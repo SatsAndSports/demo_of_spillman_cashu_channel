@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bip39::Mnemonic;
 use bitcoin::secp256k1::schnorr::Signature;
 use cdk::nuts::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
-use cdk_common::QuoteId;
+use cdk_common::{QuoteId, SpendingConditionVerification};
 use cdk::mint::{MintBuilder, MintMeltLimits};
 use cdk::nuts::nut11::{Conditions, SigFlag};
 use cdk::nuts::{
@@ -71,18 +71,7 @@ struct UnsignedSwapMessage {
 impl UnsignedSwapMessage {
     /// Create message from a swap request
     fn from_swap_request(swap_request: &SwapRequest) -> Self {
-        let mut msg_to_sign = String::new();
-
-        // Concatenate all input secrets
-        for proof in swap_request.inputs() {
-            msg_to_sign.push_str(&proof.secret.to_string());
-        }
-
-        // Concatenate all output blinded secrets
-        for output in swap_request.outputs() {
-            msg_to_sign.push_str(&output.blinded_secret.to_string());
-        }
-
+        let msg_to_sign = swap_request.sig_all_msg_to_sign();
         Self { msg_to_sign }
     }
 
