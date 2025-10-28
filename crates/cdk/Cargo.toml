@@ -149,6 +149,7 @@ reqwest = { workspace = true }
 anyhow.workspace = true
 ureq = { version = "3.1.0", features = ["json"] }
 tokio = { workspace = true, features = ["full"] }
+clap.workspace = true
 
 
 [[bench]]
