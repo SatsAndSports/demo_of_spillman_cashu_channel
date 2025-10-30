@@ -1022,7 +1022,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   Alice can send up to {} {} to Bob via signed balance updates", channel_params.capacity, channel_params.unit_name());
 
     // DEMO: Create and verify multiple balance updates
-    let num_iterations = 2_000;
+    let num_iterations = 100_000;
     if num_iterations > channel_params.capacity {
         anyhow::bail!("Number of iterations ({}) exceeds channel capacity ({})", num_iterations, channel_params.capacity);
     }
