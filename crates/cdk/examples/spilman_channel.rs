@@ -261,17 +261,15 @@ impl ChannelFixtures {
         let alice_remainder = capacity - charlie_balance;
 
         // Create deterministic blinded messages for Charlie's balance
-        let mut outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
+        let mut outputs = self.extra.create_deterministic_blinded_messages_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra,
         )?;
 
         // Create deterministic blinded messages for Alice's remainder
-        let alice_outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
+        let alice_outputs = self.extra.create_deterministic_blinded_messages_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra,
         )?;
 
         // Charlie's outputs first, then Alice's
@@ -300,29 +298,25 @@ impl ChannelFixtures {
         let alice_remainder = capacity - charlie_balance;
 
         // Get blinding factors for Charlie and Alice
-        let charlie_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
+        let charlie_blinding_factors = self.extra.create_deterministic_blinding_factors_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra,
         )?;
 
-        let alice_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
+        let alice_blinding_factors = self.extra.create_deterministic_blinding_factors_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra,
         )?;
 
         // Get secrets for Charlie and Alice
-        let charlie_secrets = self.extra.params.create_deterministic_secrets_for_amount(
+        let charlie_secrets = self.extra.create_deterministic_secrets_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra,
         )?;
 
-        let alice_secrets = self.extra.params.create_deterministic_secrets_for_amount(
+        let alice_secrets = self.extra.create_deterministic_secrets_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra,
         )?;
 
         // Split the blind signatures into Charlie's and Alice's portions
@@ -537,105 +531,6 @@ impl SpilmanChannelParameters {
         // Create deterministic P2PK output using these derived values
         create_deterministic_p2pk_output(pubkey, nonce_hex, blinding_factor)
     }
-
-    /// Create deterministic blinded messages and blinding factors for a given pubkey and target amount
-    /// Returns a vector of (BlindedMessage, SecretKey) tuples that sum to the target amount
-    /// Results are ordered largest first
-    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates outputs for each
-    fn create_deterministic_blinded_messages_and_blinding_factors_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        target_amount: u64,
-        extra: &SpilmanChannelExtra,
-    ) -> Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> {
-        // Get the list of amounts that sum to the target
-        let amounts = extra.amounts_for_target__largest_first(target_amount)?;
-
-        // For each amount with its index, create the deterministic blinded message and blinding factor
-        let results: Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> = amounts.iter()
-            .enumerate()
-            .map(|(index, &amount)| {
-                // Create the deterministic output for this index
-                let det_output = self.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
-
-                // Convert to BlindedMessage using the amount and keyset_id
-                let blinded_message = det_output.to_blinded_message(Amount::from(amount), self.active_keyset_id)?;
-
-                // Return both the blinded message and the blinding factor
-                Ok((blinded_message, det_output.blinding_factor))
-            })
-            .collect();
-
-        results
-    }
-
-    /// Create deterministic blinded messages for a given pubkey and target amount
-    /// Returns a vector of BlindedMessages that sum to the target amount
-    /// Results are ordered largest first
-    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates outputs for each
-    fn create_deterministic_blinded_messages_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        target_amount: u64,
-        extra: &SpilmanChannelExtra,
-    ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
-        // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, extra)?;
-
-        // Extract just the blinded messages
-        let blinded_messages = results.into_iter()
-            .map(|(blinded_message, _blinding_factor)| blinded_message)
-            .collect();
-
-        Ok(blinded_messages)
-    }
-
-    /// Create deterministic blinding factors for a given pubkey and target amount
-    /// Returns a vector of SecretKeys (blinding factors) that correspond to the target amount
-    /// Results are ordered largest first
-    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates blinding factors for each
-    fn create_deterministic_blinding_factors_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        target_amount: u64,
-        extra: &SpilmanChannelExtra,
-    ) -> Result<Vec<SecretKey>, anyhow::Error> {
-        // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, extra)?;
-
-        // Extract just the blinding factors
-        let blinding_factors = results.into_iter()
-            .map(|(_blinded_message, blinding_factor)| blinding_factor)
-            .collect();
-
-        Ok(blinding_factors)
-    }
-
-    /// Create deterministic secrets for a given pubkey and target amount
-    /// Returns a vector of Secrets that correspond to the target amount
-    /// Results are ordered largest first
-    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates secrets for each
-    fn create_deterministic_secrets_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        target_amount: u64,
-        extra: &SpilmanChannelExtra,
-    ) -> Result<Vec<Secret>, anyhow::Error> {
-        // Get the list of amounts that sum to the target
-        let amounts = extra.amounts_for_target__largest_first(target_amount)?;
-
-        // For each amount with its index, create the deterministic secret
-        let secrets: Result<Vec<Secret>, anyhow::Error> = amounts.iter()
-            .enumerate()
-            .map(|(index, _amount)| {
-                // Create the deterministic output for this index
-                let det_output = self.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
-                Ok(det_output.secret)
-            })
-            .collect();
-
-        secrets
-    }
 }
 
 impl SpilmanChannelExtra {
@@ -715,6 +610,122 @@ impl SpilmanChannelExtra {
 
         // Return the value after fees
         Ok(nominal_value - fee)
+    }
+
+    /// Create deterministic secrets for a given amount
+    /// Returns a vector of secrets in the same order as amounts_for_target__largest_first
+    fn create_deterministic_secrets_for_amount(
+        &self,
+        pubkey: &cdk::nuts::PublicKey,
+        amount: u64,
+    ) -> Result<Vec<Secret>, anyhow::Error> {
+        if amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let amounts = self.amounts_for_target__largest_first(amount)?;
+
+        let mut secrets = Vec::new();
+        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
+
+        for single_amount in amounts {
+            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
+
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            secrets.push(det_output.secret);
+
+            index_by_amount.insert(single_amount, index + 1);
+        }
+
+        Ok(secrets)
+    }
+
+    /// Create deterministic blinding factors for a given amount
+    /// Returns a vector of blinding factors in the same order as amounts_for_target__largest_first
+    fn create_deterministic_blinding_factors_for_amount(
+        &self,
+        pubkey: &cdk::nuts::PublicKey,
+        amount: u64,
+    ) -> Result<Vec<SecretKey>, anyhow::Error> {
+        if amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let amounts = self.amounts_for_target__largest_first(amount)?;
+
+        let mut blinding_factors = Vec::new();
+        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
+
+        for single_amount in amounts {
+            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
+
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            blinding_factors.push(det_output.blinding_factor);
+
+            index_by_amount.insert(single_amount, index + 1);
+        }
+
+        Ok(blinding_factors)
+    }
+
+    /// Create deterministic blinded messages for a given amount
+    /// Returns a vector of blinded messages in the same order as amounts_for_target__largest_first
+    fn create_deterministic_blinded_messages_for_amount(
+        &self,
+        pubkey: &cdk::nuts::PublicKey,
+        amount: u64,
+    ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
+        if amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let amounts = self.amounts_for_target__largest_first(amount)?;
+
+        let mut blinded_messages = Vec::new();
+        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
+
+        for single_amount in amounts {
+            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
+
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
+            blinded_messages.push(blinded_msg);
+
+            index_by_amount.insert(single_amount, index + 1);
+        }
+
+        Ok(blinded_messages)
+    }
+
+    /// Create deterministic blinded messages and blinding factors for a given amount
+    /// Returns both blinded messages and blinding factors in the same order
+    fn create_deterministic_blinded_messages_and_blinding_factors_for_amount(
+        &self,
+        pubkey: &cdk::nuts::PublicKey,
+        amount: u64,
+    ) -> Result<(Vec<BlindedMessage>, Vec<SecretKey>), anyhow::Error> {
+        if amount == 0 {
+            return Ok((vec![], vec![]));
+        }
+
+        let amounts = self.amounts_for_target__largest_first(amount)?;
+
+        let mut blinded_messages = Vec::new();
+        let mut blinding_factors = Vec::new();
+        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
+
+        for single_amount in amounts {
+            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
+
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
+            blinded_messages.push(blinded_msg);
+            blinding_factors.push(det_output.blinding_factor);
+
+            index_by_amount.insert(single_amount, index + 1);
+        }
+
+        Ok((blinded_messages, blinding_factors))
     }
 }
 
