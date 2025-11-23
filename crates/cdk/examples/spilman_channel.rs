@@ -456,6 +456,14 @@ impl SpilmanChannelParameters {
         active_keyset_id: Id,
         input_fee_ppk: u64,
     ) -> anyhow::Result<Self> {
+        // Validate input_fee_ppk is in valid range
+        if input_fee_ppk > 999 {
+            anyhow::bail!(
+                "input_fee_ppk must be between 0 and 999 (inclusive), got {}",
+                input_fee_ppk
+            );
+        }
+
         Ok(Self {
             alice_pubkey,
             charlie_pubkey,
