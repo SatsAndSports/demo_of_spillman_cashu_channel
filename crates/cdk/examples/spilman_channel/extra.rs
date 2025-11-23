@@ -321,7 +321,7 @@ mod tests {
         let extra = create_test_extra(400, 2); // Powers of 2
 
         // For any target balance, inverse should give us at least that balance
-        for target in [0, 1, 2, 5, 10, 15, 20, 42, 100, 255, 500] {
+        for target in 0..=1000 {
             let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
 
             // The actual balance should be >= target
@@ -345,7 +345,7 @@ mod tests {
         let extra = create_test_extra(400, 10); // Powers of 10
 
         // For any target balance, inverse should give us at least that balance
-        for target in [0, 1, 5, 10, 15, 42, 100, 123, 500, 999] {
+        for target in 0..=1000 {
             let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
 
             // The actual balance should be >= target
