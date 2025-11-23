@@ -220,7 +220,7 @@ impl BalanceUpdateMessage {
         let msg_to_sign = swap_request.sig_all_msg_to_sign();
 
         // Verify the signature using Alice's pubkey from channel params
-        channel_fixtures.params.alice_pubkey
+        channel_fixtures.extra.params.alice_pubkey
             .verify(msg_to_sign.as_bytes(), &self.signature)
             .map_err(|_| anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update"))?;
 
@@ -257,8 +257,8 @@ impl BalanceUpdateMessage {
 /// These are established at channel creation and never change
 #[derive(Debug, Clone)]
 struct ChannelFixtures {
-    /// Channel parameters
-    params: SpilmanChannelParameters,
+    /// Channel parameters plus mint-specific data
+    extra: SpilmanChannelExtra,
     /// Locked proofs (2-of-2 multisig with locktime refund)
     funding_proofs: Vec<Proof>,
     /// Total raw value of the locked proofs in the base unit
@@ -271,13 +271,13 @@ impl ChannelFixtures {
     /// Create new channel fixtures
     /// Calculates total input fee from the locked proofs
     fn new(
-        params: SpilmanChannelParameters,
+        extra: SpilmanChannelExtra,
         funding_proofs: Vec<Proof>,
         keyset_response: &KeysetResponse,
     ) -> Result<Self, anyhow::Error> {
         assert_eq!(
             funding_proofs.len(),
-            params.denominations.len(),
+            extra.denominations.len(),
             "Locked proofs must match denominations count"
         );
 
@@ -304,7 +304,7 @@ impl ChannelFixtures {
         let total_input_fee = (sum_fees_ppk + 999) / 1000;
 
         Ok(Self {
-            params,
+            extra,
             funding_proofs,
             total_locked_value,
             total_input_fee,
@@ -329,15 +329,17 @@ impl ChannelFixtures {
         let alice_remainder = capacity - charlie_balance;
 
         // Create deterministic blinded messages for Charlie's balance
-        let mut outputs = self.params.create_deterministic_blinded_messages_for_amount(
-            &self.params.charlie_pubkey,
+        let mut outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
+            &self.extra.params.charlie_pubkey,
             charlie_balance,
+            &self.extra.active_keys,
         )?;
 
         // Create deterministic blinded messages for Alice's remainder
-        let alice_outputs = self.params.create_deterministic_blinded_messages_for_amount(
-            &self.params.alice_pubkey,
+        let alice_outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
+            &self.extra.params.alice_pubkey,
             alice_remainder,
+            &self.extra.active_keys,
         )?;
 
         // Charlie's outputs first, then Alice's
@@ -366,25 +368,29 @@ impl ChannelFixtures {
         let alice_remainder = capacity - charlie_balance;
 
         // Get blinding factors for Charlie and Alice
-        let charlie_blinding_factors = self.params.create_deterministic_blinding_factors_for_amount(
-            &self.params.charlie_pubkey,
+        let charlie_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
+            &self.extra.params.charlie_pubkey,
             charlie_balance,
+            &self.extra.active_keys,
         )?;
 
-        let alice_blinding_factors = self.params.create_deterministic_blinding_factors_for_amount(
-            &self.params.alice_pubkey,
+        let alice_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
+            &self.extra.params.alice_pubkey,
             alice_remainder,
+            &self.extra.active_keys,
         )?;
 
         // Get secrets for Charlie and Alice
-        let charlie_secrets = self.params.create_deterministic_secrets_for_amount(
-            &self.params.charlie_pubkey,
+        let charlie_secrets = self.extra.params.create_deterministic_secrets_for_amount(
+            &self.extra.params.charlie_pubkey,
             charlie_balance,
+            &self.extra.active_keys,
         )?;
 
-        let alice_secrets = self.params.create_deterministic_secrets_for_amount(
-            &self.params.alice_pubkey,
+        let alice_secrets = self.extra.params.create_deterministic_secrets_for_amount(
+            &self.extra.params.alice_pubkey,
             alice_remainder,
+            &self.extra.active_keys,
         )?;
 
         // Split the blind signatures into Charlie's and Alice's portions
@@ -397,7 +403,7 @@ impl ChannelFixtures {
             charlie_signatures,
             charlie_blinding_factors,
             charlie_secrets,
-            &self.params.active_keys,
+            &self.extra.active_keys,
         )?;
 
         // Unblind Alice's outputs
@@ -405,7 +411,7 @@ impl ChannelFixtures {
             alice_signatures,
             alice_blinding_factors,
             alice_secrets,
-            &self.params.active_keys,
+            &self.extra.active_keys,
         )?;
 
         Ok((charlie_proofs, alice_proofs))
@@ -416,7 +422,7 @@ impl ChannelFixtures {
     /// Computes the spend vector and delegates to create_swap_request_from_vector
     /// Returns the swap request and total amount being spent
     fn create_updated_swap_request(&self, new_balance_for_receiver: u64) -> (SwapRequest, u64) {
-        let spend_vector = self.params.balance_to_spend_vector(new_balance_for_receiver);
+        let spend_vector = self.extra.params.balance_to_spend_vector(new_balance_for_receiver);
         self.create_swap_request_from_vector(&spend_vector)
     }
     */
@@ -448,14 +454,14 @@ impl ChannelFixtures {
             .filter_map(|(i, &should_spend)| {
                 if should_spend {
                     // Regenerate Charlie's blinded message deterministically
-                    let amount = self.params.denominations[i];
+                    let amount = self.extra.denominations[i];
                     let det_output = create_deterministic_p2pk_det_output(
-                        &self.params.charlie_pubkey,
+                        &self.extra.params.charlie_pubkey,
                         i,
                     ).ok()?;
                     let blinded_msg = det_output.to_blinded_message(
                         Amount::from(amount),
-                        self.params.active_keyset_id,
+                        self.extra.active_keyset_id,
                     ).ok()?;
                     Some(blinded_msg)
                 } else {
@@ -471,7 +477,7 @@ impl ChannelFixtures {
     */
 }
 
-/// Parameters for a Spilman payment channel
+/// Parameters for a Spilman payment channel (protocol parameters only)
 #[derive(Debug, Clone)]
 struct SpilmanChannelParameters {
     /// Alice's public key (sender)
@@ -492,6 +498,13 @@ struct SpilmanChannelParameters {
     sender_nonce: String,
     /// Active keyset ID from the mint
     active_keyset_id: Id,
+}
+
+/// Channel parameters plus mint-specific data (keys and denominations)
+#[derive(Debug, Clone)]
+struct SpilmanChannelExtra {
+    /// Channel parameters
+    params: SpilmanChannelParameters,
     /// Set of active keys from the mint (map from amount to pubkey)
     active_keys: Keys,
     /// Denomination sizes for channel outputs
@@ -516,7 +529,6 @@ impl SpilmanChannelParameters {
         setup_timestamp: u64,
         sender_nonce: String,
         active_keyset_id: Id,
-        active_keys: Keys,
     ) -> anyhow::Result<Self> {
         // Validate that capacity == 2^log2_capacity
         if log2_capacity >= 64 {
@@ -536,26 +548,6 @@ impl SpilmanChannelParameters {
             );
         }
 
-        // Build denominations vector
-        // First element: special 1-unit output (for double-spend prevention)
-        // Remaining elements: powers of 2 from 2^0 to 2^(log2_capacity - 1)
-        let mut denominations = vec![1]; // Special output
-
-        for i in 0..log2_capacity {
-            denominations.push(1u64 << i); // 2^i
-        }
-
-        // Verify sum of denominations equals capacity
-        let sum: u64 = denominations.iter().sum();
-        if sum != capacity {
-            anyhow::bail!(
-                "Denominations sum mismatch: sum({:?}) = {}, expected capacity {}",
-                denominations,
-                sum,
-                capacity
-            );
-        }
-
         Ok(Self {
             alice_pubkey,
             charlie_pubkey,
@@ -566,8 +558,6 @@ impl SpilmanChannelParameters {
             setup_timestamp,
             sender_nonce,
             active_keyset_id,
-            active_keys,
-            denominations,
         })
     }
 
@@ -599,13 +589,13 @@ impl SpilmanChannelParameters {
     /// Uses a greedy algorithm: goes through amounts from largest to smallest
     /// Returns the list in ascending order
     /// Returns an error if the target amount cannot be represented
-    fn amounts_for_target(&self, target: u64) -> anyhow::Result<Vec<u64>> {
+    fn amounts_for_target(&self, target: u64, active_keys: &Keys) -> anyhow::Result<Vec<u64>> {
         if target == 0 {
             return Ok(vec![]);
         }
 
         // Get all available amounts from the active_keys, sorted descending
-        let mut available_amounts: Vec<u64> = self.active_keys.iter()
+        let mut available_amounts: Vec<u64> = active_keys.iter()
             .map(|(amt, _)| u64::from(*amt))
             .collect();
         available_amounts.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending
@@ -678,9 +668,10 @@ impl SpilmanChannelParameters {
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
+        active_keys: &Keys,
     ) -> Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> {
         // Get the list of amounts that sum to the target
-        let amounts = self.amounts_for_target(target_amount)?;
+        let amounts = self.amounts_for_target(target_amount, active_keys)?;
 
         // For each amount with its index, create the deterministic blinded message and blinding factor
         let results: Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> = amounts.iter()
@@ -707,9 +698,10 @@ impl SpilmanChannelParameters {
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
+        active_keys: &Keys,
     ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
         // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount)?;
+        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, active_keys)?;
 
         // Extract just the blinded messages
         let blinded_messages = results.into_iter()
@@ -726,9 +718,10 @@ impl SpilmanChannelParameters {
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
+        active_keys: &Keys,
     ) -> Result<Vec<SecretKey>, anyhow::Error> {
         // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount)?;
+        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, active_keys)?;
 
         // Extract just the blinding factors
         let blinding_factors = results.into_iter()
@@ -745,9 +738,10 @@ impl SpilmanChannelParameters {
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
+        active_keys: &Keys,
     ) -> Result<Vec<Secret>, anyhow::Error> {
         // Get the list of amounts that sum to the target
-        let amounts = self.amounts_for_target(target_amount)?;
+        let amounts = self.amounts_for_target(target_amount, active_keys)?;
 
         // For each amount with its index, create the deterministic secret
         let secrets: Result<Vec<Secret>, anyhow::Error> = amounts.iter()
@@ -784,6 +778,39 @@ impl SpilmanChannelParameters {
         }
 
         vector
+    }
+}
+
+impl SpilmanChannelExtra {
+    /// Create new channel extra from parameters and active keys
+    ///
+    /// Builds the denominations vector based on log2_capacity
+    fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
+        // Build denominations vector
+        // First element: special 1-unit output (for double-spend prevention)
+        // Remaining elements: powers of 2 from 2^0 to 2^(log2_capacity - 1)
+        let mut denominations = vec![1]; // Special output
+
+        for i in 0..params.log2_capacity {
+            denominations.push(1u64 << i); // 2^i
+        }
+
+        // Verify sum of denominations equals capacity
+        let sum: u64 = denominations.iter().sum();
+        if sum != params.capacity {
+            anyhow::bail!(
+                "Denominations sum mismatch: sum({:?}) = {}, expected capacity {}",
+                denominations,
+                sum,
+                params.capacity
+            );
+        }
+
+        Ok(Self {
+            params,
+            active_keys,
+            denominations,
+        })
     }
 }
 
@@ -1220,10 +1247,12 @@ async fn main() -> anyhow::Result<()> {
         setup_timestamp,
         sender_nonce,
         active_keyset_id,
-        set_of_active_keys.keys.clone(),
     )?;
 
     println!("   Channel ID: {}\n", channel_params.get_id());
+
+    // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
+    let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
 
     // 5. CHECK MINT CAPABILITIES
     println!("🔍 Checking mint capabilities...");
@@ -1252,26 +1281,26 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     // 6. ALICE MINTS TOKENS FOR THE CHANNEL CAPACITY
-    println!("💰 Alice minting {} {} (full channel capacity)...", channel_params.capacity, channel_params.unit_name());
-    let quote = alice_wallet.mint_quote(channel_params.capacity.into(), None).await?;
+    println!("💰 Alice minting {} {} (full channel capacity)...", channel_extra.params.capacity, channel_extra.params.unit_name());
+    let quote = alice_wallet.mint_quote(channel_extra.params.capacity.into(), None).await?;
     let mut proof_stream = alice_wallet.proof_stream(quote, Default::default(), None);
     let _proofs = proof_stream.next().await.expect("proofs")?;
-    println!("✅ Alice has {} {}\n", alice_wallet.total_balance().await?, channel_params.unit_name());
+    println!("✅ Alice has {} {}\n", alice_wallet.total_balance().await?, channel_extra.params.unit_name());
 
     // 8. PREPARE 2-OF-2 MULTISIG SPENDING CONDITIONS WITH LOCKTIME REFUND
     println!("🔐 Preparing 2-of-2 multisig spending conditions with locktime refund...");
 
     let conditions = Conditions::new(
-        Some(channel_params.locktime),                // Locktime for Alice's refund
-        Some(vec![channel_params.charlie_pubkey]),        // Charlie's key as additional pubkey
-        Some(vec![channel_params.alice_pubkey]),      // Alice can refund after locktime
+        Some(channel_extra.params.locktime),                // Locktime for Alice's refund
+        Some(vec![channel_extra.params.charlie_pubkey]),        // Charlie's key as additional pubkey
+        Some(vec![channel_extra.params.alice_pubkey]),      // Alice can refund after locktime
         Some(2),                                      // Require 2 signatures (Alice + Charlie)
         Some(SigFlag::SigAll),                        // SigAll: signatures commit to outputs
         Some(1),                                      // Only 1 signature needed for refund (Alice)
     )?;
 
     let spending_conditions = SpendingConditions::new_p2pk(
-        channel_params.alice_pubkey,  // Alice's key as primary
+        channel_extra.params.alice_pubkey,  // Alice's key as primary
         Some(conditions),
     );
 
@@ -1284,7 +1313,7 @@ async fn main() -> anyhow::Result<()> {
     let mut locked_outputs = Vec::new();
     let mut locked_secrets_and_rs = Vec::new();
 
-    for (i, &amount) in channel_params.denominations.iter().enumerate() {
+    for (i, &amount) in channel_extra.denominations.iter().enumerate() {
         // Create a fresh NUT-10 secret with the same spending conditions
         // Each proof MUST have a unique secret to avoid DuplicateInputs error
         let nut10_secret: Nut10Secret = spending_conditions.clone().into();
@@ -1303,7 +1332,7 @@ async fn main() -> anyhow::Result<()> {
         locked_outputs.push(blinded_msg);
         locked_secrets_and_rs.push((secret, blinding_factor));
 
-        println!("   Output {}: {} {} - locked to 2-of-2", i + 1, amount, channel_params.unit_name());
+        println!("   Output {}: {} {} - locked to 2-of-2", i + 1, amount, channel_extra.params.unit_name());
     }
 
     println!("✅ Created locked BlindedMessage\n");
@@ -1324,8 +1353,8 @@ async fn main() -> anyhow::Result<()> {
         .map(|p| p.proof)
         .collect::<Vec<_>>();
 
-    println!("   Alice inputs: {} {}", alice_proofs.iter().map(|p| u64::from(p.amount)).sum::<u64>(), channel_params.unit_name());
-    println!("   Locked outputs: {:?}", channel_params.denominations);
+    println!("   Alice inputs: {} {}", alice_proofs.iter().map(|p| u64::from(p.amount)).sum::<u64>(), channel_extra.params.unit_name());
+    println!("   Locked outputs: {:?}", channel_extra.denominations);
 
     // Create and execute the swap
     let swap_request = SwapRequest::new(alice_proofs, locked_outputs);
@@ -1348,32 +1377,32 @@ async fn main() -> anyhow::Result<()> {
 
     // Create channel fixtures (fixed for the lifetime of the channel)
     let channel_fixtures = ChannelFixtures::new(
-        channel_params.clone(),
+        channel_extra.clone(),
         funding_proofs.clone(),
         &keysets_response,
     )?;
 
     println!("🎉 Setup complete!");
     println!("   Alice has {} proofs locked to Alice + Charlie 2-of-2", funding_proofs.len());
-    println!("   Total locked value: {} {}", channel_fixtures.total_locked_value, channel_params.unit_name());
-    println!("   Total input fee: {} {}", channel_fixtures.total_input_fee, channel_params.unit_name());
-    println!("   Usable capacity: {} {}", channel_fixtures.get_capacity(), channel_params.unit_name());
+    println!("   Total locked value: {} {}", channel_fixtures.total_locked_value, channel_fixtures.extra.params.unit_name());
+    println!("   Total input fee: {} {}", channel_fixtures.total_input_fee, channel_fixtures.extra.params.unit_name());
+    println!("   Usable capacity: {} {}", channel_fixtures.get_capacity(), channel_extra.params.unit_name());
     println!("   Requires BOTH Alice and Charlie to spend\n");
 
     println!("\n🎊 CHANNEL OPEN! 🎊");
     println!("   Both parties have verified all conditions.");
     println!("   The channel is now ready for off-chain payments.");
-    println!("   Capacity: {} {}", channel_params.capacity, channel_params.unit_name());
-    println!("   Alice can send up to {} {} to Charlie via signed balance updates", channel_params.capacity, channel_params.unit_name());
+    println!("   Capacity: {} {}", channel_extra.params.capacity, channel_extra.params.unit_name());
+    println!("   Alice can send up to {} {} to Charlie via signed balance updates", channel_extra.params.capacity, channel_extra.params.unit_name());
 
     // DEMO: Test creating and executing a swap request for 42 sats to Charlie
-    println!("\n🧪 DEMO: Creating swap request for 42 {} to Charlie...", channel_params.unit_name());
+    println!("\n🧪 DEMO: Creating swap request for 42 {} to Charlie...", channel_extra.params.unit_name());
 
     let charlie_balance = 42;
     let mut swap_request = channel_fixtures.create_unsigned_swap_request(charlie_balance)?;
     println!("   ✓ Created unsigned swap request");
-    println!("   Charlie's balance: {} {}", charlie_balance, channel_params.unit_name());
-    println!("   Alice's remainder: {} {}", channel_fixtures.get_capacity() - charlie_balance, channel_params.unit_name());
+    println!("   Charlie's balance: {} {}", charlie_balance, channel_extra.params.unit_name());
+    println!("   Alice's remainder: {} {}", channel_fixtures.get_capacity() - charlie_balance, channel_extra.params.unit_name());
 
     // Alice signs first
     println!("\n   🔏 Alice signing...");
@@ -1383,13 +1412,13 @@ async fn main() -> anyhow::Result<()> {
     // Create a balance update message (Alice -> Charlie)
     println!("\n   📨 Creating balance update message...");
     let balance_update_msg = BalanceUpdateMessage::from_signed_swap_request(
-        channel_params.get_id(),
+        channel_extra.params.get_id(),
         charlie_balance,
         &swap_request,
     )?;
     println!("   ✓ Balance update message created");
     println!("   Channel ID: {}", balance_update_msg.channel_id);
-    println!("   Charlie's new balance: {} {}", balance_update_msg.amount, channel_params.unit_name());
+    println!("   Charlie's new balance: {} {}", balance_update_msg.amount, channel_extra.params.unit_name());
     println!("   Signature: {}...{}",
         &balance_update_msg.signature.to_string()[..8],
         &balance_update_msg.signature.to_string()[balance_update_msg.signature.to_string().len()-8..]
@@ -1418,12 +1447,12 @@ async fn main() -> anyhow::Result<()> {
     println!("   Charlie received {} proofs totaling {} {}",
         charlie_proofs.len(),
         charlie_proofs.iter().map(|p| u64::from(p.amount)).sum::<u64>(),
-        channel_params.unit_name()
+        channel_extra.params.unit_name()
     );
     println!("   Alice received {} proofs totaling {} {}",
         alice_proofs.len(),
         alice_proofs.iter().map(|p| u64::from(p.amount)).sum::<u64>(),
-        channel_params.unit_name()
+        channel_extra.params.unit_name()
     );
 
     // Add the proofs to each wallet (they are still P2PK locked, so wallets will swap them)
@@ -1437,8 +1466,8 @@ async fn main() -> anyhow::Result<()> {
         metadata: HashMap::new(),
     };
     let charlie_received_amount = charlie_wallet.receive_proofs(charlie_proofs, charlie_receive_opts, None).await?;
-    println!("   ✓ Charlie received {} {} into wallet", charlie_received_amount, channel_params.unit_name());
-    println!("   Charlie's total balance: {} {}", charlie_wallet.total_balance().await?, channel_params.unit_name());
+    println!("   ✓ Charlie received {} {} into wallet", charlie_received_amount, channel_extra.params.unit_name());
+    println!("   Charlie's total balance: {} {}", charlie_wallet.total_balance().await?, channel_extra.params.unit_name());
 
     // Alice receives her proofs (wallet will sign and swap to remove P2PK)
     let alice_receive_opts = ReceiveOptions {
@@ -1448,8 +1477,8 @@ async fn main() -> anyhow::Result<()> {
         metadata: HashMap::new(),
     };
     let alice_received_amount = alice_wallet.receive_proofs(alice_proofs, alice_receive_opts, None).await?;
-    println!("   ✓ Alice received {} {} into wallet", alice_received_amount, channel_params.unit_name());
-    println!("   Alice's total balance: {} {}", alice_wallet.total_balance().await?, channel_params.unit_name());
+    println!("   ✓ Alice received {} {} into wallet", alice_received_amount, channel_extra.params.unit_name());
+    println!("   Alice's total balance: {} {}", alice_wallet.total_balance().await?, channel_extra.params.unit_name());
 
     Ok(())
 }
