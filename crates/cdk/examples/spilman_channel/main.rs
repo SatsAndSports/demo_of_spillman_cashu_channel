@@ -1,0 +1,630 @@
+//! Example: Spilman (Unidirectional) Payment Channel
+//!
+//! This example will demonstrate a Cashu implementation of Spilman channels,
+//! allowing Alice and Charlie to set up an offline unidirectional payment channel.
+
+mod deterministic;
+mod params;
+mod extra;
+mod fixtures;
+
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Formatter};
+use std::str::FromStr;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use bip39::Mnemonic;
+use bitcoin::secp256k1::schnorr::Signature;
+use cdk::nuts::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
+use cdk_common::{QuoteId, SpendingConditionVerification};
+use cdk::mint::{MintBuilder, MintMeltLimits};
+use cdk::nuts::{
+    CheckStateRequest, CheckStateResponse, CurrencyUnit, Id, KeySet, KeysetResponse,
+    MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltRequest, MintInfo,
+    MintQuoteBolt11Request, MintQuoteBolt11Response, MintRequest, MintResponse, PaymentMethod,
+    RestoreRequest, RestoreResponse, SecretKey, SwapRequest, SwapResponse,
+};
+use cdk::types::{FeeReserve, QuoteTTL};
+use cdk::util::unix_time;
+use cdk::wallet::{AuthWallet, HttpClient, MintConnector, Wallet, WalletBuilder};
+use cdk::{Error, Mint};
+use cdk_common::mint_url::MintUrl;
+use cdk_fake_wallet::FakeWallet;
+use tokio::sync::RwLock;
+use cdk::secret::Secret;
+use clap::Parser;
+
+use params::SpilmanChannelParameters;
+use extra::SpilmanChannelExtra;
+use fixtures::ChannelFixtures;
+
+/// Extract signatures from the first proof's witness in a swap request
+/// For SigAll, all signatures are stored in the witness of the FIRST proof only
+fn get_signatures_from_swap_request(swap_request: &SwapRequest) -> Result<Vec<Signature>, anyhow::Error> {
+    let first_proof = swap_request.inputs().first()
+        .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
+
+    let signatures = if let Some(ref witness) = first_proof.witness {
+        if let cdk::nuts::Witness::P2PKWitness(p2pk_witness) = witness {
+            // Parse all signature strings into Signature objects
+            p2pk_witness.signatures.iter()
+                .filter_map(|sig_str| sig_str.parse::<Signature>().ok())
+                .collect()
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    Ok(signatures)
+}
+
+/// A signed balance update message that can be sent from Alice to Charlie
+/// Represents Alice's commitment to a new channel balance
+#[derive(Debug, Clone)]
+struct BalanceUpdateMessage {
+    /// Channel ID to identify which channel this update is for
+    channel_id: String,
+    /// New balance for the receiver (Charlie)
+    amount: u64,
+    /// Alice's signature over the swap request
+    signature: Signature,
+}
+
+impl BalanceUpdateMessage {
+    /// Create a balance update message from a signed swap request
+    fn from_signed_swap_request(
+        channel_id: String,
+        amount: u64,
+        swap_request: &SwapRequest,
+    ) -> Result<Self, anyhow::Error> {
+        // Extract Alice's signature from the swap request
+        let signatures = get_signatures_from_swap_request(swap_request)?;
+
+        // Ensure there is exactly one signature (Alice's only)
+        if signatures.len() != 1 {
+            anyhow::bail!(
+                "Expected exactly 1 signature (Alice's), but found {}",
+                signatures.len()
+            );
+        }
+
+        let signature = signatures[0].clone();
+
+        Ok(Self {
+            channel_id,
+            amount,
+            signature,
+        })
+    }
+
+    /// Verify the signature using the channel fixtures
+    /// Charlie reconstructs the swap request from the amount to verify the signature
+    /// Throws an error if the signature is invalid
+    fn verify_sender_signature(&self, channel_fixtures: &ChannelFixtures) -> Result<(), anyhow::Error> {
+        // Reconstruct the unsigned swap request from the amount
+        let swap_request = channel_fixtures.create_unsigned_swap_request(self.amount)?;
+
+        // Extract the SIG_ALL message from the swap request
+        let msg_to_sign = swap_request.sig_all_msg_to_sign();
+
+        // Verify the signature using Alice's pubkey from channel params
+        channel_fixtures.extra.params.alice_pubkey
+            .verify(msg_to_sign.as_bytes(), &self.signature)
+            .map_err(|_| anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update"))?;
+
+        Ok(())
+    }
+}
+
+/// Create a wallet connected to a local in-process mint
+async fn create_wallet_local(mint: &Mint, unit: CurrencyUnit) -> anyhow::Result<Wallet> {
+    let connector = DirectMintConnection::new(mint.clone());
+    let store = Arc::new(cdk_sqlite::wallet::memory::empty().await?);
+    let seed = Mnemonic::generate(12)?.to_seed_normalized("");
+
+    let wallet = WalletBuilder::new()
+        .mint_url("http://localhost:8080".parse().unwrap())
+        .unit(unit)
+        .localstore(store)
+        .seed(seed)
+        .client(connector)
+        .build()?;
+
+    Ok(wallet)
+}
+
+/// Create a wallet connected to an external mint via HTTP
+async fn create_wallet_http(mint_url: MintUrl, unit: CurrencyUnit) -> anyhow::Result<Wallet> {
+    let http_client = HttpClient::new(mint_url.clone(), None);
+    let store = Arc::new(cdk_sqlite::wallet::memory::empty().await?);
+    let seed = Mnemonic::generate(12)?.to_seed_normalized("");
+
+    let wallet = WalletBuilder::new()
+        .mint_url(mint_url)
+        .unit(unit)
+        .localstore(store)
+        .seed(seed)
+        .client(http_client)
+        .build()?;
+
+    Ok(wallet)
+}
+
+/// Create a local mint with FakeWallet backend for testing
+async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
+    let mint_store = Arc::new(cdk_sqlite::mint::memory::empty().await?);
+
+    let fee_reserve = FeeReserve {
+        min_fee_reserve: 1.into(),
+        percent_fee_reserve: 1.0,
+    };
+
+    let fake_ln = FakeWallet::new(
+        fee_reserve,
+        HashMap::default(),
+        HashSet::default(),
+        2,
+        unit.clone(),
+    );
+
+    let mut mint_builder = MintBuilder::new(mint_store.clone());
+    mint_builder
+        .add_payment_processor(
+            unit.clone(),
+            PaymentMethod::Bolt11,
+            MintMeltLimits::new(1, 2_000_000_000),  // 2B msat = 2M sat
+            Arc::new(fake_ln),
+        )
+        .await?;
+
+    // Set input fee to 400 parts per thousand (40%)
+    mint_builder.set_unit_fee(&unit, 400)?;
+
+    let mnemonic = Mnemonic::generate(12)?;
+    mint_builder = mint_builder
+        .with_name("local test mint".to_string())
+        .with_urls(vec!["http://localhost:8080".to_string()]);
+
+    let mint = mint_builder
+        .build_with_seed(mint_store, &mnemonic.to_seed_normalized(""))
+        .await?;
+
+    mint.set_quote_ttl(QuoteTTL::new(10000, 10000)).await?;
+    mint.start().await?;
+
+    Ok(mint)
+}
+
+/// Trait for interacting with a mint (either local or HTTP)
+#[async_trait]
+trait MintConnection {
+    async fn get_mint_info(&self) -> Result<MintInfo, Error>;
+    async fn get_keysets(&self) -> Result<KeysetResponse, Error>;
+    async fn get_keys(&self) -> Result<Vec<KeySet>, Error>;
+    async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error>;
+}
+
+/// HTTP mint wrapper implementing MintConnection
+struct HttpMintConnection {
+    http_client: HttpClient,
+}
+
+impl HttpMintConnection {
+    fn new(mint_url: MintUrl) -> Self {
+        let http_client = HttpClient::new(mint_url, None);
+        Self { http_client }
+    }
+}
+
+#[async_trait]
+impl MintConnection for HttpMintConnection {
+    async fn get_mint_info(&self) -> Result<MintInfo, Error> {
+        self.http_client.get_mint_info().await
+    }
+
+    async fn get_keysets(&self) -> Result<KeysetResponse, Error> {
+        self.http_client.get_mint_keysets().await
+    }
+
+    async fn get_keys(&self) -> Result<Vec<KeySet>, Error> {
+        self.http_client.get_mint_keys().await
+    }
+
+    async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
+        self.http_client.post_swap(swap_request).await
+    }
+}
+
+/// Direct in-process connection to a mint (no HTTP)
+#[derive(Clone)]
+struct DirectMintConnection {
+    mint: Mint,
+    auth_wallet: Arc<RwLock<Option<AuthWallet>>>,
+}
+
+impl DirectMintConnection {
+    fn new(mint: Mint) -> Self {
+        Self {
+            mint,
+            auth_wallet: Arc::new(RwLock::new(None)),
+        }
+    }
+}
+
+impl Debug for DirectMintConnection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DirectMintConnection")
+    }
+}
+
+#[async_trait]
+impl MintConnector for DirectMintConnection {
+    async fn resolve_dns_txt(&self, _domain: &str) -> Result<Vec<String>, Error> {
+        panic!("Not implemented");
+    }
+
+    async fn get_mint_keys(&self) -> Result<Vec<KeySet>, Error> {
+        Ok(self.mint.pubkeys().keysets)
+    }
+
+    async fn get_mint_keyset(&self, keyset_id: Id) -> Result<KeySet, Error> {
+        self.mint.keyset(&keyset_id).ok_or(Error::UnknownKeySet)
+    }
+
+    async fn get_mint_keysets(&self) -> Result<KeysetResponse, Error> {
+        Ok(self.mint.keysets())
+    }
+
+    async fn post_mint_quote(
+        &self,
+        request: MintQuoteBolt11Request,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.mint
+            .get_mint_quote(request.into())
+            .await
+            .map(Into::into)
+    }
+
+    async fn get_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.mint
+            .check_mint_quote(&QuoteId::from_str(quote_id)?)
+            .await
+            .map(Into::into)
+    }
+
+    async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error> {
+        let request_id: MintRequest<QuoteId> = request.try_into().unwrap();
+        self.mint.process_mint_request(request_id).await
+    }
+
+    async fn post_melt_quote(
+        &self,
+        request: MeltQuoteBolt11Request,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        self.mint
+            .get_melt_quote(request.into())
+            .await
+            .map(Into::into)
+    }
+
+    async fn get_melt_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        self.mint
+            .check_melt_quote(&QuoteId::from_str(quote_id)?)
+            .await
+            .map(Into::into)
+    }
+
+    async fn post_melt(
+        &self,
+        request: MeltRequest<String>,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        let request_uuid = request.try_into().unwrap();
+        self.mint.melt(&request_uuid).await.map(Into::into)
+    }
+
+    async fn post_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
+        self.mint.process_swap_request(swap_request).await
+    }
+
+    async fn get_mint_info(&self) -> Result<MintInfo, Error> {
+        Ok(self.mint.mint_info().await?.clone().time(unix_time()))
+    }
+
+    async fn post_check_state(
+        &self,
+        request: CheckStateRequest,
+    ) -> Result<CheckStateResponse, Error> {
+        self.mint.check_state(&request).await
+    }
+
+    async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error> {
+        self.mint.restore(request).await
+    }
+
+    async fn get_auth_wallet(&self) -> Option<AuthWallet> {
+        self.auth_wallet.read().await.clone()
+    }
+
+    async fn set_auth_wallet(&self, wallet: Option<AuthWallet>) {
+        let mut auth_wallet = self.auth_wallet.write().await;
+        *auth_wallet = wallet;
+    }
+
+    async fn post_mint_bolt12_quote(
+        &self,
+        request: MintQuoteBolt12Request,
+    ) -> Result<MintQuoteBolt12Response<String>, Error> {
+        let res: MintQuoteBolt12Response<QuoteId> =
+            self.mint.get_mint_quote(request.into()).await?.try_into()?;
+        Ok(res.into())
+    }
+
+    async fn get_mint_quote_bolt12_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MintQuoteBolt12Response<String>, Error> {
+        let quote: MintQuoteBolt12Response<QuoteId> = self
+            .mint
+            .check_mint_quote(&QuoteId::from_str(quote_id)?)
+            .await?
+            .try_into()?;
+        Ok(quote.into())
+    }
+
+    async fn post_melt_bolt12_quote(
+        &self,
+        request: MeltQuoteBolt12Request,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        self.mint
+            .get_melt_quote(request.into())
+            .await
+            .map(Into::into)
+    }
+
+    async fn get_melt_bolt12_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        self.mint
+            .check_melt_quote(&QuoteId::from_str(quote_id)?)
+            .await
+            .map(Into::into)
+    }
+
+    async fn post_melt_bolt12(
+        &self,
+        _request: MeltRequest<String>,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
+}
+
+// Also implement the simpler MintConnection trait for channel operations
+#[async_trait]
+impl MintConnection for DirectMintConnection {
+    async fn get_mint_info(&self) -> Result<MintInfo, Error> {
+        Ok(self.mint.mint_info().await?.clone().time(unix_time()))
+    }
+
+    async fn get_keysets(&self) -> Result<KeysetResponse, Error> {
+        Ok(self.mint.keysets())
+    }
+
+    async fn get_keys(&self) -> Result<Vec<KeySet>, Error> {
+        Ok(self.mint.pubkeys().keysets)
+    }
+
+    async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
+        self.mint.process_swap_request(swap_request).await
+    }
+}
+
+/// Verify that the mint supports all required capabilities for Spilman channels
+///
+/// Required: NUT-07 (token state check), NUT-09 (restore signatures),
+///           NUT-11 (P2PK), NUT-12 (DLEQ)
+/// Optional: NUT-17 (WebSocket subscriptions)
+fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
+    println!("🔍 Checking mint capabilities...");
+
+    let mut all_required_supported = true;
+
+    // Check for NUT-07 support (Token state check)
+    if mint_info.nuts.nut07.supported {
+        println!("   ✓ Mint supports NUT-07 (Token state check)");
+    } else {
+        println!("   ✗ Mint does not support NUT-07 (Token state check) - REQUIRED");
+        all_required_supported = false;
+    }
+
+    // Check for NUT-09 support (Restore signatures)
+    if mint_info.nuts.nut09.supported {
+        println!("   ✓ Mint supports NUT-09 (Restore signatures)");
+    } else {
+        println!("   ✗ Mint does not support NUT-09 (Restore signatures) - REQUIRED");
+        all_required_supported = false;
+    }
+
+    // Check for NUT-11 support (P2PK spending conditions)
+    if mint_info.nuts.nut11.supported {
+        println!("   ✓ Mint supports NUT-11 (P2PK spending conditions)");
+    } else {
+        println!("   ✗ Mint does not support NUT-11 (P2PK) - REQUIRED");
+        all_required_supported = false;
+    }
+
+    // Check for NUT-12 support (DLEQ proofs)
+    if mint_info.nuts.nut12.supported {
+        println!("   ✓ Mint supports NUT-12 (DLEQ proofs)");
+    } else {
+        println!("   ✗ Mint does not support NUT-12 (DLEQ proofs) - REQUIRED");
+        all_required_supported = false;
+    }
+
+    // Check for NUT-17 support (WebSocket subscriptions) - optional but beneficial
+    if !mint_info.nuts.nut17.supported.is_empty() {
+        println!("   ✓ Mint supports NUT-17 (WebSocket subscriptions) - beneficial for detecting channel closure");
+    } else {
+        println!("   ⚠ Mint does not support NUT-17 (WebSocket subscriptions) - optional but beneficial");
+    }
+
+    println!();
+
+    if !all_required_supported {
+        anyhow::bail!("Mint does not support all required capabilities for Spilman channels");
+    }
+
+    Ok(())
+}
+
+/// Spilman Payment Channel Demo
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Mint URL (if not specified, uses in-process CDK mint)
+    #[arg(long)]
+    mint: Option<String>,
+
+    /// Delay in seconds until Alice can refund (locktime)
+    #[arg(long, default_value = "10")]
+    delay_until_refund: u64,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    // 1. GENERATE KEYS FOR ALICE AND CHARLIE
+    println!("🔑 Generating keypairs...");
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey = alice_secret.public_key();
+    println!("   Alice pubkey: {}", alice_pubkey);
+
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+    println!("   Charlie pubkey:   {}\n", charlie_pubkey);
+
+    // 2. SETUP INITIAL CHANNEL PARAMETERS
+    println!("📋 Setting up Spilman channel parameters...");
+
+    let setup_timestamp = unix_time();
+
+    // Generate random sender nonce (created by Alice)
+    let sender_nonce = Secret::generate().to_string();
+
+    let channel_unit = CurrencyUnit::Sat;
+    let capacity = 1_000_000;
+    let locktime = setup_timestamp + args.delay_until_refund;
+
+    println!("   Capacity: {} {:?}", capacity, channel_unit);
+    println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
+
+    // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
+    let (mint_connection, _alice_wallet, _charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse) = if let Some(mint_url_str) = args.mint {
+        println!("🏦 Connecting to external mint at {}...", mint_url_str);
+        let mint_url: MintUrl = mint_url_str.parse()?;
+
+        println!("👩 Setting up Alice's wallet...");
+        let alice = create_wallet_http(mint_url.clone(), channel_unit.clone()).await?;
+
+        println!("👨 Setting up Charlie's wallet...");
+        let charlie = create_wallet_http(mint_url.clone(), channel_unit.clone()).await?;
+
+        let http_mint = HttpMintConnection::new(mint_url);
+        println!("✅ Connected to external mint\n");
+
+        // Get active keyset from mint
+        println!("📦 Getting active keyset from mint...");
+        let keysets = http_mint.get_keysets().await?;
+        let active_keyset_info = keysets.keysets.iter()
+            .find(|k| k.active && k.unit == channel_unit)
+            .expect("No active keyset");
+        let keyset_id = active_keyset_info.id;
+        let fee_ppk = active_keyset_info.input_fee_ppk;
+        println!("   Using keyset: {}\n", keyset_id);
+        println!("   Input fee: {} ppk\n", fee_ppk);
+
+        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, keysets)
+    } else {
+        println!("🏦 Setting up local in-process mint...");
+        let mint = create_local_mint(channel_unit.clone()).await?;
+        println!("✅ Local mint running\n");
+
+        println!("👩 Setting up Alice's wallet...");
+        let alice = create_wallet_local(&mint, channel_unit.clone()).await?;
+
+        println!("👨 Setting up Charlie's wallet...");
+        let charlie = create_wallet_local(&mint, channel_unit.clone()).await?;
+
+        let local_mint = DirectMintConnection::new(mint);
+
+        // Get active keyset from mint
+        println!("📦 Getting active keyset from mint...");
+        let keysets = local_mint.get_keysets().await?;
+        let active_keyset_info = keysets.keysets.iter()
+            .find(|k| k.active && k.unit == channel_unit)
+            .expect("No active keyset");
+        let keyset_id = active_keyset_info.id;
+        let fee_ppk = active_keyset_info.input_fee_ppk;
+        println!("   Using keyset: {}\n", keyset_id);
+        println!("   Input fee: {} ppk\n", fee_ppk);
+
+        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, keysets)
+    };
+
+    // Get the mint's public keys for the active keyset
+    let all_keysets = mint_connection.get_keys().await?;
+    let set_of_active_keys = all_keysets.iter()
+        .find(|k| k.id == active_keyset_id)
+        .ok_or_else(|| anyhow::anyhow!("Active keyset not found"))?;
+
+    // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
+    let channel_params = SpilmanChannelParameters::new(
+        alice_pubkey,
+        charlie_pubkey,
+        channel_unit,
+        capacity,
+        locktime,
+        setup_timestamp,
+        sender_nonce,
+        active_keyset_id,
+        input_fee_ppk,
+    )?;
+
+    println!("   Channel ID: {}\n", channel_params.get_id());
+
+    // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
+    let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
+
+    // Print all amounts in the active keyset
+    println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset__largest_first);
+
+    // Demo: Show deterministic_value_after_fees for small values
+    println!("💰 Deterministic value after fees (nominal → actual):");
+    for nominal in 0..=16 {
+        match channel_extra.deterministic_value_after_fees(nominal) {
+            Ok(actual) => {
+                println!("   {} → {} (fee: {})", nominal, actual, nominal - actual);
+            }
+            Err(e) => {
+                println!("   {} → ERROR: {}", nominal, e);
+            }
+        }
+    }
+    println!();
+
+    // 5. CHECK MINT CAPABILITIES
+    let mint_info = mint_connection.get_mint_info().await?;
+    verify_mint_capabilities(&mint_info)?;
+
+    Ok(())
+}
