@@ -737,12 +737,15 @@ async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
     let mut mint_builder = MintBuilder::new(mint_store.clone());
     mint_builder
         .add_payment_processor(
-            unit,
+            unit.clone(),
             PaymentMethod::Bolt11,
             MintMeltLimits::new(1, 2_000_000_000),  // 2B msat = 2M sat
             Arc::new(fake_ln),
         )
         .await?;
+
+    // Set input fee to 10 parts per thousand (1%)
+    mint_builder.set_unit_fee(&unit, 10)?;
 
     let mnemonic = Mnemonic::generate(12)?;
     mint_builder = mint_builder
@@ -1002,7 +1005,7 @@ struct Args {
     mint: Option<String>,
 
     /// Delay in seconds until Alice can refund (locktime)
-    #[arg(long)]
+    #[arg(long, default_value = "10")]
     delay_until_refund: u64,
 }
 
