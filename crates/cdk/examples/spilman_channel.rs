@@ -428,6 +428,8 @@ struct SpilmanChannelParameters {
     sender_nonce: String,
     /// Active keyset ID from the mint
     active_keyset_id: Id,
+    /// Input fee in parts per thousand for this keyset
+    input_fee_ppk: u64,
 }
 
 /// Channel parameters plus mint-specific data (keys)
@@ -437,6 +439,8 @@ struct SpilmanChannelExtra {
     params: SpilmanChannelParameters,
     /// Set of active keys from the mint (map from amount to pubkey)
     active_keys: Keys,
+    /// Available amounts in the keyset, sorted largest first
+    amounts_in_this_keyset__largest_first: Vec<u64>,
 }
 
 impl SpilmanChannelParameters {
@@ -450,6 +454,7 @@ impl SpilmanChannelParameters {
         setup_timestamp: u64,
         sender_nonce: String,
         active_keyset_id: Id,
+        input_fee_ppk: u64,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             alice_pubkey,
@@ -460,6 +465,7 @@ impl SpilmanChannelParameters {
             setup_timestamp,
             sender_nonce,
             active_keyset_id,
+            input_fee_ppk,
         })
     }
 
@@ -662,9 +668,17 @@ impl SpilmanChannelParameters {
 impl SpilmanChannelExtra {
     /// Create new channel extra from parameters and active keys
     fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
+        // Extract and sort amounts from the keyset (largest first)
+        let mut amounts_in_this_keyset__largest_first: Vec<u64> = active_keys
+            .iter()
+            .map(|(amt, _)| u64::from(*amt))
+            .collect();
+        amounts_in_this_keyset__largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
+
         Ok(Self {
             params,
             active_keys,
+            amounts_in_this_keyset__largest_first,
         })
     }
 }
@@ -1022,7 +1036,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
-    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, keysets_response): (Box<dyn MintConnection>, Wallet, Wallet, Id, KeysetResponse) = if let Some(mint_url_str) = args.mint {
+    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse) = if let Some(mint_url_str) = args.mint {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -1042,9 +1056,11 @@ async fn main() -> anyhow::Result<()> {
             .find(|k| k.active && k.unit == channel_unit)
             .expect("No active keyset");
         let keyset_id = active_keyset_info.id;
+        let fee_ppk = active_keyset_info.input_fee_ppk;
         println!("   Using keyset: {}\n", keyset_id);
+        println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(http_mint), alice, charlie, keyset_id, keysets)
+        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, keysets)
     } else {
         println!("🏦 Setting up local in-process mint...");
         let mint = create_local_mint(channel_unit.clone()).await?;
@@ -1065,9 +1081,11 @@ async fn main() -> anyhow::Result<()> {
             .find(|k| k.active && k.unit == channel_unit)
             .expect("No active keyset");
         let keyset_id = active_keyset_info.id;
+        let fee_ppk = active_keyset_info.input_fee_ppk;
         println!("   Using keyset: {}\n", keyset_id);
+        println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(local_mint), alice, charlie, keyset_id, keysets)
+        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, keysets)
     };
 
     // Get the mint's public keys for the active keyset
@@ -1075,11 +1093,6 @@ async fn main() -> anyhow::Result<()> {
     let set_of_active_keys = all_keysets.iter()
         .find(|k| k.id == active_keyset_id)
         .ok_or_else(|| anyhow::anyhow!("Active keyset not found"))?;
-
-    // Print all amounts in the active keyset
-    let mut amounts_in_this_keyset__largest_first: Vec<u64> = set_of_active_keys.keys.iter().map(|(amt, _)| u64::from(*amt)).collect();
-    amounts_in_this_keyset__largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending (largest first)
-    println!("   Active keyset amounts: {:?}\n", amounts_in_this_keyset__largest_first);
 
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
     let channel_params = SpilmanChannelParameters::new(
@@ -1091,12 +1104,16 @@ async fn main() -> anyhow::Result<()> {
         setup_timestamp,
         sender_nonce,
         active_keyset_id,
+        input_fee_ppk,
     )?;
 
     println!("   Channel ID: {}\n", channel_params.get_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
     let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
+
+    // Print all amounts in the active keyset
+    println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset__largest_first);
 
     /*
 
