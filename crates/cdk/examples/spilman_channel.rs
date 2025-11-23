@@ -779,8 +779,8 @@ async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
         )
         .await?;
 
-    // Set input fee to 10 parts per thousand (1%)
-    mint_builder.set_unit_fee(&unit, 10)?;
+    // Set input fee to 400 parts per thousand (40%)
+    mint_builder.set_unit_fee(&unit, 400)?;
 
     let mnemonic = Mnemonic::generate(12)?;
     mint_builder = mint_builder
@@ -1210,6 +1210,20 @@ async fn main() -> anyhow::Result<()> {
 
     // Print all amounts in the active keyset
     println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset__largest_first);
+
+    // Demo: Show deterministic_value_after_fees for small values
+    println!("💰 Deterministic value after fees (nominal → actual):");
+    for nominal in 0..=16 {
+        match channel_extra.deterministic_value_after_fees(nominal) {
+            Ok(actual) => {
+                println!("   {} → {} (fee: {})", nominal, actual, nominal - actual);
+            }
+            Err(e) => {
+                println!("   {} → ERROR: {}", nominal, e);
+            }
+        }
+    }
+    println!();
 
     // 5. CHECK MINT CAPABILITIES
     let mint_info = mint_connection.get_mint_info().await?;
