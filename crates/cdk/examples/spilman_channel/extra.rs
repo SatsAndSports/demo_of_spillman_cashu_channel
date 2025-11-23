@@ -10,6 +10,15 @@ use cdk::Amount;
 
 use super::params::SpilmanChannelParameters;
 
+/// Result of inverse_deterministic_value_after_fees
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InverseFeeResult {
+    /// The nominal value to allocate in deterministic outputs
+    pub nominal_value: u64,
+    /// The actual balance after fees (may be >= target due to discrete amounts)
+    pub actual_balance: u64,
+}
+
 /// Channel parameters plus mint-specific data (keys)
 #[derive(Debug, Clone)]
 pub struct SpilmanChannelExtra {
@@ -98,6 +107,52 @@ impl SpilmanChannelExtra {
 
         // Return the value after fees
         Ok(nominal_value - fee)
+    }
+
+    /// Find the inverse of deterministic_value_after_fees
+    ///
+    /// Given a target final balance, this returns the smallest nominal value
+    /// that achieves at least the target balance, along with the actual balance
+    /// after fees.
+    ///
+    /// Note: Due to the discrete nature of available amounts and fee rounding, some
+    /// target balances may not be exactly achievable. In such cases, this returns
+    /// the smallest nominal value that gives you the closest achievable balance >= target.
+    ///
+    /// Returns: InverseFeeResult with nominal_value and actual_balance
+    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64) -> anyhow::Result<InverseFeeResult> {
+        if target_balance == 0 {
+            return Ok(InverseFeeResult {
+                nominal_value: 0,
+                actual_balance: 0,
+            });
+        }
+
+        // If there are no fees, the inverse is trivial
+        if self.params.input_fee_ppk == 0 {
+            return Ok(InverseFeeResult {
+                nominal_value: target_balance,
+                actual_balance: target_balance,
+            });
+        }
+
+        // Start with the target as initial guess and search upward
+        let mut nominal = target_balance;
+
+        loop {
+            let actual_balance = self.deterministic_value_after_fees(nominal)?;
+
+            if actual_balance >= target_balance {
+                // Found it! Return the nominal value and what we actually get
+                return Ok(InverseFeeResult {
+                    nominal_value: nominal,
+                    actual_balance,
+                });
+            }
+
+            // actual_balance < target_balance, need to increase nominal
+            nominal += 1;
+        }
     }
 
     /// Create deterministic secrets for a given amount
@@ -214,5 +269,72 @@ impl SpilmanChannelExtra {
         }
 
         Ok((blinded_messages, blinding_factors))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cdk::nuts::{CurrencyUnit, Id};
+
+    fn create_test_extra(input_fee_ppk: u64) -> SpilmanChannelExtra {
+        // Create a simple keyset with powers of 2 for testing
+        use std::collections::BTreeMap;
+        use cdk::nuts::SecretKey;
+
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        let mint_secret = SecretKey::generate();
+        let mint_pubkey = mint_secret.public_key();
+
+        let mut keys_map = BTreeMap::new();
+        for i in 0..10 {
+            let amount = Amount::from(1u64 << i); // 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
+            keys_map.insert(amount, mint_pubkey);
+        }
+        let keys = Keys::new(keys_map);
+
+        let params = SpilmanChannelParameters::new(
+            alice_pubkey,
+            charlie_pubkey,
+            CurrencyUnit::Sat,
+            1000,
+            0,
+            0,
+            "test".to_string(),
+            Id::from_bytes(&[0; 8]).unwrap(),
+            input_fee_ppk,
+        )
+        .unwrap();
+
+        SpilmanChannelExtra::new(params, keys).unwrap()
+    }
+
+    #[test]
+    fn test_roundtrip_property() {
+        let extra = create_test_extra(400);
+
+        // For any target balance, inverse should give us at least that balance
+        for target in [0, 1, 2, 5, 10, 15, 20, 42, 100, 255, 500] {
+            let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
+
+            // The actual balance should be >= target
+            assert!(
+                inverse_result.actual_balance >= target,
+                "Target {} gave actual {} which is less than target",
+                target,
+                inverse_result.actual_balance
+            );
+
+            // Verify by computing forward
+            let forward_result = extra
+                .deterministic_value_after_fees(inverse_result.nominal_value)
+                .unwrap();
+            assert_eq!(forward_result, inverse_result.actual_balance);
+        }
     }
 }
