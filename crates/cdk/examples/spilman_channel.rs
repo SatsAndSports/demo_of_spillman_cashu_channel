@@ -213,12 +213,6 @@ impl ChannelFixtures {
         funding_proofs: Vec<Proof>,
         keyset_response: &KeysetResponse,
     ) -> Result<Self, anyhow::Error> {
-        assert_eq!(
-            funding_proofs.len(),
-            extra.denominations.len(),
-            "Locked proofs must match denominations count"
-        );
-
         // Calculate total raw value of the locked proofs
         let total_locked_value: u64 = funding_proofs.iter()
             .map(|proof| u64::from(proof.amount))
@@ -424,9 +418,7 @@ struct SpilmanChannelParameters {
     charlie_pubkey: cdk::nuts::PublicKey,
     /// Currency unit for the channel
     unit: CurrencyUnit,
-    /// Log2 of capacity (e.g., 30 for 2^30)
-    log2_capacity: u32,
-    /// Total channel capacity (2^log2_capacity)
+    /// Total channel capacity
     capacity: u64,
     /// Locktime after which Alice can reclaim funds (unix timestamp)
     locktime: u64,
@@ -438,59 +430,31 @@ struct SpilmanChannelParameters {
     active_keyset_id: Id,
 }
 
-/// Channel parameters plus mint-specific data (keys and denominations)
+/// Channel parameters plus mint-specific data (keys)
 #[derive(Debug, Clone)]
 struct SpilmanChannelExtra {
     /// Channel parameters
     params: SpilmanChannelParameters,
     /// Set of active keys from the mint (map from amount to pubkey)
     active_keys: Keys,
-    /// Denomination sizes for channel outputs
-    /// First element is special 1-unit output, rest are powers of 2
-    /// Example: for capacity 8, this is [1, 1, 2, 4]
-    denominations: Vec<u64>,
 }
 
 impl SpilmanChannelParameters {
     /// Create new channel parameters
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if capacity != 2^log2_capacity
     fn new(
         alice_pubkey: cdk::nuts::PublicKey,
         charlie_pubkey: cdk::nuts::PublicKey,
         unit: CurrencyUnit,
-        log2_capacity: u32,
         capacity: u64,
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
         active_keyset_id: Id,
     ) -> anyhow::Result<Self> {
-        // Validate that capacity == 2^log2_capacity
-        if log2_capacity >= 64 {
-            anyhow::bail!("log2_capacity must be less than 64, got {}", log2_capacity);
-        }
-
-        let expected_capacity = 1u64
-            .checked_shl(log2_capacity)
-            .ok_or_else(|| anyhow::anyhow!("log2_capacity {} is too large", log2_capacity))?;
-
-        if capacity != expected_capacity {
-            anyhow::bail!(
-                "Capacity mismatch: expected 2^{} = {}, got {}",
-                log2_capacity,
-                expected_capacity,
-                capacity
-            );
-        }
-
         Ok(Self {
             alice_pubkey,
             charlie_pubkey,
             unit,
-            log2_capacity,
             capacity,
             locktime,
             setup_timestamp,
@@ -697,33 +661,10 @@ impl SpilmanChannelParameters {
 
 impl SpilmanChannelExtra {
     /// Create new channel extra from parameters and active keys
-    ///
-    /// Builds the denominations vector based on log2_capacity
     fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
-        // Build denominations vector
-        // First element: special 1-unit output (for double-spend prevention)
-        // Remaining elements: powers of 2 from 2^0 to 2^(log2_capacity - 1)
-        let mut denominations = vec![1]; // Special output
-
-        for i in 0..params.log2_capacity {
-            denominations.push(1u64 << i); // 2^i
-        }
-
-        // Verify sum of denominations equals capacity
-        let sum: u64 = denominations.iter().sum();
-        if sum != params.capacity {
-            anyhow::bail!(
-                "Denominations sum mismatch: sum({:?}) = {}, expected capacity {}",
-                denominations,
-                sum,
-                params.capacity
-            );
-        }
-
         Ok(Self {
             params,
             active_keys,
-            denominations,
         })
     }
 }
@@ -1074,11 +1015,10 @@ async fn main() -> anyhow::Result<()> {
     let sender_nonce = Secret::generate().to_string();
 
     let channel_unit = CurrencyUnit::Sat;
-    let log2_capacity = 20;
-    let capacity = 1 << 20;
+    let capacity = 1_000_000;
     let locktime = setup_timestamp + args.delay_until_refund;
 
-    println!("   Capacity: {} {:?} (2^{})", capacity, channel_unit, log2_capacity);
+    println!("   Capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
@@ -1146,7 +1086,6 @@ async fn main() -> anyhow::Result<()> {
         alice_pubkey,
         charlie_pubkey,
         channel_unit,
-        log2_capacity,
         capacity,
         locktime,
         setup_timestamp,
