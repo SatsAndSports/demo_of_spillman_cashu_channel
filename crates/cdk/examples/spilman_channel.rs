@@ -20,9 +20,9 @@ use cdk::nuts::{
     CheckStateRequest, CheckStateResponse, CurrencyUnit, Id, Keys, KeySet, KeysetResponse,
     MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltRequest, MintInfo,
     MintQuoteBolt11Request, MintQuoteBolt11Response, MintRequest, MintResponse, PaymentMethod,
-    RestoreRequest, RestoreResponse, SecretKey, SpendingConditions, State, SwapRequest, SwapResponse,
+    RestoreRequest, RestoreResponse, SecretKey, SpendingConditions, SwapRequest, SwapResponse,
 };
-use cdk::types::{FeeReserve, ProofInfo, QuoteTTL};
+use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
 use cdk::wallet::{AuthWallet, HttpClient, MintConnector, ReceiveOptions, Wallet, WalletBuilder};
 use cdk::{dhke::{blind_message, construct_proofs}, Error, Mint, StreamExt};
@@ -30,17 +30,10 @@ use cdk::amount::SplitTarget;
 use cdk_common::mint_url::MintUrl;
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
-use cdk::nuts::{BlindedMessage, BlindSignature, nut10::Secret as Nut10Secret, ProofsMethods};
+use cdk::nuts::{BlindedMessage, BlindSignature, nut10::Secret as Nut10Secret};
 use cdk::secret::Secret;
 use cdk::Amount;
-use cdk::nuts::nut10::Kind;
 use cdk::nuts::Proof;
-
-/// Format a boolean vector as binary string [101] instead of [true, false, true]
-fn format_spend_vector(vector: &[bool]) -> String {
-    let bits: String = vector.iter().map(|&b| if b { '1' } else { '0' }).collect();
-    format!("[{}]", bits)
-}
 
 /// Deterministic P2PK output containing a secret and blinding factor
 #[derive(Debug, Clone)]
@@ -52,16 +45,6 @@ struct DeterministicP2pkOutputWithBlinding {
 }
 
 impl DeterministicP2pkOutputWithBlinding {
-    /// Get the secret
-    pub fn secret(&self) -> &Secret {
-        &self.secret
-    }
-
-    /// Get the blinding factor
-    pub fn blinding_factor(&self) -> &SecretKey {
-        &self.blinding_factor
-    }
-
     /// Create a BlindedMessage from this deterministic output
     pub fn to_blinded_message(
         &self,
@@ -73,35 +56,6 @@ impl DeterministicP2pkOutputWithBlinding {
 
         Ok(BlindedMessage::new(amount, keyset_id, blinded_point))
     }
-}
-
-/// Derive deterministic nonce and blinding factor from pubkey and index
-/// Returns (nonce_hex_string, blinding_factor)
-fn derive_deterministic_nonce_and_blinding(
-    pubkey: &cdk::nuts::PublicKey,
-    index: usize,
-) -> Result<(String, SecretKey), anyhow::Error> {
-    use bitcoin::hashes::{sha256, Hash};
-
-    // Derive deterministic nonce: SHA256(pubkey || index || "nonce")
-    let mut nonce_input = Vec::new();
-    nonce_input.extend_from_slice(&pubkey.to_bytes());
-    nonce_input.extend_from_slice(&index.to_le_bytes());
-    nonce_input.extend_from_slice(b"nonce");
-
-    let nonce_hash = sha256::Hash::hash(&nonce_input);
-    let nonce_hex = hex::encode(nonce_hash.as_byte_array());
-
-    // Derive deterministic blinding factor: SHA256(pubkey || index || "blinding")
-    let mut blinding_input = Vec::new();
-    blinding_input.extend_from_slice(&pubkey.to_bytes());
-    blinding_input.extend_from_slice(&index.to_le_bytes());
-    blinding_input.extend_from_slice(b"blinding");
-
-    let blinding_hash = sha256::Hash::hash(&blinding_input);
-    let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
-
-    Ok((nonce_hex, blinding_factor))
 }
 
 /// Create a deterministic P2PK output from explicit inputs
@@ -130,22 +84,6 @@ fn create_deterministic_p2pk_output(
         secret,
         blinding_factor,
     })
-}
-
-/// Create a deterministic P2PK blinded message
-/// Takes pubkey, index, amount, and keyset_id and returns a BlindedMessage
-/// Also returns the DeterministicP2pkOutputWithBlinding for later use (contains secret and blinding factor)
-fn create_deterministic_p2pk_det_output(
-    pubkey: &cdk::nuts::PublicKey,
-    index: usize,
-) -> Result<DeterministicP2pkOutputWithBlinding, anyhow::Error> {
-    // Derive deterministic nonce and blinding factor
-    let (nonce, blinding_factor) = derive_deterministic_nonce_and_blinding(pubkey, index)?;
-
-    // Create deterministic P2PK output
-    let det_output = create_deterministic_p2pk_output(pubkey, nonce, blinding_factor)?;
-
-    Ok(det_output)
 }
 
 /// Extract signatures from the first proof's witness in a swap request
@@ -755,30 +693,6 @@ impl SpilmanChannelParameters {
 
         secrets
     }
-
-    /// Convert a balance to a boolean spend vector
-    /// The first element is always true (we always include the first proof)
-    /// The remaining elements are the binary representation of (balance - 1)
-    fn balance_to_spend_vector(&self, balance: u64) -> Vec<bool> {
-        assert!(balance > 0, "Balance must be greater than 0");
-        assert!(balance <= self.capacity, "Balance exceeds channel capacity");
-
-        let mut vector = Vec::with_capacity(1 + self.log2_capacity as usize);
-
-        // First element is always true (the special first proof)
-        vector.push(true);
-
-        // Remaining balance after the first proof
-        let remainder = balance - 1;
-
-        // Binary representation of remainder
-        for i in 0..self.log2_capacity {
-            let bit_set = (remainder & (1 << i)) != 0;
-            vector.push(bit_set);
-        }
-
-        vector
-    }
 }
 
 impl SpilmanChannelExtra {
@@ -897,7 +811,6 @@ trait MintConnection {
     async fn get_keysets(&self) -> Result<KeysetResponse, Error>;
     async fn get_keys(&self) -> Result<Vec<KeySet>, Error>;
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error>;
-    async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error>;
 }
 
 // LocalMintConnection removed - DirectMintConnection now implements both traits
@@ -930,10 +843,6 @@ impl MintConnection for HttpMintConnection {
 
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
         self.http_client.post_swap(swap_request).await
-    }
-
-    async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error> {
-        self.http_client.post_restore(restore_request).await
     }
 }
 
@@ -1124,10 +1033,6 @@ impl MintConnection for DirectMintConnection {
 
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
         self.mint.process_swap_request(swap_request).await
-    }
-
-    async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error> {
-        self.mint.restore(restore_request).await
     }
 }
 
