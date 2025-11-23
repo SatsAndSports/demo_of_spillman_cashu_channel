@@ -678,6 +678,36 @@ impl SpilmanChannelExtra {
         // Result is already in descending order from the greedy algorithm
         Ok(result)
     }
+
+    /// Calculate the value after fees for a given nominal value
+    ///
+    /// Given a nominal value x, this returns the actual value after subtracting
+    /// the fees that would be charged when swapping the deterministic outputs.
+    ///
+    /// Formula: deterministic_value_after_fees(x) = x - (input_fee_ppk * num_outputs + 999) // 1000
+    ///
+    /// Returns an error if the nominal value cannot be represented using available amounts
+    fn deterministic_value_after_fees(&self, nominal_value: u64) -> anyhow::Result<u64> {
+        if nominal_value == 0 {
+            return Ok(0);
+        }
+
+        // If there are no fees, just return the nominal value
+        if self.params.input_fee_ppk == 0 {
+            return Ok(nominal_value);
+        }
+
+        // Get the number of outputs needed to represent this nominal value
+        let amounts = self.amounts_for_target__largest_first(nominal_value)?;
+        let num_outputs = amounts.len() as u64;
+
+        // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
+        // The +999 ensures we round up
+        let fee = (self.params.input_fee_ppk * num_outputs + 999) / 1000;
+
+        // Return the value after fees
+        Ok(nominal_value - fee)
+    }
 }
 
 /// Create a wallet connected to a local in-process mint
