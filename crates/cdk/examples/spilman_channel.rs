@@ -1159,6 +1159,8 @@ async fn main() -> anyhow::Result<()> {
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
     let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
 
+    /*
+
     // 5. CHECK MINT CAPABILITIES
     println!("🔍 Checking mint capabilities...");
     let mint_info = mint_connection.get_mint_info().await?;
@@ -1286,6 +1288,9 @@ async fn main() -> anyhow::Result<()> {
         funding_proofs.clone(),
         &keysets_response,
     )?;
+    */
+
+    /*
 
     println!("🎉 Setup complete!");
     println!("   Alice has {} proofs locked to Alice + Charlie 2-of-2", funding_proofs.len());
@@ -1299,6 +1304,9 @@ async fn main() -> anyhow::Result<()> {
     println!("   The channel is now ready for off-chain payments.");
     println!("   Capacity: {} {}", channel_extra.params.capacity, channel_extra.params.unit_name());
     println!("   Alice can send up to {} {} to Charlie via signed balance updates", channel_extra.params.capacity, channel_extra.params.unit_name());
+    */
+
+    /*
 
     // DEMO: Test creating and executing a swap request for 42 sats to Charlie
     println!("\n🧪 DEMO: Creating swap request for 42 {} to Charlie...", channel_extra.params.unit_name());
@@ -1339,6 +1347,10 @@ async fn main() -> anyhow::Result<()> {
     swap_request.sign_sig_all(charlie_secret.clone())?;
     println!("   ✓ Charlie signed");
 
+    */
+
+    /*
+
     // Execute the swap
     println!("\n   💱 Executing swap at mint...");
     let swap_response = mint_connection.process_swap(swap_request).await?;
@@ -1359,6 +1371,10 @@ async fn main() -> anyhow::Result<()> {
         alice_proofs.iter().map(|p| u64::from(p.amount)).sum::<u64>(),
         channel_extra.params.unit_name()
     );
+
+    */
+
+    /*
 
     // Add the proofs to each wallet (they are still P2PK locked, so wallets will swap them)
     println!("\n   💼 Adding proofs to wallets...");
@@ -1385,5 +1401,6 @@ async fn main() -> anyhow::Result<()> {
     println!("   ✓ Alice received {} {} into wallet", alice_received_amount, channel_extra.params.unit_name());
     println!("   Alice's total balance: {} {}", alice_wallet.total_balance().await?, channel_extra.params.unit_name());
 
+    */
     Ok(())
 }
