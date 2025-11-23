@@ -1077,9 +1077,9 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Active keyset not found"))?;
 
     // Print all amounts in the active keyset
-    let mut amounts: Vec<u64> = set_of_active_keys.keys.iter().map(|(amt, _)| u64::from(*amt)).collect();
-    amounts.sort_unstable();
-    println!("   Active keyset amounts: {:?}\n", amounts);
+    let mut amounts_in_this_keyset__largest_first: Vec<u64> = set_of_active_keys.keys.iter().map(|(amt, _)| u64::from(*amt)).collect();
+    amounts_in_this_keyset__largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending (largest first)
+    println!("   Active keyset amounts: {:?}\n", amounts_in_this_keyset__largest_first);
 
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
     let channel_params = SpilmanChannelParameters::new(
