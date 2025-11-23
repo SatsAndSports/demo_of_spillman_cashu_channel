@@ -873,39 +873,7 @@ trait MintConnection {
     async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error>;
 }
 
-/// Local mint wrapper implementing MintConnection
-struct LocalMintConnection {
-    mint: Mint,
-}
-
-impl LocalMintConnection {
-    fn new(mint: Mint) -> Self {
-        Self { mint }
-    }
-}
-
-#[async_trait]
-impl MintConnection for LocalMintConnection {
-    async fn get_mint_info(&self) -> Result<MintInfo, Error> {
-        Ok(self.mint.mint_info().await?.clone().time(unix_time()))
-    }
-
-    async fn get_keysets(&self) -> Result<KeysetResponse, Error> {
-        Ok(self.mint.keysets())
-    }
-
-    async fn get_keys(&self) -> Result<Vec<KeySet>, Error> {
-        Ok(self.mint.pubkeys().keysets)
-    }
-
-    async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
-        self.mint.process_swap_request(swap_request).await
-    }
-
-    async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error> {
-        self.mint.restore(restore_request).await
-    }
-}
+// LocalMintConnection removed - DirectMintConnection now implements both traits
 
 /// HTTP mint wrapper implementing MintConnection
 struct HttpMintConnection {
@@ -1112,6 +1080,30 @@ impl MintConnector for DirectMintConnection {
     }
 }
 
+// Also implement the simpler MintConnection trait for channel operations
+#[async_trait]
+impl MintConnection for DirectMintConnection {
+    async fn get_mint_info(&self) -> Result<MintInfo, Error> {
+        Ok(self.mint.mint_info().await?.clone().time(unix_time()))
+    }
+
+    async fn get_keysets(&self) -> Result<KeysetResponse, Error> {
+        Ok(self.mint.keysets())
+    }
+
+    async fn get_keys(&self) -> Result<Vec<KeySet>, Error> {
+        Ok(self.mint.pubkeys().keysets)
+    }
+
+    async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
+        self.mint.process_swap_request(swap_request).await
+    }
+
+    async fn post_restore(&self, restore_request: cdk::nuts::RestoreRequest) -> Result<cdk::nuts::RestoreResponse, Error> {
+        self.mint.restore(restore_request).await
+    }
+}
+
 use clap::Parser;
 
 /// Spilman Payment Channel Demo
@@ -1192,7 +1184,7 @@ async fn main() -> anyhow::Result<()> {
         println!("👨 Setting up Charlie's wallet...");
         let charlie = create_wallet_local(&mint, channel_unit.clone()).await?;
 
-        let local_mint = LocalMintConnection::new(mint);
+        let local_mint = DirectMintConnection::new(mint);
 
         // Get active keyset from mint
         println!("📦 Getting active keyset from mint...");
