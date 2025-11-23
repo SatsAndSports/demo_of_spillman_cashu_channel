@@ -264,14 +264,14 @@ impl ChannelFixtures {
         let mut outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         // Create deterministic blinded messages for Alice's remainder
         let alice_outputs = self.extra.params.create_deterministic_blinded_messages_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         // Charlie's outputs first, then Alice's
@@ -303,26 +303,26 @@ impl ChannelFixtures {
         let charlie_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         let alice_blinding_factors = self.extra.params.create_deterministic_blinding_factors_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         // Get secrets for Charlie and Alice
         let charlie_secrets = self.extra.params.create_deterministic_secrets_for_amount(
             &self.extra.params.charlie_pubkey,
             charlie_balance,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         let alice_secrets = self.extra.params.create_deterministic_secrets_for_amount(
             &self.extra.params.alice_pubkey,
             alice_remainder,
-            &self.extra.active_keys,
+            &self.extra,
         )?;
 
         // Split the blind signatures into Charlie's and Alice's portions
@@ -493,45 +493,6 @@ impl SpilmanChannelParameters {
         }
     }
 
-    /// Get the list of amounts from active_keys that sum to the target amount
-    /// Uses a greedy algorithm: goes through amounts from largest to smallest
-    /// Returns the list in ascending order
-    /// Returns an error if the target amount cannot be represented
-    fn amounts_for_target(&self, target: u64, active_keys: &Keys) -> anyhow::Result<Vec<u64>> {
-        if target == 0 {
-            return Ok(vec![]);
-        }
-
-        // Get all available amounts from the active_keys, sorted descending
-        let mut available_amounts: Vec<u64> = active_keys.iter()
-            .map(|(amt, _)| u64::from(*amt))
-            .collect();
-        available_amounts.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending
-
-        let mut remaining = target;
-        let mut result = Vec::new();
-
-        // Greedy algorithm: use largest amounts first
-        for &amount in &available_amounts {
-            while remaining >= amount {
-                result.push(amount);
-                remaining -= amount;
-            }
-        }
-
-        if remaining != 0 {
-            anyhow::bail!(
-                "Cannot represent {} using available amounts {:?}",
-                target,
-                available_amounts
-            );
-        }
-
-        // Sort result in ascending order before returning
-        result.sort_unstable();
-        Ok(result)
-    }
-
     /// Create a deterministic P2PK output with blinding using the channel ID
     /// Uses channel_id in the derivation for better uniqueness
     fn create_deterministic_p2pk_output_with_blinding(
@@ -571,15 +532,16 @@ impl SpilmanChannelParameters {
 
     /// Create deterministic blinded messages and blinding factors for a given pubkey and target amount
     /// Returns a vector of (BlindedMessage, SecretKey) tuples that sum to the target amount
-    /// Uses amounts_for_target to determine which amounts to use, then creates outputs for each
+    /// Results are ordered largest first
+    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates outputs for each
     fn create_deterministic_blinded_messages_and_blinding_factors_for_amount(
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
-        active_keys: &Keys,
+        extra: &SpilmanChannelExtra,
     ) -> Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> {
         // Get the list of amounts that sum to the target
-        let amounts = self.amounts_for_target(target_amount, active_keys)?;
+        let amounts = extra.amounts_for_target__largest_first(target_amount)?;
 
         // For each amount with its index, create the deterministic blinded message and blinding factor
         let results: Result<Vec<(BlindedMessage, SecretKey)>, anyhow::Error> = amounts.iter()
@@ -601,15 +563,16 @@ impl SpilmanChannelParameters {
 
     /// Create deterministic blinded messages for a given pubkey and target amount
     /// Returns a vector of BlindedMessages that sum to the target amount
-    /// Uses amounts_for_target to determine which amounts to use, then creates outputs for each
+    /// Results are ordered largest first
+    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates outputs for each
     fn create_deterministic_blinded_messages_for_amount(
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
-        active_keys: &Keys,
+        extra: &SpilmanChannelExtra,
     ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
         // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, active_keys)?;
+        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, extra)?;
 
         // Extract just the blinded messages
         let blinded_messages = results.into_iter()
@@ -621,15 +584,16 @@ impl SpilmanChannelParameters {
 
     /// Create deterministic blinding factors for a given pubkey and target amount
     /// Returns a vector of SecretKeys (blinding factors) that correspond to the target amount
-    /// Uses amounts_for_target to determine which amounts to use, then creates blinding factors for each
+    /// Results are ordered largest first
+    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates blinding factors for each
     fn create_deterministic_blinding_factors_for_amount(
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
-        active_keys: &Keys,
+        extra: &SpilmanChannelExtra,
     ) -> Result<Vec<SecretKey>, anyhow::Error> {
         // Get the blinded messages and blinding factors
-        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, active_keys)?;
+        let results = self.create_deterministic_blinded_messages_and_blinding_factors_for_amount(pubkey, target_amount, extra)?;
 
         // Extract just the blinding factors
         let blinding_factors = results.into_iter()
@@ -641,15 +605,16 @@ impl SpilmanChannelParameters {
 
     /// Create deterministic secrets for a given pubkey and target amount
     /// Returns a vector of Secrets that correspond to the target amount
-    /// Uses amounts_for_target to determine which amounts to use, then creates secrets for each
+    /// Results are ordered largest first
+    /// Uses amounts_for_target__largest_first to determine which amounts to use, then creates secrets for each
     fn create_deterministic_secrets_for_amount(
         &self,
         pubkey: &cdk::nuts::PublicKey,
         target_amount: u64,
-        active_keys: &Keys,
+        extra: &SpilmanChannelExtra,
     ) -> Result<Vec<Secret>, anyhow::Error> {
         // Get the list of amounts that sum to the target
-        let amounts = self.amounts_for_target(target_amount, active_keys)?;
+        let amounts = extra.amounts_for_target__largest_first(target_amount)?;
 
         // For each amount with its index, create the deterministic secret
         let secrets: Result<Vec<Secret>, anyhow::Error> = amounts.iter()
@@ -680,6 +645,38 @@ impl SpilmanChannelExtra {
             active_keys,
             amounts_in_this_keyset__largest_first,
         })
+    }
+
+    /// Get the list of amounts that sum to the target amount
+    /// Uses a greedy algorithm: goes through amounts from largest to smallest
+    /// Returns the list in descending order (largest first)
+    /// Returns an error if the target amount cannot be represented
+    fn amounts_for_target__largest_first(&self, target: u64) -> anyhow::Result<Vec<u64>> {
+        if target == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut remaining = target;
+        let mut result = Vec::new();
+
+        // Greedy algorithm: use largest amounts first (already sorted in our data member)
+        for &amount in &self.amounts_in_this_keyset__largest_first {
+            while remaining >= amount {
+                result.push(amount);
+                remaining -= amount;
+            }
+        }
+
+        if remaining != 0 {
+            anyhow::bail!(
+                "Cannot represent {} using available amounts {:?}",
+                target,
+                self.amounts_in_this_keyset__largest_first
+            );
+        }
+
+        // Result is already in descending order from the greedy algorithm
+        Ok(result)
     }
 }
 
