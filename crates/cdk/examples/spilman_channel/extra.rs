@@ -277,8 +277,10 @@ mod tests {
     use super::*;
     use cdk::nuts::{CurrencyUnit, Id};
 
-    fn create_test_extra(input_fee_ppk: u64) -> SpilmanChannelExtra {
-        // Create a simple keyset with powers of 2 for testing
+    fn create_test_extra(input_fee_ppk: u64, power: u64) -> SpilmanChannelExtra {
+        // Create a simple keyset with powers of the given base for testing
+        // power=2 gives powers-of-2: 1, 2, 4, 8, 16, ...
+        // power=10 gives powers-of-10: 1, 10, 100, 1000, ...
         use std::collections::BTreeMap;
         use cdk::nuts::SecretKey;
 
@@ -293,7 +295,7 @@ mod tests {
 
         let mut keys_map = BTreeMap::new();
         for i in 0..10 {
-            let amount = Amount::from(1u64 << i); // 1, 2, 4, 8, 16, 32, 64, 128, 256, 512
+            let amount = Amount::from(power.pow(i as u32));
             keys_map.insert(amount, mint_pubkey);
         }
         let keys = Keys::new(keys_map);
@@ -315,11 +317,35 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_property() {
-        let extra = create_test_extra(400);
+    fn test_roundtrip_property_powers_of_2() {
+        let extra = create_test_extra(400, 2); // Powers of 2
 
         // For any target balance, inverse should give us at least that balance
         for target in [0, 1, 2, 5, 10, 15, 20, 42, 100, 255, 500] {
+            let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
+
+            // The actual balance should be >= target
+            assert!(
+                inverse_result.actual_balance >= target,
+                "Target {} gave actual {} which is less than target",
+                target,
+                inverse_result.actual_balance
+            );
+
+            // Verify by computing forward
+            let forward_result = extra
+                .deterministic_value_after_fees(inverse_result.nominal_value)
+                .unwrap();
+            assert_eq!(forward_result, inverse_result.actual_balance);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_property_powers_of_10() {
+        let extra = create_test_extra(400, 10); // Powers of 10
+
+        // For any target balance, inverse should give us at least that balance
+        for target in [0, 1, 5, 10, 15, 42, 100, 123, 500, 999] {
             let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
 
             // The actual balance should be >= target
