@@ -19,6 +19,58 @@ pub struct InverseFeeResult {
     pub actual_balance: u64,
 }
 
+/// An ordered list of amounts that sum to a target value
+///
+/// Created by the greedy algorithm in amounts_for_target__largest_first.
+/// The amounts are sorted largest-first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderedListOfAmounts {
+    amounts: Vec<u64>,
+    count_by_amount: std::collections::BTreeMap<u64, usize>,
+}
+
+impl OrderedListOfAmounts {
+    /// Create a new ordered list of amounts from a count map
+    /// Builds the amounts vector from the map, ordered largest-first
+    pub fn new(count_by_amount: std::collections::BTreeMap<u64, usize>) -> Self {
+        // Build amounts vector by iterating in reverse (largest-first)
+        let mut amounts = Vec::new();
+        for (&amount, &count) in count_by_amount.iter().rev() {
+            for _ in 0..count {
+                amounts.push(amount);
+            }
+        }
+
+        Self { amounts, count_by_amount }
+    }
+
+    /// Get the number of amounts in the list
+    pub fn len(&self) -> usize {
+        self.amounts.len()
+    }
+
+    /// Check if the list is empty
+    pub fn is_empty(&self) -> bool {
+        self.amounts.is_empty()
+    }
+
+    /// Get a slice of the amounts
+    pub fn as_slice(&self) -> &[u64] {
+        &self.amounts
+    }
+
+    /// Iterate over the amounts
+    pub fn iter(&self) -> impl Iterator<Item = &u64> {
+        self.amounts.iter()
+    }
+
+    /// Get the count map (amount -> number of outputs with that amount)
+    /// Keys are sorted in ascending order (BTreeMap property)
+    pub fn count_by_amount(&self) -> &std::collections::BTreeMap<u64, usize> {
+        &self.count_by_amount
+    }
+}
+
 /// Channel parameters plus mint-specific data (keys)
 #[derive(Debug, Clone)]
 pub struct SpilmanChannelExtra {
@@ -51,19 +103,25 @@ impl SpilmanChannelExtra {
     /// Uses a greedy algorithm: goes through amounts from largest to smallest
     /// Returns the list in descending order (largest first)
     /// Returns an error if the target amount cannot be represented
-    pub fn amounts_for_target__largest_first(&self, target: u64) -> anyhow::Result<Vec<u64>> {
+    pub fn amounts_for_target__largest_first(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
+        use std::collections::BTreeMap;
+
         if target == 0 {
-            return Ok(vec![]);
+            return Ok(OrderedListOfAmounts::new(BTreeMap::new()));
         }
 
         let mut remaining = target;
-        let mut result = Vec::new();
+        let mut count_by_amount = BTreeMap::new();
 
         // Greedy algorithm: use largest amounts first (already sorted in our data member)
         for &amount in &self.amounts_in_this_keyset__largest_first {
+            let mut count = 0;
             while remaining >= amount {
-                result.push(amount);
                 remaining -= amount;
+                count += 1;
+            }
+            if count > 0 {
+                count_by_amount.insert(amount, count);
             }
         }
 
@@ -75,8 +133,8 @@ impl SpilmanChannelExtra {
             );
         }
 
-        // Result is already in descending order from the greedy algorithm
-        Ok(result)
+        // Constructor will build the amounts vec from the map
+        Ok(OrderedListOfAmounts::new(count_by_amount))
     }
 
     /// Calculate the value after fees for a given nominal value
@@ -171,7 +229,7 @@ impl SpilmanChannelExtra {
         let mut secrets = Vec::new();
         let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
 
-        for single_amount in amounts {
+        for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
             let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
@@ -199,7 +257,7 @@ impl SpilmanChannelExtra {
         let mut blinding_factors = Vec::new();
         let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
 
-        for single_amount in amounts {
+        for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
             let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
@@ -227,7 +285,7 @@ impl SpilmanChannelExtra {
         let mut blinded_messages = Vec::new();
         let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
 
-        for single_amount in amounts {
+        for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
             let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
@@ -257,7 +315,7 @@ impl SpilmanChannelExtra {
         let mut blinding_factors = Vec::new();
         let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
 
-        for single_amount in amounts {
+        for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
             let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
@@ -314,6 +372,48 @@ mod tests {
         .unwrap();
 
         SpilmanChannelExtra::new(params, keys).unwrap()
+    }
+
+    #[test]
+    fn test_count_by_amount() {
+        let extra = create_test_extra(0, 2); // Powers of 2, no fees
+
+        // Test a specific example: 42 = 32 + 8 + 2
+        let amounts = extra.amounts_for_target__largest_first(42).unwrap();
+        let count_map = amounts.count_by_amount();
+
+        // Should have 1×32, 1×8, 1×2
+        assert_eq!(count_map.get(&32), Some(&1));
+        assert_eq!(count_map.get(&8), Some(&1));
+        assert_eq!(count_map.get(&2), Some(&1));
+        assert_eq!(count_map.len(), 3);
+
+        // Verify reversed iteration gives us largest-to-smallest
+        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(reversed, vec![(32, 1), (8, 1), (2, 1)]);
+
+        // Test another: 15 = 8 + 4 + 2 + 1
+        let amounts = extra.amounts_for_target__largest_first(15).unwrap();
+        let count_map = amounts.count_by_amount();
+        assert_eq!(count_map.get(&8), Some(&1));
+        assert_eq!(count_map.get(&4), Some(&1));
+        assert_eq!(count_map.get(&2), Some(&1));
+        assert_eq!(count_map.get(&1), Some(&1));
+        assert_eq!(count_map.len(), 4);
+
+        // Verify reversed iteration
+        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(reversed, vec![(8, 1), (4, 1), (2, 1), (1, 1)]);
+
+        // Test with multiple of same amount: 7 = 4 + 2 + 1
+        let amounts = extra.amounts_for_target__largest_first(7).unwrap();
+        let count_map = amounts.count_by_amount();
+        assert_eq!(count_map.get(&4), Some(&1));
+        assert_eq!(count_map.get(&2), Some(&1));
+        assert_eq!(count_map.get(&1), Some(&1));
+
+        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(reversed, vec![(4, 1), (2, 1), (1, 1)]);
     }
 
     #[test]

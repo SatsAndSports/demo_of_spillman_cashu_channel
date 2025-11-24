@@ -36,7 +36,7 @@ use cdk::secret::Secret;
 use clap::Parser;
 
 use params::SpilmanChannelParameters;
-use extra::{SpilmanChannelExtra, InverseFeeResult};
+use extra::{SpilmanChannelExtra, InverseFeeResult, OrderedListOfAmounts};
 use fixtures::ChannelFixtures;
 
 /// Extract signatures from the first proof's witness in a swap request
