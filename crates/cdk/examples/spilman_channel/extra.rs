@@ -19,6 +19,47 @@ pub struct InverseFeeResult {
     pub actual_balance: u64,
 }
 
+/// Get the list of amounts that sum to the target amount
+/// Uses a greedy algorithm: goes through amounts from largest to smallest
+/// Returns the list in descending order (largest first)
+/// Returns an error if the target amount cannot be represented
+fn amounts_for_target_largest_first(
+    amounts_in_keyset: &[u64],
+    target: u64,
+) -> anyhow::Result<OrderedListOfAmounts> {
+    use std::collections::BTreeMap;
+
+    if target == 0 {
+        return Ok(OrderedListOfAmounts::new(BTreeMap::new()));
+    }
+
+    let mut remaining = target;
+    let mut count_by_amount = BTreeMap::new();
+
+    // Greedy algorithm: use largest amounts first (already sorted in our data member)
+    for &amount in amounts_in_keyset {
+        let mut count = 0;
+        while remaining >= amount {
+            remaining -= amount;
+            count += 1;
+        }
+        if count > 0 {
+            count_by_amount.insert(amount, count);
+        }
+    }
+
+    if remaining != 0 {
+        anyhow::bail!(
+            "Cannot represent {} using available amounts {:?}",
+            target,
+            amounts_in_keyset
+        );
+    }
+
+    // Constructor will build the amounts vec from the map
+    Ok(OrderedListOfAmounts::new(count_by_amount))
+}
+
 /// An ordered list of amounts that sum to a target value
 ///
 /// Created by the greedy algorithm in amounts_for_target__largest_first.
@@ -71,6 +112,117 @@ impl OrderedListOfAmounts {
     }
 }
 
+/// A set of deterministic outputs for a specific pubkey and amount
+/// This represents all the deterministic blinded messages, secrets, and blinding factors
+/// for splitting a given amount into ecash outputs
+#[derive(Debug, Clone)]
+pub struct SetOfDeterministicOutputs {
+    /// The pubkey these outputs are for (Alice or Charlie)
+    pub pubkey: cdk::nuts::PublicKey,
+    /// The total amount to allocate
+    pub amount: u64,
+    /// The breakdown of amounts (largest-first)
+    pub ordered_amounts: OrderedListOfAmounts,
+}
+
+impl SetOfDeterministicOutputs {
+    /// Create a new set of deterministic outputs
+    pub fn new(
+        amounts_in_keyset: &[u64],
+        pubkey: cdk::nuts::PublicKey,
+        amount: u64,
+    ) -> anyhow::Result<Self> {
+        // Get the ordered list of amounts for this target
+        let ordered_amounts = amounts_for_target_largest_first(amounts_in_keyset, amount)?;
+
+        Ok(Self {
+            pubkey,
+            amount,
+            ordered_amounts,
+        })
+    }
+
+    /// Get the secrets for these outputs
+    pub fn get_secrets(&self, params: &SpilmanChannelParameters) -> Result<Vec<Secret>, anyhow::Error> {
+        if self.amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut secrets = Vec::new();
+
+        // Use count_by_amount to track index per amount
+        for (&_single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+            for index in 0..count {
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                secrets.push(det_output.secret);
+            }
+        }
+
+        Ok(secrets)
+    }
+
+    /// Get the blinding factors for these outputs
+    pub fn get_blinding_factors(&self, params: &SpilmanChannelParameters) -> Result<Vec<SecretKey>, anyhow::Error> {
+        if self.amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut blinding_factors = Vec::new();
+
+        // Use count_by_amount to track index per amount
+        for (&_single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+            for index in 0..count {
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                blinding_factors.push(det_output.blinding_factor);
+            }
+        }
+
+        Ok(blinding_factors)
+    }
+
+    /// Get the blinded messages for these outputs
+    pub fn get_blinded_messages(&self, params: &SpilmanChannelParameters) -> Result<Vec<BlindedMessage>, anyhow::Error> {
+        if self.amount == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut blinded_messages = Vec::new();
+
+        // Use count_by_amount to track index per amount
+        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+            for index in 0..count {
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
+                blinded_messages.push(blinded_msg);
+            }
+        }
+
+        Ok(blinded_messages)
+    }
+
+    /// Get both blinded messages and blinding factors for these outputs
+    pub fn get_blinded_messages_and_blinding_factors(&self, params: &SpilmanChannelParameters) -> Result<(Vec<BlindedMessage>, Vec<SecretKey>), anyhow::Error> {
+        if self.amount == 0 {
+            return Ok((vec![], vec![]));
+        }
+
+        let mut blinded_messages = Vec::new();
+        let mut blinding_factors = Vec::new();
+
+        // Use count_by_amount to track index per amount
+        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+            for index in 0..count {
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
+                blinded_messages.push(blinded_msg);
+                blinding_factors.push(det_output.blinding_factor);
+            }
+        }
+
+        Ok((blinded_messages, blinding_factors))
+    }
+}
+
 /// Channel parameters plus mint-specific data (keys)
 #[derive(Debug, Clone)]
 pub struct SpilmanChannelExtra {
@@ -104,37 +256,7 @@ impl SpilmanChannelExtra {
     /// Returns the list in descending order (largest first)
     /// Returns an error if the target amount cannot be represented
     pub fn amounts_for_target__largest_first(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
-        use std::collections::BTreeMap;
-
-        if target == 0 {
-            return Ok(OrderedListOfAmounts::new(BTreeMap::new()));
-        }
-
-        let mut remaining = target;
-        let mut count_by_amount = BTreeMap::new();
-
-        // Greedy algorithm: use largest amounts first (already sorted in our data member)
-        for &amount in &self.amounts_in_this_keyset__largest_first {
-            let mut count = 0;
-            while remaining >= amount {
-                remaining -= amount;
-                count += 1;
-            }
-            if count > 0 {
-                count_by_amount.insert(amount, count);
-            }
-        }
-
-        if remaining != 0 {
-            anyhow::bail!(
-                "Cannot represent {} using available amounts {:?}",
-                target,
-                self.amounts_in_this_keyset__largest_first
-            );
-        }
-
-        // Constructor will build the amounts vec from the map
-        Ok(OrderedListOfAmounts::new(count_by_amount))
+        amounts_for_target_largest_first(&self.amounts_in_this_keyset__largest_first, target)
     }
 
     /// Calculate the value after fees for a given nominal value
