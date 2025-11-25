@@ -58,16 +58,11 @@ impl ChannelFixtures {
         })
     }
 
-    /// Get the actual usable capacity (total value minus fees)
-    pub fn get_capacity(&self) -> u64 {
-        self.total_locked_value - self.total_input_fee
-    }
-
     /// Create an unsigned swap request for a given balance to Charlie
     /// Returns a SwapRequest with all funding_proofs as inputs,
     /// and deterministic outputs for Charlie (his balance) and Alice (the remainder)
     pub fn create_unsigned_swap_request(&self, charlie_balance: u64) -> Result<SwapRequest, anyhow::Error> {
-        let capacity = self.get_capacity();
+        let capacity = self.extra.get_capacity()?;
 
         if charlie_balance > capacity {
             anyhow::bail!("Charlie's balance {} exceeds channel capacity {}", charlie_balance, capacity);
@@ -104,7 +99,7 @@ impl ChannelFixtures {
         blind_signatures: Vec<BlindSignature>,
         charlie_balance: u64,
     ) -> Result<(Vec<Proof>, Vec<Proof>), anyhow::Error> {
-        let capacity = self.get_capacity();
+        let capacity = self.extra.get_capacity()?;
 
         if charlie_balance > capacity {
             anyhow::bail!("Charlie's balance {} exceeds channel capacity {}", charlie_balance, capacity);
