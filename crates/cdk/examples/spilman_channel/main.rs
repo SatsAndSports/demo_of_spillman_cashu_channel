@@ -726,5 +726,38 @@ async fn main() -> anyhow::Result<()> {
     println!("   ✓ Mint processed swap successfully!");
     println!("   Received {} blind signatures", swap_response.signatures.len());
 
+    // Unblind the signatures to get the commitment proofs
+    let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+        swap_response.signatures,
+        &channel_fixtures.extra.params,
+        &channel_fixtures.extra.active_keys,
+    )?;
+    println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
+
+    // Add proofs to the wallets (each party will sign and swap to remove P2PK conditions)
+    println!("\n💰 Receiving proofs into wallets...");
+
+    // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
+    let charlie_receive_opts = cdk::wallet::ReceiveOptions {
+        amount_split_target: cdk::amount::SplitTarget::default(),
+        p2pk_signing_keys: vec![charlie_secret.clone()],
+        preimages: vec![],
+        metadata: std::collections::HashMap::new(),
+    };
+    let charlie_received_amount = charlie_wallet.receive_proofs(charlie_proofs, charlie_receive_opts, None).await?;
+    println!("   Charlie received: {} sats", u64::from(charlie_received_amount));
+
+    // Alice receives her proofs (wallet will sign and swap to remove P2PK)
+    let alice_receive_opts = cdk::wallet::ReceiveOptions {
+        amount_split_target: cdk::amount::SplitTarget::default(),
+        p2pk_signing_keys: vec![alice_secret.clone()],
+        preimages: vec![],
+        metadata: std::collections::HashMap::new(),
+    };
+    let alice_received_amount = alice_wallet.receive_proofs(alice_proofs, alice_receive_opts, None).await?;
+    println!("   Alice received: {} sats", u64::from(alice_received_amount));
+
+    println!("\n✅ Commitment transaction completed and proofs distributed!");
+
     Ok(())
 }
