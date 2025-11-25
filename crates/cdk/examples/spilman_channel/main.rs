@@ -523,12 +523,10 @@ async fn main() -> anyhow::Result<()> {
     let sender_nonce = Secret::generate().to_string();
 
     let channel_unit = CurrencyUnit::Sat;
-    let total_value_of_funding_token = 1_000_000;
-    let n_funding_proofs = 5;  // TODO: Will be determined when creating funding proofs
+    let capacity = 1_000_000;  // Desired channel capacity (maximum Charlie can receive after all fees)
     let locktime = setup_timestamp + args.delay_until_refund;
 
-    println!("   Total funding value: {} {:?}", total_value_of_funding_token, channel_unit);
-    println!("   Number of funding proofs: {}", n_funding_proofs);
+    println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
@@ -596,8 +594,7 @@ async fn main() -> anyhow::Result<()> {
         charlie_pubkey,
         mint_url,
         channel_unit,
-        total_value_of_funding_token,
-        n_funding_proofs,
+        capacity,
         locktime,
         setup_timestamp,
         sender_nonce,
@@ -631,22 +628,22 @@ async fn main() -> anyhow::Result<()> {
     let mint_info = mint_connection.get_mint_info().await?;
     verify_mint_capabilities(&mint_info)?;
 
-    // 6. ALICE MINTS REGULAR PROOFS (double the funding amount to cover fees)
-    let mint_amount_sats = total_value_of_funding_token * 2;
-    println!("💰 Alice minting {} sats as regular proofs (2x funding amount to cover fees)...", mint_amount_sats);
+    // 6. ALICE MINTS REGULAR PROOFS (2x capacity to have plenty)
+    let mint_amount_sats = capacity * 2;
+    println!("💰 Alice minting {} sats as regular proofs (2x capacity)...", mint_amount_sats);
 
     // Use Alice's wallet to mint
     let mint_amount = cdk::Amount::from(mint_amount_sats);
     let quote = alice_wallet.mint_quote(mint_amount, None).await?;
     let mut proof_stream = alice_wallet.proof_stream(quote, Default::default(), None);
-    let funding_proofs = proof_stream.next().await.expect("proofs")?;
+    let regular_proofs = proof_stream.next().await.expect("proofs")?;
 
-    println!("   ✓ Minted {} proofs totaling {} sats", funding_proofs.len(), mint_amount_sats);
-
-    println!("\n✅ Alice has minted {} sats in {} regular proofs", mint_amount_sats, funding_proofs.len());
+    println!("   ✓ Minted {} sats", mint_amount_sats);
 
     // 7. SWAP FOR P2PK FUNDING TOKEN (2-of-2 multisig with locktime refund)
-    println!("\n🔐 Alice swapping for P2PK funding token ({} sats with 2-of-2 multisig)...", total_value_of_funding_token);
+    // Swap 1.5x capacity to P2PK proofs (to ensure enough for fees)
+    let funding_amount_sats = (capacity * 3) / 2;  // 1.5 * capacity
+    println!("\n🔐 Alice swapping for P2PK funding token ({} sats with 2-of-2 multisig)...", funding_amount_sats);
 
     // Create P2PK spending conditions using channel parameters
     let spending_conditions = channel_extra.params.create_funding_token_spending_conditions()?;
@@ -656,14 +653,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Swap to P2PK proofs - let wallet choose denominations
     let p2pk_proofs = alice_wallet.swap(
-        Some(total_value_of_funding_token.into()),
+        Some(funding_amount_sats.into()),
         cdk::amount::SplitTarget::default(),
-        funding_proofs,
+        regular_proofs,
         Some(spending_conditions),
         false,
     ).await?.ok_or_else(|| anyhow::anyhow!("Swap returned no proofs"))?;
 
-    println!("   ✓ Created P2PK funding token: {} proofs totaling {} sats", p2pk_proofs.len(), total_value_of_funding_token);
+    let p2pk_total: u64 = p2pk_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    println!("   ✓ Created P2PK funding token: {} proofs totaling {} sats", p2pk_proofs.len(), p2pk_total);
 
     println!("\n✅ Funding token created!");
 
@@ -673,12 +671,11 @@ async fn main() -> anyhow::Result<()> {
     let channel_fixtures = ChannelFixtures::new(
         channel_extra,
         p2pk_proofs,
-        &keysets_response,
     )?;
 
     println!("   Total locked value: {} sats", channel_fixtures.total_locked_value);
     println!("   Total input fee: {} sats", channel_fixtures.total_input_fee);
-    println!("   Channel capacity: {} sats", channel_fixtures.extra.get_capacity()?);
+    println!("   Channel capacity: {} sats", channel_fixtures.extra.params.get_capacity());
 
     println!("\n✅ Channel fixtures created!");
     println!("   Next step: Create commitment transactions and swap");

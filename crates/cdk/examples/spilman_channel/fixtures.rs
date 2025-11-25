@@ -2,7 +2,7 @@
 //!
 //! Contains the fixed channel components known to both parties
 
-use cdk::nuts::{BlindSignature, KeysetResponse, Proof, SwapRequest};
+use cdk::nuts::{BlindSignature, Proof, SwapRequest};
 
 use super::extra::SpilmanChannelExtra;
 
@@ -26,28 +26,29 @@ impl ChannelFixtures {
     pub fn new(
         extra: SpilmanChannelExtra,
         funding_proofs: Vec<Proof>,
-        keyset_response: &KeysetResponse,
     ) -> Result<Self, anyhow::Error> {
+        // Assert all proofs have the expected keyset_id from params
+        let expected_keyset_id = extra.params.active_keyset_id;
+        for proof in &funding_proofs {
+            if proof.keyset_id != expected_keyset_id {
+                anyhow::bail!(
+                    "Funding proof has keyset_id {} but expected {} from params",
+                    proof.keyset_id,
+                    expected_keyset_id
+                );
+            }
+        }
+
         // Calculate total raw value of the locked proofs
         let total_locked_value: u64 = funding_proofs.iter()
             .map(|proof| u64::from(proof.amount))
             .sum();
 
         // Calculate total input fee using the fee formula
-        // sum_fees_ppk = sum of (input_fee_ppk for each proof's keyset)
-        // total_fee_sats = (sum_fees_ppk + 999) / 1000  (integer division, rounds up)
-        let mut sum_fees_ppk = 0u64;
-
-        for proof in &funding_proofs {
-            // Find the keyset info for this proof's keyset ID
-            let keyset_info = keyset_response.keysets.iter()
-                .find(|k| k.id == proof.keyset_id)
-                .ok_or_else(|| anyhow::anyhow!("Keyset {} not found for proof", proof.keyset_id))?;
-
-            sum_fees_ppk += keyset_info.input_fee_ppk;
-        }
-
-        // Round up: (sum_fees_ppk + 999) / 1000
+        // Since all proofs have the same keyset_id, we can simply multiply:
+        // total_fee_sats = (input_fee_ppk * num_proofs + 999) / 1000  (rounds up)
+        let num_proofs = funding_proofs.len() as u64;
+        let sum_fees_ppk = extra.params.input_fee_ppk * num_proofs;
         let total_input_fee = (sum_fees_ppk + 999) / 1000;
 
         Ok(Self {
@@ -58,11 +59,18 @@ impl ChannelFixtures {
         })
     }
 
+    /// Get the nominal value available after stage 1 fees
+    /// This is the amount that will be distributed as deterministic outputs
+    /// Returns: total_locked_value - total_input_fee
+    pub fn post_fee_amount_in_the_funding_token(&self) -> u64 {
+        self.total_locked_value - self.total_input_fee
+    }
+
     /// Create an unsigned swap request for a given balance to Charlie
     /// Returns a SwapRequest with all funding_proofs as inputs,
     /// and deterministic outputs for Charlie (his balance) and Alice (the remainder)
     pub fn create_unsigned_swap_request(&self, charlie_balance: u64) -> Result<SwapRequest, anyhow::Error> {
-        let capacity = self.extra.get_capacity()?;
+        let capacity = self.extra.params.get_capacity();
 
         if charlie_balance > capacity {
             anyhow::bail!("Charlie's balance {} exceeds channel capacity {}", charlie_balance, capacity);
@@ -99,7 +107,7 @@ impl ChannelFixtures {
         blind_signatures: Vec<BlindSignature>,
         charlie_balance: u64,
     ) -> Result<(Vec<Proof>, Vec<Proof>), anyhow::Error> {
-        let capacity = self.extra.get_capacity()?;
+        let capacity = self.extra.params.get_capacity();
 
         if charlie_balance > capacity {
             anyhow::bail!("Charlie's balance {} exceeds channel capacity {}", charlie_balance, capacity);
