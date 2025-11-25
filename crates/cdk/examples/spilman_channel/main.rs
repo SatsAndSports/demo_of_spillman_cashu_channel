@@ -28,7 +28,7 @@ use cdk::nuts::{
 use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
 use cdk::wallet::{AuthWallet, HttpClient, MintConnector, Wallet, WalletBuilder};
-use cdk::{Error, Mint};
+use cdk::{Error, Mint, StreamExt};
 use cdk_common::mint_url::MintUrl;
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
@@ -125,8 +125,9 @@ async fn create_wallet_local(mint: &Mint, unit: CurrencyUnit) -> anyhow::Result<
     let store = Arc::new(cdk_sqlite::wallet::memory::empty().await?);
     let seed = Mnemonic::generate(12)?.to_seed_normalized("");
 
+    // Use a dummy mint URL for local wallet (actual connection is via DirectMintConnection)
     let wallet = WalletBuilder::new()
-        .mint_url("http://localhost:8080".parse().unwrap())
+        .mint_url("http://localhost:8080".parse()?)
         .unit(unit)
         .localstore(store)
         .seed(seed)
@@ -531,7 +532,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
-    let (mint_connection, _alice_wallet, _charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse, String) = if let Some(mint_url_str) = args.mint {
+    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse, String) = if let Some(mint_url_str) = args.mint {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -629,6 +630,21 @@ async fn main() -> anyhow::Result<()> {
     // 5. CHECK MINT CAPABILITIES
     let mint_info = mint_connection.get_mint_info().await?;
     verify_mint_capabilities(&mint_info)?;
+
+    // 6. ALICE MINTS REGULAR PROOFS (double the funding amount to cover fees)
+    let mint_amount_sats = total_value_of_funding_token * 2;
+    println!("💰 Alice minting {} sats as regular proofs (2x funding amount to cover fees)...", mint_amount_sats);
+
+    // Use Alice's wallet to mint
+    let mint_amount = cdk::Amount::from(mint_amount_sats);
+    let quote = alice_wallet.mint_quote(mint_amount, None).await?;
+    let mut proof_stream = alice_wallet.proof_stream(quote, Default::default(), None);
+    let funding_proofs = proof_stream.next().await.expect("proofs")?;
+
+    println!("   ✓ Minted {} proofs totaling {} sats", funding_proofs.len(), mint_amount_sats);
+
+    println!("\n✅ Alice has minted {} sats in {} regular proofs", mint_amount_sats, funding_proofs.len());
+    println!("   Next step: Swap these for P2PK funding proofs with 2-of-2 multisig");
 
     Ok(())
 }
