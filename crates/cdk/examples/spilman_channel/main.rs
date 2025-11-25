@@ -531,7 +531,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
-    let (mint_connection, _alice_wallet, _charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse) = if let Some(mint_url_str) = args.mint {
+    let (mint_connection, _alice_wallet, _charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse, String) = if let Some(mint_url_str) = args.mint {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -555,7 +555,7 @@ async fn main() -> anyhow::Result<()> {
         println!("   Using keyset: {}\n", keyset_id);
         println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, keysets)
+        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, keysets, mint_url_str)
     } else {
         println!("🏦 Setting up local in-process mint...");
         let mint = create_local_mint(channel_unit.clone()).await?;
@@ -580,7 +580,7 @@ async fn main() -> anyhow::Result<()> {
         println!("   Using keyset: {}\n", keyset_id);
         println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, keysets)
+        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, keysets, "local".to_string())
     };
 
     // Get the mint's public keys for the active keyset
@@ -593,6 +593,7 @@ async fn main() -> anyhow::Result<()> {
     let channel_params = SpilmanChannelParameters::new(
         alice_pubkey,
         charlie_pubkey,
+        mint_url,
         channel_unit,
         total_value_of_funding_token,
         n_funding_proofs,
