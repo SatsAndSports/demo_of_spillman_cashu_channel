@@ -644,7 +644,44 @@ async fn main() -> anyhow::Result<()> {
     println!("   ✓ Minted {} proofs totaling {} sats", funding_proofs.len(), mint_amount_sats);
 
     println!("\n✅ Alice has minted {} sats in {} regular proofs", mint_amount_sats, funding_proofs.len());
-    println!("   Next step: Swap these for P2PK funding proofs with 2-of-2 multisig");
+
+    // 7. SWAP FOR P2PK FUNDING TOKEN (2-of-2 multisig with locktime refund)
+    println!("\n🔐 Alice swapping for P2PK funding token ({} sats with 2-of-2 multisig)...", total_value_of_funding_token);
+
+    // Create P2PK spending conditions using channel parameters
+    let spending_conditions = channel_extra.params.create_funding_token_spending_conditions()?;
+
+    println!("   P2PK conditions: 2-of-2 multisig (Alice + Charlie) before locktime");
+    println!("   After locktime: Alice can refund with just her signature");
+
+    // Swap to P2PK proofs - let wallet choose denominations
+    let p2pk_proofs = alice_wallet.swap(
+        Some(total_value_of_funding_token.into()),
+        cdk::amount::SplitTarget::default(),
+        funding_proofs,
+        Some(spending_conditions),
+        false,
+    ).await?.ok_or_else(|| anyhow::anyhow!("Swap returned no proofs"))?;
+
+    println!("   ✓ Created P2PK funding token: {} proofs totaling {} sats", p2pk_proofs.len(), total_value_of_funding_token);
+
+    println!("\n✅ Funding token created!");
+
+    // 8. CREATE CHANNEL FIXTURES
+    println!("\n📦 Creating channel fixtures...");
+
+    let channel_fixtures = ChannelFixtures::new(
+        channel_extra,
+        p2pk_proofs,
+        &keysets_response,
+    )?;
+
+    println!("   Total locked value: {} sats", channel_fixtures.total_locked_value);
+    println!("   Total input fee: {} sats", channel_fixtures.total_input_fee);
+    println!("   Channel capacity: {} sats", channel_fixtures.extra.get_capacity()?);
+
+    println!("\n✅ Channel fixtures created!");
+    println!("   Next step: Create commitment transactions and swap");
 
     Ok(())
 }
