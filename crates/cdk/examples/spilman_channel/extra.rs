@@ -147,6 +147,31 @@ impl CommitmentOutputs {
             sender_outputs,
         }
     }
+
+    /// Create an unsigned swap request from this commitment
+    ///
+    /// Takes the funding proofs and creates a SwapRequest with:
+    /// - Inputs: all funding proofs
+    /// - Outputs: receiver's deterministic outputs followed by sender's deterministic outputs
+    ///
+    /// The swap request is unsigned and needs to be signed by the sender (Alice) before sending
+    pub fn create_swap_request(
+        &self,
+        funding_proofs: Vec<cdk::nuts::Proof>,
+        params: &SpilmanChannelParameters,
+    ) -> Result<cdk::nuts::SwapRequest, anyhow::Error> {
+        // Get blinded messages for receiver (Charlie)
+        let mut outputs = self.receiver_outputs.get_blinded_messages(params)?;
+
+        // Get blinded messages for sender (Alice)
+        let sender_outputs = self.sender_outputs.get_blinded_messages(params)?;
+
+        // Concatenate (receiver first, then sender, per NUT-XX spec)
+        outputs.extend(sender_outputs);
+
+        // Create swap request with all funding proofs as inputs
+        Ok(cdk::nuts::SwapRequest::new(funding_proofs, outputs))
+    }
 }
 
 impl SetOfDeterministicOutputs {
