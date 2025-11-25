@@ -484,9 +484,10 @@ mod tests {
             alice_pubkey,
             charlie_pubkey,
             CurrencyUnit::Sat,
-            1000,
-            0,
-            0,
+            1000,  // total_value_of_funding_token
+            5,     // n_funding_proofs
+            0,     // locktime
+            0,     // setup_timestamp
             "test".to_string(),
             Id::from_bytes(&[0; 8]).unwrap(),
             input_fee_ppk,
