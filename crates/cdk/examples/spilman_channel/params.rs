@@ -76,10 +76,10 @@ impl SpilmanChannelParameters {
         self.capacity
     }
 
-    /// Get channel ID
-    /// Format: mint|unit|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
-    pub fn get_id(&self) -> String {
-        format!(
+    /// Get channel ID as a hash of the channel parameters
+    /// The hash is computed over: mint|unit|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
+    pub fn get_channel_id(&self) -> String {
+        let params_string = format!(
             "{}|{}|{}|{}|{}|{}|{}",
             self.mint,
             self.unit_name(),
@@ -88,7 +88,9 @@ impl SpilmanChannelParameters {
             self.charlie_pubkey.to_hex(),
             self.locktime,
             self.sender_nonce
-        )
+        );
+        let hash = sha256::Hash::hash(params_string.as_bytes());
+        hex::encode(hash.as_byte_array())
     }
 
     /// Get a string representation of the unit
@@ -110,7 +112,7 @@ impl SpilmanChannelParameters {
         amount: u64,
         index: usize,
     ) -> Result<DeterministicP2pkOutputWithBlinding, anyhow::Error> {
-        let channel_id = self.get_id();
+        let channel_id = self.get_channel_id();
         let pubkey_bytes = pubkey.to_bytes();
         let amount_bytes = amount.to_le_bytes();
         let index_bytes = index.to_le_bytes();
