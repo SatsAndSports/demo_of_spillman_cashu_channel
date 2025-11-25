@@ -522,10 +522,12 @@ async fn main() -> anyhow::Result<()> {
     let sender_nonce = Secret::generate().to_string();
 
     let channel_unit = CurrencyUnit::Sat;
-    let capacity = 1_000_000;
+    let total_value_of_funding_token = 1_000_000;
+    let n_funding_proofs = 5;  // TODO: Will be determined when creating funding proofs
     let locktime = setup_timestamp + args.delay_until_refund;
 
-    println!("   Capacity: {} {:?}", capacity, channel_unit);
+    println!("   Total funding value: {} {:?}", total_value_of_funding_token, channel_unit);
+    println!("   Number of funding proofs: {}", n_funding_proofs);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
@@ -592,7 +594,8 @@ async fn main() -> anyhow::Result<()> {
         alice_pubkey,
         charlie_pubkey,
         channel_unit,
-        capacity,
+        total_value_of_funding_token,
+        n_funding_proofs,
         locktime,
         setup_timestamp,
         sender_nonce,
