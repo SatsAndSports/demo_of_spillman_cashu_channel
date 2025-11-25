@@ -483,6 +483,7 @@ mod tests {
         let params = SpilmanChannelParameters::new(
             alice_pubkey,
             charlie_pubkey,
+            "local".to_string(),
             CurrencyUnit::Sat,
             1000,  // total_value_of_funding_token
             5,     // n_funding_proofs
