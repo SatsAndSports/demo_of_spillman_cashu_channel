@@ -2,7 +2,7 @@
 //!
 //! Contains the fixed channel components known to both parties
 
-use cdk::nuts::{BlindSignature, Proof, SwapRequest};
+use cdk::nuts::{BlindSignature, CheckStateRequest, CheckStateResponse, Proof, SwapRequest};
 
 use super::extra::SpilmanChannelExtra;
 
@@ -64,6 +64,33 @@ impl ChannelFixtures {
     /// Returns: total_locked_value - total_input_fee
     pub fn post_fee_amount_in_the_funding_token(&self) -> u64 {
         self.total_locked_value - self.total_input_fee
+    }
+
+    /// Get the Y value for checking the funding token state
+    ///
+    /// Since all funding proofs are spent together (they're all inputs to the commitment transaction),
+    /// checking any one of them is sufficient to determine if the funding token has been spent.
+    /// This returns the Y value of the first funding proof for use with NUT-07 state checks.
+    pub fn get_funding_token_y_for_state_check(&self) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
+        let proof = self.funding_proofs.first()
+            .ok_or_else(|| anyhow::anyhow!("No funding proofs available"))?;
+        Ok(proof.y()?)
+    }
+
+    /// Check the state of the funding token using NUT-07
+    ///
+    /// Since all funding proofs are spent together (they're all inputs to the commitment transaction),
+    /// checking any one of them is sufficient to determine if the funding token has been spent.
+    /// This method checks the first funding proof and returns the full response.
+    ///
+    /// The response will indicate if the funding token is UNSPENT, PENDING, or SPENT.
+    pub async fn check_funding_token_state<M>(&self, mint_connection: &M) -> Result<CheckStateResponse, anyhow::Error>
+    where
+        M: super::MintConnection + ?Sized,
+    {
+        let y = self.get_funding_token_y_for_state_check()?;
+        let request = CheckStateRequest { ys: vec![y] };
+        Ok(mint_connection.check_state(request).await?)
     }
 
     /// Create an unsigned swap request for a given balance to Charlie
