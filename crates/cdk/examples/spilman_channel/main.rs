@@ -675,10 +675,56 @@ async fn main() -> anyhow::Result<()> {
 
     println!("   Total locked value: {} sats", channel_fixtures.total_locked_value);
     println!("   Total input fee: {} sats", channel_fixtures.total_input_fee);
+    println!("   Post-fee value: {} sats", channel_fixtures.post_fee_amount_in_the_funding_token());
     println!("   Channel capacity: {} sats", channel_fixtures.extra.params.get_capacity());
 
     println!("\n✅ Channel fixtures created!");
-    println!("   Next step: Create commitment transactions and swap");
+
+    // 9. CREATE COMMITMENT TRANSACTION AND SWAP
+    let charlie_balance = 100_000u64; // Charlie gets 100,000 sats
+    println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
+
+    // Get the amount available after stage 1 fees
+    let amount_after_stage1 = channel_fixtures.post_fee_amount_in_the_funding_token();
+    println!("   Amount after stage 1 fees: {} sats", amount_after_stage1);
+
+    // Create commitment outputs for this balance
+    let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
+        charlie_balance,
+        amount_after_stage1,
+    )?;
+    println!("   ✓ Created deterministic outputs for both parties");
+    let charlie_final = commitment_outputs.receiver_outputs.value_after_fees(channel_fixtures.extra.params.input_fee_ppk)?;
+    let alice_final = commitment_outputs.sender_outputs.value_after_fees(channel_fixtures.extra.params.input_fee_ppk)?;
+    println!("      Charlie: {} sats nominal → {} proofs → {} sats final",
+        commitment_outputs.receiver_outputs.amount,
+        commitment_outputs.receiver_outputs.ordered_amounts.len(),
+        charlie_final);
+    println!("      Alice: {} sats nominal → {} proofs → {} sats final",
+        commitment_outputs.sender_outputs.amount,
+        commitment_outputs.sender_outputs.ordered_amounts.len(),
+        alice_final);
+
+    // Create unsigned swap request
+    let mut swap_request = commitment_outputs.create_swap_request(
+        channel_fixtures.funding_proofs.clone(),
+        &channel_fixtures.extra.params,
+    )?;
+    println!("   ✓ Created unsigned swap request");
+
+    // Alice signs first (as the sender/funder)
+    swap_request.sign_sig_all(alice_secret.clone())?;
+    println!("   ✓ Alice signed the swap request");
+
+    // Charlie signs second (as the receiver)
+    swap_request.sign_sig_all(charlie_secret.clone())?;
+    println!("   ✓ Charlie signed the swap request");
+
+    // Submit the signed swap request to the mint
+    println!("\n🔄 Submitting swap to mint...");
+    let swap_response = mint_connection.process_swap(swap_request).await?;
+    println!("   ✓ Mint processed swap successfully!");
+    println!("   Received {} blind signatures", swap_response.signatures.len());
 
     Ok(())
 }
