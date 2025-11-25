@@ -104,8 +104,20 @@ impl BalanceUpdateMessage {
     /// Charlie reconstructs the swap request from the amount to verify the signature
     /// Throws an error if the signature is invalid
     fn verify_sender_signature(&self, channel_fixtures: &ChannelFixtures) -> Result<(), anyhow::Error> {
-        // Reconstruct the unsigned swap request from the amount
-        let swap_request = channel_fixtures.create_unsigned_swap_request(self.amount)?;
+        // Get the amount available after stage 1 fees
+        let amount_after_stage1 = channel_fixtures.post_fee_amount_in_the_funding_token();
+
+        // Reconstruct the commitment outputs for this balance
+        let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
+            self.amount,
+            amount_after_stage1,
+        )?;
+
+        // Reconstruct the unsigned swap request
+        let swap_request = commitment_outputs.create_swap_request(
+            channel_fixtures.funding_proofs.clone(),
+            &channel_fixtures.extra.params,
+        )?;
 
         // Extract the SIG_ALL message from the swap request
         let msg_to_sign = swap_request.sig_all_msg_to_sign();
@@ -756,6 +768,10 @@ async fn main() -> anyhow::Result<()> {
     println!("      Channel: {}", balance_update.channel_id);
     println!("      Amount: {} sats", balance_update.amount);
     println!("      Signature: {}", balance_update.signature);
+
+    // Charlie verifies Alice's signature before adding his own
+    balance_update.verify_sender_signature(&channel_fixtures)?;
+    println!("   ✓ Charlie verified Alice's signature on the balance update");
 
     // Charlie signs second (as the receiver)
     swap_request.sign_sig_all(charlie_secret.clone())?;
