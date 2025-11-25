@@ -259,6 +259,25 @@ impl SpilmanChannelExtra {
         amounts_for_target_largest_first(&self.amounts_in_this_keyset__largest_first, target)
     }
 
+    /// Calculate the channel capacity
+    ///
+    /// Capacity is the maximum balance that can be paid to the receiver (Charlie).
+    /// It accounts for both stage 1 fees (swapping funding token) and stage 2 fees
+    /// (swapping the deterministic outputs).
+    ///
+    /// Formula: capacity = deterministic_value_after_fees(total_value_of_funding_token - stage1_fees)
+    /// where stage1_fees = (input_fee_ppk * n_funding_proofs + 999) / 1000
+    pub fn get_capacity(&self) -> anyhow::Result<u64> {
+        // Stage 1 fees: swapping funding token to deterministic outputs
+        let stage1_fees = (self.params.input_fee_ppk * self.params.n_funding_proofs + 999) / 1000;
+
+        // Amount available after stage 1 (fees are always < total due to ppk limit of 999)
+        let amount_after_stage1 = self.params.total_value_of_funding_token - stage1_fees;
+
+        // Apply stage 2 fees (swapping deterministic outputs to final balance)
+        self.deterministic_value_after_fees(amount_after_stage1)
+    }
+
     /// Calculate the value after fees for a given nominal value
     ///
     /// Given a nominal value x, this returns the actual value after subtracting
