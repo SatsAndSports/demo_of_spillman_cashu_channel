@@ -90,32 +90,36 @@ impl SpilmanChannelParameters {
     }
 
     /// Create a deterministic P2PK output with blinding using the channel ID
-    /// Uses channel_id in the derivation for better uniqueness
+    /// Uses channel_id, amount, and index in the derivation per NUT-XX spec
     pub fn create_deterministic_p2pk_output_with_blinding(
         &self,
         pubkey: &cdk::nuts::PublicKey,
+        amount: u64,
         index: usize,
     ) -> Result<DeterministicP2pkOutputWithBlinding, anyhow::Error> {
         let channel_id = self.get_id();
         let pubkey_bytes = pubkey.to_bytes();
+        let amount_bytes = amount.to_le_bytes();
         let index_bytes = index.to_le_bytes();
 
-        // Derive deterministic nonce: SHA256(channel_id || pubkey || index || "nonce")
+        // Derive deterministic nonce: SHA256(channel_id || pubkey || amount || "nonce" || index)
         let mut nonce_input = Vec::new();
         nonce_input.extend_from_slice(channel_id.as_bytes());
         nonce_input.extend_from_slice(&pubkey_bytes);
-        nonce_input.extend_from_slice(&index_bytes);
+        nonce_input.extend_from_slice(&amount_bytes);
         nonce_input.extend_from_slice(b"nonce");
+        nonce_input.extend_from_slice(&index_bytes);
 
         let nonce_hash = sha256::Hash::hash(&nonce_input);
         let nonce_hex = hex::encode(nonce_hash.as_byte_array());
 
-        // Derive deterministic blinding factor: SHA256(channel_id || pubkey || index || "blinding")
+        // Derive deterministic blinding factor: SHA256(channel_id || pubkey || amount || "blinding" || index)
         let mut blinding_input = Vec::new();
         blinding_input.extend_from_slice(channel_id.as_bytes());
         blinding_input.extend_from_slice(&pubkey_bytes);
-        blinding_input.extend_from_slice(&index_bytes);
+        blinding_input.extend_from_slice(&amount_bytes);
         blinding_input.extend_from_slice(b"blinding");
+        blinding_input.extend_from_slice(&index_bytes);
 
         let blinding_hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
