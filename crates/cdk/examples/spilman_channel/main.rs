@@ -622,7 +622,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
-    println!("   Channel ID: {}\n", channel_params.get_id());
+    println!("   Channel ID: {}\n", channel_params.get_channel_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
     let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
@@ -748,7 +748,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a balance update message (this is what Alice would send to Charlie off-chain)
     let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-        channel_fixtures.extra.params.get_id(),
+        channel_fixtures.extra.params.get_channel_id(),
         charlie_balance,
         &swap_request,
     )?;
