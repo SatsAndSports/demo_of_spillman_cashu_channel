@@ -17,8 +17,10 @@ pub struct SpilmanChannelParameters {
     pub charlie_pubkey: cdk::nuts::PublicKey,
     /// Currency unit for the channel
     pub unit: CurrencyUnit,
-    /// Total channel capacity
-    pub capacity: u64,
+    /// Total value of the funding token (before fees)
+    pub total_value_of_funding_token: u64,
+    /// Number of proofs in the funding token
+    pub n_funding_proofs: u64,
     /// Locktime after which Alice can reclaim funds (unix timestamp)
     pub locktime: u64,
     /// Setup timestamp (unix timestamp when channel was created)
@@ -37,7 +39,8 @@ impl SpilmanChannelParameters {
         alice_pubkey: cdk::nuts::PublicKey,
         charlie_pubkey: cdk::nuts::PublicKey,
         unit: CurrencyUnit,
-        capacity: u64,
+        total_value_of_funding_token: u64,
+        n_funding_proofs: u64,
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
@@ -56,7 +59,8 @@ impl SpilmanChannelParameters {
             alice_pubkey,
             charlie_pubkey,
             unit,
-            capacity,
+            total_value_of_funding_token,
+            n_funding_proofs,
             locktime,
             setup_timestamp,
             sender_nonce,
