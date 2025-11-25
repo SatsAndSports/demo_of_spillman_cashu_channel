@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use cdk::nuts::{BlindedMessage, Keys, SecretKey};
+use cdk::nuts::{BlindedMessage, BlindSignature, Keys, RestoreRequest, SecretKey};
 use cdk::secret::Secret;
 use cdk::Amount;
 
@@ -223,6 +223,52 @@ impl CommitmentOutputs {
         )?;
 
         Ok((receiver_proofs, sender_proofs))
+    }
+
+    /// Restore blind signatures from the mint using NUT-09
+    ///
+    /// This allows recovering the blind signatures for a commitment transaction
+    /// without needing to have received them from the original swap.
+    /// Since outputs are deterministic, we can recreate the blinded messages
+    /// and ask the mint to restore the corresponding blind signatures.
+    ///
+    /// Returns the blind signatures in the same order as unblind_all expects:
+    /// receiver signatures first, then sender signatures
+    pub async fn restore_all_blind_signatures<M>(
+        &self,
+        extra: &SpilmanChannelExtra,
+        mint_connection: &M,
+    ) -> Result<Vec<BlindSignature>, anyhow::Error>
+    where
+        M: super::MintConnection + ?Sized,
+    {
+        // Get all blinded messages in the same order as create_swap_request
+        // (receiver first, then sender)
+        let mut all_outputs = self.receiver_outputs.get_blinded_messages(&extra.params)?;
+        let sender_outputs = self.sender_outputs.get_blinded_messages(&extra.params)?;
+        all_outputs.extend(sender_outputs);
+
+        // Create restore request
+        let restore_request = RestoreRequest { outputs: all_outputs };
+
+        // Call mint restore endpoint
+        let restore_response = mint_connection.post_restore(restore_request).await
+            .map_err(|e| anyhow::anyhow!("Restore failed: {}", e))?;
+
+        // Extract blind signatures from the response
+        let blind_signatures: Vec<BlindSignature> = restore_response.signatures;
+
+        // Verify we got the expected number of signatures
+        let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
+        if blind_signatures.len() != expected_count {
+            anyhow::bail!(
+                "Restore returned {} blind signatures but expected {}",
+                blind_signatures.len(),
+                expected_count
+            );
+        }
+
+        Ok(blind_signatures)
     }
 }
 
