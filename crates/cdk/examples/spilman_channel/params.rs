@@ -20,10 +20,8 @@ pub struct SpilmanChannelParameters {
     pub mint: String,
     /// Currency unit for the channel
     pub unit: CurrencyUnit,
-    /// Total value of the funding token (before fees)
-    pub total_value_of_funding_token: u64,
-    /// Number of proofs in the funding token
-    pub n_funding_proofs: u64,
+    /// Channel capacity: maximum final value (after both fee stages) that Charlie can receive
+    pub capacity: u64,
     /// Locktime after which Alice can reclaim funds (unix timestamp)
     pub locktime: u64,
     /// Setup timestamp (unix timestamp when channel was created)
@@ -43,8 +41,7 @@ impl SpilmanChannelParameters {
         charlie_pubkey: cdk::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
-        total_value_of_funding_token: u64,
-        n_funding_proofs: u64,
+        capacity: u64,
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
@@ -64,14 +61,19 @@ impl SpilmanChannelParameters {
             charlie_pubkey,
             mint,
             unit,
-            total_value_of_funding_token,
-            n_funding_proofs,
+            capacity,
             locktime,
             setup_timestamp,
             sender_nonce,
             active_keyset_id,
             input_fee_ppk,
         })
+    }
+
+    /// Get channel capacity
+    /// Returns the maximum final value (after both fee stages) that Charlie can receive
+    pub fn get_capacity(&self) -> u64 {
+        self.capacity
     }
 
     /// Get channel ID

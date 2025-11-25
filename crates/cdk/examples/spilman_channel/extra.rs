@@ -308,24 +308,6 @@ impl SpilmanChannelExtra {
         amounts_for_target_largest_first(&self.amounts_in_this_keyset__largest_first, target)
     }
 
-    /// Calculate the channel capacity
-    ///
-    /// Capacity is the maximum balance that can be paid to the receiver (Charlie).
-    /// It accounts for both stage 1 fees (swapping funding token) and stage 2 fees
-    /// (swapping the deterministic outputs).
-    ///
-    /// Formula: capacity = deterministic_value_after_fees(total_value_of_funding_token - stage1_fees)
-    /// where stage1_fees = (input_fee_ppk * n_funding_proofs + 999) / 1000
-    pub fn get_capacity(&self) -> anyhow::Result<u64> {
-        // Stage 1 fees: swapping funding token to deterministic outputs
-        let stage1_fees = (self.params.input_fee_ppk * self.params.n_funding_proofs + 999) / 1000;
-
-        // Amount available after stage 1 (fees are always < total due to ppk limit of 999)
-        let amount_after_stage1 = self.params.total_value_of_funding_token - stage1_fees;
-
-        // Apply stage 2 fees (swapping deterministic outputs to final balance)
-        self.deterministic_value_after_fees(amount_after_stage1)
-    }
 
     /// Create two sets of deterministic outputs for a given receiver balance
     ///
@@ -335,23 +317,22 @@ impl SpilmanChannelExtra {
     ///
     /// The process:
     /// 1. Use inverse function to find nominal value for receiver's deterministic outputs
-    /// 2. Calculate sender's nominal value as: total_funding - stage1_fees - receiver_nominal
+    /// 2. Calculate sender's nominal value as: amount_after_stage1 - receiver_nominal
     /// 3. Create both sets of outputs wrapped in CommitmentOutputs
+    ///
+    /// Parameters:
+    /// - receiver_balance: The desired final balance for the receiver (after stage 2 fees)
+    /// - amount_after_stage1: The nominal value available after stage 1 fees (total_locked_value - stage1_fees)
     ///
     /// Returns CommitmentOutputs containing both receiver and sender outputs
     pub fn create_two_sets_of_outputs_for_balance(
         &self,
         receiver_balance: u64,
+        amount_after_stage1: u64,
     ) -> anyhow::Result<CommitmentOutputs> {
-        // Stage 1 fees: swapping funding token to deterministic outputs
-        let stage1_fees = (self.params.input_fee_ppk * self.params.n_funding_proofs + 999) / 1000;
-
         // Find the nominal value needed for Charlie's deterministic outputs
         let inverse_result = self.inverse_deterministic_value_after_fees(receiver_balance)?;
         let charlie_nominal = inverse_result.nominal_value;
-
-        // Calculate Alice's nominal value (what's left after stage 1 fees and Charlie's allocation)
-        let amount_after_stage1 = self.params.total_value_of_funding_token - stage1_fees;
 
         // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
         if charlie_nominal > amount_after_stage1 {
@@ -608,8 +589,7 @@ mod tests {
             charlie_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
-            1000,  // total_value_of_funding_token
-            5,     // n_funding_proofs
+            1000,  // capacity
             0,     // locktime
             0,     // setup_timestamp
             "test".to_string(),
