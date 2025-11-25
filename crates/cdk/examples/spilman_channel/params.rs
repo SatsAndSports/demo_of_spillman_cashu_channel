@@ -15,6 +15,8 @@ pub struct SpilmanChannelParameters {
     pub alice_pubkey: cdk::nuts::PublicKey,
     /// Charlie's public key (receiver)
     pub charlie_pubkey: cdk::nuts::PublicKey,
+    /// Mint URL (or "local" for in-process mint)
+    pub mint: String,
     /// Currency unit for the channel
     pub unit: CurrencyUnit,
     /// Total value of the funding token (before fees)
@@ -38,6 +40,7 @@ impl SpilmanChannelParameters {
     pub fn new(
         alice_pubkey: cdk::nuts::PublicKey,
         charlie_pubkey: cdk::nuts::PublicKey,
+        mint: String,
         unit: CurrencyUnit,
         total_value_of_funding_token: u64,
         n_funding_proofs: u64,
@@ -58,6 +61,7 @@ impl SpilmanChannelParameters {
         Ok(Self {
             alice_pubkey,
             charlie_pubkey,
+            mint,
             unit,
             total_value_of_funding_token,
             n_funding_proofs,
