@@ -746,6 +746,17 @@ async fn main() -> anyhow::Result<()> {
     swap_request.sign_sig_all(alice_secret.clone())?;
     println!("   ✓ Alice signed the swap request");
 
+    // Create a balance update message (this is what Alice would send to Charlie off-chain)
+    let balance_update = BalanceUpdateMessage::from_signed_swap_request(
+        channel_fixtures.extra.params.get_id(),
+        charlie_balance,
+        &swap_request,
+    )?;
+    println!("   ✓ Created off-chain balance update message");
+    println!("      Channel: {}", balance_update.channel_id);
+    println!("      Amount: {} sats", balance_update.amount);
+    println!("      Signature: {}", balance_update.signature);
+
     // Charlie signs second (as the receiver)
     swap_request.sign_sig_all(charlie_secret.clone())?;
     println!("   ✓ Charlie signed the swap request");
