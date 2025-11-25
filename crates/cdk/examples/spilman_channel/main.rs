@@ -201,11 +201,12 @@ async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
 
 /// Trait for interacting with a mint (either local or HTTP)
 #[async_trait]
-trait MintConnection {
+pub trait MintConnection {
     async fn get_mint_info(&self) -> Result<MintInfo, Error>;
     async fn get_keysets(&self) -> Result<KeysetResponse, Error>;
     async fn get_keys(&self) -> Result<Vec<KeySet>, Error>;
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error>;
+    async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error>;
 }
 
 /// HTTP mint wrapper implementing MintConnection
@@ -236,6 +237,10 @@ impl MintConnection for HttpMintConnection {
 
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
         self.http_client.post_swap(swap_request).await
+    }
+
+    async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error> {
+        self.http_client.post_check_state(request).await
     }
 }
 
@@ -426,6 +431,10 @@ impl MintConnection for DirectMintConnection {
 
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error> {
         self.mint.process_swap_request(swap_request).await
+    }
+
+    async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error> {
+        self.mint.check_state(&request).await
     }
 }
 
@@ -680,7 +689,17 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n✅ Channel fixtures created!");
 
-    // 9. CREATE COMMITMENT TRANSACTION AND SWAP
+    // 9. CHECK FUNDING TOKEN STATE (should be UNSPENT)
+    println!("\n🔍 Checking funding token state (NUT-07)...");
+    let state_before = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
+    let state_info = &state_before.states[0];
+    println!("   Funding token state: {:?}", state_info.state);
+    if state_info.state != cdk::nuts::State::Unspent {
+        anyhow::bail!("Funding token should be UNSPENT but is {:?}", state_info.state);
+    }
+    println!("   ✓ Funding token is unspent and ready for commitment transaction");
+
+    // 10. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_balance = 100_000u64; // Charlie gets 100,000 sats
     println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
 
@@ -725,6 +744,17 @@ async fn main() -> anyhow::Result<()> {
     let swap_response = mint_connection.process_swap(swap_request).await?;
     println!("   ✓ Mint processed swap successfully!");
     println!("   Received {} blind signatures", swap_response.signatures.len());
+
+    // Check funding token state after swap (should be SPENT)
+    println!("\n🔍 Checking funding token state after swap (NUT-07)...");
+    let state_after = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
+    let state_info_after = &state_after.states[0];
+    println!("   Funding token state: {:?}", state_info_after.state);
+    if state_info_after.state != cdk::nuts::State::Spent {
+        println!("   ⚠ WARNING: Expected SPENT but got {:?}", state_info_after.state);
+    } else {
+        println!("   ✓ Funding token has been spent (commitment transaction executed)");
+    }
 
     // Unblind the signatures to get the commitment proofs
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
