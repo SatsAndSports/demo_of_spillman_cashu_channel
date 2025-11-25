@@ -77,10 +77,12 @@ impl SpilmanChannelParameters {
     }
 
     /// Get channel ID
-    /// Format: setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
+    /// Format: mint|unit|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
     pub fn get_id(&self) -> String {
         format!(
-            "{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}",
+            self.mint,
+            self.unit_name(),
             self.setup_timestamp,
             self.alice_pubkey.to_hex(),
             self.charlie_pubkey.to_hex(),

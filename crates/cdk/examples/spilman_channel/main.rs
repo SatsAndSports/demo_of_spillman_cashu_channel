@@ -610,8 +610,8 @@ async fn main() -> anyhow::Result<()> {
     let channel_params = SpilmanChannelParameters::new(
         alice_pubkey,
         charlie_pubkey,
-        mint_url,
-        channel_unit,
+        mint_url.clone(),
+        channel_unit.clone(),
         capacity,
         locktime,
         setup_timestamp,
@@ -620,6 +620,8 @@ async fn main() -> anyhow::Result<()> {
         input_fee_ppk,
     )?;
 
+    println!("   Mint: {}", mint_url);
+    println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}\n", channel_params.get_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
