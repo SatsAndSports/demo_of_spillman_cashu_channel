@@ -151,9 +151,9 @@ impl SetOfDeterministicOutputs {
         let mut secrets = Vec::new();
 
         // Use count_by_amount to track index per amount
-        for (&_single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
             for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
                 secrets.push(det_output.secret);
             }
         }
@@ -170,9 +170,9 @@ impl SetOfDeterministicOutputs {
         let mut blinding_factors = Vec::new();
 
         // Use count_by_amount to track index per amount
-        for (&_single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
             for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
                 blinding_factors.push(det_output.blinding_factor);
             }
         }
@@ -191,7 +191,7 @@ impl SetOfDeterministicOutputs {
         // Use count_by_amount to track index per amount
         for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
             for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
                 let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
                 blinded_messages.push(blinded_msg);
             }
@@ -212,7 +212,7 @@ impl SetOfDeterministicOutputs {
         // Use count_by_amount to track index per amount
         for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
             for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, index)?;
+                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
                 let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
                 blinded_messages.push(blinded_msg);
                 blinding_factors.push(det_output.blinding_factor);
@@ -354,7 +354,7 @@ impl SpilmanChannelExtra {
         for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
             secrets.push(det_output.secret);
 
             index_by_amount.insert(single_amount, index + 1);
@@ -382,7 +382,7 @@ impl SpilmanChannelExtra {
         for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
             blinding_factors.push(det_output.blinding_factor);
 
             index_by_amount.insert(single_amount, index + 1);
@@ -410,7 +410,7 @@ impl SpilmanChannelExtra {
         for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
             let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
             blinded_messages.push(blinded_msg);
 
@@ -440,7 +440,7 @@ impl SpilmanChannelExtra {
         for &single_amount in amounts.iter() {
             let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
 
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, index)?;
+            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
             let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
             blinded_messages.push(blinded_msg);
             blinding_factors.push(det_output.blinding_factor);
