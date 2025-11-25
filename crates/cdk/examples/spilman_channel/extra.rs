@@ -172,6 +172,58 @@ impl CommitmentOutputs {
         // Create swap request with all funding proofs as inputs
         Ok(cdk::nuts::SwapRequest::new(funding_proofs, outputs))
     }
+
+    /// Unblind all outputs from a swap response
+    ///
+    /// Takes the blind signatures from the swap response and returns
+    /// (receiver_proofs, sender_proofs) as two separate vectors
+    pub fn unblind_all(
+        &self,
+        blind_signatures: Vec<cdk::nuts::BlindSignature>,
+        params: &SpilmanChannelParameters,
+        active_keys: &cdk::nuts::Keys,
+    ) -> Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>), anyhow::Error> {
+        // Assert the number of signatures matches the expected number of outputs
+        let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
+        if blind_signatures.len() != expected_count {
+            anyhow::bail!(
+                "Expected {} blind signatures but received {}",
+                expected_count,
+                blind_signatures.len()
+            );
+        }
+
+        // Get secrets and blinding factors for receiver
+        let receiver_secrets = self.receiver_outputs.get_secrets(params)?;
+        let receiver_blinding_factors = self.receiver_outputs.get_blinding_factors(params)?;
+
+        // Get secrets and blinding factors for sender
+        let sender_secrets = self.sender_outputs.get_secrets(params)?;
+        let sender_blinding_factors = self.sender_outputs.get_blinding_factors(params)?;
+
+        // Split the blind signatures into receiver's and sender's portions
+        let receiver_count = receiver_blinding_factors.len();
+        let receiver_signatures = blind_signatures.iter().take(receiver_count).cloned().collect::<Vec<_>>();
+        let sender_signatures = blind_signatures.iter().skip(receiver_count).cloned().collect::<Vec<_>>();
+
+        // Unblind receiver's outputs
+        let receiver_proofs = cdk::dhke::construct_proofs(
+            receiver_signatures,
+            receiver_blinding_factors,
+            receiver_secrets,
+            active_keys,
+        )?;
+
+        // Unblind sender's outputs
+        let sender_proofs = cdk::dhke::construct_proofs(
+            sender_signatures,
+            sender_blinding_factors,
+            sender_secrets,
+            active_keys,
+        )?;
+
+        Ok((receiver_proofs, sender_proofs))
+    }
 }
 
 impl SetOfDeterministicOutputs {
