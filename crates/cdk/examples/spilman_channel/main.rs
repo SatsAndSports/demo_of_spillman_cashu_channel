@@ -207,6 +207,7 @@ pub trait MintConnection {
     async fn get_keys(&self) -> Result<Vec<KeySet>, Error>;
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error>;
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error>;
+    async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error>;
 }
 
 /// HTTP mint wrapper implementing MintConnection
@@ -241,6 +242,10 @@ impl MintConnection for HttpMintConnection {
 
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error> {
         self.http_client.post_check_state(request).await
+    }
+
+    async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error> {
+        self.http_client.post_restore(request).await
     }
 }
 
@@ -435,6 +440,10 @@ impl MintConnection for DirectMintConnection {
 
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error> {
         self.mint.check_state(&request).await
+    }
+
+    async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error> {
+        self.mint.restore(request).await
     }
 }
 
@@ -755,6 +764,21 @@ async fn main() -> anyhow::Result<()> {
     } else {
         println!("   ✓ Funding token has been spent (commitment transaction executed)");
     }
+
+    // Restore blind signatures using NUT-09 (demonstrates that deterministic outputs can be recovered)
+    println!("\n🔄 Restoring blind signatures from mint (NUT-09)...");
+    let restored_signatures = commitment_outputs.restore_all_blind_signatures(
+        &channel_fixtures.extra,
+        &*mint_connection,
+    ).await?;
+    println!("   ✓ Restored {} blind signatures from mint", restored_signatures.len());
+
+    // Verify that restored signatures match the original signatures from the swap
+    assert_eq!(
+        restored_signatures, swap_response.signatures,
+        "Restored signatures should match original swap response signatures"
+    );
+    println!("   ✓ Restored signatures match original signatures - NUT-09 working correctly!");
 
     // Unblind the signatures to get the commitment proofs
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
