@@ -4,6 +4,7 @@
 
 use bitcoin::hashes::{sha256, Hash};
 use cdk::nuts::{CurrencyUnit, Id, SecretKey};
+use cdk::nuts::nut11::{Conditions, SigFlag, SpendingConditions};
 use cdk::util::hex;
 
 use super::deterministic::{create_deterministic_p2pk_output, DeterministicP2pkOutputWithBlinding};
@@ -134,5 +135,23 @@ impl SpilmanChannelParameters {
 
         // Create deterministic P2PK output using these derived values
         create_deterministic_p2pk_output(pubkey, nonce_hex, blinding_factor)
+    }
+
+    /// Create spending conditions for the funding token
+    /// This creates P2PK conditions with 2-of-2 multisig (Alice + Charlie) before locktime
+    /// After locktime, Alice can refund with just her signature
+    pub fn create_funding_token_spending_conditions(&self) -> Result<SpendingConditions, anyhow::Error> {
+        // Create conditions for the P2PK spending
+        let conditions = Conditions::new(
+            Some(self.locktime),                    // Locktime for Alice's refund
+            Some(vec![self.charlie_pubkey]),        // Charlie's key as additional pubkey for 2-of-2
+            Some(vec![self.alice_pubkey]),          // Alice can refund after locktime
+            Some(2),                                // Require 2 signatures (Alice + Charlie) before locktime
+            Some(SigFlag::SigAll),                  // SigAll: signatures commit to outputs
+            Some(1),                                // Only 1 signature needed for refund (Alice)
+        )?;
+
+        // Construct SpendingConditions with Alice as the main P2PK pubkey
+        Ok(SpendingConditions::new_p2pk(self.alice_pubkey, Some(conditions)))
     }
 }
