@@ -341,20 +341,18 @@ impl SetOfDeterministicOutputs {
     }
 }
 
-/// Channel parameters plus mint-specific data (keys)
+/// Keyset information for fee calculations and amount selection
 #[derive(Debug, Clone)]
-pub struct SpilmanChannelExtra {
-    /// Channel parameters
-    pub params: SpilmanChannelParameters,
+pub struct KeysetInfo {
     /// Set of active keys from the mint (map from amount to pubkey)
     pub active_keys: Keys,
     /// Available amounts in the keyset, sorted largest first
     pub amounts_in_this_keyset_largest_first: Vec<u64>,
 }
 
-impl SpilmanChannelExtra {
-    /// Create new channel extra from parameters and active keys
-    pub fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
+impl KeysetInfo {
+    /// Create new keyset info from active keys
+    pub fn new(active_keys: Keys) -> Self {
         // Extract and sort amounts from the keyset (largest first)
         let mut amounts_in_this_keyset_largest_first: Vec<u64> = active_keys
             .iter()
@@ -362,11 +360,10 @@ impl SpilmanChannelExtra {
             .collect();
         amounts_in_this_keyset_largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
 
-        Ok(Self {
-            params,
+        Self {
             active_keys,
             amounts_in_this_keyset_largest_first,
-        })
+        }
     }
 
     /// Get the list of amounts that sum to the target amount
@@ -377,6 +374,92 @@ impl SpilmanChannelExtra {
         amounts_for_target_largest_first(&self.amounts_in_this_keyset_largest_first, target)
     }
 
+    /// Calculate the value after stage 2 fees for a given nominal value
+    ///
+    /// Given a nominal value (what you allocate in deterministic outputs),
+    /// this calculates what remains after paying the input fees when those outputs are used.
+    pub fn deterministic_value_after_fees(&self, nominal_value: u64, input_fee_ppk: u64) -> anyhow::Result<u64> {
+        if nominal_value == 0 {
+            return Ok(0);
+        }
+
+        // If there are no fees, just return the nominal value
+        if input_fee_ppk == 0 {
+            return Ok(nominal_value);
+        }
+
+        // Get the number of outputs needed to represent this nominal value
+        let amounts = self.amounts_for_target_largest_first(nominal_value)?;
+        let num_outputs = amounts.len() as u64;
+
+        // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
+        // The +999 ensures we round up
+        let fee = (input_fee_ppk * num_outputs + 999) / 1000;
+
+        // Return the value after fees
+        Ok(nominal_value - fee)
+    }
+
+    /// Find the inverse of deterministic_value_after_fees
+    ///
+    /// Given a target final balance, this returns the smallest nominal value
+    /// that achieves at least the target balance, along with the actual balance
+    /// you'll get (which may be slightly higher due to discrete denominations).
+    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64, input_fee_ppk: u64) -> anyhow::Result<InverseFeeResult> {
+        if target_balance == 0 {
+            return Ok(InverseFeeResult {
+                nominal_value: 0,
+                actual_balance: 0,
+            });
+        }
+
+        // If there are no fees, the inverse is trivial
+        if input_fee_ppk == 0 {
+            return Ok(InverseFeeResult {
+                nominal_value: target_balance,
+                actual_balance: target_balance,
+            });
+        }
+
+        // Start with the target as initial guess and search upward
+        let mut nominal = target_balance;
+
+        loop {
+            let actual_balance = self.deterministic_value_after_fees(nominal, input_fee_ppk)?;
+
+            if actual_balance >= target_balance {
+                // Found it! Return the nominal value and what we actually get
+                return Ok(InverseFeeResult {
+                    nominal_value: nominal,
+                    actual_balance,
+                });
+            }
+
+            // actual_balance < target_balance, need to increase nominal
+            nominal += 1;
+        }
+    }
+}
+
+/// Channel parameters plus mint-specific data (keys)
+#[derive(Debug, Clone)]
+pub struct SpilmanChannelExtra {
+    /// Channel parameters
+    pub params: SpilmanChannelParameters,
+    /// Keyset information (keys and amounts)
+    pub keyset_info: KeysetInfo,
+}
+
+impl SpilmanChannelExtra {
+    /// Create new channel extra from parameters and active keys
+    pub fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
+        let keyset_info = KeysetInfo::new(active_keys);
+
+        Ok(Self {
+            params,
+            keyset_info,
+        })
+    }
 
     /// Create two sets of deterministic outputs for a given receiver balance
     ///
@@ -400,7 +483,7 @@ impl SpilmanChannelExtra {
         amount_after_stage1: u64,
     ) -> anyhow::Result<CommitmentOutputs> {
         // Find the nominal value needed for Charlie's deterministic outputs
-        let inverse_result = self.inverse_deterministic_value_after_fees(receiver_balance)?;
+        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(receiver_balance, self.params.input_fee_ppk)?;
         let charlie_nominal = inverse_result.nominal_value;
 
         // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
@@ -417,95 +500,19 @@ impl SpilmanChannelExtra {
 
         // Create outputs for Charlie (receiver)
         let charlie_outputs = SetOfDeterministicOutputs::new(
-            &self.amounts_in_this_keyset_largest_first,
+            &self.keyset_info.amounts_in_this_keyset_largest_first,
             self.params.charlie_pubkey,
             charlie_nominal,
         )?;
 
         // Create outputs for Alice (sender)
         let alice_outputs = SetOfDeterministicOutputs::new(
-            &self.amounts_in_this_keyset_largest_first,
+            &self.keyset_info.amounts_in_this_keyset_largest_first,
             self.params.alice_pubkey,
             alice_nominal,
         )?;
 
         Ok(CommitmentOutputs::new(charlie_outputs, alice_outputs))
-    }
-
-    /// Calculate the value after fees for a given nominal value
-    ///
-    /// Given a nominal value x, this returns the actual value after subtracting
-    /// the fees that would be charged when swapping the deterministic outputs.
-    ///
-    /// Formula: deterministic_value_after_fees(x) = x - (input_fee_ppk * num_outputs + 999) // 1000
-    ///
-    /// Returns an error if the nominal value cannot be represented using available amounts
-    pub fn deterministic_value_after_fees(&self, nominal_value: u64) -> anyhow::Result<u64> {
-        if nominal_value == 0 {
-            return Ok(0);
-        }
-
-        // If there are no fees, just return the nominal value
-        if self.params.input_fee_ppk == 0 {
-            return Ok(nominal_value);
-        }
-
-        // Get the number of outputs needed to represent this nominal value
-        let amounts = self.amounts_for_target_largest_first(nominal_value)?;
-        let num_outputs = amounts.len() as u64;
-
-        // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
-        // The +999 ensures we round up
-        let fee = (self.params.input_fee_ppk * num_outputs + 999) / 1000;
-
-        // Return the value after fees
-        Ok(nominal_value - fee)
-    }
-
-    /// Find the inverse of deterministic_value_after_fees
-    ///
-    /// Given a target final balance, this returns the smallest nominal value
-    /// that achieves at least the target balance, along with the actual balance
-    /// after fees.
-    ///
-    /// Note: Due to the discrete nature of available amounts and fee rounding, some
-    /// target balances may not be exactly achievable. In such cases, this returns
-    /// the smallest nominal value that gives you the closest achievable balance >= target.
-    ///
-    /// Returns: InverseFeeResult with nominal_value and actual_balance
-    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64) -> anyhow::Result<InverseFeeResult> {
-        if target_balance == 0 {
-            return Ok(InverseFeeResult {
-                nominal_value: 0,
-                actual_balance: 0,
-            });
-        }
-
-        // If there are no fees, the inverse is trivial
-        if self.params.input_fee_ppk == 0 {
-            return Ok(InverseFeeResult {
-                nominal_value: target_balance,
-                actual_balance: target_balance,
-            });
-        }
-
-        // Start with the target as initial guess and search upward
-        let mut nominal = target_balance;
-
-        loop {
-            let actual_balance = self.deterministic_value_after_fees(nominal)?;
-
-            if actual_balance >= target_balance {
-                // Found it! Return the nominal value and what we actually get
-                return Ok(InverseFeeResult {
-                    nominal_value: nominal,
-                    actual_balance,
-                });
-            }
-
-            // actual_balance < target_balance, need to increase nominal
-            nominal += 1;
-        }
     }
 
 }
@@ -560,7 +567,7 @@ mod tests {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
 
         // Test a specific example: 42 = 32 + 8 + 2
-        let amounts = extra.amounts_for_target_largest_first(42).unwrap();
+        let amounts = extra.keyset_info.amounts_for_target_largest_first(42).unwrap();
         let count_map = amounts.count_by_amount();
 
         // Should have 1×32, 1×8, 1×2
@@ -574,7 +581,7 @@ mod tests {
         assert_eq!(reversed, vec![(32, 1), (8, 1), (2, 1)]);
 
         // Test another: 15 = 8 + 4 + 2 + 1
-        let amounts = extra.amounts_for_target_largest_first(15).unwrap();
+        let amounts = extra.keyset_info.amounts_for_target_largest_first(15).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
@@ -587,7 +594,7 @@ mod tests {
         assert_eq!(reversed, vec![(8, 1), (4, 1), (2, 1), (1, 1)]);
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
-        let amounts = extra.amounts_for_target_largest_first(7).unwrap();
+        let amounts = extra.keyset_info.amounts_for_target_largest_first(7).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
@@ -600,10 +607,11 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_2() {
         let extra = create_test_extra(400, 2); // Powers of 2
+        let input_fee_ppk = extra.params.input_fee_ppk;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
+            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target, input_fee_ppk).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -614,8 +622,8 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra
-                .deterministic_value_after_fees(inverse_result.nominal_value)
+            let forward_result = extra.keyset_info
+                .deterministic_value_after_fees(inverse_result.nominal_value, input_fee_ppk)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
@@ -624,10 +632,11 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_10() {
         let extra = create_test_extra(400, 10); // Powers of 10
+        let input_fee_ppk = extra.params.input_fee_ppk;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.inverse_deterministic_value_after_fees(target).unwrap();
+            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target, input_fee_ppk).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -638,8 +647,8 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra
-                .deterministic_value_after_fees(inverse_result.nominal_value)
+            let forward_result = extra.keyset_info
+                .deterministic_value_after_fees(inverse_result.nominal_value, input_fee_ppk)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
