@@ -429,6 +429,20 @@ impl MintConnector for DirectMintConnection {
     ) -> Result<MeltQuoteBolt11Response<String>, Error> {
         Err(Error::UnsupportedPaymentMethod)
     }
+
+    async fn fetch_lnurl_pay_request(
+        &self,
+        _lnurl: &str,
+    ) -> Result<cdk::wallet::LnurlPayResponse, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
+
+    async fn fetch_lnurl_invoice(
+        &self,
+        _callback_url: &str,
+    ) -> Result<cdk::wallet::LnurlPayInvoiceResponse, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
 }
 
 // Also implement the simpler MintConnection trait for channel operations
