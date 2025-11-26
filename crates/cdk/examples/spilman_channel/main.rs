@@ -640,12 +640,12 @@ async fn main() -> anyhow::Result<()> {
     let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
 
     // Print all amounts in the active keyset
-    println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset_largest_first);
+    println!("   Active keyset amounts: {:?}\n", channel_extra.keyset_info.amounts_in_this_keyset_largest_first);
 
     // Demo: Show deterministic_value_after_fees for small values
     println!("💰 Deterministic value after fees (nominal → actual):");
     for nominal in 0..=16 {
-        match channel_extra.deterministic_value_after_fees(nominal) {
+        match channel_extra.keyset_info.deterministic_value_after_fees(nominal, channel_extra.params.input_fee_ppk) {
             Ok(actual) => {
                 println!("   {} → {} (fee: {})", nominal, actual, nominal - actual);
             }
@@ -813,7 +813,7 @@ async fn main() -> anyhow::Result<()> {
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
         swap_response.signatures,
         &channel_fixtures.extra.params,
-        &channel_fixtures.extra.active_keys,
+        &channel_fixtures.extra.keyset_info.active_keys,
     )?;
     println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
 
