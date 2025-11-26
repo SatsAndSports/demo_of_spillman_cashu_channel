@@ -20,7 +20,7 @@ pub struct InverseFeeResult {
 /// Uses a greedy algorithm: goes through amounts from largest to smallest
 /// Returns the list in descending order (largest first)
 /// Returns an error if the target amount cannot be represented
-fn amounts_for_target_largest_first(
+pub fn amounts_for_target_largest_first(
     amounts_in_keyset: &[u64],
     target: u64,
 ) -> anyhow::Result<OrderedListOfAmounts> {
