@@ -2,8 +2,7 @@
 //!
 //! Contains channel parameters plus mint-specific data (keys and amounts)
 
-use cdk::nuts::{BlindedMessage, BlindSignature, Keys, RestoreRequest, SecretKey};
-use cdk::secret::Secret;
+use cdk::nuts::{BlindedMessage, BlindSignature, Keys, RestoreRequest};
 use cdk::Amount;
 
 use super::params::SpilmanChannelParameters;
@@ -93,6 +92,12 @@ impl OrderedListOfAmounts {
     pub fn count_by_amount(&self) -> &std::collections::BTreeMap<u64, usize> {
         &self.count_by_amount
     }
+
+    /// Iterate over the count map in reverse order (largest-first)
+    /// Returns an iterator over (&amount, &count) pairs in descending order by amount
+    pub fn iter_largest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
+        self.count_by_amount.iter().rev()
+    }
 }
 
 /// A set of deterministic outputs for a specific pubkey and amount
@@ -100,8 +105,8 @@ impl OrderedListOfAmounts {
 /// for splitting a given amount into ecash outputs
 #[derive(Debug, Clone)]
 pub struct SetOfDeterministicOutputs {
-    /// The pubkey these outputs are for (Alice or Charlie)
-    pub pubkey: cdk::nuts::PublicKey,
+    /// The context for these outputs: "sender", "receiver", or "funding"
+    pub context: String,
     /// The total amount to allocate
     pub amount: u64,
     /// The breakdown of amounts (largest-first)
@@ -176,13 +181,15 @@ impl CommitmentOutputs {
             );
         }
 
-        // Get secrets and blinding factors for receiver
-        let receiver_secrets = self.receiver_outputs.get_secrets(params)?;
-        let receiver_blinding_factors = self.receiver_outputs.get_blinding_factors(params)?;
+        // Get outputs for receiver and sender
+        let receiver_outputs = self.receiver_outputs.get_secrets_with_blinding(params)?;
+        let sender_outputs = self.sender_outputs.get_secrets_with_blinding(params)?;
 
-        // Get secrets and blinding factors for sender
-        let sender_secrets = self.sender_outputs.get_secrets(params)?;
-        let sender_blinding_factors = self.sender_outputs.get_blinding_factors(params)?;
+        // Extract secrets and blinding factors
+        let receiver_secrets: Vec<_> = receiver_outputs.iter().map(|o| o.secret.clone()).collect();
+        let receiver_blinding_factors: Vec<_> = receiver_outputs.iter().map(|o| o.blinding_factor.clone()).collect();
+        let sender_secrets: Vec<_> = sender_outputs.iter().map(|o| o.secret.clone()).collect();
+        let sender_blinding_factors: Vec<_> = sender_outputs.iter().map(|o| o.blinding_factor.clone()).collect();
 
         // Split the blind signatures into receiver's and sender's portions
         let receiver_count = receiver_blinding_factors.len();
@@ -259,14 +266,14 @@ impl SetOfDeterministicOutputs {
     /// Create a new set of deterministic outputs
     pub fn new(
         amounts_in_keyset: &[u64],
-        pubkey: cdk::nuts::PublicKey,
+        context: String,
         amount: u64,
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = amounts_for_target_largest_first(amounts_in_keyset, amount)?;
 
         Ok(Self {
-            pubkey,
+            context,
             amount,
             ordered_amounts,
         })
@@ -282,62 +289,43 @@ impl SetOfDeterministicOutputs {
         Ok(self.amount - fee)
     }
 
-    /// Get the secrets for these outputs
-    pub fn get_secrets(&self, params: &SpilmanChannelParameters) -> Result<Vec<Secret>, anyhow::Error> {
+
+    /// Get the secrets with blinding for these outputs
+    /// Works for all contexts: "sender", "receiver", and "funding"
+    /// Returns full DeterministicSecretWithBlinding objects (secret + blinding factor)
+    pub fn get_secrets_with_blinding(&self, params: &SpilmanChannelParameters) -> Result<Vec<super::deterministic::DeterministicSecretWithBlinding>, anyhow::Error> {
         if self.amount == 0 {
             return Ok(vec![]);
         }
 
-        let mut secrets = Vec::new();
+        let mut outputs = Vec::new();
 
-        // Use count_by_amount to track index per amount
-        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
+        // Use iter_largest_first to track index per amount
+        for (&single_amount, &count) in self.ordered_amounts.iter_largest_first() {
             for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
-                secrets.push(det_output.secret);
+                let det_output = params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
+                outputs.push(det_output);
             }
         }
 
-        Ok(secrets)
-    }
-
-    /// Get the blinding factors for these outputs
-    pub fn get_blinding_factors(&self, params: &SpilmanChannelParameters) -> Result<Vec<SecretKey>, anyhow::Error> {
-        if self.amount == 0 {
-            return Ok(vec![]);
-        }
-
-        let mut blinding_factors = Vec::new();
-
-        // Use count_by_amount to track index per amount
-        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
-            for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
-                blinding_factors.push(det_output.blinding_factor);
-            }
-        }
-
-        Ok(blinding_factors)
+        Ok(outputs)
     }
 
     /// Get the blinded messages for these outputs
+    /// Works for all contexts: "sender", "receiver", and "funding"
     pub fn get_blinded_messages(&self, params: &SpilmanChannelParameters) -> Result<Vec<BlindedMessage>, anyhow::Error> {
-        if self.amount == 0 {
-            return Ok(vec![]);
-        }
+        // Get the secrets with blinding factors
+        let secrets = self.get_secrets_with_blinding(params)?;
 
-        let mut blinded_messages = Vec::new();
+        // Build parallel vector of amounts in the same order as the secrets
+        let amounts: Vec<u64> = self.ordered_amounts.iter_largest_first()
+            .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
+            .collect();
 
-        // Use count_by_amount to track index per amount
-        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
-            for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
-                let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
-                blinded_messages.push(blinded_msg);
-            }
-        }
-
-        Ok(blinded_messages)
+        // Convert each secret to a blinded message
+        secrets.iter().zip(amounts.iter())
+            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), params.active_keyset_id))
+            .collect()
     }
 }
 
@@ -501,14 +489,14 @@ impl SpilmanChannelExtra {
         // Create outputs for Charlie (receiver)
         let charlie_outputs = SetOfDeterministicOutputs::new(
             &self.keyset_info.amounts_in_this_keyset_largest_first,
-            self.params.charlie_pubkey,
+            "receiver".to_string(),
             charlie_nominal,
         )?;
 
         // Create outputs for Alice (sender)
         let alice_outputs = SetOfDeterministicOutputs::new(
             &self.keyset_info.amounts_in_this_keyset_largest_first,
-            self.params.alice_pubkey,
+            "sender".to_string(),
             alice_nominal,
         )?;
 
