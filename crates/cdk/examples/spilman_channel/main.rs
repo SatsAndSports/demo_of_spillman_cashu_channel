@@ -34,6 +34,7 @@ use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
 use cdk::secret::Secret;
 use clap::Parser;
+use uuid::Uuid;
 
 use params::SpilmanChannelParameters;
 use extra::SpilmanChannelExtra;
@@ -686,32 +687,174 @@ async fn main() -> anyhow::Result<()> {
 
     println!("   ✓ Minted {} sats", mint_amount_sats);
 
-    // 7. SWAP FOR P2PK FUNDING TOKEN (2-of-2 multisig with locktime refund)
-    // Swap 1.5x capacity to P2PK proofs (to ensure enough for fees)
-    let funding_amount_sats = (capacity * 3) / 2;  // 1.5 * capacity
-    println!("\n🔐 Alice swapping for P2PK funding token ({} sats with 2-of-2 multisig)...", funding_amount_sats);
+    // 7. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
+    println!("\n💡 Calculating exact funding token size using double inverse...");
 
-    // Create P2PK spending conditions using channel parameters
-    let spending_conditions = channel_extra.params.create_funding_token_spending_conditions()?;
+    // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
+    let post_stage1_result = channel_extra.keyset_info.inverse_deterministic_value_after_fees(capacity, channel_extra.params.input_fee_ppk)?;
+    println!("   Capacity: {} sats", capacity);
+    println!("   Post-stage-1 nominal (after inverse 1): {} sats (actual: {} sats)",
+             post_stage1_result.nominal_value, post_stage1_result.actual_balance);
+
+    // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+    let funding_token_result = channel_extra.keyset_info.inverse_deterministic_value_after_fees(post_stage1_result.nominal_value, channel_extra.params.input_fee_ppk)?;
+    println!("   Funding token nominal (after inverse 2): {} sats (actual: {} sats)",
+             funding_token_result.nominal_value, funding_token_result.actual_balance);
+
+    let funding_token_nominal = funding_token_result.nominal_value;
+
+    // 8. CREATE DETERMINISTIC FUNDING OUTPUTS
+    println!("\n🔐 Creating deterministic funding token outputs ({} sats with 2-of-2 multisig)...", funding_token_nominal);
 
     println!("   P2PK conditions: 2-of-2 multisig (Alice + Charlie) before locktime");
     println!("   After locktime: Alice can refund with just her signature");
 
-    // Swap to P2PK proofs - let wallet choose denominations
-    let p2pk_proofs = alice_wallet.swap(
-        Some(funding_amount_sats.into()),
-        cdk::amount::SplitTarget::default(),
-        regular_proofs,
-        Some(spending_conditions),
-        false,
-    ).await?.ok_or_else(|| anyhow::anyhow!("Swap returned no proofs"))?;
+    // Create deterministic outputs for the funding token
+    let funding_outputs = extra::SetOfDeterministicOutputs::new(
+        &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
+        "funding".to_string(),
+        funding_token_nominal,
+    )?;
 
-    let p2pk_total: u64 = p2pk_proofs.iter().map(|p| u64::from(p.amount)).sum();
-    println!("   ✓ Created P2PK funding token: {} proofs totaling {} sats", p2pk_proofs.len(), p2pk_total);
+    // Get the blinded messages for the funding outputs
+    let funding_blinded_messages = funding_outputs.get_blinded_messages(&channel_extra.params)?;
+    let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding(&channel_extra.params)?;
 
-    println!("\n✅ Funding token created!");
+    println!("   ✓ Created {} deterministic funding outputs", funding_blinded_messages.len());
 
-    // 8. CREATE CHANNEL FIXTURES
+    let total_output_value: u64 = funding_blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum();
+    println!("   Total funding output value: {} sats", total_output_value);
+
+    // 9. SELECT INPUT PROOFS iteratively until we have enough for outputs + fees
+    println!("\n📊 Selecting input proofs to cover outputs + fees...");
+
+    let mut selected_inputs = Vec::new();
+    let mut input_total = 0u64;
+    let mut fee = 0u64;
+
+    for proof in &regular_proofs {
+        selected_inputs.push(proof.clone());
+        input_total += u64::from(proof.amount);
+
+        let num_inputs = selected_inputs.len();
+        fee = (channel_extra.params.input_fee_ppk * num_inputs as u64 + 999) / 1000;
+
+        if input_total >= total_output_value + fee {
+            break;
+        }
+    }
+
+    println!("   Selected {} input proofs totaling {} sats", selected_inputs.len(), input_total);
+    println!("   Expected fee: {} sats", fee);
+
+    let change = input_total - total_output_value - fee;
+    println!("   Change: {} sats", change);
+
+    // 10. CREATE CHANGE OUTPUTS
+    println!("\n💵 Creating change outputs...");
+
+    let change_amounts_list = if change > 0 {
+        extra::amounts_for_target_largest_first(
+            &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
+            change
+        )?
+    } else {
+        extra::OrderedListOfAmounts::new(std::collections::BTreeMap::new())
+    };
+
+    let change_amounts: Vec<u64> = change_amounts_list.iter_largest_first()
+        .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
+        .collect();
+
+    println!("   Change amounts: {:?}", change_amounts);
+
+    // Create random blinded messages for change
+    let mut change_blinded_messages = Vec::new();
+    let mut change_secrets = Vec::new();
+    let mut change_blinding_factors = Vec::new();
+
+    for &amount in &change_amounts {
+        let secret = Secret::new(format!("change_{}", Uuid::new_v4()));
+        let blinding_factor = SecretKey::generate();
+
+        let (blinded_point, _) = cdk::dhke::blind_message(&secret.to_bytes(), Some(blinding_factor.clone()))?;
+        let blinded_message = cdk::nuts::BlindedMessage::new(
+            cdk::Amount::from(amount),
+            channel_extra.params.active_keyset_id,
+            blinded_point,
+        );
+
+        change_blinded_messages.push(blinded_message);
+        change_secrets.push(secret);
+        change_blinding_factors.push(blinding_factor);
+    }
+
+    println!("   ✓ Created {} change outputs", change_blinded_messages.len());
+
+    // 11. BUILD MANUAL SWAP REQUEST
+    println!("\n🔄 Building manual swap request...");
+
+    // Combine funding outputs + change outputs
+    let mut all_outputs = funding_blinded_messages.clone();
+    all_outputs.extend(change_blinded_messages.clone());
+
+    let total_all_outputs: u64 = all_outputs.iter().map(|bm| u64::from(bm.amount)).sum();
+    println!("   Total inputs: {} sats ({} proofs)", input_total, selected_inputs.len());
+    println!("   Total outputs: {} sats ({} outputs: {} funding + {} change)",
+             total_all_outputs, all_outputs.len(),
+             funding_blinded_messages.len(), change_blinded_messages.len());
+    println!("   Fee: {} sats", fee);
+
+    // Verify the equation
+    if input_total != total_all_outputs + fee {
+        anyhow::bail!(
+            "Input/output mismatch: {} inputs ≠ {} outputs + {} fee",
+            input_total, total_all_outputs, fee
+        );
+    }
+
+    println!("   ✓ Equation verified: {} = {} + {}", input_total, total_all_outputs, fee);
+
+    // Create the swap request (no signatures needed - regular proofs)
+    let swap_request = SwapRequest::new(selected_inputs.clone(), all_outputs);
+
+    println!("\n🔄 Submitting swap to mint...");
+    let swap_response = mint_connection.process_swap(swap_request).await?;
+
+    println!("   ✓ Received {} blind signatures", swap_response.signatures.len());
+
+    // 12. UNBLIND THE RESPONSES
+    println!("\n🔓 Unblinding signatures...");
+
+    // Unblind funding token signatures
+    let funding_proofs = cdk::dhke::construct_proofs(
+        swap_response.signatures[0..funding_blinded_messages.len()].to_vec(),
+        funding_secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect(),
+        funding_secrets_with_blinding.iter().map(|s| s.secret.clone()).collect(),
+        &set_of_active_keys.keys,
+    )?;
+
+    let p2pk_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    println!("   ✓ Unblinded {} funding token proofs totaling {} sats", funding_proofs.len(), p2pk_total);
+
+    // Unblind change signatures (if any)
+    if !change_blinded_messages.is_empty() {
+        let change_proofs = cdk::dhke::construct_proofs(
+            swap_response.signatures[funding_blinded_messages.len()..].to_vec(),
+            change_blinding_factors,
+            change_secrets,
+            &set_of_active_keys.keys,
+        )?;
+
+        let change_total: u64 = change_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        println!("   ✓ Unblinded {} change proofs totaling {} sats", change_proofs.len(), change_total);
+    }
+
+    let p2pk_proofs = funding_proofs;
+
+    println!("\n✅ Deterministic funding token created!");
+
+    // 13. CREATE CHANNEL FIXTURES
     println!("\n📦 Creating channel fixtures...");
 
     let channel_fixtures = ChannelFixtures::new(
