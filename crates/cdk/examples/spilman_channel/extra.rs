@@ -2,8 +2,6 @@
 //!
 //! Contains channel parameters plus mint-specific data (keys and amounts)
 
-use std::collections::HashMap;
-
 use cdk::nuts::{BlindedMessage, BlindSignature, Keys, RestoreRequest, SecretKey};
 use cdk::secret::Secret;
 use cdk::Amount;
@@ -62,7 +60,7 @@ fn amounts_for_target_largest_first(
 
 /// An ordered list of amounts that sum to a target value
 ///
-/// Created by the greedy algorithm in amounts_for_target__largest_first.
+/// Created by the greedy algorithm in amounts_for_target_largest_first.
 /// The amounts are sorted largest-first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedListOfAmounts {
@@ -88,21 +86,6 @@ impl OrderedListOfAmounts {
     /// Get the number of amounts in the list
     pub fn len(&self) -> usize {
         self.amounts.len()
-    }
-
-    /// Check if the list is empty
-    pub fn is_empty(&self) -> bool {
-        self.amounts.is_empty()
-    }
-
-    /// Get a slice of the amounts
-    pub fn as_slice(&self) -> &[u64] {
-        &self.amounts
-    }
-
-    /// Iterate over the amounts
-    pub fn iter(&self) -> impl Iterator<Item = &u64> {
-        self.amounts.iter()
     }
 
     /// Get the count map (amount -> number of outputs with that amount)
@@ -356,28 +339,6 @@ impl SetOfDeterministicOutputs {
 
         Ok(blinded_messages)
     }
-
-    /// Get both blinded messages and blinding factors for these outputs
-    pub fn get_blinded_messages_and_blinding_factors(&self, params: &SpilmanChannelParameters) -> Result<(Vec<BlindedMessage>, Vec<SecretKey>), anyhow::Error> {
-        if self.amount == 0 {
-            return Ok((vec![], vec![]));
-        }
-
-        let mut blinded_messages = Vec::new();
-        let mut blinding_factors = Vec::new();
-
-        // Use count_by_amount to track index per amount
-        for (&single_amount, &count) in self.ordered_amounts.count_by_amount().iter().rev() {
-            for index in 0..count {
-                let det_output = params.create_deterministic_p2pk_output_with_blinding(&self.pubkey, single_amount, index)?;
-                let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), params.active_keyset_id)?;
-                blinded_messages.push(blinded_msg);
-                blinding_factors.push(det_output.blinding_factor);
-            }
-        }
-
-        Ok((blinded_messages, blinding_factors))
-    }
 }
 
 /// Channel parameters plus mint-specific data (keys)
@@ -388,23 +349,23 @@ pub struct SpilmanChannelExtra {
     /// Set of active keys from the mint (map from amount to pubkey)
     pub active_keys: Keys,
     /// Available amounts in the keyset, sorted largest first
-    pub amounts_in_this_keyset__largest_first: Vec<u64>,
+    pub amounts_in_this_keyset_largest_first: Vec<u64>,
 }
 
 impl SpilmanChannelExtra {
     /// Create new channel extra from parameters and active keys
     pub fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
         // Extract and sort amounts from the keyset (largest first)
-        let mut amounts_in_this_keyset__largest_first: Vec<u64> = active_keys
+        let mut amounts_in_this_keyset_largest_first: Vec<u64> = active_keys
             .iter()
             .map(|(amt, _)| u64::from(*amt))
             .collect();
-        amounts_in_this_keyset__largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
+        amounts_in_this_keyset_largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
 
         Ok(Self {
             params,
             active_keys,
-            amounts_in_this_keyset__largest_first,
+            amounts_in_this_keyset_largest_first,
         })
     }
 
@@ -412,8 +373,8 @@ impl SpilmanChannelExtra {
     /// Uses a greedy algorithm: goes through amounts from largest to smallest
     /// Returns the list in descending order (largest first)
     /// Returns an error if the target amount cannot be represented
-    pub fn amounts_for_target__largest_first(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
-        amounts_for_target_largest_first(&self.amounts_in_this_keyset__largest_first, target)
+    pub fn amounts_for_target_largest_first(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
+        amounts_for_target_largest_first(&self.amounts_in_this_keyset_largest_first, target)
     }
 
 
@@ -456,14 +417,14 @@ impl SpilmanChannelExtra {
 
         // Create outputs for Charlie (receiver)
         let charlie_outputs = SetOfDeterministicOutputs::new(
-            &self.amounts_in_this_keyset__largest_first,
+            &self.amounts_in_this_keyset_largest_first,
             self.params.charlie_pubkey,
             charlie_nominal,
         )?;
 
         // Create outputs for Alice (sender)
         let alice_outputs = SetOfDeterministicOutputs::new(
-            &self.amounts_in_this_keyset__largest_first,
+            &self.amounts_in_this_keyset_largest_first,
             self.params.alice_pubkey,
             alice_nominal,
         )?;
@@ -490,7 +451,7 @@ impl SpilmanChannelExtra {
         }
 
         // Get the number of outputs needed to represent this nominal value
-        let amounts = self.amounts_for_target__largest_first(nominal_value)?;
+        let amounts = self.amounts_for_target_largest_first(nominal_value)?;
         let num_outputs = amounts.len() as u64;
 
         // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
@@ -547,121 +508,6 @@ impl SpilmanChannelExtra {
         }
     }
 
-    /// Create deterministic secrets for a given amount
-    /// Returns a vector of secrets in the same order as amounts_for_target__largest_first
-    pub fn create_deterministic_secrets_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        amount: u64,
-    ) -> Result<Vec<Secret>, anyhow::Error> {
-        if amount == 0 {
-            return Ok(vec![]);
-        }
-
-        let amounts = self.amounts_for_target__largest_first(amount)?;
-
-        let mut secrets = Vec::new();
-        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
-
-        for &single_amount in amounts.iter() {
-            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
-
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
-            secrets.push(det_output.secret);
-
-            index_by_amount.insert(single_amount, index + 1);
-        }
-
-        Ok(secrets)
-    }
-
-    /// Create deterministic blinding factors for a given amount
-    /// Returns a vector of blinding factors in the same order as amounts_for_target__largest_first
-    pub fn create_deterministic_blinding_factors_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        amount: u64,
-    ) -> Result<Vec<SecretKey>, anyhow::Error> {
-        if amount == 0 {
-            return Ok(vec![]);
-        }
-
-        let amounts = self.amounts_for_target__largest_first(amount)?;
-
-        let mut blinding_factors = Vec::new();
-        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
-
-        for &single_amount in amounts.iter() {
-            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
-
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
-            blinding_factors.push(det_output.blinding_factor);
-
-            index_by_amount.insert(single_amount, index + 1);
-        }
-
-        Ok(blinding_factors)
-    }
-
-    /// Create deterministic blinded messages for a given amount
-    /// Returns a vector of blinded messages in the same order as amounts_for_target__largest_first
-    pub fn create_deterministic_blinded_messages_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        amount: u64,
-    ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
-        if amount == 0 {
-            return Ok(vec![]);
-        }
-
-        let amounts = self.amounts_for_target__largest_first(amount)?;
-
-        let mut blinded_messages = Vec::new();
-        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
-
-        for &single_amount in amounts.iter() {
-            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
-
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
-            let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
-            blinded_messages.push(blinded_msg);
-
-            index_by_amount.insert(single_amount, index + 1);
-        }
-
-        Ok(blinded_messages)
-    }
-
-    /// Create deterministic blinded messages and blinding factors for a given amount
-    /// Returns both blinded messages and blinding factors in the same order
-    pub fn create_deterministic_blinded_messages_and_blinding_factors_for_amount(
-        &self,
-        pubkey: &cdk::nuts::PublicKey,
-        amount: u64,
-    ) -> Result<(Vec<BlindedMessage>, Vec<SecretKey>), anyhow::Error> {
-        if amount == 0 {
-            return Ok((vec![], vec![]));
-        }
-
-        let amounts = self.amounts_for_target__largest_first(amount)?;
-
-        let mut blinded_messages = Vec::new();
-        let mut blinding_factors = Vec::new();
-        let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
-
-        for &single_amount in amounts.iter() {
-            let index = *index_by_amount.get(&single_amount).unwrap_or(&0);
-
-            let det_output = self.params.create_deterministic_p2pk_output_with_blinding(pubkey, single_amount, index)?;
-            let blinded_msg = det_output.to_blinded_message(Amount::from(single_amount), self.params.active_keyset_id)?;
-            blinded_messages.push(blinded_msg);
-            blinding_factors.push(det_output.blinding_factor);
-
-            index_by_amount.insert(single_amount, index + 1);
-        }
-
-        Ok((blinded_messages, blinding_factors))
-    }
 }
 
 #[cfg(test)]
@@ -714,7 +560,7 @@ mod tests {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
 
         // Test a specific example: 42 = 32 + 8 + 2
-        let amounts = extra.amounts_for_target__largest_first(42).unwrap();
+        let amounts = extra.amounts_for_target_largest_first(42).unwrap();
         let count_map = amounts.count_by_amount();
 
         // Should have 1×32, 1×8, 1×2
@@ -728,7 +574,7 @@ mod tests {
         assert_eq!(reversed, vec![(32, 1), (8, 1), (2, 1)]);
 
         // Test another: 15 = 8 + 4 + 2 + 1
-        let amounts = extra.amounts_for_target__largest_first(15).unwrap();
+        let amounts = extra.amounts_for_target_largest_first(15).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
@@ -741,7 +587,7 @@ mod tests {
         assert_eq!(reversed, vec![(8, 1), (4, 1), (2, 1), (1, 1)]);
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
-        let amounts = extra.amounts_for_target__largest_first(7).unwrap();
+        let amounts = extra.amounts_for_target_largest_first(7).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));

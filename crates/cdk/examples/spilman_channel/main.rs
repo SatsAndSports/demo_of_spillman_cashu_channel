@@ -36,7 +36,7 @@ use cdk::secret::Secret;
 use clap::Parser;
 
 use params::SpilmanChannelParameters;
-use extra::{SpilmanChannelExtra, SetOfDeterministicOutputs, CommitmentOutputs};
+use extra::SpilmanChannelExtra;
 use fixtures::ChannelFixtures;
 
 /// Extract signatures from the first proof's witness in a swap request
@@ -560,7 +560,7 @@ async fn main() -> anyhow::Result<()> {
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
     // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
-    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, input_fee_ppk, keysets_response, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, KeysetResponse, String) = if let Some(mint_url_str) = args.mint {
+    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, input_fee_ppk, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, String) = if let Some(mint_url_str) = args.mint {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -584,7 +584,7 @@ async fn main() -> anyhow::Result<()> {
         println!("   Using keyset: {}\n", keyset_id);
         println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, keysets, mint_url_str)
+        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, mint_url_str)
     } else {
         println!("🏦 Setting up local in-process mint...");
         let mint = create_local_mint(channel_unit.clone()).await?;
@@ -609,7 +609,7 @@ async fn main() -> anyhow::Result<()> {
         println!("   Using keyset: {}\n", keyset_id);
         println!("   Input fee: {} ppk\n", fee_ppk);
 
-        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, keysets, "local".to_string())
+        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, "local".to_string())
     };
 
     // Get the mint's public keys for the active keyset
@@ -640,7 +640,7 @@ async fn main() -> anyhow::Result<()> {
     let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
 
     // Print all amounts in the active keyset
-    println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset__largest_first);
+    println!("   Active keyset amounts: {:?}\n", channel_extra.amounts_in_this_keyset_largest_first);
 
     // Demo: Show deterministic_value_after_fees for small values
     println!("💰 Deterministic value after fees (nominal → actual):");
