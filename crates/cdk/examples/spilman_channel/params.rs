@@ -7,7 +7,7 @@ use cdk::nuts::{CurrencyUnit, Id, SecretKey};
 use cdk::nuts::nut11::{Conditions, SigFlag, SpendingConditions};
 use cdk::util::hex;
 
-use super::deterministic::{create_deterministic_p2pk_output, DeterministicP2pkOutputWithBlinding};
+use super::deterministic::{create_deterministic_commitment_output, DeterministicNonceAndBlinding, DeterministicSecretWithBlinding};
 
 /// Parameters for a Spilman payment channel (protocol parameters only)
 #[derive(Debug, Clone)]
@@ -104,23 +104,68 @@ impl SpilmanChannelParameters {
         }
     }
 
-    /// Create a deterministic P2PK output with blinding using the channel ID
-    /// Uses channel_id, amount, and index in the derivation per NUT-XX spec
-    pub fn create_deterministic_p2pk_output_with_blinding(
+    /// Get the pubkey for a commitment context ("sender" or "receiver")
+    /// Returns Charlie's pubkey for "receiver", Alice's pubkey for "sender"
+    /// Returns an error for "funding" since funding requires both pubkeys
+    pub fn get_pubkey_from_commitment_context(&self, context: &str) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
+        match context {
+            "receiver" => Ok(self.charlie_pubkey),
+            "sender" => Ok(self.alice_pubkey),
+            "funding" => anyhow::bail!("Funding context requires both pubkeys, use create_deterministic_funding_output instead"),
+            _ => anyhow::bail!("Unknown context: {}", context),
+        }
+    }
+
+    /// Create a deterministic output with blinding using the channel ID
+    /// Uses channel_id, context, amount, and index in the derivation per NUT-XX spec
+    ///
+    /// The context parameter specifies the role: "sender", "receiver", or "funding"
+    /// - "sender"/"receiver" create simple P2PK outputs for commitments
+    /// - "funding" creates P2PK outputs with 2-of-2 multisig + locktime conditions
+    pub fn create_deterministic_output_with_blinding(
         &self,
-        pubkey: &cdk::nuts::PublicKey,
+        context: &str,
         amount: u64,
         index: usize,
-    ) -> Result<DeterministicP2pkOutputWithBlinding, anyhow::Error> {
+    ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
+        // Derive the deterministic nonce and blinding factor
+        let nonce_and_blinding = self.derive_nonce_and_blinding(context, amount, index)?;
+
+        // Handle funding context separately (requires both pubkeys + locktime)
+        if context == "funding" {
+            super::deterministic::create_deterministic_funding_output(
+                &self.alice_pubkey,
+                &self.charlie_pubkey,
+                self.locktime,
+                nonce_and_blinding,
+            )
+        } else {
+            // For sender/receiver contexts, create simple P2PK outputs
+            let pubkey = self.get_pubkey_from_commitment_context(context)?;
+            create_deterministic_commitment_output(&pubkey, nonce_and_blinding)
+        }
+    }
+
+    /// Derive deterministic nonce and blinding factor using the channel ID
+    /// Uses channel_id, context, amount, and index in the derivation
+    ///
+    /// The context parameter specifies the role: "sender", "receiver", or "funding"
+    /// Since the context already identifies which pubkey is involved, the pubkey
+    /// itself is not included in the derivation (but is still needed to construct the secret).
+    pub fn derive_nonce_and_blinding(
+        &self,
+        context: &str,
+        amount: u64,
+        index: usize,
+    ) -> Result<DeterministicNonceAndBlinding, anyhow::Error> {
         let channel_id = self.get_channel_id();
-        let pubkey_bytes = pubkey.to_bytes();
         let amount_bytes = amount.to_le_bytes();
         let index_bytes = index.to_le_bytes();
 
-        // Derive deterministic nonce: SHA256(channel_id || pubkey || amount || "nonce" || index)
+        // Derive deterministic nonce: SHA256(channel_id || context || amount || "nonce" || index)
         let mut nonce_input = Vec::new();
         nonce_input.extend_from_slice(channel_id.as_bytes());
-        nonce_input.extend_from_slice(&pubkey_bytes);
+        nonce_input.extend_from_slice(context.as_bytes());
         nonce_input.extend_from_slice(&amount_bytes);
         nonce_input.extend_from_slice(b"nonce");
         nonce_input.extend_from_slice(&index_bytes);
@@ -128,10 +173,10 @@ impl SpilmanChannelParameters {
         let nonce_hash = sha256::Hash::hash(&nonce_input);
         let nonce_hex = hex::encode(nonce_hash.as_byte_array());
 
-        // Derive deterministic blinding factor: SHA256(channel_id || pubkey || amount || "blinding" || index)
+        // Derive deterministic blinding factor: SHA256(channel_id || context || amount || "blinding" || index)
         let mut blinding_input = Vec::new();
         blinding_input.extend_from_slice(channel_id.as_bytes());
-        blinding_input.extend_from_slice(&pubkey_bytes);
+        blinding_input.extend_from_slice(context.as_bytes());
         blinding_input.extend_from_slice(&amount_bytes);
         blinding_input.extend_from_slice(b"blinding");
         blinding_input.extend_from_slice(&index_bytes);
@@ -139,8 +184,10 @@ impl SpilmanChannelParameters {
         let blinding_hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
 
-        // Create deterministic P2PK output using these derived values
-        create_deterministic_p2pk_output(pubkey, nonce_hex, blinding_factor)
+        Ok(DeterministicNonceAndBlinding {
+            nonce: nonce_hex,
+            blinding_factor,
+        })
     }
 
     /// Create spending conditions for the funding token
