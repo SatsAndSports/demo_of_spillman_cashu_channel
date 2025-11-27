@@ -25,6 +25,8 @@ pub struct DeterministicSecretWithBlinding {
     pub secret: Secret,
     /// The blinding factor
     pub blinding_factor: SecretKey,
+    /// The amount for this output
+    pub amount: u64,
 }
 
 impl DeterministicSecretWithBlinding {
@@ -47,6 +49,7 @@ impl DeterministicSecretWithBlinding {
 pub fn create_deterministic_commitment_output(
     pubkey: &cdk::nuts::PublicKey,
     nonce_and_blinding: DeterministicNonceAndBlinding,
+    amount: u64,
 ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
     // Extract nonce and blinding factor directly
     let nonce = nonce_and_blinding.nonce;
@@ -69,6 +72,7 @@ pub fn create_deterministic_commitment_output(
     Ok(DeterministicSecretWithBlinding {
         secret,
         blinding_factor,
+        amount,
     })
 }
 
@@ -80,6 +84,7 @@ pub fn create_deterministic_funding_output(
     charlie_pubkey: &cdk::nuts::PublicKey,
     locktime: u64,
     nonce_and_blinding: DeterministicNonceAndBlinding,
+    amount: u64,
 ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
     // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before locktime
     // After locktime, Alice can refund with just her signature
@@ -117,5 +122,6 @@ pub fn create_deterministic_funding_output(
     Ok(DeterministicSecretWithBlinding {
         secret,
         blinding_factor,
+        amount,
     })
 }
