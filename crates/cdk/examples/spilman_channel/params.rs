@@ -31,6 +31,8 @@ pub struct SpilmanChannelParameters {
     pub active_keyset_id: Id,
     /// Input fee in parts per thousand for this keyset
     pub input_fee_ppk: u64,
+    /// Maximum amount for one output (amounts larger than this are filtered out)
+    pub maximum_amount_for_one_output: u64,
 }
 
 impl SpilmanChannelParameters {
@@ -46,6 +48,7 @@ impl SpilmanChannelParameters {
         sender_nonce: String,
         active_keyset_id: Id,
         input_fee_ppk: u64,
+        maximum_amount_for_one_output: u64,
     ) -> anyhow::Result<Self> {
         // Validate input_fee_ppk is in valid range
         if input_fee_ppk > 999 {
@@ -66,6 +69,7 @@ impl SpilmanChannelParameters {
             sender_nonce,
             active_keyset_id,
             input_fee_ppk,
+            maximum_amount_for_one_output,
         })
     }
 
