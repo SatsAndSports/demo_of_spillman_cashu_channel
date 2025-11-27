@@ -221,6 +221,8 @@ pub trait MintConnection {
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error>;
     async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error>;
     async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error>;
+    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error>;
+    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error>;
 }
 
 /// HTTP mint wrapper implementing MintConnection
@@ -263,6 +265,14 @@ impl MintConnection for HttpMintConnection {
 
     async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error> {
         self.http_client.post_mint(request).await
+    }
+
+    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.http_client.post_mint_quote(request).await
+    }
+
+    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.http_client.get_mint_quote_status(quote_id).await
     }
 }
 
@@ -481,21 +491,35 @@ impl MintConnection for DirectMintConnection {
         let request_id: MintRequest<QuoteId> = request.try_into().unwrap();
         self.mint.process_mint_request(request_id).await
     }
+
+    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.mint
+            .get_mint_quote(request.into())
+            .await
+            .map(Into::into)
+    }
+
+    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error> {
+        self.mint
+            .check_mint_quote(&QuoteId::from_str(quote_id)?)
+            .await
+            .map(Into::into)
+    }
 }
 
 /// Mint deterministic outputs directly using NUT-20 signed MintRequest
 ///
 /// This helper function:
-/// 1. Creates a mint quote for the total amount
+/// 1. Creates a mint quote for the total amount with NUT-20
 /// 2. Waits for the quote to be paid
 /// 3. Builds a MintRequest with the provided blinded messages
-/// 4. Signs the request with NUT-20 (if the quote has a secret_key)
+/// 4. Signs the request with NUT-20
 /// 5. Submits the request to the mint
 /// 6. Unblinds the response to get the proofs
 ///
 /// # Arguments
-/// * `wallet` - The wallet to create the quote with
-/// * `mint_connection` - The mint connection to submit the request to
+/// * `mint_connection` - The mint connection to use
+/// * `unit` - The currency unit for the quote
 /// * `blinded_messages` - The deterministic blinded messages to mint
 /// * `secrets_with_blinding` - The secrets and blinding factors for unblinding
 /// * `keyset_keys` - The mint's public keys for the keyset
@@ -503,8 +527,8 @@ impl MintConnection for DirectMintConnection {
 /// # Returns
 /// The unblinded proofs
 async fn mint_deterministic_outputs(
-    wallet: &Wallet,
     mint_connection: &dyn MintConnection,
+    unit: CurrencyUnit,
     blinded_messages: Vec<cdk::nuts::BlindedMessage>,
     secrets_with_blinding: Vec<deterministic::DeterministicSecretWithBlinding>,
     keyset_keys: &cdk::nuts::Keys,
@@ -514,15 +538,26 @@ async fn mint_deterministic_outputs(
 
     println!("   Creating quote for {} sats ({} outputs)...", total_amount, blinded_messages.len());
 
-    // Create mint quote (NUT-20 enabled by default)
-    let quote = wallet.mint_quote(cdk::Amount::from(total_amount), None).await?;
-    println!("   Created quote with NUT-20: {}", quote.id);
+    // Generate NUT-20 keypair for the quote
+    let secret_key = SecretKey::generate();
+    let pubkey = secret_key.public_key();
+
+    // Create mint quote with NUT-20
+    let quote_request = MintQuoteBolt11Request {
+        amount: cdk::Amount::from(total_amount),
+        unit,
+        description: None,
+        pubkey: Some(pubkey),
+    };
+
+    let quote = mint_connection.post_mint_quote(quote_request).await?;
+    println!("   Created quote with NUT-20: {}", quote.quote);
 
     // Poll for quote to be paid
     println!("   Waiting for quote to be paid...");
-    let quote_id = quote.id.clone();
+    let quote_id = quote.quote.clone();
     loop {
-        let quote_status = wallet.mint_quote_state(&quote_id).await?;
+        let quote_status = mint_connection.get_mint_quote_status(&quote_id).await?;
         if quote_status.state == cdk_common::MintQuoteState::Paid {
             println!("   ✓ Quote paid!");
             break;
@@ -534,17 +569,15 @@ async fn mint_deterministic_outputs(
     // Create MintRequest with the deterministic blinded messages
     println!("   Creating MintRequest with {} outputs...", blinded_messages.len());
     let mut mint_request = MintRequest {
-        quote: quote.id.clone(),
+        quote: quote_id.clone(),
         outputs: blinded_messages,
         signature: None,
     };
 
-    // Sign the request with NUT-20 (using the secret_key from the quote)
-    if let Some(secret_key) = &quote.secret_key {
-        println!("   Signing MintRequest with NUT-20...");
-        mint_request.sign(secret_key.clone())?;
-        println!("   ✓ MintRequest signed");
-    }
+    // Sign the request with NUT-20
+    println!("   Signing MintRequest with NUT-20...");
+    mint_request.sign(secret_key)?;
+    println!("   ✓ MintRequest signed");
 
     // Submit the signed MintRequest to the mint
     println!("   Submitting MintRequest to mint...");
@@ -802,8 +835,8 @@ async fn main() -> anyhow::Result<()> {
     println!("\n🪙 Minting funding token directly...");
 
     let funding_proofs = mint_deterministic_outputs(
-        &alice_wallet,
         &*mint_connection,
+        channel_unit.clone(),
         funding_blinded_messages.clone(),
         funding_secrets_with_blinding,
         &set_of_active_keys.keys,
