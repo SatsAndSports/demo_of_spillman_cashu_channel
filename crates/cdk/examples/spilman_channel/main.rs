@@ -518,9 +518,18 @@ async fn mint_deterministic_outputs(
     let quote = wallet.mint_quote(cdk::Amount::from(total_amount), None).await?;
     println!("   Created quote with NUT-20: {}", quote.id);
 
-    // Wait for FakeWallet to pay the quote
+    // Poll for quote to be paid
     println!("   Waiting for quote to be paid...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let quote_id = quote.id.clone();
+    loop {
+        let quote_status = wallet.mint_quote_state(&quote_id).await?;
+        if quote_status.state == cdk_common::MintQuoteState::Paid {
+            println!("   ✓ Quote paid!");
+            break;
+        }
+        println!("   Polling... quote not yet paid (state: {:?})", quote_status.state);
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
 
     // Create MintRequest with the deterministic blinded messages
     println!("   Creating MintRequest with {} outputs...", blinded_messages.len());
