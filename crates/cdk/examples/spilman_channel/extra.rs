@@ -16,11 +16,11 @@ pub struct InverseFeeResult {
     pub actual_balance: u64,
 }
 
-/// Get the list of amounts that sum to the target amount
-/// Uses a greedy algorithm: goes through amounts from largest to smallest
-/// Returns the list in descending order (largest first)
+/// Select amounts from the keyset to reach a target value
+/// Uses a largest-first greedy algorithm to minimize the number of outputs
+/// Returns amounts in a BTreeMap which can be iterated smallest-first or largest-first
 /// Returns an error if the target amount cannot be represented
-pub fn amounts_for_target_largest_first(
+pub fn select_amounts_to_reach_a_target(
     amounts_in_keyset: &[u64],
     target: u64,
 ) -> anyhow::Result<OrderedListOfAmounts> {
@@ -33,7 +33,8 @@ pub fn amounts_for_target_largest_first(
     let mut remaining = target;
     let mut count_by_amount = BTreeMap::new();
 
-    // Greedy algorithm: use largest amounts first (already sorted in our data member)
+    // Greedy algorithm: use largest amounts first to minimize number of outputs
+    // (The outputs will be ordered smallest-first when sent, per Cashu protocol)
     for &amount in amounts_in_keyset {
         let mut count = 0;
         while remaining >= amount {
@@ -59,8 +60,8 @@ pub fn amounts_for_target_largest_first(
 
 /// An ordered list of amounts that sum to a target value
 ///
-/// Created by the greedy algorithm in amounts_for_target_largest_first.
-/// The amounts are sorted largest-first.
+/// Created by the greedy algorithm in select_amounts_to_reach_a_target.
+/// The amounts are stored in a BTreeMap (sorted by key).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedListOfAmounts {
     amounts: Vec<u64>,
@@ -97,6 +98,13 @@ impl OrderedListOfAmounts {
     /// Returns an iterator over (&amount, &count) pairs in descending order by amount
     pub fn iter_largest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
         self.count_by_amount.iter().rev()
+    }
+
+    /// Iterate over the count map in normal order (smallest-first)
+    /// Returns an iterator over (&amount, &count) pairs in ascending order by amount
+    /// This is the recommended order for Cashu protocol outputs
+    pub fn iter_smallest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
+        self.count_by_amount.iter()
     }
 }
 
@@ -270,7 +278,7 @@ impl SetOfDeterministicOutputs {
         amount: u64,
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
-        let ordered_amounts = amounts_for_target_largest_first(amounts_in_keyset, amount)?;
+        let ordered_amounts = select_amounts_to_reach_a_target(amounts_in_keyset, amount)?;
 
         Ok(Self {
             context,
@@ -293,6 +301,7 @@ impl SetOfDeterministicOutputs {
     /// Get the secrets with blinding for these outputs
     /// Works for all contexts: "sender", "receiver", and "funding"
     /// Returns full DeterministicSecretWithBlinding objects (secret + blinding factor)
+    /// Outputs are ordered smallest-first per Cashu protocol recommendation
     pub fn get_secrets_with_blinding(&self, params: &SpilmanChannelParameters) -> Result<Vec<super::deterministic::DeterministicSecretWithBlinding>, anyhow::Error> {
         if self.amount == 0 {
             return Ok(vec![]);
@@ -300,8 +309,8 @@ impl SetOfDeterministicOutputs {
 
         let mut outputs = Vec::new();
 
-        // Use iter_largest_first to track index per amount
-        for (&single_amount, &count) in self.ordered_amounts.iter_largest_first() {
+        // Use iter_smallest_first to track index per amount (Cashu protocol recommendation)
+        for (&single_amount, &count) in self.ordered_amounts.iter_smallest_first() {
             for index in 0..count {
                 let det_output = params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
                 outputs.push(det_output);
@@ -313,12 +322,13 @@ impl SetOfDeterministicOutputs {
 
     /// Get the blinded messages for these outputs
     /// Works for all contexts: "sender", "receiver", and "funding"
+    /// Outputs are ordered smallest-first per Cashu protocol recommendation
     pub fn get_blinded_messages(&self, params: &SpilmanChannelParameters) -> Result<Vec<BlindedMessage>, anyhow::Error> {
-        // Get the secrets with blinding factors
+        // Get the secrets with blinding factors (already in smallest-first order)
         let secrets = self.get_secrets_with_blinding(params)?;
 
-        // Build parallel vector of amounts in the same order as the secrets
-        let amounts: Vec<u64> = self.ordered_amounts.iter_largest_first()
+        // Build parallel vector of amounts in the same order as the secrets (smallest-first)
+        let amounts: Vec<u64> = self.ordered_amounts.iter_smallest_first()
             .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
             .collect();
 
@@ -354,12 +364,12 @@ impl KeysetInfo {
         }
     }
 
-    /// Get the list of amounts that sum to the target amount
-    /// Uses a greedy algorithm: goes through amounts from largest to smallest
-    /// Returns the list in descending order (largest first)
+    /// Select amounts from the keyset to reach a target value
+    /// Uses a largest-first greedy algorithm to minimize the number of outputs
+    /// Returns amounts in a BTreeMap which can be iterated smallest-first or largest-first
     /// Returns an error if the target amount cannot be represented
-    pub fn amounts_for_target_largest_first(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
-        amounts_for_target_largest_first(&self.amounts_in_this_keyset_largest_first, target)
+    pub fn select_amounts_to_reach_a_target(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
+        select_amounts_to_reach_a_target(&self.amounts_in_this_keyset_largest_first, target)
     }
 
     /// Calculate the value after stage 2 fees for a given nominal value
@@ -377,7 +387,7 @@ impl KeysetInfo {
         }
 
         // Get the number of outputs needed to represent this nominal value
-        let amounts = self.amounts_for_target_largest_first(nominal_value)?;
+        let amounts = self.select_amounts_to_reach_a_target(nominal_value)?;
         let num_outputs = amounts.len() as u64;
 
         // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
@@ -555,7 +565,7 @@ mod tests {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
 
         // Test a specific example: 42 = 32 + 8 + 2
-        let amounts = extra.keyset_info.amounts_for_target_largest_first(42).unwrap();
+        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(42).unwrap();
         let count_map = amounts.count_by_amount();
 
         // Should have 1×32, 1×8, 1×2
@@ -564,12 +574,12 @@ mod tests {
         assert_eq!(count_map.get(&2), Some(&1));
         assert_eq!(count_map.len(), 3);
 
-        // Verify reversed iteration gives us largest-to-smallest
-        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
-        assert_eq!(reversed, vec![(32, 1), (8, 1), (2, 1)]);
+        // Verify forward iteration gives us smallest-to-largest (BTreeMap natural order)
+        let forward: Vec<(u64, usize)> = count_map.iter().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(forward, vec![(2, 1), (8, 1), (32, 1)]);
 
         // Test another: 15 = 8 + 4 + 2 + 1
-        let amounts = extra.keyset_info.amounts_for_target_largest_first(15).unwrap();
+        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(15).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
@@ -577,19 +587,19 @@ mod tests {
         assert_eq!(count_map.get(&1), Some(&1));
         assert_eq!(count_map.len(), 4);
 
-        // Verify reversed iteration
-        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
-        assert_eq!(reversed, vec![(8, 1), (4, 1), (2, 1), (1, 1)]);
+        // Verify forward iteration (smallest-first)
+        let forward: Vec<(u64, usize)> = count_map.iter().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1), (8, 1)]);
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
-        let amounts = extra.keyset_info.amounts_for_target_largest_first(7).unwrap();
+        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(7).unwrap();
         let count_map = amounts.count_by_amount();
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
         assert_eq!(count_map.get(&1), Some(&1));
 
-        let reversed: Vec<(u64, usize)> = count_map.iter().rev().map(|(&k, &v)| (k, v)).collect();
-        assert_eq!(reversed, vec![(4, 1), (2, 1), (1, 1)]);
+        let forward: Vec<(u64, usize)> = count_map.iter().map(|(&k, &v)| (k, v)).collect();
+        assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1)]);
     }
 
     #[test]
