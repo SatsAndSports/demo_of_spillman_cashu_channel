@@ -883,10 +883,9 @@ async fn main() -> anyhow::Result<()> {
     // 10. CHECK FUNDING TOKEN STATE (should be UNSPENT)
     println!("\n🔍 Checking funding token state (NUT-07)...");
     let state_before = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
-    let state_info = &state_before.states[0];
-    println!("   Funding token state: {:?}", state_info.state);
-    if state_info.state != cdk::nuts::State::Unspent {
-        anyhow::bail!("Funding token should be UNSPENT but is {:?}", state_info.state);
+    println!("   Funding token state: {:?}", state_before.state);
+    if state_before.state != cdk::nuts::State::Unspent {
+        anyhow::bail!("Funding token should be UNSPENT but is {:?}", state_before.state);
     }
     println!("   ✓ Funding token is unspent and ready for commitment transaction");
 
@@ -955,10 +954,9 @@ async fn main() -> anyhow::Result<()> {
     // Check funding token state after swap (should be SPENT)
     println!("\n🔍 Checking funding token state after swap (NUT-07)...");
     let state_after = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
-    let state_info_after = &state_after.states[0];
-    println!("   Funding token state: {:?}", state_info_after.state);
-    if state_info_after.state != cdk::nuts::State::Spent {
-        println!("   ⚠ WARNING: Expected SPENT but got {:?}", state_info_after.state);
+    println!("   Funding token state: {:?}", state_after.state);
+    if state_after.state != cdk::nuts::State::Spent {
+        println!("   ⚠ WARNING: Expected SPENT but got {:?}", state_after.state);
     } else {
         println!("   ✓ Funding token has been spent (commitment transaction executed)");
     }
