@@ -484,6 +484,80 @@ impl MintConnection for DirectMintConnection {
     }
 }
 
+/// Mint deterministic outputs directly using NUT-20 signed MintRequest
+///
+/// This helper function:
+/// 1. Creates a mint quote for the total amount
+/// 2. Waits for the quote to be paid
+/// 3. Builds a MintRequest with the provided blinded messages
+/// 4. Signs the request with NUT-20 (if the quote has a secret_key)
+/// 5. Submits the request to the mint
+/// 6. Unblinds the response to get the proofs
+///
+/// # Arguments
+/// * `wallet` - The wallet to create the quote with
+/// * `mint_connection` - The mint connection to submit the request to
+/// * `blinded_messages` - The deterministic blinded messages to mint
+/// * `secrets_with_blinding` - The secrets and blinding factors for unblinding
+/// * `keyset_keys` - The mint's public keys for the keyset
+///
+/// # Returns
+/// The unblinded proofs
+async fn mint_deterministic_outputs(
+    wallet: &Wallet,
+    mint_connection: &dyn MintConnection,
+    blinded_messages: Vec<cdk::nuts::BlindedMessage>,
+    secrets_with_blinding: Vec<deterministic::DeterministicSecretWithBlinding>,
+    keyset_keys: &cdk::nuts::Keys,
+) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
+    // Calculate total amount
+    let total_amount: u64 = blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum();
+
+    println!("   Creating quote for {} sats ({} outputs)...", total_amount, blinded_messages.len());
+
+    // Create mint quote (NUT-20 enabled by default)
+    let quote = wallet.mint_quote(cdk::Amount::from(total_amount), None).await?;
+    println!("   Created quote with NUT-20: {}", quote.id);
+
+    // Wait for FakeWallet to pay the quote
+    println!("   Waiting for quote to be paid...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+    // Create MintRequest with the deterministic blinded messages
+    println!("   Creating MintRequest with {} outputs...", blinded_messages.len());
+    let mut mint_request = MintRequest {
+        quote: quote.id.clone(),
+        outputs: blinded_messages,
+        signature: None,
+    };
+
+    // Sign the request with NUT-20 (using the secret_key from the quote)
+    if let Some(secret_key) = &quote.secret_key {
+        println!("   Signing MintRequest with NUT-20...");
+        mint_request.sign(secret_key.clone())?;
+        println!("   ✓ MintRequest signed");
+    }
+
+    // Submit the signed MintRequest to the mint
+    println!("   Submitting MintRequest to mint...");
+    let mint_response = mint_connection.post_mint(mint_request).await?;
+
+    println!("   ✓ Received {} blind signature(s)", mint_response.signatures.len());
+
+    // Unblind to get the proofs
+    let proofs = cdk::dhke::construct_proofs(
+        mint_response.signatures,
+        secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect(),
+        secrets_with_blinding.iter().map(|s| s.secret.clone()).collect(),
+        keyset_keys,
+    )?;
+
+    let total: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
+    println!("   ✓ Unblinded {} proofs totaling {} sats", proofs.len(), total);
+
+    Ok(proofs)
+}
+
 /// Verify that the mint supports all required capabilities for Spilman channels
 ///
 /// Required: NUT-07 (token state check), NUT-09 (restore signatures),
@@ -726,45 +800,14 @@ async fn main() -> anyhow::Result<()> {
     // 8. MINT THE FUNDING TOKEN DIRECTLY (using NUT-20 signed MintRequest)
     println!("\n🪙 Minting funding token directly...");
 
-    // Create mint quote for the funding token amount
-    let funding_quote = alice_wallet.mint_quote(cdk::Amount::from(total_output_value), None).await?;
-    println!("   Created quote with NUT-20: {}", funding_quote.id);
-
-    // Wait for FakeWallet to pay the quote
-    println!("   Waiting for quote to be paid...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-
-    // Create MintRequest with the funding deterministic blinded messages
-    println!("   Creating MintRequest with {} funding outputs...", funding_blinded_messages.len());
-    let mut funding_mint_request = MintRequest {
-        quote: funding_quote.id.clone(),
-        outputs: funding_blinded_messages.clone(),
-        signature: None,
-    };
-
-    // Sign the request with NUT-20 (using the secret_key from the quote)
-    if let Some(secret_key) = &funding_quote.secret_key {
-        println!("   Signing MintRequest with NUT-20...");
-        funding_mint_request.sign(secret_key.clone())?;
-        println!("   ✓ MintRequest signed");
-    }
-
-    // Submit the signed MintRequest to the mint
-    println!("   Submitting MintRequest to mint...");
-    let funding_mint_response = mint_connection.post_mint(funding_mint_request).await?;
-
-    println!("   ✓ Received {} blind signature(s)", funding_mint_response.signatures.len());
-
-    // Unblind to get the funding proofs
-    let funding_proofs = cdk::dhke::construct_proofs(
-        funding_mint_response.signatures.clone(),
-        funding_secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect(),
-        funding_secrets_with_blinding.iter().map(|s| s.secret.clone()).collect(),
+    let funding_proofs = mint_deterministic_outputs(
+        &alice_wallet,
+        &*mint_connection,
+        funding_blinded_messages.clone(),
+        funding_secrets_with_blinding,
         &set_of_active_keys.keys,
-    )?;
+    ).await?;
 
-    let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
-    println!("   ✓ Unblinded {} funding token proofs totaling {} sats", funding_proofs.len(), funding_total);
     for (i, proof) in funding_proofs.iter().enumerate() {
         println!("      Proof {}: {} sats", i, u64::from(proof.amount));
     }
