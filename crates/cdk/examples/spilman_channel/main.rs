@@ -782,6 +782,8 @@ async fn main() -> anyhow::Result<()> {
     let sender_nonce = Secret::generate().to_string();
 
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
+    let maximum_amount_for_one_output = 100_000; // 100k sats maximum per output
+
     let channel_params = SpilmanChannelParameters::new(
         alice_pubkey,
         charlie_pubkey,
@@ -793,6 +795,7 @@ async fn main() -> anyhow::Result<()> {
         sender_nonce,
         active_keyset_id,
         input_fee_ppk,
+        maximum_amount_for_one_output,
     )?;
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);

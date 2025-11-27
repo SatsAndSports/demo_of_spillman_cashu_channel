@@ -463,8 +463,17 @@ pub struct SpilmanChannelExtra {
 
 impl SpilmanChannelExtra {
     /// Create new channel extra from parameters and active keys
+    /// Filters out amounts larger than maximum_amount_for_one_output
     pub fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
-        let keyset_info = KeysetInfo::new(active_keys);
+        // Filter out keys with amounts larger than the maximum
+        let filtered_map: std::collections::BTreeMap<_, _> = active_keys
+            .iter()
+            .filter(|(amount, _)| u64::from(**amount) <= params.maximum_amount_for_one_output)
+            .map(|(amount, pubkey)| (*amount, *pubkey))
+            .collect();
+
+        let filtered_keys = Keys::new(filtered_map);
+        let keyset_info = KeysetInfo::new(filtered_keys);
 
         Ok(Self {
             params,
@@ -569,6 +578,7 @@ mod tests {
             "test".to_string(),
             Id::from_bytes(&[0; 8]).unwrap(),
             input_fee_ppk,
+            100_000, // maximum_amount_for_one_output
         )
         .unwrap();
 
