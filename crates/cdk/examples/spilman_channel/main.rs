@@ -116,7 +116,6 @@ impl BalanceUpdateMessage {
         // Reconstruct the unsigned swap request
         let swap_request = commitment_outputs.create_swap_request(
             channel_fixtures.funding_proofs.clone(),
-            &channel_fixtures.extra.params,
         )?;
 
         // Extract the SIG_ALL message from the swap request
@@ -164,6 +163,84 @@ async fn create_wallet_http(mint_url: MintUrl, unit: CurrencyUnit) -> anyhow::Re
         .build()?;
 
     Ok(wallet)
+}
+
+/// Setup mint connection and wallets for both parties
+///
+/// Creates either a local in-process mint or connects to an external mint via HTTP,
+/// creates wallets for both Alice and Charlie, and verifies mint capabilities.
+///
+/// # Arguments
+/// * `mint_url_opt` - Optional mint URL; None creates a local in-process mint
+/// * `unit` - The currency unit to use
+///
+/// # Returns
+/// (MintConnection, Alice's Wallet, Charlie's Wallet, Mint URL string)
+async fn setup_mint_and_wallets_for_demo(
+    mint_url_opt: Option<String>, // None = create local in-process mint
+    unit: CurrencyUnit,
+) -> anyhow::Result<(Box<dyn MintConnection>, Wallet, Wallet, String)> {
+    let (mint_connection, alice, charlie, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
+        println!("🏦 Connecting to external mint at {}...", mint_url_str);
+        let mint_url: MintUrl = mint_url_str.parse()?;
+
+        println!("👩 Setting up Alice's wallet...");
+        let alice = create_wallet_http(mint_url.clone(), unit.clone()).await?;
+
+        println!("👨 Setting up Charlie's wallet...");
+        let charlie = create_wallet_http(mint_url.clone(), unit.clone()).await?;
+
+        let http_mint = HttpMintConnection::new(mint_url);
+        println!("✅ Connected to external mint\n");
+
+        (Box::new(http_mint), alice, charlie, mint_url_str)
+    } else {
+        println!("🏦 Setting up local in-process mint...");
+        let mint = create_local_mint(unit.clone()).await?;
+        println!("✅ Local mint running\n");
+
+        println!("👩 Setting up Alice's wallet...");
+        let alice = create_wallet_local(&mint, unit.clone()).await?;
+
+        println!("👨 Setting up Charlie's wallet...");
+        let charlie = create_wallet_local(&mint, unit.clone()).await?;
+
+        let local_mint = DirectMintConnection::new(mint);
+
+        (Box::new(local_mint), alice, charlie, "local".to_string())
+    };
+
+    // Verify mint capabilities
+    let mint_info = mint_connection.get_mint_info().await?;
+    verify_mint_capabilities(&mint_info)?;
+
+    Ok((mint_connection, alice, charlie, mint_url))
+}
+
+/// Get active keyset information for a unit
+/// Returns (keyset_id, input_fee_ppk, keys)
+async fn get_active_keyset_info(
+    mint_connection: &dyn MintConnection,
+    unit: &CurrencyUnit,
+) -> anyhow::Result<(Id, u64, cdk::nuts::Keys)> {
+    // Get all keysets and their info
+    let all_keysets = mint_connection.get_keys().await?;
+    let keysets_info = mint_connection.get_keysets().await?;
+
+    // Find the active keyset for our unit
+    let active_keyset_info = keysets_info.keysets.iter()
+        .find(|k| k.active && k.unit == *unit)
+        .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", unit))?;
+
+    let active_keyset_id = active_keyset_info.id;
+    let input_fee_ppk = active_keyset_info.input_fee_ppk;
+
+    // Get the actual keys for this keyset
+    let set_of_active_keys = all_keysets.iter()
+        .find(|k| k.id == active_keyset_id)
+        .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
+
+    Ok((active_keyset_id, input_fee_ppk, set_of_active_keys.keys.clone()))
 }
 
 /// Create a local mint with FakeWallet backend for testing
@@ -687,69 +764,22 @@ async fn main() -> anyhow::Result<()> {
     // 2. SETUP INITIAL CHANNEL PARAMETERS
     println!("📋 Setting up Spilman channel parameters...");
 
+    let channel_unit = CurrencyUnit::Sat;
+
+    // 3. CREATE OR CONNECT TO MINT
+    let (mint_connection, alice_wallet, charlie_wallet, mint_url) =
+        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone()).await?;
+
+    // Get active keyset information
+    let (active_keyset_id, input_fee_ppk, active_keys) =
+        get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
+
+    let capacity = 1_000_000;  // Desired channel capacity (maximum Charlie can receive after all fees)
     let setup_timestamp = unix_time();
+    let locktime = setup_timestamp + args.delay_until_refund;
 
     // Generate random sender nonce (created by Alice)
     let sender_nonce = Secret::generate().to_string();
-
-    let channel_unit = CurrencyUnit::Sat;
-    let capacity = 1_000_000;  // Desired channel capacity (maximum Charlie can receive after all fees)
-    let locktime = setup_timestamp + args.delay_until_refund;
-
-    println!("   Desired capacity: {} {:?}", capacity, channel_unit);
-    println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
-
-    // 3. CREATE OR CONNECT TO MINT
-    let (mint_connection, alice_wallet, charlie_wallet, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = args.mint {
-        println!("🏦 Connecting to external mint at {}...", mint_url_str);
-        let mint_url: MintUrl = mint_url_str.parse()?;
-
-        println!("👩 Setting up Alice's wallet...");
-        let alice = create_wallet_http(mint_url.clone(), channel_unit.clone()).await?;
-
-        println!("👨 Setting up Charlie's wallet...");
-        let charlie = create_wallet_http(mint_url.clone(), channel_unit.clone()).await?;
-
-        let http_mint = HttpMintConnection::new(mint_url);
-        println!("✅ Connected to external mint\n");
-
-        (Box::new(http_mint), alice, charlie, mint_url_str)
-    } else {
-        println!("🏦 Setting up local in-process mint...");
-        let mint = create_local_mint(channel_unit.clone()).await?;
-        println!("✅ Local mint running\n");
-
-        println!("👩 Setting up Alice's wallet...");
-        let alice = create_wallet_local(&mint, channel_unit.clone()).await?;
-
-        println!("👨 Setting up Charlie's wallet...");
-        let charlie = create_wallet_local(&mint, channel_unit.clone()).await?;
-
-        let local_mint = DirectMintConnection::new(mint);
-
-        (Box::new(local_mint), alice, charlie, "local".to_string())
-    };
-
-    // Get the mint's public keys and find the active keyset for our unit
-    println!("📦 Getting active keyset from mint...");
-    let all_keysets = mint_connection.get_keys().await?;
-    let keysets_info = mint_connection.get_keysets().await?;
-
-    // Find the active keyset for our unit
-    let active_keyset_info = keysets_info.keysets.iter()
-        .find(|k| k.active && k.unit == channel_unit)
-        .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", channel_unit))?;
-
-    let active_keyset_id = active_keyset_info.id;
-    let input_fee_ppk = active_keyset_info.input_fee_ppk;
-
-    // Get the actual keys for this keyset
-    let set_of_active_keys = all_keysets.iter()
-        .find(|k| k.id == active_keyset_id)
-        .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
-
-    println!("   Using keyset: {}", active_keyset_id);
-    println!("   Input fee: {} ppk\n", input_fee_ppk);
 
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
     let channel_params = SpilmanChannelParameters::new(
@@ -765,49 +795,27 @@ async fn main() -> anyhow::Result<()> {
         input_fee_ppk,
     )?;
 
+    println!("   Desired capacity: {} {:?}", capacity, channel_unit);
+    println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
+    println!("   Using keyset: {}", active_keyset_id);
+    println!("   Input fee: {} ppk\n", input_fee_ppk);
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}\n", channel_params.get_channel_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
-    let channel_extra = SpilmanChannelExtra::new(channel_params, set_of_active_keys.keys.clone())?;
+    let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone())?;
 
-    // Print all amounts in the active keyset
-    println!("   Active keyset amounts: {:?}\n", channel_extra.keyset_info.amounts_in_this_keyset_largest_first);
-
-    // Demo: Show deterministic_value_after_fees for small values
-    println!("💰 Deterministic value after fees (nominal → actual):");
-    for nominal in 0..=16 {
-        match channel_extra.keyset_info.deterministic_value_after_fees(nominal, channel_extra.params.input_fee_ppk) {
-            Ok(actual) => {
-                println!("   {} → {} (fee: {})", nominal, actual, nominal - actual);
-            }
-            Err(e) => {
-                println!("   {} → ERROR: {}", nominal, e);
-            }
-        }
-    }
-    println!();
-
-    // 5. CHECK MINT CAPABILITIES
-    let mint_info = mint_connection.get_mint_info().await?;
-    verify_mint_capabilities(&mint_info)?;
-
-    // 6. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
+    // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
-
-    // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-    let post_stage1_result = channel_extra.keyset_info.inverse_deterministic_value_after_fees(capacity, channel_extra.params.input_fee_ppk)?;
     println!("   Capacity: {} sats", capacity);
-    println!("   Post-stage-1 nominal (after inverse 1): {} sats (actual: {} sats)",
-             post_stage1_result.nominal_value, post_stage1_result.actual_balance);
 
-    // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-    let funding_token_result = channel_extra.keyset_info.inverse_deterministic_value_after_fees(post_stage1_result.nominal_value, channel_extra.params.input_fee_ppk)?;
-    println!("   Funding token nominal (after inverse 2): {} sats (actual: {} sats)",
-             funding_token_result.nominal_value, funding_token_result.actual_balance);
+    let funding_token_nominal = channel_extra.keyset_info.inverse_deterministic_value_after_fees(
+        channel_extra.keyset_info.inverse_deterministic_value_after_fees(capacity, channel_extra.params.input_fee_ppk)?.nominal_value,
+        channel_extra.params.input_fee_ppk
+    )?.nominal_value;
 
-    let funding_token_nominal = funding_token_result.nominal_value;
+    println!("   Funding token nominal: {} sats\n", funding_token_nominal);
 
     // 7. CREATE DETERMINISTIC FUNDING OUTPUTS
     println!("\n🔐 Creating deterministic funding token outputs ({} sats with 2-of-2 multisig)...", funding_token_nominal);
@@ -820,16 +828,21 @@ async fn main() -> anyhow::Result<()> {
         &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
         "funding".to_string(),
         funding_token_nominal,
+        channel_extra.params.clone(),
     )?;
 
     // Get the blinded messages for the funding outputs
-    let funding_blinded_messages = funding_outputs.get_blinded_messages(&channel_extra.params)?;
-    let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding(&channel_extra.params)?;
+    let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
+    let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding()?;
 
     println!("   ✓ Created {} deterministic funding outputs", funding_blinded_messages.len());
 
-    let total_output_value: u64 = funding_blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum();
-    println!("   Total funding output value: {} sats", total_output_value);
+    // Verify that the total output value equals the funding token nominal
+    assert_eq!(
+        funding_blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum::<u64>(),
+        funding_token_nominal,
+        "Total funding output value should equal funding_token_nominal"
+    );
 
     // 8. MINT THE FUNDING TOKEN DIRECTLY (using NUT-20 signed MintRequest)
     println!("\n🪙 Minting funding token directly...");
@@ -839,7 +852,7 @@ async fn main() -> anyhow::Result<()> {
         channel_unit.clone(),
         funding_blinded_messages.clone(),
         funding_secrets_with_blinding,
-        &set_of_active_keys.keys,
+        &active_keys,
     ).await?;
 
     for (i, proof) in funding_proofs.iter().enumerate() {
@@ -905,7 +918,6 @@ async fn main() -> anyhow::Result<()> {
     // Create unsigned swap request
     let mut swap_request = commitment_outputs.create_swap_request(
         channel_fixtures.funding_proofs.clone(),
-        &channel_fixtures.extra.params,
     )?;
     println!("   ✓ Created unsigned swap request");
 
@@ -954,7 +966,6 @@ async fn main() -> anyhow::Result<()> {
     // Restore blind signatures using NUT-09 (demonstrates that deterministic outputs can be recovered)
     println!("\n🔄 Restoring blind signatures from mint (NUT-09)...");
     let restored_signatures = commitment_outputs.restore_all_blind_signatures(
-        &channel_fixtures.extra,
         &*mint_connection,
     ).await?;
     println!("   ✓ Restored {} blind signatures from mint", restored_signatures.len());
@@ -969,7 +980,6 @@ async fn main() -> anyhow::Result<()> {
     // Unblind the signatures to get the commitment proofs
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
         swap_response.signatures,
-        &channel_fixtures.extra.params,
         &channel_fixtures.extra.keyset_info.active_keys,
     )?;
     println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
