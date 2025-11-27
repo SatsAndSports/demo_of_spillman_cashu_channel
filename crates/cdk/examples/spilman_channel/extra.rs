@@ -136,7 +136,7 @@ impl CommitmentOutputs {
     ///
     /// Takes the funding proofs and creates a SwapRequest with:
     /// - Inputs: all funding proofs
-    /// - Outputs: receiver's deterministic outputs followed by sender's deterministic outputs
+    /// - Outputs: all outputs sorted by amount (stable) for privacy
     ///
     /// The swap request is unsigned and needs to be signed by the sender (Alice) before sending
     pub fn create_swap_request(
@@ -150,8 +150,11 @@ impl CommitmentOutputs {
         // Get blinded messages for sender (Alice)
         let sender_outputs = self.sender_outputs.get_blinded_messages(params)?;
 
-        // Concatenate (receiver first, then sender, per NUT-XX spec)
+        // Concatenate (receiver first, then sender)
         outputs.extend(sender_outputs);
+
+        // Sort by amount (stable) for privacy - mixes receiver and sender outputs
+        outputs.sort_by_key(|bm| u64::from(bm.amount));
 
         // Create swap request with all funding proofs as inputs
         Ok(cdk::nuts::SwapRequest::new(funding_proofs, outputs))
@@ -181,32 +184,50 @@ impl CommitmentOutputs {
         let receiver_outputs = self.receiver_outputs.get_secrets_with_blinding(params)?;
         let sender_outputs = self.sender_outputs.get_secrets_with_blinding(params)?;
 
-        // Extract secrets and blinding factors
-        let receiver_secrets: Vec<_> = receiver_outputs.iter().map(|o| o.secret.clone()).collect();
-        let receiver_blinding_factors: Vec<_> = receiver_outputs.iter().map(|o| o.blinding_factor.clone()).collect();
-        let sender_secrets: Vec<_> = sender_outputs.iter().map(|o| o.secret.clone()).collect();
-        let sender_blinding_factors: Vec<_> = sender_outputs.iter().map(|o| o.blinding_factor.clone()).collect();
+        // Create vector with all outputs paired with ownership flag
+        // Format: (DeterministicSecretWithBlinding, is_receiver)
+        let mut all_outputs: Vec<(super::deterministic::DeterministicSecretWithBlinding, bool)> =
+            receiver_outputs.into_iter().map(|o| (o, true)).collect();
 
-        // Split the blind signatures into receiver's and sender's portions
-        let receiver_count = receiver_blinding_factors.len();
-        let receiver_signatures = blind_signatures.iter().take(receiver_count).cloned().collect::<Vec<_>>();
-        let sender_signatures = blind_signatures.iter().skip(receiver_count).cloned().collect::<Vec<_>>();
+        // Extend with sender outputs with flag = false
+        all_outputs.extend(sender_outputs.into_iter().map(|o| (o, false)));
 
-        // Unblind receiver's outputs
-        let receiver_proofs = cdk::dhke::construct_proofs(
-            receiver_signatures,
-            receiver_blinding_factors,
-            receiver_secrets,
+        // Sort by amount (stable) to match create_swap_request ordering
+        all_outputs.sort_by_key(|(output, _)| output.amount);
+
+        // Assert all_outputs has the correct length
+        assert_eq!(all_outputs.len(), blind_signatures.len());
+
+        // Extract secrets and blinding factors in sorted order
+        let sorted_secrets: Vec<_> = all_outputs.iter().map(|(o, _)| o.secret.clone()).collect();
+        let sorted_blinding: Vec<_> = all_outputs.iter().map(|(o, _)| o.blinding_factor.clone()).collect();
+
+        // Assert sorted vectors have the correct length
+        assert_eq!(sorted_secrets.len(), blind_signatures.len());
+        assert_eq!(sorted_blinding.len(), blind_signatures.len());
+
+        // Unblind all proofs in sorted order
+        let all_proofs = cdk::dhke::construct_proofs(
+            blind_signatures,
+            sorted_blinding,
+            sorted_secrets,
             active_keys,
         )?;
 
-        // Unblind sender's outputs
-        let sender_proofs = cdk::dhke::construct_proofs(
-            sender_signatures,
-            sender_blinding_factors,
-            sender_secrets,
-            active_keys,
-        )?;
+        // Assert result has the correct length
+        assert_eq!(all_proofs.len(), all_outputs.len());
+
+        // Separate proofs back into receiver and sender based on ownership flag
+        let mut receiver_proofs = Vec::new();
+        let mut sender_proofs = Vec::new();
+
+        for (proof, (_, is_receiver)) in all_proofs.into_iter().zip(all_outputs.iter()) {
+            if *is_receiver {
+                receiver_proofs.push(proof);
+            } else {
+                sender_proofs.push(proof);
+            }
+        }
 
         Ok((receiver_proofs, sender_proofs))
     }
@@ -218,8 +239,8 @@ impl CommitmentOutputs {
     /// Since outputs are deterministic, we can recreate the blinded messages
     /// and ask the mint to restore the corresponding blind signatures.
     ///
-    /// Returns the blind signatures in the same order as unblind_all expects:
-    /// receiver signatures first, then sender signatures
+    /// Returns the blind signatures in the same order as create_swap_request:
+    /// sorted by amount (stable) for privacy
     pub async fn restore_all_blind_signatures<M>(
         &self,
         extra: &SpilmanChannelExtra,
@@ -233,6 +254,9 @@ impl CommitmentOutputs {
         let mut all_outputs = self.receiver_outputs.get_blinded_messages(&extra.params)?;
         let sender_outputs = self.sender_outputs.get_blinded_messages(&extra.params)?;
         all_outputs.extend(sender_outputs);
+
+        // Sort by amount (stable) for privacy - matches create_swap_request ordering
+        all_outputs.sort_by_key(|bm| u64::from(bm.amount));
 
         // Create restore request
         let restore_request = RestoreRequest { outputs: all_outputs };
