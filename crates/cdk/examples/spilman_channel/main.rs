@@ -221,6 +221,7 @@ pub trait MintConnection {
     async fn process_swap(&self, swap_request: SwapRequest) -> Result<SwapResponse, Error>;
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error>;
     async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error>;
+    async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error>;
 }
 
 /// HTTP mint wrapper implementing MintConnection
@@ -259,6 +260,10 @@ impl MintConnection for HttpMintConnection {
 
     async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error> {
         self.http_client.post_restore(request).await
+    }
+
+    async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error> {
+        self.http_client.post_mint(request).await
     }
 }
 
@@ -471,6 +476,11 @@ impl MintConnection for DirectMintConnection {
 
     async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error> {
         self.mint.restore(request).await
+    }
+
+    async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error> {
+        let request_id: MintRequest<QuoteId> = request.try_into().unwrap();
+        self.mint.process_mint_request(request_id).await
     }
 }
 
@@ -686,6 +696,61 @@ async fn main() -> anyhow::Result<()> {
     let regular_proofs = proof_stream.next().await.expect("proofs")?;
 
     println!("   ✓ Minted {} sats", mint_amount_sats);
+
+    // 6b. TEST MANUAL MINT (with NUT-20 automatic signing)
+    println!("\n🧪 Testing manual mint with custom BlindedMessages...");
+
+    // Create mint quote (NUT-20 enabled by default)
+    let test_quote = alice_wallet.mint_quote(cdk::Amount::from(64u64), None).await?;
+    println!("   Created quote with NUT-20: {}", test_quote.id);
+
+    // Wait for FakeWallet to pay the quote
+    println!("   Waiting for quote to be paid...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+    // Create one arbitrary blinded message
+    let test_secret = Secret::new(format!("test_manual_{}", Uuid::new_v4()));
+    let test_blinding = SecretKey::generate();
+    let (test_blinded_point, _) = cdk::dhke::blind_message(&test_secret.to_bytes(), Some(test_blinding.clone()))?;
+    let test_blinded_msg = cdk::nuts::BlindedMessage::new(
+        cdk::Amount::from(64u64),
+        channel_extra.params.active_keyset_id,
+        test_blinded_point,
+    );
+
+    println!("   Created arbitrary BlindedMessage for 64 sats");
+
+    // Create MintRequest with custom blinded message
+    println!("   Creating MintRequest...");
+    let mut test_mint_request = MintRequest {
+        quote: test_quote.id.clone(),
+        outputs: vec![test_blinded_msg],
+        signature: None,
+    };
+
+    // Sign the request with NUT-20 (using the secret_key from the quote)
+    if let Some(secret_key) = &test_quote.secret_key {
+        println!("   Signing MintRequest with NUT-20 (secret_key from quote)...");
+        test_mint_request.sign(secret_key.clone())?;
+        println!("   ✓ MintRequest signed");
+    }
+
+    // Submit the signed MintRequest to the mint
+    println!("   Submitting MintRequest to mint...");
+    let manual_mint_response = mint_connection.post_mint(test_mint_request).await?;
+
+    println!("   ✓ Received {} blind signature(s)", manual_mint_response.signatures.len());
+
+    // Unblind to get the proof
+    let manual_proof = cdk::dhke::construct_proofs(
+        vec![manual_mint_response.signatures[0].clone()],
+        vec![test_blinding],
+        vec![test_secret],
+        &set_of_active_keys.keys,
+    )?;
+
+    println!("   ✓ Unblinded proof: {} sats", u64::from(manual_proof[0].amount));
+    println!("   ✅ Manual mint with NUT-20 succeeded!\n");
 
     // 7. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
