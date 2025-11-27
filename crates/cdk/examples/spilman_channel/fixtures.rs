@@ -2,7 +2,7 @@
 //!
 //! Contains the fixed channel components known to both parties
 
-use cdk::nuts::{CheckStateRequest, CheckStateResponse, Proof};
+use cdk::nuts::{CheckStateRequest, Proof};
 
 use super::extra::SpilmanChannelExtra;
 
@@ -81,16 +81,18 @@ impl ChannelFixtures {
     ///
     /// Since all funding proofs are spent together (they're all inputs to the commitment transaction),
     /// checking any one of them is sufficient to determine if the funding token has been spent.
-    /// This method checks the first funding proof and returns the full response.
+    /// This method checks the first funding proof and returns its state.
     ///
-    /// The response will indicate if the funding token is UNSPENT, PENDING, or SPENT.
-    pub async fn check_funding_token_state<M>(&self, mint_connection: &M) -> Result<CheckStateResponse, anyhow::Error>
+    /// Returns the state (UNSPENT, PENDING, or SPENT) of the funding token.
+    pub async fn check_funding_token_state<M>(&self, mint_connection: &M) -> Result<cdk::nuts::ProofState, anyhow::Error>
     where
         M: super::MintConnection + ?Sized,
     {
         let y = self.get_funding_token_y_for_state_check()?;
         let request = CheckStateRequest { ys: vec![y] };
-        Ok(mint_connection.check_state(request).await?)
+        let response = mint_connection.check_state(request).await?;
+        response.states.into_iter().next()
+            .ok_or_else(|| anyhow::anyhow!("No state returned for funding token"))
     }
 
 }
