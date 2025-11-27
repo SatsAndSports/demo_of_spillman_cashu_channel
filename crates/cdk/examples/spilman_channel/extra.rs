@@ -88,18 +88,6 @@ impl OrderedListOfAmounts {
         self.amounts.len()
     }
 
-    /// Get the count map (amount -> number of outputs with that amount)
-    /// Keys are sorted in ascending order (BTreeMap property)
-    pub fn count_by_amount(&self) -> &std::collections::BTreeMap<u64, usize> {
-        &self.count_by_amount
-    }
-
-    /// Iterate over the count map in reverse order (largest-first)
-    /// Returns an iterator over (&amount, &count) pairs in descending order by amount
-    pub fn iter_largest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
-        self.count_by_amount.iter().rev()
-    }
-
     /// Iterate over the count map in normal order (smallest-first)
     /// Returns an iterator over (&amount, &count) pairs in ascending order by amount
     /// This is the recommended order for Cashu protocol outputs
@@ -566,7 +554,7 @@ mod tests {
 
         // Test a specific example: 42 = 32 + 8 + 2
         let amounts = extra.keyset_info.select_amounts_to_reach_a_target(42).unwrap();
-        let count_map = amounts.count_by_amount();
+        let count_map = &amounts.count_by_amount;
 
         // Should have 1×32, 1×8, 1×2
         assert_eq!(count_map.get(&32), Some(&1));
@@ -580,7 +568,7 @@ mod tests {
 
         // Test another: 15 = 8 + 4 + 2 + 1
         let amounts = extra.keyset_info.select_amounts_to_reach_a_target(15).unwrap();
-        let count_map = amounts.count_by_amount();
+        let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
@@ -593,7 +581,7 @@ mod tests {
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
         let amounts = extra.keyset_info.select_amounts_to_reach_a_target(7).unwrap();
-        let count_map = amounts.count_by_amount();
+        let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
         assert_eq!(count_map.get(&1), Some(&1));

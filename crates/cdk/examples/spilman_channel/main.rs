@@ -28,13 +28,12 @@ use cdk::nuts::{
 use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
 use cdk::wallet::{AuthWallet, HttpClient, MintConnector, Wallet, WalletBuilder};
-use cdk::{Error, Mint, StreamExt};
+use cdk::{Error, Mint};
 use cdk_common::mint_url::MintUrl;
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
 use cdk::secret::Secret;
 use clap::Parser;
-use uuid::Uuid;
 
 use params::SpilmanChannelParameters;
 use extra::SpilmanChannelExtra;
