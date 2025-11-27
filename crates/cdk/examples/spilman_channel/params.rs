@@ -137,11 +137,12 @@ impl SpilmanChannelParameters {
                 &self.charlie_pubkey,
                 self.locktime,
                 nonce_and_blinding,
+                amount,
             )
         } else {
             // For sender/receiver contexts, create simple P2PK outputs
             let pubkey = self.get_pubkey_from_commitment_context(context)?;
-            create_deterministic_commitment_output(&pubkey, nonce_and_blinding)
+            create_deterministic_commitment_output(&pubkey, nonce_and_blinding, amount)
         }
     }
 
