@@ -666,8 +666,8 @@ async fn main() -> anyhow::Result<()> {
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
 
-    // 3. CREATE OR CONNECT TO MINT AND GET KEYSET
-    let (mint_connection, alice_wallet, charlie_wallet, active_keyset_id, input_fee_ppk, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, Id, u64, String) = if let Some(mint_url_str) = args.mint {
+    // 3. CREATE OR CONNECT TO MINT
+    let (mint_connection, alice_wallet, charlie_wallet, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = args.mint {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -680,18 +680,7 @@ async fn main() -> anyhow::Result<()> {
         let http_mint = HttpMintConnection::new(mint_url);
         println!("✅ Connected to external mint\n");
 
-        // Get active keyset from mint
-        println!("📦 Getting active keyset from mint...");
-        let keysets = http_mint.get_keysets().await?;
-        let active_keyset_info = keysets.keysets.iter()
-            .find(|k| k.active && k.unit == channel_unit)
-            .expect("No active keyset");
-        let keyset_id = active_keyset_info.id;
-        let fee_ppk = active_keyset_info.input_fee_ppk;
-        println!("   Using keyset: {}\n", keyset_id);
-        println!("   Input fee: {} ppk\n", fee_ppk);
-
-        (Box::new(http_mint), alice, charlie, keyset_id, fee_ppk, mint_url_str)
+        (Box::new(http_mint), alice, charlie, mint_url_str)
     } else {
         println!("🏦 Setting up local in-process mint...");
         let mint = create_local_mint(channel_unit.clone()).await?;
@@ -705,25 +694,29 @@ async fn main() -> anyhow::Result<()> {
 
         let local_mint = DirectMintConnection::new(mint);
 
-        // Get active keyset from mint
-        println!("📦 Getting active keyset from mint...");
-        let keysets = local_mint.get_keysets().await?;
-        let active_keyset_info = keysets.keysets.iter()
-            .find(|k| k.active && k.unit == channel_unit)
-            .expect("No active keyset");
-        let keyset_id = active_keyset_info.id;
-        let fee_ppk = active_keyset_info.input_fee_ppk;
-        println!("   Using keyset: {}\n", keyset_id);
-        println!("   Input fee: {} ppk\n", fee_ppk);
-
-        (Box::new(local_mint), alice, charlie, keyset_id, fee_ppk, "local".to_string())
+        (Box::new(local_mint), alice, charlie, "local".to_string())
     };
 
-    // Get the mint's public keys for the active keyset
+    // Get the mint's public keys and find the active keyset for our unit
+    println!("📦 Getting active keyset from mint...");
     let all_keysets = mint_connection.get_keys().await?;
+    let keysets_info = mint_connection.get_keysets().await?;
+
+    // Find the active keyset for our unit
+    let active_keyset_info = keysets_info.keysets.iter()
+        .find(|k| k.active && k.unit == channel_unit)
+        .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", channel_unit))?;
+
+    let active_keyset_id = active_keyset_info.id;
+    let input_fee_ppk = active_keyset_info.input_fee_ppk;
+
+    // Get the actual keys for this keyset
     let set_of_active_keys = all_keysets.iter()
         .find(|k| k.id == active_keyset_id)
-        .ok_or_else(|| anyhow::anyhow!("Active keyset not found"))?;
+        .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
+
+    println!("   Using keyset: {}", active_keyset_id);
+    println!("   Input fee: {} ppk\n", input_fee_ppk);
 
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
     let channel_params = SpilmanChannelParameters::new(
