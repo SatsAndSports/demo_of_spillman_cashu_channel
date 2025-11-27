@@ -685,74 +685,7 @@ async fn main() -> anyhow::Result<()> {
     let mint_info = mint_connection.get_mint_info().await?;
     verify_mint_capabilities(&mint_info)?;
 
-    // 6. ALICE MINTS REGULAR PROOFS (2x capacity to have plenty)
-    let mint_amount_sats = capacity * 2;
-    println!("💰 Alice minting {} sats as regular proofs (2x capacity)...", mint_amount_sats);
-
-    // Use Alice's wallet to mint
-    let mint_amount = cdk::Amount::from(mint_amount_sats);
-    let quote = alice_wallet.mint_quote(mint_amount, None).await?;
-    let mut proof_stream = alice_wallet.proof_stream(quote, Default::default(), None);
-    let regular_proofs = proof_stream.next().await.expect("proofs")?;
-
-    println!("   ✓ Minted {} sats", mint_amount_sats);
-
-    // 6b. TEST MANUAL MINT (with NUT-20 automatic signing)
-    println!("\n🧪 Testing manual mint with custom BlindedMessages...");
-
-    // Create mint quote (NUT-20 enabled by default)
-    let test_quote = alice_wallet.mint_quote(cdk::Amount::from(64u64), None).await?;
-    println!("   Created quote with NUT-20: {}", test_quote.id);
-
-    // Wait for FakeWallet to pay the quote
-    println!("   Waiting for quote to be paid...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-
-    // Create one arbitrary blinded message
-    let test_secret = Secret::new(format!("test_manual_{}", Uuid::new_v4()));
-    let test_blinding = SecretKey::generate();
-    let (test_blinded_point, _) = cdk::dhke::blind_message(&test_secret.to_bytes(), Some(test_blinding.clone()))?;
-    let test_blinded_msg = cdk::nuts::BlindedMessage::new(
-        cdk::Amount::from(64u64),
-        channel_extra.params.active_keyset_id,
-        test_blinded_point,
-    );
-
-    println!("   Created arbitrary BlindedMessage for 64 sats");
-
-    // Create MintRequest with custom blinded message
-    println!("   Creating MintRequest...");
-    let mut test_mint_request = MintRequest {
-        quote: test_quote.id.clone(),
-        outputs: vec![test_blinded_msg],
-        signature: None,
-    };
-
-    // Sign the request with NUT-20 (using the secret_key from the quote)
-    if let Some(secret_key) = &test_quote.secret_key {
-        println!("   Signing MintRequest with NUT-20 (secret_key from quote)...");
-        test_mint_request.sign(secret_key.clone())?;
-        println!("   ✓ MintRequest signed");
-    }
-
-    // Submit the signed MintRequest to the mint
-    println!("   Submitting MintRequest to mint...");
-    let manual_mint_response = mint_connection.post_mint(test_mint_request).await?;
-
-    println!("   ✓ Received {} blind signature(s)", manual_mint_response.signatures.len());
-
-    // Unblind to get the proof
-    let manual_proof = cdk::dhke::construct_proofs(
-        vec![manual_mint_response.signatures[0].clone()],
-        vec![test_blinding],
-        vec![test_secret],
-        &set_of_active_keys.keys,
-    )?;
-
-    println!("   ✓ Unblinded proof: {} sats", u64::from(manual_proof[0].amount));
-    println!("   ✅ Manual mint with NUT-20 succeeded!\n");
-
-    // 7. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
+    // 6. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
 
     // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
@@ -768,7 +701,7 @@ async fn main() -> anyhow::Result<()> {
 
     let funding_token_nominal = funding_token_result.nominal_value;
 
-    // 8. CREATE DETERMINISTIC FUNDING OUTPUTS
+    // 7. CREATE DETERMINISTIC FUNDING OUTPUTS
     println!("\n🔐 Creating deterministic funding token outputs ({} sats with 2-of-2 multisig)...", funding_token_nominal);
 
     println!("   P2PK conditions: 2-of-2 multisig (Alice + Charlie) before locktime");
@@ -790,136 +723,59 @@ async fn main() -> anyhow::Result<()> {
     let total_output_value: u64 = funding_blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum();
     println!("   Total funding output value: {} sats", total_output_value);
 
-    // 9. SELECT INPUT PROOFS iteratively until we have enough for outputs + fees
-    println!("\n📊 Selecting input proofs to cover outputs + fees...");
+    // 8. MINT THE FUNDING TOKEN DIRECTLY (using NUT-20 signed MintRequest)
+    println!("\n🪙 Minting funding token directly...");
 
-    let mut selected_inputs = Vec::new();
-    let mut input_total = 0u64;
-    let mut fee = 0u64;
+    // Create mint quote for the funding token amount
+    let funding_quote = alice_wallet.mint_quote(cdk::Amount::from(total_output_value), None).await?;
+    println!("   Created quote with NUT-20: {}", funding_quote.id);
 
-    for proof in &regular_proofs {
-        selected_inputs.push(proof.clone());
-        input_total += u64::from(proof.amount);
+    // Wait for FakeWallet to pay the quote
+    println!("   Waiting for quote to be paid...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-        let num_inputs = selected_inputs.len();
-        fee = (channel_extra.params.input_fee_ppk * num_inputs as u64 + 999) / 1000;
-
-        if input_total >= total_output_value + fee {
-            break;
-        }
-    }
-
-    println!("   Selected {} input proofs totaling {} sats", selected_inputs.len(), input_total);
-    println!("   Expected fee: {} sats", fee);
-
-    let change = input_total - total_output_value - fee;
-    println!("   Change: {} sats", change);
-
-    // 10. CREATE CHANGE OUTPUTS
-    println!("\n💵 Creating change outputs...");
-
-    let change_amounts_list = if change > 0 {
-        extra::amounts_for_target_largest_first(
-            &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
-            change
-        )?
-    } else {
-        extra::OrderedListOfAmounts::new(std::collections::BTreeMap::new())
+    // Create MintRequest with the funding deterministic blinded messages
+    println!("   Creating MintRequest with {} funding outputs...", funding_blinded_messages.len());
+    let mut funding_mint_request = MintRequest {
+        quote: funding_quote.id.clone(),
+        outputs: funding_blinded_messages.clone(),
+        signature: None,
     };
 
-    let change_amounts: Vec<u64> = change_amounts_list.iter_largest_first()
-        .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
-        .collect();
-
-    println!("   Change amounts: {:?}", change_amounts);
-
-    // Create random blinded messages for change
-    let mut change_blinded_messages = Vec::new();
-    let mut change_secrets = Vec::new();
-    let mut change_blinding_factors = Vec::new();
-
-    for &amount in &change_amounts {
-        let secret = Secret::new(format!("change_{}", Uuid::new_v4()));
-        let blinding_factor = SecretKey::generate();
-
-        let (blinded_point, _) = cdk::dhke::blind_message(&secret.to_bytes(), Some(blinding_factor.clone()))?;
-        let blinded_message = cdk::nuts::BlindedMessage::new(
-            cdk::Amount::from(amount),
-            channel_extra.params.active_keyset_id,
-            blinded_point,
-        );
-
-        change_blinded_messages.push(blinded_message);
-        change_secrets.push(secret);
-        change_blinding_factors.push(blinding_factor);
+    // Sign the request with NUT-20 (using the secret_key from the quote)
+    if let Some(secret_key) = &funding_quote.secret_key {
+        println!("   Signing MintRequest with NUT-20...");
+        funding_mint_request.sign(secret_key.clone())?;
+        println!("   ✓ MintRequest signed");
     }
 
-    println!("   ✓ Created {} change outputs", change_blinded_messages.len());
+    // Submit the signed MintRequest to the mint
+    println!("   Submitting MintRequest to mint...");
+    let funding_mint_response = mint_connection.post_mint(funding_mint_request).await?;
 
-    // 11. BUILD MANUAL SWAP REQUEST
-    println!("\n🔄 Building manual swap request...");
+    println!("   ✓ Received {} blind signature(s)", funding_mint_response.signatures.len());
 
-    // Combine funding outputs + change outputs
-    let mut all_outputs = funding_blinded_messages.clone();
-    all_outputs.extend(change_blinded_messages.clone());
-
-    let total_all_outputs: u64 = all_outputs.iter().map(|bm| u64::from(bm.amount)).sum();
-    println!("   Total inputs: {} sats ({} proofs)", input_total, selected_inputs.len());
-    println!("   Total outputs: {} sats ({} outputs: {} funding + {} change)",
-             total_all_outputs, all_outputs.len(),
-             funding_blinded_messages.len(), change_blinded_messages.len());
-    println!("   Fee: {} sats", fee);
-
-    // Verify the equation
-    if input_total != total_all_outputs + fee {
-        anyhow::bail!(
-            "Input/output mismatch: {} inputs ≠ {} outputs + {} fee",
-            input_total, total_all_outputs, fee
-        );
-    }
-
-    println!("   ✓ Equation verified: {} = {} + {}", input_total, total_all_outputs, fee);
-
-    // Create the swap request (no signatures needed - regular proofs)
-    let swap_request = SwapRequest::new(selected_inputs.clone(), all_outputs);
-
-    println!("\n🔄 Submitting swap to mint...");
-    let swap_response = mint_connection.process_swap(swap_request).await?;
-
-    println!("   ✓ Received {} blind signatures", swap_response.signatures.len());
-
-    // 12. UNBLIND THE RESPONSES
-    println!("\n🔓 Unblinding signatures...");
-
-    // Unblind funding token signatures
+    // Unblind to get the funding proofs
     let funding_proofs = cdk::dhke::construct_proofs(
-        swap_response.signatures[0..funding_blinded_messages.len()].to_vec(),
+        funding_mint_response.signatures.clone(),
         funding_secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect(),
         funding_secrets_with_blinding.iter().map(|s| s.secret.clone()).collect(),
         &set_of_active_keys.keys,
     )?;
 
-    let p2pk_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
-    println!("   ✓ Unblinded {} funding token proofs totaling {} sats", funding_proofs.len(), p2pk_total);
-
-    // Unblind change signatures (if any)
-    if !change_blinded_messages.is_empty() {
-        let change_proofs = cdk::dhke::construct_proofs(
-            swap_response.signatures[funding_blinded_messages.len()..].to_vec(),
-            change_blinding_factors,
-            change_secrets,
-            &set_of_active_keys.keys,
-        )?;
-
-        let change_total: u64 = change_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        println!("   ✓ Unblinded {} change proofs totaling {} sats", change_proofs.len(), change_total);
+    let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    println!("   ✓ Unblinded {} funding token proofs totaling {} sats", funding_proofs.len(), funding_total);
+    for (i, proof) in funding_proofs.iter().enumerate() {
+        println!("      Proof {}: {} sats", i, u64::from(proof.amount));
     }
+    println!("   ✅ Funding token minted directly!\n");
 
+    // Use the minted funding token as the P2PK proofs for the channel
     let p2pk_proofs = funding_proofs;
 
     println!("\n✅ Deterministic funding token created!");
 
-    // 13. CREATE CHANNEL FIXTURES
+    // 9. CREATE CHANNEL FIXTURES
     println!("\n📦 Creating channel fixtures...");
 
     let channel_fixtures = ChannelFixtures::new(
@@ -934,7 +790,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n✅ Channel fixtures created!");
 
-    // 9. CHECK FUNDING TOKEN STATE (should be UNSPENT)
+    // 10. CHECK FUNDING TOKEN STATE (should be UNSPENT)
     println!("\n🔍 Checking funding token state (NUT-07)...");
     let state_before = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
     let state_info = &state_before.states[0];
@@ -944,7 +800,7 @@ async fn main() -> anyhow::Result<()> {
     }
     println!("   ✓ Funding token is unspent and ready for commitment transaction");
 
-    // 10. CREATE COMMITMENT TRANSACTION AND SWAP
+    // 11. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_balance = 100_000u64; // Charlie gets 100,000 sats
     println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
 
