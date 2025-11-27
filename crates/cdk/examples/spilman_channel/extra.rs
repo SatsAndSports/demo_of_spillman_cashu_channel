@@ -107,6 +107,8 @@ pub struct SetOfDeterministicOutputs {
     pub amount: u64,
     /// The breakdown of amounts (largest-first)
     pub ordered_amounts: OrderedListOfAmounts,
+    /// Channel parameters
+    pub params: SpilmanChannelParameters,
 }
 
 /// Commitment outputs for a specific balance distribution
@@ -142,13 +144,12 @@ impl CommitmentOutputs {
     pub fn create_swap_request(
         &self,
         funding_proofs: Vec<cdk::nuts::Proof>,
-        params: &SpilmanChannelParameters,
     ) -> Result<cdk::nuts::SwapRequest, anyhow::Error> {
         // Get blinded messages for receiver (Charlie)
-        let mut outputs = self.receiver_outputs.get_blinded_messages(params)?;
+        let mut outputs = self.receiver_outputs.get_blinded_messages()?;
 
         // Get blinded messages for sender (Alice)
-        let sender_outputs = self.sender_outputs.get_blinded_messages(params)?;
+        let sender_outputs = self.sender_outputs.get_blinded_messages()?;
 
         // Concatenate (receiver first, then sender)
         outputs.extend(sender_outputs);
@@ -167,7 +168,6 @@ impl CommitmentOutputs {
     pub fn unblind_all(
         &self,
         blind_signatures: Vec<cdk::nuts::BlindSignature>,
-        params: &SpilmanChannelParameters,
         active_keys: &cdk::nuts::Keys,
     ) -> Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>), anyhow::Error> {
         // Assert the number of signatures matches the expected number of outputs
@@ -181,8 +181,8 @@ impl CommitmentOutputs {
         }
 
         // Get outputs for receiver and sender
-        let receiver_outputs = self.receiver_outputs.get_secrets_with_blinding(params)?;
-        let sender_outputs = self.sender_outputs.get_secrets_with_blinding(params)?;
+        let receiver_outputs = self.receiver_outputs.get_secrets_with_blinding()?;
+        let sender_outputs = self.sender_outputs.get_secrets_with_blinding()?;
 
         // Create vector with all outputs paired with ownership flag
         // Format: (DeterministicSecretWithBlinding, is_receiver)
@@ -243,7 +243,6 @@ impl CommitmentOutputs {
     /// sorted by amount (stable) for privacy
     pub async fn restore_all_blind_signatures<M>(
         &self,
-        extra: &SpilmanChannelExtra,
         mint_connection: &M,
     ) -> Result<Vec<BlindSignature>, anyhow::Error>
     where
@@ -251,8 +250,8 @@ impl CommitmentOutputs {
     {
         // Get all blinded messages in the same order as create_swap_request
         // (receiver first, then sender)
-        let mut all_outputs = self.receiver_outputs.get_blinded_messages(&extra.params)?;
-        let sender_outputs = self.sender_outputs.get_blinded_messages(&extra.params)?;
+        let mut all_outputs = self.receiver_outputs.get_blinded_messages()?;
+        let sender_outputs = self.sender_outputs.get_blinded_messages()?;
         all_outputs.extend(sender_outputs);
 
         // Sort by amount (stable) for privacy - matches create_swap_request ordering
@@ -288,6 +287,7 @@ impl SetOfDeterministicOutputs {
         amounts_in_keyset: &[u64],
         context: String,
         amount: u64,
+        params: SpilmanChannelParameters,
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = select_amounts_to_reach_a_target(amounts_in_keyset, amount)?;
@@ -296,6 +296,7 @@ impl SetOfDeterministicOutputs {
             context,
             amount,
             ordered_amounts,
+            params,
         })
     }
 
@@ -314,7 +315,7 @@ impl SetOfDeterministicOutputs {
     /// Works for all contexts: "sender", "receiver", and "funding"
     /// Returns full DeterministicSecretWithBlinding objects (secret + blinding factor)
     /// Outputs are ordered smallest-first per Cashu protocol recommendation
-    pub fn get_secrets_with_blinding(&self, params: &SpilmanChannelParameters) -> Result<Vec<super::deterministic::DeterministicSecretWithBlinding>, anyhow::Error> {
+    pub fn get_secrets_with_blinding(&self) -> Result<Vec<super::deterministic::DeterministicSecretWithBlinding>, anyhow::Error> {
         if self.amount == 0 {
             return Ok(vec![]);
         }
@@ -324,7 +325,7 @@ impl SetOfDeterministicOutputs {
         // Use iter_smallest_first to track index per amount (Cashu protocol recommendation)
         for (&single_amount, &count) in self.ordered_amounts.iter_smallest_first() {
             for index in 0..count {
-                let det_output = params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
+                let det_output = self.params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
                 outputs.push(det_output);
             }
         }
@@ -335,9 +336,9 @@ impl SetOfDeterministicOutputs {
     /// Get the blinded messages for these outputs
     /// Works for all contexts: "sender", "receiver", and "funding"
     /// Outputs are ordered smallest-first per Cashu protocol recommendation
-    pub fn get_blinded_messages(&self, params: &SpilmanChannelParameters) -> Result<Vec<BlindedMessage>, anyhow::Error> {
+    pub fn get_blinded_messages(&self) -> Result<Vec<BlindedMessage>, anyhow::Error> {
         // Get the secrets with blinding factors (already in smallest-first order)
-        let secrets = self.get_secrets_with_blinding(params)?;
+        let secrets = self.get_secrets_with_blinding()?;
 
         // Build parallel vector of amounts in the same order as the secrets (smallest-first)
         let amounts: Vec<u64> = self.ordered_amounts.iter_smallest_first()
@@ -346,7 +347,7 @@ impl SetOfDeterministicOutputs {
 
         // Convert each secret to a blinded message
         secrets.iter().zip(amounts.iter())
-            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), params.active_keyset_id))
+            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), self.params.active_keyset_id))
             .collect()
     }
 }
@@ -513,6 +514,7 @@ impl SpilmanChannelExtra {
             &self.keyset_info.amounts_in_this_keyset_largest_first,
             "receiver".to_string(),
             charlie_nominal,
+            self.params.clone(),
         )?;
 
         // Create outputs for Alice (sender)
@@ -520,6 +522,7 @@ impl SpilmanChannelExtra {
             &self.keyset_info.amounts_in_this_keyset_largest_first,
             "sender".to_string(),
             alice_nominal,
+            self.params.clone(),
         )?;
 
         Ok(CommitmentOutputs::new(charlie_outputs, alice_outputs))
