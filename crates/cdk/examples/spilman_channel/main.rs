@@ -899,6 +899,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Submit the signed swap request to the mint
     println!("\n🔄 Submitting swap to mint...");
+    let swap_output_amounts: Vec<u64> = swap_request.outputs().iter().map(|bm| u64::from(bm.amount)).collect();
+    println!("   Swap output amounts: {:?}", swap_output_amounts);
     let swap_response = mint_connection.process_swap(swap_request).await?;
     println!("   ✓ Mint processed swap successfully!");
     println!("   Received {} blind signatures", swap_response.signatures.len());
