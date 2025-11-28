@@ -189,9 +189,6 @@ async fn create_and_mint_funding_token(
     mint_connection: &dyn MintConnection,
     active_keys: &cdk::nuts::Keys,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
-    println!("\n🔐 Creating deterministic funding token outputs ({} sats with 2-of-2 multisig)...", funding_token_nominal);
-    println!("   P2PK conditions: 2-of-2 multisig (Alice + Charlie) before locktime");
-    println!("   After locktime: Alice can refund with just her signature");
 
     // Create deterministic outputs for the funding token
     let funding_outputs = extra::SetOfDeterministicOutputs::new(
@@ -215,7 +212,7 @@ async fn create_and_mint_funding_token(
     );
 
     // Mint the funding token directly (using NUT-20 signed MintRequest)
-    println!("\n🪙 Minting funding token directly...");
+    println!("\n🪙 Minting funding token, via those deterministic funding token outputs ...");
 
     let funding_proofs = mint_deterministic_outputs(
         mint_connection,
@@ -224,11 +221,6 @@ async fn create_and_mint_funding_token(
         funding_secrets_with_blinding,
         active_keys,
     ).await?;
-
-    for (i, proof) in funding_proofs.iter().enumerate() {
-        println!("      Proof {}: {} sats", i, u64::from(proof.amount));
-    }
-    println!("   ✅ Funding token minted directly!\n");
 
     Ok(funding_proofs)
 }
@@ -638,10 +630,8 @@ async fn mint_deterministic_outputs(
     };
 
     let quote = mint_connection.post_mint_quote(quote_request).await?;
-    println!("   Created quote with NUT-20: {}", quote.quote);
 
     // Poll for quote to be paid
-    println!("   Waiting for quote to be paid...");
     let quote_id = quote.quote.clone();
     loop {
         let quote_status = mint_connection.get_mint_quote_status(&quote_id).await?;
@@ -654,17 +644,14 @@ async fn mint_deterministic_outputs(
     }
 
     // Create MintRequest with the deterministic blinded messages
-    println!("   Creating MintRequest with {} outputs...", blinded_messages.len());
     let mut mint_request = MintRequest {
         quote: quote_id.clone(),
         outputs: blinded_messages,
         signature: None,
     };
 
-    // Sign the request with NUT-20
-    println!("   Signing MintRequest with NUT-20...");
+    // Sign the mint request with NUT-20
     mint_request.sign(secret_key)?;
-    println!("   ✓ MintRequest signed");
 
     // Submit the signed MintRequest to the mint
     println!("   Submitting MintRequest to mint...");
@@ -762,14 +749,10 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // 1. GENERATE KEYS FOR ALICE AND CHARLIE
-    println!("🔑 Generating keypairs...");
     let alice_secret = SecretKey::generate();
     let alice_pubkey = alice_secret.public_key();
-    println!("   Alice pubkey: {}", alice_pubkey);
-
     let charlie_secret = SecretKey::generate();
     let charlie_pubkey = charlie_secret.public_key();
-    println!("   Charlie pubkey:   {}\n", charlie_pubkey);
 
     // 2. SETUP INITIAL CHANNEL PARAMETERS
     println!("📋 Setting up Spilman channel parameters...");
@@ -810,22 +793,20 @@ async fn main() -> anyhow::Result<()> {
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
-    println!("   Using keyset: {}", active_keyset_id);
-    println!("   Input fee: {} ppk\n", input_fee_ppk);
+    println!("   Input fee: {} ppk", input_fee_ppk);
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
-    println!("   Channel ID: {}\n", channel_params.get_channel_id());
+    println!("   Channel ID: {}", channel_params.get_channel_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
     let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone())?;
 
     // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
-    println!("   Capacity: {} sats", capacity);
 
     let funding_token_nominal = channel_extra.get_total_funding_token_amount()?;
 
-    println!("   Funding token nominal: {} sats\n", funding_token_nominal);
+    println!("   Capacity: {} sats   Funding token nominal: {} sats", capacity, funding_token_nominal);
 
     // 7. CREATE AND MINT FUNDING TOKEN
     let funding_proofs = create_and_mint_funding_token(
@@ -838,14 +819,11 @@ async fn main() -> anyhow::Result<()> {
     println!("\n✅ Deterministic funding token created!");
 
     // 9. CREATE CHANNEL FIXTURES
-    println!("\n📦 Creating channel fixtures...");
 
     let channel_fixtures = ChannelFixtures::new(
         channel_extra,
         funding_proofs,
     )?;
-
-    println!("\n✅ Channel fixtures created!");
 
     // 10. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_intended_balance = 100_000u64;
@@ -855,7 +833,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Get the amount available after stage 1 fees
     let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
-    println!("   Amount after stage 1 fees: {} sats", amount_after_stage1);
 
     // Create commitment outputs for this balance
     let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
@@ -882,7 +859,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Alice signs first (as the sender/funder)
     swap_request.sign_sig_all(alice_secret.clone())?;
-    println!("   ✓ Alice signed the swap request");
 
     // Create a balance update message (this is what Alice would send to Charlie off-chain)
     let balance_update = BalanceUpdateMessage::from_signed_swap_request(
@@ -890,10 +866,7 @@ async fn main() -> anyhow::Result<()> {
         charlie_balance,
         &swap_request,
     )?;
-    println!("   ✓ Created off-chain balance update message");
-    println!("      Channel: {}", balance_update.channel_id);
-    println!("      Amount: {} sats", balance_update.amount);
-    println!("      Signature: {}", balance_update.signature);
+    println!("   ✓ Created off-chain balance update message, with Alice's signature");
 
     // Charlie verifies Alice's signature before adding his own
     balance_update.verify_sender_signature(&channel_fixtures)?;
@@ -923,7 +896,6 @@ async fn main() -> anyhow::Result<()> {
     let restored_signatures = commitment_outputs.restore_all_blind_signatures(
         &*mint_connection,
     ).await?;
-    println!("   ✓ Restored {} blind signatures from mint", restored_signatures.len());
 
     // Verify that restored signatures match the original signatures from the swap
     assert_eq!(
@@ -944,7 +916,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
     let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
-    println!("   Charlie received: {} sats", charlie_received_amount);
+
+    // Alice receives her proofs (wallet will sign and swap to remove P2PK)
+    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
+    println!("   Charlie received: {} sats   Alice received: {} sats", charlie_received_amount, alice_received_amount);
 
     // Assert that Charlie's received amount matches the de facto balance
     assert_eq!(
@@ -952,10 +927,6 @@ async fn main() -> anyhow::Result<()> {
         "Charlie's received amount ({}) should match the de facto balance ({})",
         charlie_received_amount, charlie_balance
     );
-
-    // Alice receives her proofs (wallet will sign and swap to remove P2PK)
-    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
-    println!("   Alice received: {} sats", alice_received_amount);
 
     println!("\n✅ Commitment transaction completed and proofs distributed!");
 
