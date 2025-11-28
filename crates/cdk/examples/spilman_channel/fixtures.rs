@@ -14,15 +14,10 @@ pub struct ChannelFixtures {
     pub extra: SpilmanChannelExtra,
     /// Locked proofs (2-of-2 multisig with locktime refund)
     pub funding_proofs: Vec<Proof>,
-    /// Total raw value of the locked proofs in the base unit
-    pub total_locked_value: u64,
-    /// Total input fee in sats for the locked proofs (rounded up from ppk)
-    pub total_input_fee: u64,
 }
 
 impl ChannelFixtures {
     /// Create new channel fixtures
-    /// Calculates total input fee from the locked proofs
     pub fn new(
         extra: SpilmanChannelExtra,
         funding_proofs: Vec<Proof>,
@@ -39,31 +34,24 @@ impl ChannelFixtures {
             }
         }
 
-        // Calculate total raw value of the locked proofs
-        let total_locked_value: u64 = funding_proofs.iter()
+        // Assert the total value of funding proofs matches the expected funding token amount
+        let actual_funding_value: u64 = funding_proofs.iter()
             .map(|proof| u64::from(proof.amount))
             .sum();
+        let expected_funding_value = extra.get_total_funding_token_amount()?;
 
-        // Calculate total input fee using the fee formula
-        // Since all proofs have the same keyset_id, we can simply multiply:
-        // total_fee_sats = (input_fee_ppk * num_proofs + 999) / 1000  (rounds up)
-        let num_proofs = funding_proofs.len() as u64;
-        let sum_fees_ppk = extra.params.input_fee_ppk * num_proofs;
-        let total_input_fee = (sum_fees_ppk + 999) / 1000;
+        if actual_funding_value != expected_funding_value {
+            anyhow::bail!(
+                "Funding proofs total value {} does not match expected funding token amount {}",
+                actual_funding_value,
+                expected_funding_value
+            );
+        }
 
         Ok(Self {
             extra,
             funding_proofs,
-            total_locked_value,
-            total_input_fee,
         })
-    }
-
-    /// Get the nominal value available after stage 1 fees
-    /// This is the amount that will be distributed as deterministic outputs
-    /// Returns: total_locked_value - total_input_fee
-    pub fn post_fee_amount_in_the_funding_token(&self) -> u64 {
-        self.total_locked_value - self.total_input_fee
     }
 
     /// Get the Y value for checking the funding token state
