@@ -233,6 +233,26 @@ async fn create_and_mint_funding_token(
     Ok(funding_proofs)
 }
 
+/// Receive proofs into a wallet with P2PK signing
+///
+/// The wallet will automatically sign and swap the proofs to remove P2PK conditions.
+/// Returns the amount received in the base unit.
+async fn receive_proofs_into_wallet(
+    wallet: &Wallet,
+    proofs: Vec<cdk::nuts::Proof>,
+    secret_key: cdk::nuts::SecretKey,
+) -> anyhow::Result<u64> {
+    let receive_opts = cdk::wallet::ReceiveOptions {
+        amount_split_target: cdk::amount::SplitTarget::default(),
+        p2pk_signing_keys: vec![secret_key],
+        preimages: vec![],
+        metadata: std::collections::HashMap::new(),
+    };
+
+    let received_amount = wallet.receive_proofs(proofs, receive_opts, None).await?;
+    Ok(u64::from(received_amount))
+}
+
 /// Create a local mint with FakeWallet backend for testing
 async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
     let mint_store = Arc::new(cdk_sqlite::mint::memory::empty().await?);
@@ -883,11 +903,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Submit the signed swap request to the mint
     println!("\n🔄 Submitting swap to mint...");
-    let swap_output_amounts: Vec<u64> = swap_request.outputs().iter().map(|bm| u64::from(bm.amount)).collect();
-    println!("   Swap output amounts: {:?}", swap_output_amounts);
     let swap_response = mint_connection.process_swap(swap_request).await?;
     println!("   ✓ Mint processed swap successfully!");
-    println!("   Received {} blind signatures", swap_response.signatures.len());
 
     // Check funding token state after swap (should be SPENT)
     println!("\n🔍 Checking funding token state after swap (NUT-07)...");
@@ -924,24 +941,12 @@ async fn main() -> anyhow::Result<()> {
     println!("\n💰 Receiving proofs into wallets...");
 
     // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
-    let charlie_receive_opts = cdk::wallet::ReceiveOptions {
-        amount_split_target: cdk::amount::SplitTarget::default(),
-        p2pk_signing_keys: vec![charlie_secret.clone()],
-        preimages: vec![],
-        metadata: std::collections::HashMap::new(),
-    };
-    let charlie_received_amount = charlie_wallet.receive_proofs(charlie_proofs, charlie_receive_opts, None).await?;
-    println!("   Charlie received: {} sats", u64::from(charlie_received_amount));
+    let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
+    println!("   Charlie received: {} sats", charlie_received_amount);
 
     // Alice receives her proofs (wallet will sign and swap to remove P2PK)
-    let alice_receive_opts = cdk::wallet::ReceiveOptions {
-        amount_split_target: cdk::amount::SplitTarget::default(),
-        p2pk_signing_keys: vec![alice_secret.clone()],
-        preimages: vec![],
-        metadata: std::collections::HashMap::new(),
-    };
-    let alice_received_amount = alice_wallet.receive_proofs(alice_proofs, alice_receive_opts, None).await?;
-    println!("   Alice received: {} sats", u64::from(alice_received_amount));
+    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
+    println!("   Alice received: {} sats", alice_received_amount);
 
     println!("\n✅ Commitment transaction completed and proofs distributed!");
 
