@@ -881,9 +881,6 @@ async fn main() -> anyhow::Result<()> {
         &active_keys,
     ).await?;
 
-    // Use the minted funding token as the P2PK proofs for the channel
-    let p2pk_proofs = funding_proofs;
-
     println!("\n✅ Deterministic funding token created!");
 
     // 9. CREATE CHANNEL FIXTURES
@@ -891,23 +888,12 @@ async fn main() -> anyhow::Result<()> {
 
     let channel_fixtures = ChannelFixtures::new(
         channel_extra,
-        p2pk_proofs,
+        funding_proofs,
     )?;
-
-    println!("   Channel capacity: {} sats", channel_fixtures.extra.params.get_capacity());
 
     println!("\n✅ Channel fixtures created!");
 
-    // 10. CHECK FUNDING TOKEN STATE (should be UNSPENT)
-    println!("\n🔍 Checking funding token state (NUT-07)...");
-    let state_before = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
-    println!("   Funding token state: {:?}", state_before.state);
-    if state_before.state != cdk::nuts::State::Unspent {
-        anyhow::bail!("Funding token should be UNSPENT but is {:?}", state_before.state);
-    }
-    println!("   ✓ Funding token is unspent and ready for commitment transaction");
-
-    // 11. CREATE COMMITMENT TRANSACTION AND SWAP
+    // 10. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_balance = 100_000u64; // Charlie gets 100,000 sats
     println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
 
@@ -921,8 +907,8 @@ async fn main() -> anyhow::Result<()> {
         amount_after_stage1,
     )?;
     println!("   ✓ Created deterministic outputs for both parties");
-    let charlie_final = commitment_outputs.receiver_outputs.value_after_fees(channel_fixtures.extra.params.input_fee_ppk)?;
-    let alice_final = commitment_outputs.sender_outputs.value_after_fees(channel_fixtures.extra.params.input_fee_ppk)?;
+    let charlie_final = commitment_outputs.receiver_outputs.value_after_fees()?;
+    let alice_final = commitment_outputs.sender_outputs.value_after_fees()?;
     println!("      Charlie: {} sats nominal → {} proofs → {} sats final",
         commitment_outputs.receiver_outputs.amount,
         commitment_outputs.receiver_outputs.ordered_amounts.len(),
