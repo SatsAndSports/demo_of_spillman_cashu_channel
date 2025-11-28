@@ -813,10 +813,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\n💡 Calculating exact funding token size using double inverse...");
     println!("   Capacity: {} sats", capacity);
 
-    let funding_token_nominal = channel_extra.keyset_info.inverse_deterministic_value_after_fees(
-        channel_extra.keyset_info.inverse_deterministic_value_after_fees(capacity, channel_extra.params.input_fee_ppk)?.nominal_value,
-        channel_extra.params.input_fee_ppk
-    )?.nominal_value;
+    let funding_token_nominal = channel_extra.get_total_funding_token_amount()?;
 
     println!("   Funding token nominal: {} sats\n", funding_token_nominal);
 
