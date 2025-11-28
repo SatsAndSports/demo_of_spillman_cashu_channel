@@ -6,7 +6,7 @@ use bitcoin::secp256k1::schnorr::Signature;
 use cdk::nuts::nut10::SpendingConditionVerification;
 use cdk::nuts::SwapRequest;
 
-use super::fixtures::ChannelFixtures;
+use super::established_channel::EstablishedChannel;
 
 /// A balance update message from Alice to Charlie
 ///
@@ -49,29 +49,29 @@ impl BalanceUpdateMessage {
         })
     }
 
-    /// Verify the signature using the channel fixtures
+    /// Verify the signature using the established channel
     /// Charlie reconstructs the swap request from the amount to verify the signature
     /// Throws an error if the signature is invalid
-    pub fn verify_sender_signature(&self, channel_fixtures: &ChannelFixtures) -> Result<(), anyhow::Error> {
+    pub fn verify_sender_signature(&self, channel: &EstablishedChannel) -> Result<(), anyhow::Error> {
         // Get the amount available after stage 1 fees
-        let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
+        let amount_after_stage1 = channel.extra.get_value_after_stage1()?;
 
         // Reconstruct the commitment outputs for this balance
-        let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
+        let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
             self.amount,
             amount_after_stage1,
         )?;
 
         // Reconstruct the unsigned swap request
         let swap_request = commitment_outputs.create_swap_request(
-            channel_fixtures.funding_proofs.clone(),
+            channel.funding_proofs.clone(),
         )?;
 
         // Extract the SIG_ALL message from the swap request
         let msg_to_sign = swap_request.sig_all_msg_to_sign();
 
         // Verify the signature using Alice's pubkey from channel params
-        channel_fixtures.extra.params.alice_pubkey
+        channel.extra.params.alice_pubkey
             .verify(msg_to_sign.as_bytes(), &self.signature)
             .map_err(|_| anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update"))?;
 

@@ -6,7 +6,7 @@
 mod deterministic;
 mod params;
 mod extra;
-mod fixtures;
+mod established_channel;
 mod balance_update;
 
 use std::collections::{HashMap, HashSet};
@@ -38,7 +38,7 @@ use clap::Parser;
 
 use params::SpilmanChannelParameters;
 use extra::SpilmanChannelExtra;
-use fixtures::ChannelFixtures;
+use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
 /// Extract signatures from the first proof's witness in a swap request
@@ -820,7 +820,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 9. CREATE CHANNEL FIXTURES
 
-    let channel_fixtures = ChannelFixtures::new(
+    let channel_fixtures = EstablishedChannel::new(
         channel_extra,
         funding_proofs,
     )?;
