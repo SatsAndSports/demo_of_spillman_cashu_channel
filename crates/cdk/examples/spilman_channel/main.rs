@@ -105,7 +105,7 @@ impl BalanceUpdateMessage {
     /// Throws an error if the signature is invalid
     fn verify_sender_signature(&self, channel_fixtures: &ChannelFixtures) -> Result<(), anyhow::Error> {
         // Get the amount available after stage 1 fees
-        let amount_after_stage1 = channel_fixtures.post_fee_amount_in_the_funding_token();
+        let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
 
         // Reconstruct the commitment outputs for this balance
         let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
@@ -894,9 +894,6 @@ async fn main() -> anyhow::Result<()> {
         p2pk_proofs,
     )?;
 
-    println!("   Total locked value: {} sats", channel_fixtures.total_locked_value);
-    println!("   Total input fee: {} sats", channel_fixtures.total_input_fee);
-    println!("   Post-fee value: {} sats", channel_fixtures.post_fee_amount_in_the_funding_token());
     println!("   Channel capacity: {} sats", channel_fixtures.extra.params.get_capacity());
 
     println!("\n✅ Channel fixtures created!");
@@ -915,7 +912,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
 
     // Get the amount available after stage 1 fees
-    let amount_after_stage1 = channel_fixtures.post_fee_amount_in_the_funding_token();
+    let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
     println!("   Amount after stage 1 fees: {} sats", amount_after_stage1);
 
     // Create commitment outputs for this balance
