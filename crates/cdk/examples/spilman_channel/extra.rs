@@ -302,9 +302,9 @@ impl SetOfDeterministicOutputs {
 
     /// Calculate the value after stage 2 fees
     /// Takes the nominal amount and subtracts the fees for spending these outputs
-    pub fn value_after_fees(&self, input_fee_ppk: u64) -> anyhow::Result<u64> {
+    pub fn value_after_fees(&self) -> anyhow::Result<u64> {
         let num_outputs = self.ordered_amounts.len() as u64;
-        let fees_ppk = input_fee_ppk * num_outputs;
+        let fees_ppk = self.params.input_fee_ppk * num_outputs;
         let fee = (fees_ppk + 999) / 1000;
 
         Ok(self.amount - fee)
