@@ -481,6 +481,31 @@ impl SpilmanChannelExtra {
         })
     }
 
+    /// Get the total funding token amount using double inverse
+    ///
+    /// Applies the inverse fee calculation twice:
+    /// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
+    /// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+    ///
+    /// Returns the nominal value needed for the funding token
+    pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
+        // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
+        let post_stage1_result = self.keyset_info.inverse_deterministic_value_after_fees(
+            self.params.capacity,
+            self.params.input_fee_ppk
+        )?;
+        let post_stage1_nominal = post_stage1_result.nominal_value;
+
+        // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+        let funding_token_result = self.keyset_info.inverse_deterministic_value_after_fees(
+            post_stage1_nominal,
+            self.params.input_fee_ppk
+        )?;
+        let funding_token_nominal = funding_token_result.nominal_value;
+
+        Ok(funding_token_nominal)
+    }
+
     /// Create two sets of deterministic outputs for a given receiver balance
     ///
     /// Given the receiver's (Charlie's) desired final balance, this creates:
