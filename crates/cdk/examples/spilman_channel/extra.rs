@@ -520,6 +520,33 @@ impl SpilmanChannelExtra {
         Ok(funding_token_nominal)
     }
 
+    /// Compute the actual de facto balance from an intended balance
+    ///
+    /// Due to output denomination constraints and fee rounding, the actual balance
+    /// that can be created may differ slightly from the intended balance.
+    ///
+    /// This method:
+    /// 1. Applies inverse to find the nominal value needed for the intended balance
+    /// 2. Applies deterministic_value to that nominal to get the actual de facto balance
+    ///
+    /// Returns the actual balance that will be created
+    pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
+        // Apply inverse to get nominal value needed
+        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(
+            intended_balance,
+            self.params.input_fee_ppk
+        )?;
+        let nominal_value = inverse_result.nominal_value;
+
+        // Apply deterministic_value to get actual balance
+        let actual_balance = self.keyset_info.deterministic_value_after_fees(
+            nominal_value,
+            self.params.input_fee_ppk
+        )?;
+
+        Ok(actual_balance)
+    }
+
     /// Create two sets of deterministic outputs for a given receiver balance
     ///
     /// Given the receiver's (Charlie's) desired final balance, this creates:
