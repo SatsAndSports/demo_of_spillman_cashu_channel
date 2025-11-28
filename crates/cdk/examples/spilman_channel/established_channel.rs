@@ -1,23 +1,23 @@
-//! Spilman Channel Fixtures
+//! Established Spilman Channel
 //!
-//! Contains the fixed channel components known to both parties
+//! Contains the complete channel state after funding
 
 use cdk::nuts::{CheckStateRequest, Proof};
 
 use super::extra::SpilmanChannelExtra;
 
-/// Fixed channel components known to both parties
-/// These are established at channel creation and never change
+/// An established Spilman payment channel
+/// Contains all channel components after funding transaction is complete
 #[derive(Debug, Clone)]
-pub struct ChannelFixtures {
+pub struct EstablishedChannel {
     /// Channel parameters plus mint-specific data
     pub extra: SpilmanChannelExtra,
     /// Locked proofs (2-of-2 multisig with locktime refund)
     pub funding_proofs: Vec<Proof>,
 }
 
-impl ChannelFixtures {
-    /// Create new channel fixtures
+impl EstablishedChannel {
+    /// Create new established channel
     pub fn new(
         extra: SpilmanChannelExtra,
         funding_proofs: Vec<Proof>,
