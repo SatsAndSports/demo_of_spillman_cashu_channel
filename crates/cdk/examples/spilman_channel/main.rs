@@ -848,8 +848,10 @@ async fn main() -> anyhow::Result<()> {
     println!("\n✅ Channel fixtures created!");
 
     // 10. CREATE COMMITMENT TRANSACTION AND SWAP
-    let charlie_balance = 100_000u64; // Charlie gets 100,000 sats
-    println!("\n💱 Creating commitment transaction for balance: {} sats to Charlie...", charlie_balance);
+    let charlie_intended_balance = 100_000u64;
+    let charlie_balance = channel_fixtures.extra.get_de_facto_balance(charlie_intended_balance)?;
+    println!("\n💱 Creating commitment transaction for balance: {} sats intended → {} sats de facto for Charlie...",
+             charlie_intended_balance, charlie_balance);
 
     // Get the amount available after stage 1 fees
     let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
@@ -943,6 +945,13 @@ async fn main() -> anyhow::Result<()> {
     // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
     let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
     println!("   Charlie received: {} sats", charlie_received_amount);
+
+    // Assert that Charlie's received amount matches the de facto balance
+    assert_eq!(
+        charlie_received_amount, charlie_balance,
+        "Charlie's received amount ({}) should match the de facto balance ({})",
+        charlie_received_amount, charlie_balance
+    );
 
     // Alice receives her proofs (wallet will sign and swap to remove P2PK)
     let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
