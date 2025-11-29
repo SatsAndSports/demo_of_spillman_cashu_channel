@@ -560,14 +560,15 @@ impl SpilmanChannelExtra {
     ///
     /// Parameters:
     /// - receiver_balance: The desired final balance for the receiver (after stage 2 fees)
-    /// - amount_after_stage1: The nominal value available after stage 1 fees (total_locked_value - stage1_fees)
     ///
     /// Returns CommitmentOutputs containing both receiver and sender outputs
     pub fn create_two_sets_of_outputs_for_balance(
         &self,
         receiver_balance: u64,
-        amount_after_stage1: u64,
     ) -> anyhow::Result<CommitmentOutputs> {
+        // Get the amount available after stage 1 fees
+        let amount_after_stage1 = self.get_value_after_stage1()?;
+
         // Find the nominal value needed for Charlie's deterministic outputs
         let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(receiver_balance, self.params.input_fee_ppk)?;
         let charlie_nominal = inverse_result.nominal_value;
