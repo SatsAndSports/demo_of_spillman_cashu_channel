@@ -660,6 +660,61 @@ mod tests {
         SpilmanChannelExtra::new(params, keys).unwrap()
     }
 
+    /// Helper to receive proofs into both wallets
+    ///
+    /// Checks that each party's proofs will have non-zero value after fees.
+    /// If a party's proofs would be worth 0 after fees, skips receiving for that party
+    /// and returns 0 for their amount.
+    ///
+    /// Returns (charlie_received, alice_received) as a tuple.
+    async fn receive_proofs_for_both_parties(
+        charlie_wallet: &cdk::wallet::Wallet,
+        alice_wallet: &cdk::wallet::Wallet,
+        charlie_proofs: Vec<cdk::nuts::Proof>,
+        alice_proofs: Vec<cdk::nuts::Proof>,
+        charlie_secret: cdk::nuts::SecretKey,
+        alice_secret: cdk::nuts::SecretKey,
+        input_fee_ppk: u64,
+    ) -> anyhow::Result<(u64, u64)> {
+        use crate::receive_proofs_into_wallet;
+
+        // Check Charlie's proofs will be worth something after fees
+        let charlie_nominal: u64 = charlie_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let charlie_fee = ((charlie_proofs.len() as u64) * input_fee_ppk + 999) / 1000;
+        let charlie_after_fee = charlie_nominal.saturating_sub(charlie_fee);
+
+        let charlie_received = if charlie_after_fee == 0 {
+            println!("   ⚠ Skipping Charlie's receive: proofs worth 0 after fees (nominal: {} sats, fee: {} sats)",
+                     charlie_nominal, charlie_fee);
+            0
+        } else {
+            receive_proofs_into_wallet(
+                charlie_wallet,
+                charlie_proofs,
+                charlie_secret,
+            ).await?
+        };
+
+        // Check Alice's proofs will be worth something after fees
+        let alice_nominal: u64 = alice_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let alice_fee = ((alice_proofs.len() as u64) * input_fee_ppk + 999) / 1000;
+        let alice_after_fee = alice_nominal.saturating_sub(alice_fee);
+
+        let alice_received = if alice_after_fee == 0 {
+            println!("   ⚠ Skipping Alice's receive: proofs worth 0 after fees (nominal: {} sats, fee: {} sats)",
+                     alice_nominal, alice_fee);
+            0
+        } else {
+            receive_proofs_into_wallet(
+                alice_wallet,
+                alice_proofs,
+                alice_secret,
+            ).await?
+        };
+
+        Ok((charlie_received, alice_received))
+    }
+
     #[test]
     fn test_count_by_amount() {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
@@ -854,11 +909,24 @@ mod tests {
         ).unwrap();
 
         // 17. Both parties receive their proofs
-        let charlie_received = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret).await.unwrap();
-        let alice_received = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret).await.unwrap();
+        let (charlie_received, alice_received) = receive_proofs_for_both_parties(
+            &charlie_wallet,
+            &alice_wallet,
+            charlie_proofs,
+            alice_proofs,
+            charlie_secret,
+            alice_secret,
+            input_fee_ppk,
+        ).await.unwrap();
 
         // 18. Verify amounts
         assert_eq!(charlie_received, charlie_balance, "Charlie should receive the de facto balance");
+
+        // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
+        let expected_received = channel.extra.get_de_facto_balance(charlie_balance).unwrap();
+        assert_eq!(charlie_received, expected_received,
+            "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
+
         assert!(alice_received > 0, "Alice should receive some amount");
 
         // Total received should equal capacity (minus fees)
@@ -869,5 +937,125 @@ mod tests {
         println!("   Charlie received: {} sats", charlie_received);
         println!("   Alice received: {} sats", alice_received);
         println!("   Total: {} sats (capacity: {})", total_received, capacity);
+    }
+
+    #[tokio::test]
+    async fn test_full_channel_flow_charlie_takes_all() {
+        use cdk::nuts::SecretKey;
+        use cdk::util::unix_time;
+        use crate::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_and_mint_funding_token, receive_proofs_into_wallet};
+        use crate::established_channel::EstablishedChannel;
+        use crate::balance_update::BalanceUpdateMessage;
+
+        // 1. Generate keys for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // 2. Setup mint and wallets
+        let channel_unit = CurrencyUnit::Sat;
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone()).await.unwrap();
+
+        // 3. Get active keyset info
+        let (active_keyset_id, input_fee_ppk, active_keys) =
+            get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+
+        // 4. Create channel parameters - Charlie tries to take entire capacity
+        let capacity = 100_000u64;
+        let locktime = unix_time() + 86400; // 1 day from now
+        let setup_timestamp = unix_time();
+        let sender_nonce = "test_nonce".to_string();
+        let maximum_amount_for_one_output = 100_000u64;
+
+        let channel_params = SpilmanChannelParameters::new(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            channel_unit.clone(),
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce,
+            active_keyset_id,
+            input_fee_ppk,
+            maximum_amount_for_one_output,
+        ).unwrap();
+
+        // 5. Create channel extra
+        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+
+        // 6. Calculate funding token size
+        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+
+        // 7. Create and mint funding token
+        let funding_proofs = create_and_mint_funding_token(
+            &channel_extra,
+            funding_token_nominal,
+            &*mint_connection,
+            &active_keys,
+        ).await.unwrap();
+
+        // 8. Create established channel
+        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+
+        // 9. Create commitment transaction for Charlie to receive ENTIRE capacity
+        let charlie_intended_balance = 100_000u64;  // Same as capacity!
+        let charlie_balance = channel.extra.get_de_facto_balance(charlie_intended_balance).unwrap();
+
+        let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
+            charlie_balance,
+        ).unwrap();
+
+        // 10. Create unsigned swap request
+        let mut swap_request = commitment_outputs.create_swap_request(
+            channel.funding_proofs.clone(),
+        ).unwrap();
+
+        // 11. Alice signs the swap request
+        swap_request.sign_sig_all(alice_secret.clone()).unwrap();
+
+        // 12. Create balance update message
+        let balance_update = BalanceUpdateMessage::from_signed_swap_request(
+            channel.extra.params.get_channel_id(),
+            charlie_balance,
+            &swap_request,
+        ).unwrap();
+
+        // 13. Charlie verifies Alice's signature
+        balance_update.verify_sender_signature(&channel).unwrap();
+
+        // 14. Charlie signs the swap request
+        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
+
+        // 15. Execute the swap
+        let swap_response = mint_connection.process_swap(swap_request.clone()).await.unwrap();
+
+        // 16. Unblind the signatures to get proofs
+        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+            swap_response.signatures,
+            &channel.extra.keyset_info.active_keys,
+        ).unwrap();
+
+        // 17. Both parties receive their proofs
+        // Alice gets effectively 0 sats after fees, so helper will skip her receive
+        let (charlie_received, alice_received) = receive_proofs_for_both_parties(
+            &charlie_wallet,
+            &alice_wallet,
+            charlie_proofs,
+            alice_proofs,
+            charlie_secret,
+            alice_secret,
+            input_fee_ppk,
+        ).await.unwrap();
+
+        // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
+        let expected_received = channel.extra.get_de_facto_balance(charlie_balance).unwrap();
+        assert_eq!(charlie_received, expected_received,
+            "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
+
+        println!("   Charlie received: {} sats", charlie_received);
+        println!("   Alice received: {} sats", alice_received);
     }
 }
