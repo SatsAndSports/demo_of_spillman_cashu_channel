@@ -481,43 +481,51 @@ impl SpilmanChannelExtra {
         })
     }
 
-    /// Get the value available after stage 1 fees
-    ///
-    /// Applies the inverse fee calculation once to the capacity to determine
-    /// the nominal value needed after stage 1 fees (accounting for stage 2 fees).
-    ///
-    /// This represents the total amount that will be distributed between Alice and Charlie
-    /// in the commitment transaction outputs.
-    ///
-    /// Returns the nominal value after stage 1 fees
-    pub fn get_value_after_stage1(&self) -> anyhow::Result<u64> {
-        // Inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let result = self.keyset_info.inverse_deterministic_value_after_fees(
-            self.params.capacity,
-            self.params.input_fee_ppk
-        )?;
-        Ok(result.nominal_value)
-    }
-
     /// Get the total funding token amount using double inverse
     ///
-    /// Applies the inverse fee calculation twice:
+    /// Applies the inverse fee calculation twice to the capacity:
     /// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
     /// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
     ///
     /// Returns the nominal value needed for the funding token
     pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
         // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let post_stage1_nominal = self.get_value_after_stage1()?;
+        let first_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
+            self.params.capacity,
+            self.params.input_fee_ppk
+        )?;
+        let post_stage1_nominal = first_inverse.nominal_value;
 
         // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-        let funding_token_result = self.keyset_info.inverse_deterministic_value_after_fees(
+        let second_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
             post_stage1_nominal,
             self.params.input_fee_ppk
         )?;
-        let funding_token_nominal = funding_token_result.nominal_value;
+        let funding_token_nominal = second_inverse.nominal_value;
 
         Ok(funding_token_nominal)
+    }
+
+    /// Get the value available after stage 1 fees
+    ///
+    /// Takes the funding token nominal and applies the forward fee calculation
+    /// to determine the actual amount available after the swap transaction (stage 1).
+    ///
+    /// This represents the total amount that will be distributed between Alice and Charlie
+    /// in the commitment transaction outputs.
+    ///
+    /// Returns the actual value after stage 1 fees
+    pub fn get_value_after_stage1(&self) -> anyhow::Result<u64> {
+        // Get the funding token nominal
+        let funding_token_nominal = self.get_total_funding_token_amount()?;
+
+        // Apply forward to get actual value after stage 1 fees (spending the funding token)
+        let value_after_stage1 = self.keyset_info.deterministic_value_after_fees(
+            funding_token_nominal,
+            self.params.input_fee_ppk
+        )?;
+
+        Ok(value_after_stage1)
     }
 
     /// Compute the actual de facto balance from an intended balance
