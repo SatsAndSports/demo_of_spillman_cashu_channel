@@ -53,13 +53,9 @@ impl BalanceUpdateMessage {
     /// Charlie reconstructs the swap request from the amount to verify the signature
     /// Throws an error if the signature is invalid
     pub fn verify_sender_signature(&self, channel: &EstablishedChannel) -> Result<(), anyhow::Error> {
-        // Get the amount available after stage 1 fees
-        let amount_after_stage1 = channel.extra.get_value_after_stage1()?;
-
         // Reconstruct the commitment outputs for this balance
         let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
             self.amount,
-            amount_after_stage1,
         )?;
 
         // Reconstruct the unsigned swap request

@@ -831,13 +831,9 @@ async fn main() -> anyhow::Result<()> {
     println!("\n💱 Creating commitment transaction for balance: {} sats intended → {} sats de facto for Charlie...",
              charlie_intended_balance, charlie_balance);
 
-    // Get the amount available after stage 1 fees
-    let amount_after_stage1 = channel_fixtures.extra.get_value_after_stage1()?;
-
     // Create commitment outputs for this balance
     let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
         charlie_balance,
-        amount_after_stage1,
     )?;
     println!("   ✓ Created deterministic outputs for both parties");
     let charlie_final = commitment_outputs.receiver_outputs.value_after_fees()?;
