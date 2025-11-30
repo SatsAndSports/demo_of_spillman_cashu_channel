@@ -573,6 +573,33 @@ pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Get active keyset information for a unit
+///
+/// Returns (keyset_id, input_fee_ppk, keys)
+pub async fn get_active_keyset_info(
+    mint_connection: &dyn MintConnection,
+    unit: &CurrencyUnit,
+) -> anyhow::Result<(Id, u64, cdk::nuts::Keys)> {
+    // Get all keysets and their info
+    let all_keysets = mint_connection.get_keys().await?;
+    let keysets_info = mint_connection.get_keysets().await?;
+
+    // Find the active keyset for our unit
+    let active_keyset_info = keysets_info.keysets.iter()
+        .find(|k| k.active && k.unit == *unit)
+        .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", unit))?;
+
+    let active_keyset_id = active_keyset_info.id;
+    let input_fee_ppk = active_keyset_info.input_fee_ppk;
+
+    // Get the actual keys for this keyset
+    let set_of_active_keys = all_keysets.iter()
+        .find(|k| k.id == active_keyset_id)
+        .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
+
+    Ok((active_keyset_id, input_fee_ppk, set_of_active_keys.keys.clone()))
+}
+
 /// Setup mint and wallets for demo/testing
 ///
 /// Creates either a local in-process mint or connects to an external mint,

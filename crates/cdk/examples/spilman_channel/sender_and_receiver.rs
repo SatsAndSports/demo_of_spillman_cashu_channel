@@ -100,17 +100,8 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let all_keysets = mint_connection.get_keys().await.unwrap();
-        let keysets_info = mint_connection.get_keysets().await.unwrap();
-        let active_keyset_info = keysets_info.keysets.iter()
-            .find(|k| k.active && k.unit == channel_unit)
-            .unwrap();
-        let active_keyset_id = active_keyset_info.id;
-        let input_fee_ppk = active_keyset_info.input_fee_ppk;
-        let active_keys = all_keysets.iter()
-            .find(|k| k.id == active_keyset_id)
-            .unwrap()
-            .keys.clone();
+        let (active_keyset_id, input_fee_ppk, active_keys) =
+            crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters
         let capacity = 100_000u64;
@@ -249,17 +240,8 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let all_keysets = mint_connection.get_keys().await.unwrap();
-        let keysets_info = mint_connection.get_keysets().await.unwrap();
-        let active_keyset_info = keysets_info.keysets.iter()
-            .find(|k| k.active && k.unit == channel_unit)
-            .unwrap();
-        let active_keyset_id = active_keyset_info.id;
-        let input_fee_ppk = active_keyset_info.input_fee_ppk;
-        let active_keys = all_keysets.iter()
-            .find(|k| k.id == active_keyset_id)
-            .unwrap()
-            .keys.clone();
+        let (active_keyset_id, input_fee_ppk, active_keys) =
+            crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters
         let capacity = 100_000u64;
