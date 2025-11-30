@@ -698,3 +698,26 @@ pub async fn create_funding_proofs(
 
     Ok(funding_proofs)
 }
+
+/// Unblind swap signatures to create stage 1 proofs for both parties
+///
+/// Creates commitment outputs for the given balance and unblinds the signatures
+/// to create proofs for both the receiver (Charlie) and sender (Alice) after stage 1.
+///
+/// Returns (receiver_stage1_proofs, sender_stage1_proofs)
+pub fn unblind_commitment_proofs(
+    channel_extra: &crate::extra::SpilmanChannelExtra,
+    balance: u64,
+    signatures: Vec<cdk::nuts::BlindSignature>,
+) -> anyhow::Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>)> {
+    // Create commitment outputs to get the secrets for unblinding
+    let commitment_outputs = channel_extra.create_two_sets_of_outputs_for_balance(balance)?;
+
+    // Unblind the signatures to get the commitment proofs
+    let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(
+        signatures,
+        &channel_extra.keyset_info.active_keys,
+    )?;
+
+    Ok((receiver_stage1_proofs, sender_stage1_proofs))
+}
