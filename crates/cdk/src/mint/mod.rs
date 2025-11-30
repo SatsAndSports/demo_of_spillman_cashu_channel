@@ -993,7 +993,7 @@ mod tests {
         spent_proofs: Proofs,
         seed: &'a [u8],
         mint_info: MintInfo,
-        supported_units: HashMap<CurrencyUnit, (u64, u8)>,
+        supported_units: HashMap<CurrencyUnit, (u64, u8, u64)>,
     }
 
     async fn create_mint(config: MintConfig<'_>) -> Mint {
@@ -1030,7 +1030,7 @@ mod tests {
     #[tokio::test]
     async fn mint_mod_new_mint() {
         let mut supported_units = HashMap::new();
-        supported_units.insert(CurrencyUnit::default(), (0, 32));
+        supported_units.insert(CurrencyUnit::default(), (0, 32, 2));
         let config = MintConfig::<'_> {
             supported_units,
             ..Default::default()
@@ -1059,7 +1059,7 @@ mod tests {
     #[tokio::test]
     async fn mint_mod_rotate_keyset() {
         let mut supported_units = HashMap::new();
-        supported_units.insert(CurrencyUnit::default(), (0, 32));
+        supported_units.insert(CurrencyUnit::default(), (0, 32, 2));
 
         let config = MintConfig::<'_> {
             supported_units,
@@ -1094,7 +1094,7 @@ mod tests {
         )
         .unwrap();
         let mut supported_units = HashMap::new();
-        supported_units.insert(CurrencyUnit::default(), (0, 32));
+        supported_units.insert(CurrencyUnit::default(), (0, 32, 2));
 
         let config = MintConfig::<'_> {
             seed: &seed.to_seed_normalized(""),
@@ -1113,7 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_stop_lifecycle() {
         let mut supported_units = HashMap::new();
-        supported_units.insert(CurrencyUnit::default(), (0, 32));
+        supported_units.insert(CurrencyUnit::default(), (0, 32, 2));
         let config = MintConfig::<'_> {
             supported_units,
             ..Default::default()

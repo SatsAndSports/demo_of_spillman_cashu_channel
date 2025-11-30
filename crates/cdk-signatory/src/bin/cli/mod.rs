@@ -107,7 +107,8 @@ pub async fn cli_main() -> Result<()> {
                 .transpose()?
                 .unwrap_or_default();
             let max_order = parts.pop().map(|x| x.parse()).transpose()?.unwrap_or(32);
-            Ok::<(_, (_, _)), anyhow::Error>((unit, (fee, max_order)))
+            let base = parts.pop().map(|x| x.parse()).transpose()?.unwrap_or(2);
+            Ok::<(_, (_, _, _)), anyhow::Error>((unit, (fee, max_order, base)))
         })
         .collect::<Result<HashMap<_, _>, _>>()?;
 

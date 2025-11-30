@@ -16,7 +16,7 @@ pub async fn init_keysets(
     xpriv: Xpriv,
     secp_ctx: &Secp256k1<All>,
     localstore: &Arc<dyn database::MintKeysDatabase<Err = database::Error> + Send + Sync>,
-    supported_units: &HashMap<CurrencyUnit, (u64, u8)>,
+    supported_units: &HashMap<CurrencyUnit, (u64, u8, u64)>,
     custom_paths: &HashMap<CurrencyUnit, DerivationPath>,
 ) -> Result<(HashMap<Id, MintKeySet>, Vec<CurrencyUnit>), Error> {
     let mut active_keysets: HashMap<Id, MintKeySet> = HashMap::new();
@@ -56,7 +56,7 @@ pub async fn init_keysets(
                 .filter(|ks| ks.derivation_path_index.is_some())
                 .collect();
 
-            if let Some((input_fee_ppk, max_order)) = supported_units.get(&unit) {
+            if let Some((input_fee_ppk, max_order, _base)) = supported_units.get(&unit) {
                 if !keysets.is_empty()
                     && &highest_index_keyset.input_fee_ppk == input_fee_ppk
                     && highest_index_keyset.amounts.len() == (*max_order as usize)
