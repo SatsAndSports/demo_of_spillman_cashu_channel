@@ -553,50 +553,18 @@ pub async fn mint_deterministic_outputs(
 ///           NUT-11 (P2PK), NUT-12 (DLEQ)
 /// Optional: NUT-17 (WebSocket subscriptions)
 pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
-    println!("🔍 Checking mint capabilities...");
+    let nut07 = if mint_info.nuts.nut07.supported { "✓" } else { "✗" };
+    let nut09 = if mint_info.nuts.nut09.supported { "✓" } else { "✗" };
+    let nut11 = if mint_info.nuts.nut11.supported { "✓" } else { "✗" };
+    let nut12 = if mint_info.nuts.nut12.supported { "✓" } else { "✗" };
+    let nut17 = if !mint_info.nuts.nut17.supported.is_empty() { "✓" } else { "⚠" };
 
-    let mut all_required_supported = true;
+    println!("🔍 Mint capabilities: NUT-07:{} NUT-09:{} NUT-11:{} NUT-12:{} NUT-17:{}", nut07, nut09, nut11, nut12, nut17);
 
-    // Check for NUT-07 support (Token state check)
-    if mint_info.nuts.nut07.supported {
-        println!("   ✓ Mint supports NUT-07 (Token state check)");
-    } else {
-        println!("   ✗ Mint does not support NUT-07 (Token state check) - REQUIRED");
-        all_required_supported = false;
-    }
-
-    // Check for NUT-09 support (Restore signatures)
-    if mint_info.nuts.nut09.supported {
-        println!("   ✓ Mint supports NUT-09 (Restore signatures)");
-    } else {
-        println!("   ✗ Mint does not support NUT-09 (Restore signatures) - REQUIRED");
-        all_required_supported = false;
-    }
-
-    // Check for NUT-11 support (P2PK spending conditions)
-    if mint_info.nuts.nut11.supported {
-        println!("   ✓ Mint supports NUT-11 (P2PK spending conditions)");
-    } else {
-        println!("   ✗ Mint does not support NUT-11 (P2PK) - REQUIRED");
-        all_required_supported = false;
-    }
-
-    // Check for NUT-12 support (DLEQ proofs)
-    if mint_info.nuts.nut12.supported {
-        println!("   ✓ Mint supports NUT-12 (DLEQ proofs)");
-    } else {
-        println!("   ✗ Mint does not support NUT-12 (DLEQ proofs) - REQUIRED");
-        all_required_supported = false;
-    }
-
-    // Check for NUT-17 support (WebSocket subscriptions) - optional but beneficial
-    if !mint_info.nuts.nut17.supported.is_empty() {
-        println!("   ✓ Mint supports NUT-17 (WebSocket subscriptions) - beneficial for detecting channel closure");
-    } else {
-        println!("   ⚠ Mint does not support NUT-17 (WebSocket subscriptions) - optional but beneficial");
-    }
-
-    println!();
+    let all_required_supported = mint_info.nuts.nut07.supported
+        && mint_info.nuts.nut09.supported
+        && mint_info.nuts.nut11.supported
+        && mint_info.nuts.nut12.supported;
 
     if !all_required_supported {
         anyhow::bail!("Mint does not support all required capabilities for Spilman channels");
