@@ -181,8 +181,8 @@ mod tests {
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
         // Print swap request details
-        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| p.amount).collect::<Vec<_>>());
-        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| bm.amount).collect::<Vec<_>>());
+        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| u64::from(bm.amount)).collect::<Vec<_>>());
 
         // 13. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
@@ -201,8 +201,8 @@ mod tests {
         println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
                  charlie_proofs.len(), alice_proofs.len());
 
-        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
-        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
 
         // 16. Both parties receive their proofs into wallets
         use crate::test_helpers::receive_proofs_into_wallet;
@@ -313,14 +313,14 @@ mod tests {
         let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
 
         // 9. Test creating a balance update
-        let charlie_intended_balance = 10_000u64;
-        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_intended_balance).unwrap();
+        let charlie_balance = 10_000u64;
+        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_balance).unwrap();
         let (balance_update, mut swap_request) = sender.create_signed_balance_update(
-            charlie_intended_balance
+            charlie_balance
         ).unwrap();
 
         // 10. Verify the balance update has Alice's signature
-        assert_eq!(balance_update.amount, charlie_intended_balance);
+        assert_eq!(balance_update.amount, charlie_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
         // 11. Verify that the signature can be verified against the channel
@@ -330,15 +330,15 @@ mod tests {
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
         // Print swap request details
-        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| p.amount).collect::<Vec<_>>());
-        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| bm.amount).collect::<Vec<_>>());
+        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| u64::from(bm.amount)).collect::<Vec<_>>());
 
         // 13. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
         // 14. Create commitment outputs to get the secrets for unblinding
         let commitment_outputs = sender.channel.extra.create_two_sets_of_outputs_for_balance(
-            charlie_intended_balance
+            charlie_balance,
         ).unwrap();
 
         // 15. Unblind the signatures to get the commitment proofs
@@ -350,8 +350,33 @@ mod tests {
         println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
                  charlie_proofs.len(), alice_proofs.len());
 
-        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
-        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+
+        // Verify that Charlie's proofs total the inverse of the balance
+        // (the nominal value needed to achieve (de facto) charlie_balance after stage1 fees
+        let charlie_total_after_stage1: u64 = charlie_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
+            charlie_balance,
+            sender.channel.extra.params.input_fee_ppk
+        ).unwrap();
+        let expected_nominal = inverse_result.nominal_value;
+        assert_eq!(
+            charlie_total_after_stage1, expected_nominal,
+            "Charlie's proofs should total {} sats (inverse of balance {})", expected_nominal, charlie_balance
+        );
+        println!("   ✓ Charlie's proofs total {} sats (inverse of balance {} sats)", charlie_total_after_stage1, charlie_balance);
+
+        // Verify that Alice's proofs total the remainder after Charlie's allocation
+        let alice_total_after_stage1: u64 = alice_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+        let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
+        assert_eq!(
+            alice_total_after_stage1, expected_alice_total,
+            "Alice's proofs should total {} sats (value after stage1 {} - Charlie's total {})",
+            expected_alice_total, value_after_stage1, charlie_total_after_stage1
+        );
+        println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
 
         // As this is powers-of-3, and the CDK doesn't really support the final
         // wallet.receive_proofs, we just end this test here.
