@@ -180,6 +180,10 @@ mod tests {
         // 12. Charlie can now add his signature
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
+        // Print swap request details
+        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| bm.amount).collect::<Vec<_>>());
+
         // 13. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
@@ -197,21 +201,25 @@ mod tests {
         println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
                  charlie_proofs.len(), alice_proofs.len());
 
+        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+
         // 16. Both parties receive their proofs into wallets
         use crate::test_helpers::receive_proofs_into_wallet;
+        println!("   Charlie receiving proofs...");
         let charlie_received = receive_proofs_into_wallet(
             &charlie_wallet,
             charlie_proofs,
             charlie_secret,
         ).await.unwrap();
+        println!("   Charlie received: {} sats", charlie_received);
 
+        println!("   Alice receiving proofs...");
         let alice_received = receive_proofs_into_wallet(
             &alice_wallet,
             alice_proofs,
             alice_secret,
         ).await.unwrap();
-
-        println!("   Charlie received: {} sats", charlie_received);
         println!("   Alice received: {} sats", alice_received);
 
         // 17. Assert that Charlie's received amount matches the de facto balance
@@ -221,5 +229,132 @@ mod tests {
         );
 
         println!("✅ Full channel flow test passed!");
+    }
+
+    #[tokio::test]
+    async fn test_full_flow_powers_of_3() {
+        use crate::test_helpers::{setup_mint_and_wallets_for_demo, mint_deterministic_outputs};
+
+        // 1. Generate keys for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // 2. Setup mint and wallets
+        let channel_unit = CurrencyUnit::Sat;
+        let input_fee_ppk = 400; // 40% fee for testing
+        let base = 3; // Powers of 2
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
+
+        // 3. Get active keyset info
+        let all_keysets = mint_connection.get_keys().await.unwrap();
+        let keysets_info = mint_connection.get_keysets().await.unwrap();
+        let active_keyset_info = keysets_info.keysets.iter()
+            .find(|k| k.active && k.unit == channel_unit)
+            .unwrap();
+        let active_keyset_id = active_keyset_info.id;
+        let input_fee_ppk = active_keyset_info.input_fee_ppk;
+        let active_keys = all_keysets.iter()
+            .find(|k| k.id == active_keyset_id)
+            .unwrap()
+            .keys.clone();
+
+        // 4. Create channel parameters
+        let capacity = 100_000u64;
+        let locktime = unix_time() + 86400;
+        let setup_timestamp = unix_time();
+        let sender_nonce = "test_nonce".to_string();
+        let maximum_amount_for_one_output = 100_000u64;
+
+        let channel_params = SpilmanChannelParameters::new(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            channel_unit.clone(),
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce,
+            active_keyset_id,
+            input_fee_ppk,
+            maximum_amount_for_one_output,
+        ).unwrap();
+
+        // 5. Create channel extra
+        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+
+        // 6. Calculate funding token size and mint it
+        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+
+        let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
+            &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
+            "funding".to_string(),
+            funding_token_nominal,
+            channel_extra.params.clone(),
+        ).unwrap();
+
+        let funding_blinded_messages = funding_outputs.get_blinded_messages().unwrap();
+        let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding().unwrap();
+
+        let funding_proofs = mint_deterministic_outputs(
+            &*mint_connection,
+            channel_extra.params.unit.clone(),
+            funding_blinded_messages,
+            funding_secrets_with_blinding,
+            &active_keys,
+        ).await.unwrap();
+
+        // 7. Create established channel
+        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+
+        // 8. Create SpilmanChannelSender
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
+
+        // 9. Test creating a balance update
+        let charlie_intended_balance = 10_000u64;
+        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_intended_balance).unwrap();
+        let (balance_update, mut swap_request) = sender.create_signed_balance_update(
+            charlie_intended_balance
+        ).unwrap();
+
+        // 10. Verify the balance update has Alice's signature
+        assert_eq!(balance_update.amount, charlie_intended_balance);
+        assert_eq!(balance_update.channel_id, sender.channel_id());
+
+        // 11. Verify that the signature can be verified against the channel
+        balance_update.verify_sender_signature(&sender.channel).unwrap();
+
+        // 12. Charlie can now add his signature
+        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
+
+        // Print swap request details
+        println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| bm.amount).collect::<Vec<_>>());
+
+        // 13. Execute the swap
+        let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
+
+        // 14. Create commitment outputs to get the secrets for unblinding
+        let commitment_outputs = sender.channel.extra.create_two_sets_of_outputs_for_balance(
+            charlie_intended_balance
+        ).unwrap();
+
+        // 15. Unblind the signatures to get the commitment proofs
+        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+            swap_response.signatures,
+            &sender.channel.extra.keyset_info.active_keys,
+        ).unwrap();
+
+        println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
+                 charlie_proofs.len(), alice_proofs.len());
+
+        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| p.amount).collect::<Vec<_>>());
+
+        // As this is powers-of-3, and the CDK doesn't really support the final
+        // wallet.receive_proofs, we just end this test here.
+
     }
 }
