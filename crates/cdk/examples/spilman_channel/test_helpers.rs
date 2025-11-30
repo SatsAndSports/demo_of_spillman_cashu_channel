@@ -85,7 +85,7 @@ pub async fn create_wallet_http(mint_url: MintUrl, unit: CurrencyUnit) -> anyhow
 }
 
 /// Create a local mint with FakeWallet backend for testing
-pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64) -> anyhow::Result<Mint> {
+pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64, base: u64) -> anyhow::Result<Mint> {
     let mint_store = Arc::new(cdk_sqlite::mint::memory::empty().await?);
 
     let fee_reserve = FeeReserve {
@@ -113,6 +113,9 @@ pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64) -> anyhow
 
     // Set input fee (parts per thousand)
     mint_builder.set_unit_fee(&unit, input_fee_ppk)?;
+
+    // Set base for amount generation (e.g., 2 for powers of 2, 10 for powers of 10)
+    mint_builder.set_unit_base(&unit, base)?;
 
     let mnemonic = Mnemonic::generate(12)?;
     mint_builder = mint_builder
@@ -612,6 +615,7 @@ pub async fn setup_mint_and_wallets_for_demo(
     mint_url_opt: Option<String>, // None = create local in-process mint
     unit: CurrencyUnit,
     input_fee_ppk: u64, // Fee in parts per thousand (e.g., 400 = 40%)
+    base: u64, // Base for amount generation (e.g., 2 for powers of 2, 10 for powers of 10)
 ) -> anyhow::Result<(Box<dyn MintConnection>, Wallet, Wallet, String)> {
     let (mint_connection, alice, charlie, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
@@ -629,7 +633,7 @@ pub async fn setup_mint_and_wallets_for_demo(
         (Box::new(http_mint), alice, charlie, mint_url_str)
     } else {
         println!("🏦 Setting up local in-process mint...");
-        let mint = create_local_mint(unit.clone(), input_fee_ppk).await?;
+        let mint = create_local_mint(unit.clone(), input_fee_ppk, base).await?;
         println!("✅ Local mint running\n");
 
         println!("👩 Setting up Alice's wallet...");
@@ -648,4 +652,24 @@ pub async fn setup_mint_and_wallets_for_demo(
     verify_mint_capabilities(&mint_info)?;
 
     Ok((mint_connection, alice, charlie, mint_url))
+}
+
+/// Receive proofs into a wallet with P2PK signing
+///
+/// The wallet will automatically sign and swap the proofs to remove P2PK conditions.
+/// Returns the amount received in the base unit.
+pub async fn receive_proofs_into_wallet(
+    wallet: &Wallet,
+    proofs: Vec<cdk::nuts::Proof>,
+    secret_key: cdk::nuts::SecretKey,
+) -> anyhow::Result<u64> {
+    let receive_opts = cdk::wallet::ReceiveOptions {
+        amount_split_target: cdk::amount::SplitTarget::default(),
+        p2pk_signing_keys: vec![secret_key],
+        preimages: vec![],
+        metadata: std::collections::HashMap::new(),
+    };
+
+    let received_amount = wallet.receive_proofs(proofs, receive_opts, None).await?;
+    Ok(u64::from(received_amount))
 }
