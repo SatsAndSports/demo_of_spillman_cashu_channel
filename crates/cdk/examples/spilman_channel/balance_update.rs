@@ -7,6 +7,7 @@ use cdk::nuts::nut10::SpendingConditionVerification;
 use cdk::nuts::SwapRequest;
 
 use super::established_channel::EstablishedChannel;
+use super::test_helpers::get_signatures_from_swap_request;
 
 /// A balance update message from Alice to Charlie
 ///
@@ -30,7 +31,7 @@ impl BalanceUpdateMessage {
         swap_request: &SwapRequest,
     ) -> Result<Self, anyhow::Error> {
         // Extract Alice's signature from the swap request
-        let signatures = crate::get_signatures_from_swap_request(swap_request)?;
+        let signatures = get_signatures_from_swap_request(swap_request)?;
 
         // Ensure there is exactly one signature (Alice's only)
         if signatures.len() != 1 {
