@@ -668,3 +668,33 @@ pub async fn receive_proofs_into_wallet(
     let received_amount = wallet.receive_proofs(proofs, receive_opts, None).await?;
     Ok(u64::from(received_amount))
 }
+
+/// Create and mint funding proofs for a channel
+///
+/// Creates deterministic funding outputs and mints them using NUT-20 authentication.
+/// Returns the minted funding proofs.
+pub async fn create_funding_proofs(
+    mint_connection: &dyn MintConnection,
+    channel_extra: &crate::extra::SpilmanChannelExtra,
+    funding_token_nominal: u64,
+) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
+    let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
+        &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
+        "funding".to_string(),
+        funding_token_nominal,
+        channel_extra.params.clone(),
+    )?;
+
+    let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
+    let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding()?;
+
+    let funding_proofs = mint_deterministic_outputs(
+        mint_connection,
+        channel_extra.params.unit.clone(),
+        funding_blinded_messages,
+        funding_secrets_with_blinding,
+        &channel_extra.keyset_info.active_keys,
+    ).await?;
+
+    Ok(funding_proofs)
+}

@@ -130,22 +130,10 @@ mod tests {
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
-        let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
-            &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
-            "funding".to_string(),
-            funding_token_nominal,
-            channel_extra.params.clone(),
-        ).unwrap();
-
-        let funding_blinded_messages = funding_outputs.get_blinded_messages().unwrap();
-        let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding().unwrap();
-
-        let funding_proofs = mint_deterministic_outputs(
+        let funding_proofs = crate::test_helpers::create_funding_proofs(
             &*mint_connection,
-            channel_extra.params.unit.clone(),
-            funding_blinded_messages,
-            funding_secrets_with_blinding,
-            &active_keys,
+            &channel_extra,
+            funding_token_nominal,
         ).await.unwrap();
 
         // 7. Create established channel
@@ -270,22 +258,10 @@ mod tests {
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
-        let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
-            &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
-            "funding".to_string(),
-            funding_token_nominal,
-            channel_extra.params.clone(),
-        ).unwrap();
-
-        let funding_blinded_messages = funding_outputs.get_blinded_messages().unwrap();
-        let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding().unwrap();
-
-        let funding_proofs = mint_deterministic_outputs(
+        let funding_proofs = crate::test_helpers::create_funding_proofs(
             &*mint_connection,
-            channel_extra.params.unit.clone(),
-            funding_blinded_messages,
-            funding_secrets_with_blinding,
-            &active_keys,
+            &channel_extra,
+            funding_token_nominal,
         ).await.unwrap();
 
         // 7. Create established channel
