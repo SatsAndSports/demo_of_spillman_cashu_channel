@@ -259,7 +259,7 @@ async fn create_local_mint(unit: CurrencyUnit) -> anyhow::Result<Mint> {
 
 /// Trait for interacting with a mint (either local or HTTP)
 #[async_trait]
-pub trait MintConnection {
+pub trait MintConnection: Send + Sync {
     async fn get_mint_info(&self) -> Result<MintInfo, Error>;
     async fn get_keysets(&self) -> Result<KeysetResponse, Error>;
     async fn get_keys(&self) -> Result<Vec<KeySet>, Error>;
@@ -269,6 +269,12 @@ pub trait MintConnection {
     async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error>;
     async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error>;
     async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error>;
+
+    /// Immediately pay a mint quote (only for local/direct connections)
+    /// Returns an error for HTTP connections
+    async fn pay_mint_quote_directly(&self, _quote_id: &str) -> Result<(), Error> {
+        Err(Error::Custom("pay_mint_quote_directly is only supported for DirectMintConnection".to_string()))
+    }
 }
 
 /// HTTP mint wrapper implementing MintConnection
@@ -551,6 +557,29 @@ impl MintConnection for DirectMintConnection {
             .await
             .map(Into::into)
     }
+
+    async fn pay_mint_quote_directly(&self, quote_id: &str) -> Result<(), Error> {
+        use cdk::cdk_payment::WaitPaymentResponse;
+        use cdk::mint::QuoteId;
+
+        // Get the mint quote to extract its request_lookup_id
+        let quote_id_obj: QuoteId = quote_id.parse()
+            .map_err(|e| Error::Custom(format!("Invalid quote ID: {}", e)))?;
+        let mint_quote = self.mint.localstore()
+            .get_mint_quote(&quote_id_obj)
+            .await?
+            .ok_or_else(|| Error::Custom(format!("Quote {} not found", quote_id)))?;
+
+        // Construct a WaitPaymentResponse with the correct fields
+        let wait_response = WaitPaymentResponse {
+            payment_identifier: mint_quote.request_lookup_id.clone(),
+            payment_amount: mint_quote.amount.unwrap_or(cdk::Amount::ZERO),
+            unit: mint_quote.unit.clone(),
+            payment_id: mint_quote.request_lookup_id.to_string(),
+        };
+
+        self.mint.pay_mint_quote_for_request_id(wait_response).await
+    }
 }
 
 /// Mint deterministic outputs directly using NUT-20 signed MintRequest
@@ -597,6 +626,9 @@ async fn mint_deterministic_outputs(
     };
 
     let quote = mint_connection.post_mint_quote(quote_request).await?;
+
+    // Try to pay the quote directly (for local mints); ignore errors (for HTTP mints)
+    let _ = mint_connection.pay_mint_quote_directly(&quote.quote).await;
 
     // Poll for quote to be paid
     let quote_id = quote.quote.clone();
