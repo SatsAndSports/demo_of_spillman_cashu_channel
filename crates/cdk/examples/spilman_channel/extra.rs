@@ -572,6 +572,15 @@ impl SpilmanChannelExtra {
         &self,
         receiver_balance: u64,
     ) -> anyhow::Result<CommitmentOutputs> {
+        // Validate that receiver balance doesn't exceed channel capacity
+        if receiver_balance > self.params.capacity {
+            anyhow::bail!(
+                "Receiver balance {} exceeds channel capacity {}",
+                receiver_balance,
+                self.params.capacity
+            );
+        }
+
         // Get the amount available after stage 1 fees
         let amount_after_stage1 = self.get_value_after_stage1()?;
 
