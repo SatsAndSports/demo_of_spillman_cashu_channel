@@ -357,8 +357,7 @@ mod tests {
         // (the nominal value needed to achieve (de facto) charlie_balance after stage1 fees
         let charlie_total_after_stage1: u64 = charlie_proofs.iter().map(|p| u64::from(p.amount)).sum();
         let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-            charlie_balance,
-            sender.channel.extra.params.input_fee_ppk
+            charlie_balance
         ).unwrap();
         let expected_nominal = inverse_result.nominal_value;
         assert_eq!(

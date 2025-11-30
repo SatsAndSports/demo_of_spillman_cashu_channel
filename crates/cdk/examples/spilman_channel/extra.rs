@@ -359,11 +359,13 @@ pub struct KeysetInfo {
     pub active_keys: Keys,
     /// Available amounts in the keyset, sorted largest first
     pub amounts_in_this_keyset_largest_first: Vec<u64>,
+    /// Input fee in parts per thousand
+    pub input_fee_ppk: u64,
 }
 
 impl KeysetInfo {
     /// Create new keyset info from active keys
-    pub fn new(active_keys: Keys) -> Self {
+    pub fn new(active_keys: Keys, input_fee_ppk: u64) -> Self {
         // Extract and sort amounts from the keyset (largest first)
         let mut amounts_in_this_keyset_largest_first: Vec<u64> = active_keys
             .iter()
@@ -374,6 +376,7 @@ impl KeysetInfo {
         Self {
             active_keys,
             amounts_in_this_keyset_largest_first,
+            input_fee_ppk,
         }
     }
 
@@ -389,13 +392,13 @@ impl KeysetInfo {
     ///
     /// Given a nominal value (what you allocate in deterministic outputs),
     /// this calculates what remains after paying the input fees when those outputs are used.
-    pub fn deterministic_value_after_fees(&self, nominal_value: u64, input_fee_ppk: u64) -> anyhow::Result<u64> {
+    pub fn deterministic_value_after_fees(&self, nominal_value: u64) -> anyhow::Result<u64> {
         if nominal_value == 0 {
             return Ok(0);
         }
 
         // If there are no fees, just return the nominal value
-        if input_fee_ppk == 0 {
+        if self.input_fee_ppk == 0 {
             return Ok(nominal_value);
         }
 
@@ -405,7 +408,7 @@ impl KeysetInfo {
 
         // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
         // The +999 ensures we round up
-        let fee = (input_fee_ppk * num_outputs + 999) / 1000;
+        let fee = (self.input_fee_ppk * num_outputs + 999) / 1000;
 
         // Return the value after fees
         Ok(nominal_value - fee)
@@ -416,7 +419,7 @@ impl KeysetInfo {
     /// Given a target final balance, this returns the smallest nominal value
     /// that achieves at least the target balance, along with the actual balance
     /// you'll get (which may be slightly higher due to discrete denominations).
-    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64, input_fee_ppk: u64) -> anyhow::Result<InverseFeeResult> {
+    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64) -> anyhow::Result<InverseFeeResult> {
         if target_balance == 0 {
             return Ok(InverseFeeResult {
                 nominal_value: 0,
@@ -425,7 +428,7 @@ impl KeysetInfo {
         }
 
         // If there are no fees, the inverse is trivial
-        if input_fee_ppk == 0 {
+        if self.input_fee_ppk == 0 {
             return Ok(InverseFeeResult {
                 nominal_value: target_balance,
                 actual_balance: target_balance,
@@ -436,7 +439,7 @@ impl KeysetInfo {
         let mut nominal = target_balance;
 
         loop {
-            let actual_balance = self.deterministic_value_after_fees(nominal, input_fee_ppk)?;
+            let actual_balance = self.deterministic_value_after_fees(nominal)?;
 
             if actual_balance >= target_balance {
                 // Found it! Return the nominal value and what we actually get
@@ -473,7 +476,7 @@ impl SpilmanChannelExtra {
             .collect();
 
         let filtered_keys = Keys::new(filtered_map);
-        let keyset_info = KeysetInfo::new(filtered_keys);
+        let keyset_info = KeysetInfo::new(filtered_keys, params.input_fee_ppk);
 
         Ok(Self {
             params,
@@ -491,15 +494,13 @@ impl SpilmanChannelExtra {
     pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
         // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
         let first_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            self.params.capacity,
-            self.params.input_fee_ppk
+            self.params.capacity
         )?;
         let post_stage1_nominal = first_inverse.nominal_value;
 
         // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
         let second_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            post_stage1_nominal,
-            self.params.input_fee_ppk
+            post_stage1_nominal
         )?;
         let funding_token_nominal = second_inverse.nominal_value;
 
@@ -521,8 +522,7 @@ impl SpilmanChannelExtra {
 
         // Apply forward to get actual value after stage 1 fees (spending the funding token)
         let value_after_stage1 = self.keyset_info.deterministic_value_after_fees(
-            funding_token_nominal,
-            self.params.input_fee_ppk
+            funding_token_nominal
         )?;
 
         Ok(value_after_stage1)
@@ -541,15 +541,13 @@ impl SpilmanChannelExtra {
     pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
         // Apply inverse to get nominal value needed
         let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(
-            intended_balance,
-            self.params.input_fee_ppk
+            intended_balance
         )?;
         let nominal_value = inverse_result.nominal_value;
 
         // Apply deterministic_value to get actual balance
         let actual_balance = self.keyset_info.deterministic_value_after_fees(
-            nominal_value,
-            self.params.input_fee_ppk
+            nominal_value
         )?;
 
         Ok(actual_balance)
@@ -578,7 +576,7 @@ impl SpilmanChannelExtra {
         let amount_after_stage1 = self.get_value_after_stage1()?;
 
         // Find the nominal value needed for Charlie's deterministic outputs
-        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(receiver_balance, self.params.input_fee_ppk)?;
+        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(receiver_balance)?;
         let charlie_nominal = inverse_result.nominal_value;
 
         // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
@@ -760,11 +758,10 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_2() {
         let extra = create_test_extra(400, 2); // Powers of 2
-        let input_fee_ppk = extra.params.input_fee_ppk;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target, input_fee_ppk).unwrap();
+            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -776,7 +773,7 @@ mod tests {
 
             // Verify by computing forward
             let forward_result = extra.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value, input_fee_ppk)
+                .deterministic_value_after_fees(inverse_result.nominal_value)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
@@ -785,11 +782,10 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_10() {
         let extra = create_test_extra(400, 10); // Powers of 10
-        let input_fee_ppk = extra.params.input_fee_ppk;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target, input_fee_ppk).unwrap();
+            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -801,7 +797,7 @@ mod tests {
 
             // Verify by computing forward
             let forward_result = extra.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value, input_fee_ppk)
+                .deterministic_value_after_fees(inverse_result.nominal_value)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
