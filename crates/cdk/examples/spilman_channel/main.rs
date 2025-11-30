@@ -8,6 +8,7 @@ mod params;
 mod extra;
 mod established_channel;
 mod balance_update;
+mod sender_and_receiver;
 mod test_helpers;
 
 use cdk::nuts::{CurrencyUnit, Id, SecretKey};
@@ -143,12 +144,13 @@ async fn main() -> anyhow::Result<()> {
     println!("📋 Setting up Spilman channel parameters...");
 
     let channel_unit = CurrencyUnit::Sat;
+    let requested_input_fee_ppk = 400; // 40% input fee (only for local mints)
 
     // 3. CREATE OR CONNECT TO MINT
     let (mint_connection, alice_wallet, charlie_wallet, mint_url) =
-        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone()).await?;
+        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk).await?;
 
-    // Get active keyset information
+    // Get active keyset information (will use actual fee from mint)
     let (active_keyset_id, input_fee_ppk, active_keys) =
         get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
 

@@ -94,8 +94,9 @@ mod tests {
 
         // 2. Setup mint and wallets
         let channel_unit = CurrencyUnit::Sat;
+        let input_fee_ppk = 400; // 40% fee for testing
         let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone()).await.unwrap();
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk).await.unwrap();
 
         // 3. Get active keyset info
         let all_keysets = mint_connection.get_keys().await.unwrap();
