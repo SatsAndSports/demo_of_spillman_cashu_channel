@@ -268,11 +268,10 @@ mod tests {
         let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
 
         // 8. Create SpilmanChannelSender
-        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
 
         // 9. Test creating a balance update
         let charlie_balance = 10_000u64;
-        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_balance).unwrap();
         let (balance_update, mut swap_request) = sender.create_signed_balance_update(
             charlie_balance
         ).unwrap();
@@ -282,7 +281,7 @@ mod tests {
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
         // 11. Verify that the signature can be verified against the channel
-        balance_update.verify_sender_signature(&sender.channel).unwrap();
+        balance_update.verify_sender_signature(&channel).unwrap();
 
         // 12. Charlie can now add his signature
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
