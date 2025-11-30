@@ -223,7 +223,7 @@ mod tests {
         // 2. Setup mint and wallets
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 400; // 40% fee for testing
-        let base = 3; // Powers of 2
+        let base = 3; // Powers of 3 as the mint's amounts: 1,3,9,27,...
         let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
@@ -276,7 +276,7 @@ mod tests {
             charlie_balance
         ).unwrap();
 
-        // 10. Verify the balance update has Alice's signature
+        // 10. Verify the balance update has the expected amount
         assert_eq!(balance_update.amount, charlie_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
