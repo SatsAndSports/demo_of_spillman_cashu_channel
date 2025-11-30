@@ -74,6 +74,62 @@ impl SpilmanChannelSender {
     }
 }
 
+/// The receiver's view of a Spilman payment channel
+///
+/// This struct holds Charlie's secret key and the established channel state.
+/// It provides high-level methods for Charlie's operations.
+pub struct SpilmanChannelReceiver {
+    /// Charlie's secret key for signing
+    pub charlie_secret: SecretKey,
+    /// The established channel state
+    pub channel: EstablishedChannel,
+}
+
+impl SpilmanChannelReceiver {
+    /// Create a new receiver instance
+    pub fn new(charlie_secret: SecretKey, channel: EstablishedChannel) -> Self {
+        Self {
+            charlie_secret,
+            channel,
+        }
+    }
+
+    /// Verify a balance update from the sender and add receiver's signature
+    ///
+    /// This verifies Alice's signature on the balance update, then adds Charlie's
+    /// signature to the swap request, making it ready to submit to the mint.
+    ///
+    /// Returns the fully-signed SwapRequest ready for execution
+    pub fn verify_and_sign_balance_update(
+        &self,
+        balance_update: &BalanceUpdateMessage,
+        mut swap_request: SwapRequest,
+    ) -> anyhow::Result<SwapRequest> {
+        // Verify that Alice's signature is valid
+        balance_update.verify_sender_signature(&self.channel)?;
+
+        // Add Charlie's signature to complete the 2-of-2 multisig
+        swap_request.sign_sig_all(self.charlie_secret.clone())?;
+
+        Ok(swap_request)
+    }
+
+    /// Get the de facto balance (after fee rounding) for an intended balance
+    pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
+        self.channel.extra.get_de_facto_balance(intended_balance)
+    }
+
+    /// Get the channel capacity
+    pub fn capacity(&self) -> u64 {
+        self.channel.extra.params.capacity
+    }
+
+    /// Get the channel ID
+    pub fn channel_id(&self) -> String {
+        self.channel.extra.params.get_channel_id()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,13 +195,14 @@ mod tests {
         // 7. Create established channel
         let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
 
-        // 8. Create SpilmanChannelSender (Alice's view)
+        // 8. Create SpilmanChannelSender (Alice's view) and SpilmanChannelReceiver (Charlie's view)
         let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
+        let receiver = SpilmanChannelReceiver::new(charlie_secret.clone(), channel.clone());
 
-        // 9. Test creating a balance update
+        // 9. Alice creates a balance update
         let charlie_balance = 10_000u64;
         let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_balance).unwrap();
-        let (balance_update, mut swap_request) = sender.create_signed_balance_update(
+        let (balance_update, swap_request) = sender.create_signed_balance_update(
             charlie_balance
         ).unwrap();
 
@@ -153,20 +210,17 @@ mod tests {
         assert_eq!(balance_update.amount, charlie_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
-        // 11. Charlie verifies the signature against the channel (doesn't need sender object)
-        balance_update.verify_sender_signature(&channel).unwrap();
-
-        // 12. Charlie can now add his signature
-        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
+        // 11. Charlie verifies Alice's signature and adds his own
+        let swap_request = receiver.verify_and_sign_balance_update(&balance_update, swap_request).unwrap();
 
         // Print swap request details
         println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
         println!("   Swap outputs: {:?}", swap_request.outputs().iter().map(|bm| u64::from(bm.amount)).collect::<Vec<_>>());
 
-        // 13. Execute the swap
+        // 12. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
-        // 14. Unblind the swap signatures to get stage 1 proofs for both parties
+        // 13. Unblind the swap signatures to get stage 1 proofs for both parties
         let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
             &sender.channel.extra,
             charlie_balance,
@@ -179,7 +233,7 @@ mod tests {
         println!("   Charlie's proofs: {:?}", charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
         println!("   Alice's proofs: {:?}", alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
 
-        // 15. Verify that Charlie's proofs total the inverse of the balance
+        // 14. Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage 2 fees)
         let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
         let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
@@ -192,7 +246,7 @@ mod tests {
         );
         println!("   ✓ Charlie's proofs total {} sats (inverse of balance {} sats)", charlie_total_after_stage1, charlie_balance);
 
-        // 16. Verify that Alice's proofs total the remainder after Charlie's allocation
+        // 15. Verify that Alice's proofs total the remainder after Charlie's allocation
         let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
         let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
         let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
@@ -203,7 +257,7 @@ mod tests {
         );
         println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
 
-        // 17. Both parties receive their proofs into wallets
+        // 16. Both parties receive their proofs into wallets
         use crate::test_helpers::receive_proofs_into_wallet;
         println!("   Charlie receiving proofs...");
         let charlie_received = receive_proofs_into_wallet(
@@ -221,7 +275,7 @@ mod tests {
         ).await.unwrap();
         println!("   Alice received: {} sats", alice_received);
 
-        // 18. Assert that Charlie's received amount matches the de facto balance
+        // 17. Assert that Charlie's received amount matches the de facto balance
         assert_eq!(
             charlie_received, charlie_de_facto_balance,
             "Charlie's received amount should match get_de_facto_balance(charlie_balance)"
