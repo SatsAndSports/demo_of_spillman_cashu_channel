@@ -11,7 +11,7 @@ mod balance_update;
 mod sender_and_receiver;
 mod test_helpers;
 
-use cdk::nuts::{CurrencyUnit, Id, SecretKey};
+use cdk::nuts::{CurrencyUnit, SecretKey};
 use cdk::util::unix_time;
 use cdk::secret::Secret;
 use clap::Parser;
@@ -21,33 +21,7 @@ use extra::SpilmanChannelExtra;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
-use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, mint_deterministic_outputs};
-
-/// Get active keyset information for a unit
-/// Returns (keyset_id, input_fee_ppk, keys)
-async fn get_active_keyset_info(
-    mint_connection: &dyn MintConnection,
-    unit: &CurrencyUnit,
-) -> anyhow::Result<(Id, u64, cdk::nuts::Keys)> {
-    // Get all keysets and their info
-    let all_keysets = mint_connection.get_keys().await?;
-    let keysets_info = mint_connection.get_keysets().await?;
-
-    // Find the active keyset for our unit
-    let active_keyset_info = keysets_info.keysets.iter()
-        .find(|k| k.active && k.unit == *unit)
-        .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", unit))?;
-
-    let active_keyset_id = active_keyset_info.id;
-    let input_fee_ppk = active_keyset_info.input_fee_ppk;
-
-    // Get the actual keys for this keyset
-    let set_of_active_keys = all_keysets.iter()
-        .find(|k| k.id == active_keyset_id)
-        .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
-
-    Ok((active_keyset_id, input_fee_ppk, set_of_active_keys.keys.clone()))
-}
+use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, mint_deterministic_outputs, get_active_keyset_info};
 
 /// Create and mint the funding token for a Spilman channel
 ///
