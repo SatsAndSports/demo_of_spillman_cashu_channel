@@ -108,7 +108,7 @@ mod tests {
         let locktime = unix_time() + 86400;
         let setup_timestamp = unix_time();
         let sender_nonce = "test_nonce".to_string();
-        let maximum_amount_for_one_output = 100_000u64;
+        let maximum_amount_for_one_output = 10_000u64;
 
         let channel_params = SpilmanChannelParameters::new(
             alice_pubkey,
@@ -248,7 +248,7 @@ mod tests {
         let locktime = unix_time() + 86400;
         let setup_timestamp = unix_time();
         let sender_nonce = "test_nonce".to_string();
-        let maximum_amount_for_one_output = 100_000u64;
+        let maximum_amount_for_one_output = 10_000u64;
 
         let channel_params = SpilmanChannelParameters::new(
             alice_pubkey,
