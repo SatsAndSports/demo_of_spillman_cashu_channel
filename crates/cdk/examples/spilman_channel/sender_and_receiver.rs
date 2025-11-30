@@ -83,7 +83,7 @@ mod tests {
     use crate::extra::SpilmanChannelExtra;
 
     #[tokio::test]
-    async fn test_sender_create_balance_update() {
+    async fn test_full_flow() {
         use crate::test_helpers::{setup_mint_and_wallets_for_demo, mint_deterministic_outputs};
 
         // 1. Generate keys for Alice and Charlie
@@ -95,8 +95,9 @@ mod tests {
         // 2. Setup mint and wallets
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 400; // 40% fee for testing
-        let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk).await.unwrap();
+        let base = 2; // Powers of 2
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
         let all_keysets = mint_connection.get_keys().await.unwrap();
@@ -164,6 +165,7 @@ mod tests {
 
         // 9. Test creating a balance update
         let charlie_intended_balance = 10_000u64;
+        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_intended_balance).unwrap();
         let (balance_update, mut swap_request) = sender.create_signed_balance_update(
             charlie_intended_balance
         ).unwrap();
@@ -176,11 +178,48 @@ mod tests {
         balance_update.verify_sender_signature(&sender.channel).unwrap();
 
         // 12. Charlie can now add his signature
-        swap_request.sign_sig_all(charlie_secret).unwrap();
+        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
-        // 13. Execute the swap to verify it works
-        let _swap_response = mint_connection.process_swap(swap_request).await.unwrap();
+        // 13. Execute the swap
+        let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
-        println!("✅ Sender balance update test passed!");
+        // 14. Create commitment outputs to get the secrets for unblinding
+        let commitment_outputs = sender.channel.extra.create_two_sets_of_outputs_for_balance(
+            charlie_intended_balance
+        ).unwrap();
+
+        // 15. Unblind the signatures to get the commitment proofs
+        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+            swap_response.signatures,
+            &sender.channel.extra.keyset_info.active_keys,
+        ).unwrap();
+
+        println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
+                 charlie_proofs.len(), alice_proofs.len());
+
+        // 16. Both parties receive their proofs into wallets
+        use crate::test_helpers::receive_proofs_into_wallet;
+        let charlie_received = receive_proofs_into_wallet(
+            &charlie_wallet,
+            charlie_proofs,
+            charlie_secret,
+        ).await.unwrap();
+
+        let alice_received = receive_proofs_into_wallet(
+            &alice_wallet,
+            alice_proofs,
+            alice_secret,
+        ).await.unwrap();
+
+        println!("   Charlie received: {} sats", charlie_received);
+        println!("   Alice received: {} sats", alice_received);
+
+        // 17. Assert that Charlie's received amount matches the de facto balance
+        assert_eq!(
+            charlie_received, charlie_de_facto_balance,
+            "Charlie's received amount should match get_de_facto_balance(charlie_intended_balance)"
+        );
+
+        println!("✅ Full channel flow test passed!");
     }
 }

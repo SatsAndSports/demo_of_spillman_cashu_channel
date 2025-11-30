@@ -824,8 +824,9 @@ mod tests {
         // 2. Setup mint and wallets
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 400; // 40% fee
+        let base = 2; // Powers of 2
         let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk).await.unwrap();
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
         let (active_keyset_id, input_fee_ppk, active_keys) =
@@ -957,8 +958,9 @@ mod tests {
         // 2. Setup mint and wallets
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 400; // 40% fee
+        let base = 2; // Powers of 2
         let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk).await.unwrap();
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
         let (active_keyset_id, input_fee_ppk, active_keys) =

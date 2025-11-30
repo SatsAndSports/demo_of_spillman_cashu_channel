@@ -145,10 +145,11 @@ async fn main() -> anyhow::Result<()> {
 
     let channel_unit = CurrencyUnit::Sat;
     let requested_input_fee_ppk = 400; // 40% input fee (only for local mints)
+    let base = 2; // Powers of 2 (only for local mints)
 
     // 3. CREATE OR CONNECT TO MINT
     let (mint_connection, alice_wallet, charlie_wallet, mint_url) =
-        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk).await?;
+        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk, base).await?;
 
     // Get active keyset information (will use actual fee from mint)
     let (active_keyset_id, input_fee_ppk, active_keys) =
