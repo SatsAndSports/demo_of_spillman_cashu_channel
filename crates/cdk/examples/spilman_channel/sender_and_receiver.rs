@@ -139,8 +139,8 @@ mod tests {
         // 7. Create established channel
         let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
 
-        // 8. Create SpilmanChannelSender
-        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
+        // 8. Create SpilmanChannelSender (Alice's view)
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
 
         // 9. Test creating a balance update
         let charlie_intended_balance = 10_000u64;
@@ -153,8 +153,8 @@ mod tests {
         assert_eq!(balance_update.amount, charlie_intended_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
-        // 11. Verify that the signature can be verified against the channel
-        balance_update.verify_sender_signature(&sender.channel).unwrap();
+        // 11. Charlie verifies the signature against the channel (doesn't need sender object)
+        balance_update.verify_sender_signature(&channel).unwrap();
 
         // 12. Charlie can now add his signature
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
@@ -166,15 +166,11 @@ mod tests {
         // 13. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
-        // 14. Create commitment outputs to get the secrets for unblinding
-        let commitment_outputs = sender.channel.extra.create_two_sets_of_outputs_for_balance(
-            charlie_intended_balance
-        ).unwrap();
-
-        // 15. Unblind the signatures to get the commitment proofs
-        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+        // 14. Unblind the swap signatures to get stage 1 proofs for both parties
+        let (charlie_proofs, alice_proofs) = crate::test_helpers::unblind_commitment_proofs(
+            &sender.channel.extra,
+            charlie_intended_balance,
             swap_response.signatures,
-            &sender.channel.extra.keyset_info.active_keys,
         ).unwrap();
 
         println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
@@ -267,7 +263,7 @@ mod tests {
         // 7. Create established channel
         let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
 
-        // 8. Create SpilmanChannelSender
+        // 8. Create SpilmanChannelSender (Alice's view)
         let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
 
         // 9. Test creating a balance update
@@ -280,7 +276,7 @@ mod tests {
         assert_eq!(balance_update.amount, charlie_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
-        // 11. Verify that the signature can be verified against the channel
+        // 11. Charlie verifies the signature against the channel (doesn't need sender object)
         balance_update.verify_sender_signature(&channel).unwrap();
 
         // 12. Charlie can now add his signature
@@ -293,26 +289,22 @@ mod tests {
         // 13. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
 
-        // 14. Create commitment outputs to get the secrets for unblinding
-        let commitment_outputs = sender.channel.extra.create_two_sets_of_outputs_for_balance(
+        // 14. Unblind the swap signatures to get stage 1 proofs for both parties
+        let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
+            &sender.channel.extra,
             charlie_balance,
-        ).unwrap();
-
-        // 15. Unblind the signatures to get the commitment proofs
-        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
             swap_response.signatures,
-            &sender.channel.extra.keyset_info.active_keys,
         ).unwrap();
 
         println!("   ✓ Unblinded {} proofs for Charlie, {} for Alice",
-                 charlie_proofs.len(), alice_proofs.len());
+                 charlie_stage1_proofs.len(), alice_stage1_proofs.len());
 
-        println!("   Charlie's proofs: {:?}", charlie_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
-        println!("   Alice's proofs: {:?}", alice_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Charlie's proofs: {:?}", charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
+        println!("   Alice's proofs: {:?}", alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
 
         // Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage1 fees
-        let charlie_total_after_stage1: u64 = charlie_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
         let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
             charlie_balance
         ).unwrap();
@@ -324,7 +316,7 @@ mod tests {
         println!("   ✓ Charlie's proofs total {} sats (inverse of balance {} sats)", charlie_total_after_stage1, charlie_balance);
 
         // Verify that Alice's proofs total the remainder after Charlie's allocation
-        let alice_total_after_stage1: u64 = alice_proofs.iter().map(|p| u64::from(p.amount)).sum();
+        let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
         let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
         let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
         assert_eq!(
