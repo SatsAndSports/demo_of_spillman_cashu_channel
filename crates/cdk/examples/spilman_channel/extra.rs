@@ -684,9 +684,7 @@ mod tests {
 
     /// Helper to receive proofs into both wallets
     ///
-    /// Checks that each party's proofs will have non-zero value after fees.
-    /// If a party's proofs would be worth 0 after fees, skips receiving for that party
-    /// and returns 0 for their amount.
+    /// If a party's proofs would be worth 0 after fees, returns 0 for their amount.
     ///
     /// Returns (charlie_received, alice_received) as a tuple.
     async fn receive_proofs_for_both_parties(
@@ -696,43 +694,23 @@ mod tests {
         alice_proofs: Vec<cdk::nuts::Proof>,
         charlie_secret: cdk::nuts::SecretKey,
         alice_secret: cdk::nuts::SecretKey,
-        input_fee_ppk: u64,
+        keyset_info: &KeysetInfo,
     ) -> anyhow::Result<(u64, u64)> {
         use crate::receive_proofs_into_wallet;
 
-        // Check Charlie's proofs will be worth something after fees
-        let charlie_nominal: u64 = charlie_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let charlie_fee = ((charlie_proofs.len() as u64) * input_fee_ppk + 999) / 1000;
-        let charlie_after_fee = charlie_nominal.saturating_sub(charlie_fee);
+        let charlie_received = receive_proofs_into_wallet(
+            charlie_wallet,
+            charlie_proofs,
+            charlie_secret,
+            keyset_info,
+        ).await?;
 
-        let charlie_received = if charlie_after_fee == 0 {
-            println!("   ⚠ Skipping Charlie's receive: proofs worth 0 after fees (nominal: {} sats, fee: {} sats)",
-                     charlie_nominal, charlie_fee);
-            0
-        } else {
-            receive_proofs_into_wallet(
-                charlie_wallet,
-                charlie_proofs,
-                charlie_secret,
-            ).await?
-        };
-
-        // Check Alice's proofs will be worth something after fees
-        let alice_nominal: u64 = alice_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let alice_fee = ((alice_proofs.len() as u64) * input_fee_ppk + 999) / 1000;
-        let alice_after_fee = alice_nominal.saturating_sub(alice_fee);
-
-        let alice_received = if alice_after_fee == 0 {
-            println!("   ⚠ Skipping Alice's receive: proofs worth 0 after fees (nominal: {} sats, fee: {} sats)",
-                     alice_nominal, alice_fee);
-            0
-        } else {
-            receive_proofs_into_wallet(
-                alice_wallet,
-                alice_proofs,
-                alice_secret,
-            ).await?
-        };
+        let alice_received = receive_proofs_into_wallet(
+            alice_wallet,
+            alice_proofs,
+            alice_secret,
+            keyset_info,
+        ).await?;
 
         Ok((charlie_received, alice_received))
     }
@@ -938,7 +916,7 @@ mod tests {
             alice_proofs,
             charlie_secret,
             alice_secret,
-            input_fee_ppk,
+            &channel.extra.keyset_info,
         ).await.unwrap();
 
         // 18. Verify amounts
@@ -1070,7 +1048,7 @@ mod tests {
             alice_proofs,
             charlie_secret,
             alice_secret,
-            input_fee_ppk,
+            &channel.extra.keyset_info,
         ).await.unwrap();
 
         // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
