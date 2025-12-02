@@ -10,6 +10,15 @@ use super::params::SpilmanChannelParameters;
 /// Result of inverse_deterministic_value_after_fees
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InverseFeeResult {
+    /* Certain post-fee balances are impossible, if there are non-zero fees,
+     * in this deterministic system. So even if we intend the post-fee
+     * balance to be 100 sats, it may need to be 101 sats (actual_balance)
+     * and the pre-fee amount may need to be larger, e.g. 104 sats (nominal). 
+     * So the funding token it swapped to created 104 sats of P2PK commitment
+     * outputs to Charlie, which become 101 sats after he swaps them into his
+     * own wallet
+     */
+
     /// The nominal value to allocate in deterministic outputs
     pub nominal_value: u64,
     /// The actual balance after fees (may be >= target due to discrete amounts)
@@ -61,7 +70,7 @@ pub fn select_amounts_to_reach_a_target(
 /// An ordered list of amounts that sum to a target value
 ///
 /// Created by the greedy algorithm in select_amounts_to_reach_a_target.
-/// The amounts are stored in a BTreeMap (sorted by key).
+/// The amounts are stored in a BTreeMap (sorted by the amount).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedListOfAmounts {
     amounts: Vec<u64>,
@@ -192,7 +201,9 @@ impl CommitmentOutputs {
         // Extend with sender outputs with flag = false
         all_outputs.extend(sender_outputs.into_iter().map(|o| (o, false)));
 
-        // Sort by amount (stable) to match create_swap_request ordering
+        // Sort by amount (stable) to match create_swap_request ordering, i.e.
+        // smallest amounts first, tie-breaking by the partner (Charlie first,
+        // then Alice). For a given amount and partner, they are ordered by 'index'
         all_outputs.sort_by_key(|(output, _)| output.amount);
 
         // Assert all_outputs has the correct length
@@ -241,6 +252,10 @@ impl CommitmentOutputs {
     ///
     /// Returns the blind signatures in the same order as create_swap_request:
     /// sorted by amount (stable) for privacy
+    ///
+    /// TODO: This implementation assumes that Alice knows which balance Charlie exited
+    ///       with. We should make a more robust method, as described in the NUT.
+    /// TODO: think about keysets here; what if Charlie chose a different keyset?
     pub async fn restore_all_blind_signatures<M>(
         &self,
         mint_connection: &M,
@@ -1010,8 +1025,7 @@ mod tests {
         let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
 
         // 9. Create commitment transaction for Charlie to receive ENTIRE capacity
-        let charlie_intended_balance = 100_000u64;  // Same as capacity!
-        let charlie_balance = channel.extra.get_de_facto_balance(charlie_intended_balance).unwrap();
+        let charlie_balance = capacity;  // Same as capacity!
 
         let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
             charlie_balance,
