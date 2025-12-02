@@ -258,22 +258,16 @@ mod tests {
         println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
 
         // 16. Both parties receive their proofs into wallets
-        use crate::test_helpers::receive_proofs_into_wallet;
-        println!("   Charlie receiving proofs...");
-        let charlie_received = receive_proofs_into_wallet(
+        let (charlie_received, alice_received) = crate::test_helpers::receive_proofs_into_both_wallets(
             &charlie_wallet,
             charlie_stage1_proofs,
             charlie_secret,
-        ).await.unwrap();
-        println!("   Charlie received: {} sats", charlie_received);
-
-        println!("   Alice receiving proofs...");
-        let alice_received = receive_proofs_into_wallet(
             &alice_wallet,
             alice_stage1_proofs,
             alice_secret,
+            &sender.channel.extra.keyset_info,
         ).await.unwrap();
-        println!("   Alice received: {} sats", alice_received);
+        println!("   Charlie received: {} sats   Alice received: {} sats", charlie_received, alice_received);
 
         // 17. Assert that Charlie's received amount matches the de facto balance
         assert_eq!(
@@ -687,7 +681,7 @@ mod tests {
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 0; // no fees
         let base = 2; // Powers of 2 as the mint's amounts: 1,2,4,8,...
-        let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
@@ -800,6 +794,26 @@ mod tests {
                 expected_alice_total, value_after_stage1, charlie_total_after_stage1
             );
             println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
+
+            // 15. Receive proofs into both wallets
+            let (charlie_received, _alice_received) = crate::test_helpers::receive_proofs_into_both_wallets(
+                &charlie_wallet,
+                charlie_stage1_proofs,
+                charlie_secret.clone(),
+                &alice_wallet,
+                alice_stage1_proofs,
+                alice_secret.clone(),
+                &sender.channel.extra.keyset_info,
+            ).await.unwrap();
+
+            // 16. Assert Charlie's received amount matches the de facto balance
+            let charlie_de_facto_balance = sender.get_de_facto_balance(*charlie_balance).unwrap();
+            assert_eq!(
+                charlie_received, charlie_de_facto_balance,
+                "Charlie's received amount ({}) should match de facto balance ({})",
+                charlie_received, charlie_de_facto_balance
+            );
+            println!("   ✓ Charlie received {} sats (de facto balance)", charlie_received);
         }
 
         println!("\n✅ All {} balance iterations passed!", test_balances.len());
@@ -819,7 +833,7 @@ mod tests {
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 400; // 40% fee for testing
         let base = 2; // Powers of 2 as the mint's amounts: 1,2,4,8,...
-        let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
@@ -932,6 +946,26 @@ mod tests {
                 expected_alice_total, value_after_stage1, charlie_total_after_stage1
             );
             println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
+
+            // 15. Receive proofs into both wallets
+            let (charlie_received, _alice_received) = crate::test_helpers::receive_proofs_into_both_wallets(
+                &charlie_wallet,
+                charlie_stage1_proofs,
+                charlie_secret.clone(),
+                &alice_wallet,
+                alice_stage1_proofs,
+                alice_secret.clone(),
+                &sender.channel.extra.keyset_info,
+            ).await.unwrap();
+
+            // 16. Assert Charlie's received amount matches the de facto balance
+            let charlie_de_facto_balance = sender.get_de_facto_balance(*charlie_balance).unwrap();
+            assert_eq!(
+                charlie_received, charlie_de_facto_balance,
+                "Charlie's received amount ({}) should match de facto balance ({})",
+                charlie_received, charlie_de_facto_balance
+            );
+            println!("   ✓ Charlie received {} sats (de facto balance)", charlie_received);
         }
 
         println!("\n✅ All {} balance iterations passed!", test_balances.len());
@@ -951,7 +985,7 @@ mod tests {
         let channel_unit = CurrencyUnit::Sat;
         let input_fee_ppk = 10; // 1% fee (realistic production fee)
         let base = 2; // Powers of 2 as the mint's amounts: 1,2,4,8,...
-        let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
@@ -1064,6 +1098,26 @@ mod tests {
                 expected_alice_total, value_after_stage1, charlie_total_after_stage1
             );
             println!("   ✓ Alice's proofs total {} sats (remainder after Charlie's {} sats)", alice_total_after_stage1, charlie_total_after_stage1);
+
+            // 15. Receive proofs into both wallets
+            let (charlie_received, _alice_received) = crate::test_helpers::receive_proofs_into_both_wallets(
+                &charlie_wallet,
+                charlie_stage1_proofs,
+                charlie_secret.clone(),
+                &alice_wallet,
+                alice_stage1_proofs,
+                alice_secret.clone(),
+                &sender.channel.extra.keyset_info,
+            ).await.unwrap();
+
+            // 16. Assert Charlie's received amount matches the de facto balance
+            let charlie_de_facto_balance = sender.get_de_facto_balance(*charlie_balance).unwrap();
+            assert_eq!(
+                charlie_received, charlie_de_facto_balance,
+                "Charlie's received amount ({}) should match de facto balance ({})",
+                charlie_received, charlie_de_facto_balance
+            );
+            println!("   ✓ Charlie received {} sats (de facto balance)", charlie_received);
         }
 
         println!("\n✅ All {} balance iterations passed!", test_balances.len());
