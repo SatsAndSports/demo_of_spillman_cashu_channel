@@ -21,7 +21,7 @@ use extra::SpilmanChannelExtra;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
-use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, mint_deterministic_outputs, get_active_keyset_info};
+use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, mint_deterministic_outputs, get_active_keyset_info, receive_proofs_into_wallet};
 
 /// Create and mint the funding token for a Spilman channel
 ///
@@ -69,26 +69,6 @@ async fn create_and_mint_funding_token(
     ).await?;
 
     Ok(funding_proofs)
-}
-
-/// Receive proofs into a wallet with P2PK signing
-///
-/// The wallet will automatically sign and swap the proofs to remove P2PK conditions.
-/// Returns the amount received in the base unit.
-async fn receive_proofs_into_wallet(
-    wallet: &cdk::wallet::Wallet,
-    proofs: Vec<cdk::nuts::Proof>,
-    secret_key: cdk::nuts::SecretKey,
-) -> anyhow::Result<u64> {
-    let receive_opts = cdk::wallet::ReceiveOptions {
-        amount_split_target: cdk::amount::SplitTarget::default(),
-        p2pk_signing_keys: vec![secret_key],
-        preimages: vec![],
-        metadata: std::collections::HashMap::new(),
-    };
-
-    let received_amount = wallet.receive_proofs(proofs, receive_opts, None).await?;
-    Ok(u64::from(received_amount))
 }
 
 /// Spilman Payment Channel Demo
