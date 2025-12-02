@@ -657,7 +657,20 @@ pub async fn receive_proofs_into_wallet(
     wallet: &Wallet,
     proofs: Vec<cdk::nuts::Proof>,
     secret_key: cdk::nuts::SecretKey,
+    keyset_info: &crate::extra::KeysetInfo,
 ) -> anyhow::Result<u64> {
+    // Handle empty proofs case (e.g., balance 0)
+    if proofs.is_empty() {
+        return Ok(0);
+    }
+
+    // Calculate value after fees - if it's 0, return 0 without calling wallet
+    let nominal_value: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
+    let value_after_fees = keyset_info.deterministic_value_after_fees(nominal_value)?;
+    if value_after_fees == 0 {
+        return Ok(0);
+    }
+
     let receive_opts = cdk::wallet::ReceiveOptions {
         amount_split_target: cdk::amount::SplitTarget::default(),
         p2pk_signing_keys: vec![secret_key],
@@ -720,4 +733,24 @@ pub fn unblind_commitment_proofs(
     )?;
 
     Ok((receiver_stage1_proofs, sender_stage1_proofs))
+}
+
+/// Receive proofs into both wallets (stage 2 - removes P2PK conditions)
+///
+/// Takes stage 1 proofs for both parties and receives them into their respective wallets.
+/// Each wallet will sign and swap the proofs to remove the P2PK conditions.
+///
+/// Returns (receiver_received_amount, sender_received_amount)
+pub async fn receive_proofs_into_both_wallets(
+    receiver_wallet: &cdk::wallet::Wallet,
+    receiver_proofs: Vec<cdk::nuts::Proof>,
+    receiver_secret: cdk::nuts::SecretKey,
+    sender_wallet: &cdk::wallet::Wallet,
+    sender_proofs: Vec<cdk::nuts::Proof>,
+    sender_secret: cdk::nuts::SecretKey,
+    keyset_info: &crate::extra::KeysetInfo,
+) -> anyhow::Result<(u64, u64)> {
+    let receiver_amount = receive_proofs_into_wallet(receiver_wallet, receiver_proofs, receiver_secret, keyset_info).await?;
+    let sender_amount = receive_proofs_into_wallet(sender_wallet, sender_proofs, sender_secret, keyset_info).await?;
+    Ok((receiver_amount, sender_amount))
 }
