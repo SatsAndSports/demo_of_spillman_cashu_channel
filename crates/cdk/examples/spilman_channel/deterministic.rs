@@ -45,7 +45,7 @@ impl DeterministicSecretWithBlinding {
 
 /// Create a deterministic commitment output from a nonce/blinding pair and pubkey
 /// Takes a DeterministicNonceAndBlinding and a pubkey for Charlie (receiver) or Alice (sender)
-/// Returns a DeterministicSecretWithBlinding with a simple P2PK secret (no conditions)
+/// Returns a DeterministicSecretWithBlinding with a simple 1-of-1 P2PK secret
 pub fn create_deterministic_commitment_output(
     pubkey: &cdk::nuts::PublicKey,
     nonce_and_blinding: DeterministicNonceAndBlinding,

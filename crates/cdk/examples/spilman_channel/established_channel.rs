@@ -22,6 +22,10 @@ impl EstablishedChannel {
         extra: SpilmanChannelExtra,
         funding_proofs: Vec<Proof>,
     ) -> Result<Self, anyhow::Error> {
+        // TODO: verify everything, especially for Charlie's security, either
+        // here or in another function
+
+
         // Assert all proofs have the expected keyset_id from params
         let expected_keyset_id = extra.params.active_keyset_id;
         for proof in &funding_proofs {
@@ -59,7 +63,7 @@ impl EstablishedChannel {
     /// Since all funding proofs are spent together (they're all inputs to the commitment transaction),
     /// checking any one of them is sufficient to determine if the funding token has been spent.
     /// This returns the Y value of the first funding proof for use with NUT-07 state checks.
-    pub fn get_funding_token_y_for_state_check(&self) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
+    fn get_one_funding_token_y_for_state_check(&self) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
         let proof = self.funding_proofs.first()
             .ok_or_else(|| anyhow::anyhow!("No funding proofs available"))?;
         Ok(proof.y()?)
@@ -76,7 +80,7 @@ impl EstablishedChannel {
     where
         M: super::MintConnection + ?Sized,
     {
-        let y = self.get_funding_token_y_for_state_check()?;
+        let y = self.get_one_funding_token_y_for_state_check()?;
         let request = CheckStateRequest { ys: vec![y] };
         let response = mint_connection.check_state(request).await?;
         response.states.into_iter().next()

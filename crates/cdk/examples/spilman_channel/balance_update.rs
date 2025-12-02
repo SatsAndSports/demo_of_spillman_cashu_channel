@@ -24,7 +24,8 @@ pub struct BalanceUpdateMessage {
 }
 
 impl BalanceUpdateMessage {
-    /// Create a balance update message from a signed swap request
+    /// Used by Alice to create a balance update message from a swap request
+    /// which is signed by her. She then sends the resulting message to Charlie.
     pub fn from_signed_swap_request(
         channel_id: String,
         amount: u64,
