@@ -253,10 +253,10 @@ async fn main() -> anyhow::Result<()> {
     println!("\n💰 Receiving proofs into wallets...");
 
     // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
-    let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone(), &channel_fixtures.extra.keyset_info).await?;
+    let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
 
     // Alice receives her proofs (wallet will sign and swap to remove P2PK)
-    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone(), &channel_fixtures.extra.keyset_info).await?;
+    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
     println!("   Charlie received: {} sats   Alice received: {} sats", charlie_received_amount, alice_received_amount);
 
     // Assert that Charlie's received amount matches the de facto balance

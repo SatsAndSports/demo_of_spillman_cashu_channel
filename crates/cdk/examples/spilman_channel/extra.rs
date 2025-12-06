@@ -694,7 +694,6 @@ mod tests {
         alice_proofs: Vec<cdk::nuts::Proof>,
         charlie_secret: cdk::nuts::SecretKey,
         alice_secret: cdk::nuts::SecretKey,
-        keyset_info: &KeysetInfo,
     ) -> anyhow::Result<(u64, u64)> {
         use crate::receive_proofs_into_wallet;
 
@@ -702,14 +701,12 @@ mod tests {
             charlie_wallet,
             charlie_proofs,
             charlie_secret,
-            keyset_info,
         ).await?;
 
         let alice_received = receive_proofs_into_wallet(
             alice_wallet,
             alice_proofs,
             alice_secret,
-            keyset_info,
         ).await?;
 
         Ok((charlie_received, alice_received))
@@ -916,7 +913,6 @@ mod tests {
             alice_proofs,
             charlie_secret,
             alice_secret,
-            &channel.extra.keyset_info,
         ).await.unwrap();
 
         // 18. Verify amounts
@@ -1048,7 +1044,6 @@ mod tests {
             alice_proofs,
             charlie_secret,
             alice_secret,
-            &channel.extra.keyset_info,
         ).await.unwrap();
 
         // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
