@@ -21,55 +21,7 @@ use extra::SpilmanChannelExtra;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
-use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, mint_deterministic_outputs, get_active_keyset_info, receive_proofs_into_wallet};
-
-/// Create and mint the funding token for a Spilman channel
-///
-/// This creates deterministic funding outputs with 2-of-2 multisig conditions
-/// and mints them directly using NUT-20 authentication.
-///
-/// Returns the minted funding proofs
-async fn create_and_mint_funding_token(
-    channel_extra: &SpilmanChannelExtra,
-    funding_token_nominal: u64,
-    mint_connection: &dyn MintConnection,
-    active_keys: &cdk::nuts::Keys,
-) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
-
-    // Create deterministic outputs for the funding token
-    let funding_outputs = extra::SetOfDeterministicOutputs::new(
-        &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
-        "funding".to_string(),
-        funding_token_nominal,
-        channel_extra.params.clone(),
-    )?;
-
-    // Get the blinded messages for the funding outputs
-    let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
-    let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding()?;
-
-    println!("   ✓ Created {} deterministic funding outputs", funding_blinded_messages.len());
-
-    // Verify that the total output value equals the funding token nominal
-    assert_eq!(
-        funding_blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum::<u64>(),
-        funding_token_nominal,
-        "Total funding output value should equal funding_token_nominal"
-    );
-
-    // Mint the funding token directly (using NUT-20 signed MintRequest)
-    println!("\n🪙 Minting funding token, via those deterministic funding token outputs ...");
-
-    let funding_proofs = mint_deterministic_outputs(
-        mint_connection,
-        channel_extra.params.unit.clone(),
-        funding_blinded_messages.clone(),
-        funding_secrets_with_blinding,
-        active_keys,
-    ).await?;
-
-    Ok(funding_proofs)
-}
+use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, get_active_keyset_info, receive_proofs_into_wallet, create_funding_proofs};
 
 /// Spilman Payment Channel Demo
 #[derive(Parser, Debug)]
@@ -151,14 +103,13 @@ async fn main() -> anyhow::Result<()> {
     println!("   Capacity: {} sats   Funding token nominal: {} sats", capacity, funding_token_nominal);
 
     // 7. CREATE AND MINT FUNDING TOKEN
-    let funding_proofs = create_and_mint_funding_token(
+    println!("\n🪙 Minting funding token...");
+    let funding_proofs = create_funding_proofs(
+        &*mint_connection,
         &channel_extra,
         funding_token_nominal,
-        &*mint_connection,
-        &active_keys,
     ).await?;
-
-    println!("\n✅ Deterministic funding token created!");
+    println!("   ✓ Created {} funding proofs", funding_proofs.len());
 
     // 9. CREATE CHANNEL FIXTURES
 

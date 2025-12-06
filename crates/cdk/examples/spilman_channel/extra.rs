@@ -806,7 +806,7 @@ mod tests {
     async fn test_full_channel_flow() {
         use cdk::nuts::SecretKey;
         use cdk::util::unix_time;
-        use crate::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_and_mint_funding_token, receive_proofs_into_wallet};
+        use crate::test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_funding_proofs, receive_proofs_into_wallet};
         use crate::established_channel::EstablishedChannel;
         use crate::balance_update::BalanceUpdateMessage;
 
@@ -855,11 +855,10 @@ mod tests {
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
         // 7. Create and mint funding token
-        let funding_proofs = create_and_mint_funding_token(
+        let funding_proofs = create_funding_proofs(
+            &*mint_connection,
             &channel_extra,
             funding_token_nominal,
-            &*mint_connection,
-            &active_keys,
         ).await.unwrap();
 
         // 8. Create established channel
@@ -939,7 +938,7 @@ mod tests {
     async fn test_full_channel_flow_charlie_takes_all() {
         use cdk::nuts::SecretKey;
         use cdk::util::unix_time;
-        use crate::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_and_mint_funding_token, receive_proofs_into_wallet};
+        use crate::test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_funding_proofs, receive_proofs_into_wallet};
         use crate::established_channel::EstablishedChannel;
         use crate::balance_update::BalanceUpdateMessage;
 
@@ -988,11 +987,10 @@ mod tests {
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
         // 7. Create and mint funding token
-        let funding_proofs = create_and_mint_funding_token(
+        let funding_proofs = create_funding_proofs(
+            &*mint_connection,
             &channel_extra,
             funding_token_nominal,
-            &*mint_connection,
-            &active_keys,
         ).await.unwrap();
 
         // 8. Create established channel
