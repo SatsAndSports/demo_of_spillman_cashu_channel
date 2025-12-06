@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use bip39::Mnemonic;
 use bitcoin::secp256k1::schnorr::Signature;
 use cdk::nuts::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
-use cdk_common::QuoteId;
+use cdk_common::{ProofsMethods, QuoteId};
 use cdk::mint::{MintBuilder, MintMeltLimits};
 use cdk::nuts::{
     CheckStateRequest, CheckStateResponse, CurrencyUnit, Id, KeySet, KeysetResponse,
@@ -653,21 +653,22 @@ pub async fn setup_mint_and_wallets_for_demo(
 ///
 /// The wallet will automatically sign and swap the proofs to remove P2PK conditions.
 /// Returns the amount received in the base unit.
+/// Returns 0 if proofs are empty or worth nothing after fees.
 pub async fn receive_proofs_into_wallet(
     wallet: &Wallet,
     proofs: Vec<cdk::nuts::Proof>,
     secret_key: cdk::nuts::SecretKey,
-    keyset_info: &crate::extra::KeysetInfo,
 ) -> anyhow::Result<u64> {
     // Handle empty proofs case (e.g., balance 0)
     if proofs.is_empty() {
         return Ok(0);
     }
 
-    // Calculate value after fees - if it's 0, return 0 without calling wallet
-    let nominal_value: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
-    let value_after_fees = keyset_info.deterministic_value_after_fees(nominal_value)?;
-    if value_after_fees == 0 {
+    // Calculate value after fees - if it's 0 or negative, return 0 without calling wallet
+    let nominal_value = proofs.total_amount()?;
+    let fee = wallet.get_proofs_fee(&proofs).await?;
+    if nominal_value <= fee {
+        println!("   ⚠ Skipping receive: proofs worth 0 after fees (nominal: {}, fee: {})", nominal_value, fee);
         return Ok(0);
     }
 
@@ -748,9 +749,8 @@ pub async fn receive_proofs_into_both_wallets(
     sender_wallet: &cdk::wallet::Wallet,
     sender_proofs: Vec<cdk::nuts::Proof>,
     sender_secret: cdk::nuts::SecretKey,
-    keyset_info: &crate::extra::KeysetInfo,
 ) -> anyhow::Result<(u64, u64)> {
-    let receiver_amount = receive_proofs_into_wallet(receiver_wallet, receiver_proofs, receiver_secret, keyset_info).await?;
-    let sender_amount = receive_proofs_into_wallet(sender_wallet, sender_proofs, sender_secret, keyset_info).await?;
+    let receiver_amount = receive_proofs_into_wallet(receiver_wallet, receiver_proofs, receiver_secret).await?;
+    let sender_amount = receive_proofs_into_wallet(sender_wallet, sender_proofs, sender_secret).await?;
     Ok((receiver_amount, sender_amount))
 }

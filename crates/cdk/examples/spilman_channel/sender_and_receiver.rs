@@ -265,8 +265,7 @@ mod tests {
             &alice_wallet,
             alice_stage1_proofs,
             alice_secret,
-            &sender.channel.extra.keyset_info,
-        ).await.unwrap();
+            ).await.unwrap();
         println!("   Charlie received: {} sats   Alice received: {} sats", charlie_received, alice_received);
 
         // 17. Assert that Charlie's received amount matches the de facto balance
@@ -803,7 +802,6 @@ mod tests {
                 &alice_wallet,
                 alice_stage1_proofs,
                 alice_secret.clone(),
-                &sender.channel.extra.keyset_info,
             ).await.unwrap();
 
             // 16. Assert Charlie's received amount matches the de facto balance
@@ -955,7 +953,6 @@ mod tests {
                 &alice_wallet,
                 alice_stage1_proofs,
                 alice_secret.clone(),
-                &sender.channel.extra.keyset_info,
             ).await.unwrap();
 
             // 16. Assert Charlie's received amount matches the de facto balance
@@ -1107,7 +1104,6 @@ mod tests {
                 &alice_wallet,
                 alice_stage1_proofs,
                 alice_secret.clone(),
-                &sender.channel.extra.keyset_info,
             ).await.unwrap();
 
             // 16. Assert Charlie's received amount matches the de facto balance
