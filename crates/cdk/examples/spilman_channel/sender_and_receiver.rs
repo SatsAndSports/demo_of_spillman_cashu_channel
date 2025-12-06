@@ -156,7 +156,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters
@@ -175,13 +175,13 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            active_keyset_id,
-            input_fee_ppk,
+            keyset_info.keyset_id,
+            keyset_info.input_fee_ppk,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -295,7 +295,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters
@@ -314,13 +314,13 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            active_keyset_id,
-            input_fee_ppk,
+            keyset_info.keyset_id,
+            keyset_info.input_fee_ppk,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -420,7 +420,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // Common channel parameters
@@ -449,13 +449,13 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                active_keyset_id,
-                input_fee_ppk,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -552,7 +552,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // Common channel parameters
@@ -581,13 +581,13 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                active_keyset_id,
-                input_fee_ppk,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -684,7 +684,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // Common channel parameters
@@ -713,13 +713,13 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                active_keyset_id,
-                input_fee_ppk,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -835,7 +835,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // Common channel parameters
@@ -864,13 +864,13 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                active_keyset_id,
-                input_fee_ppk,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -986,7 +986,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
+        let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // Common channel parameters
@@ -1015,13 +1015,13 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                active_keyset_id,
-                input_fee_ppk,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();

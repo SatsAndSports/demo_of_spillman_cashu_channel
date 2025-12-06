@@ -58,8 +58,7 @@ async fn main() -> anyhow::Result<()> {
         setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk, base).await?;
 
     // Get active keyset information (will use actual fee from mint)
-    let (active_keyset_id, input_fee_ppk, active_keys) =
-        get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
+    let keyset_info = get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
 
     let capacity = 1_000_000;  // Desired channel capacity (maximum Charlie can receive after all fees)
     let setup_timestamp = unix_time();
@@ -80,20 +79,20 @@ async fn main() -> anyhow::Result<()> {
         locktime,
         setup_timestamp,
         sender_nonce,
-        active_keyset_id,
-        input_fee_ppk,
+        keyset_info.keyset_id,
+        keyset_info.input_fee_ppk,
         maximum_amount_for_one_output,
     )?;
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
-    println!("   Input fee: {} ppk", input_fee_ppk);
+    println!("   Input fee: {} ppk", keyset_info.input_fee_ppk);
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}", channel_params.get_channel_id());
 
     // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
-    let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone())?;
+    let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone())?;
 
     // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");

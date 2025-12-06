@@ -2,7 +2,7 @@
 //!
 //! Contains channel parameters plus mint-specific data (keys and amounts)
 
-use cdk::nuts::{BlindedMessage, BlindSignature, Keys, RestoreRequest};
+use cdk::nuts::{BlindedMessage, BlindSignature, Id, Keys, RestoreRequest};
 use cdk::Amount;
 
 use super::params::SpilmanChannelParameters;
@@ -370,6 +370,8 @@ impl SetOfDeterministicOutputs {
 /// Keyset information for fee calculations and amount selection
 #[derive(Debug, Clone)]
 pub struct KeysetInfo {
+    /// Keyset ID
+    pub keyset_id: Id,
     /// Set of active keys from the mint (map from amount to pubkey)
     pub active_keys: Keys,
     /// Available amounts in the keyset, sorted largest first
@@ -380,7 +382,7 @@ pub struct KeysetInfo {
 
 impl KeysetInfo {
     /// Create new keyset info from active keys
-    pub fn new(active_keys: Keys, input_fee_ppk: u64) -> Self {
+    pub fn new(keyset_id: Id, active_keys: Keys, input_fee_ppk: u64) -> Self {
         // Extract and sort amounts from the keyset (largest first)
         let mut amounts_in_this_keyset_largest_first: Vec<u64> = active_keys
             .iter()
@@ -389,6 +391,7 @@ impl KeysetInfo {
         amounts_in_this_keyset_largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
 
         Self {
+            keyset_id,
             active_keys,
             amounts_in_this_keyset_largest_first,
             input_fee_ppk,
@@ -491,7 +494,7 @@ impl SpilmanChannelExtra {
             .collect();
 
         let filtered_keys = Keys::new(filtered_map);
-        let keyset_info = KeysetInfo::new(filtered_keys, params.input_fee_ppk);
+        let keyset_info = KeysetInfo::new(params.active_keyset_id, filtered_keys, params.input_fee_ppk);
 
         Ok(Self {
             params,
@@ -824,8 +827,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
-            get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+        let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters
         let capacity = 100_000u64;
@@ -843,13 +845,13 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            active_keyset_id,
-            input_fee_ppk,
+            keyset_info.keyset_id,
+            keyset_info.input_fee_ppk,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -956,8 +958,7 @@ mod tests {
             setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
 
         // 3. Get active keyset info
-        let (active_keyset_id, input_fee_ppk, active_keys) =
-            get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+        let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
         // 4. Create channel parameters - Charlie tries to take entire capacity
         let capacity = 100_000u64;
@@ -975,13 +976,13 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            active_keyset_id,
-            input_fee_ppk,
+            keyset_info.keyset_id,
+            keyset_info.input_fee_ppk,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, active_keys.clone()).unwrap();
+        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
