@@ -2,7 +2,8 @@
 //!
 //! Contains channel parameters plus mint-specific data (keys and amounts)
 
-use cdk::nuts::{BlindedMessage, BlindSignature, Id, Keys, RestoreRequest};
+use bitcoin::secp256k1::ecdh::SharedSecret;
+use cdk::nuts::{BlindedMessage, BlindSignature, Id, Keys, RestoreRequest, SecretKey};
 use cdk::Amount;
 
 use super::params::SpilmanChannelParameters;
@@ -118,6 +119,8 @@ pub struct SetOfDeterministicOutputs {
     pub ordered_amounts: OrderedListOfAmounts,
     /// Channel parameters
     pub params: SpilmanChannelParameters,
+    /// Shared secret for deterministic derivation
+    pub shared_secret: [u8; 32],
 }
 
 /// Commitment outputs for a specific balance distribution
@@ -303,6 +306,7 @@ impl SetOfDeterministicOutputs {
         context: String,
         amount: u64,
         params: SpilmanChannelParameters,
+        shared_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = select_amounts_to_reach_a_target(amounts_in_keyset, amount)?;
@@ -312,6 +316,7 @@ impl SetOfDeterministicOutputs {
             amount,
             ordered_amounts,
             params,
+            shared_secret,
         })
     }
 
@@ -340,7 +345,7 @@ impl SetOfDeterministicOutputs {
         // Use iter_smallest_first to track index per amount (Cashu protocol recommendation)
         for (&single_amount, &count) in self.ordered_amounts.iter_smallest_first() {
             for index in 0..count {
-                let det_output = self.params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
+                let det_output = self.params.create_deterministic_output_with_blinding(&self.shared_secret, &self.context, single_amount, index)?;
                 outputs.push(det_output);
             }
         }
@@ -480,12 +485,14 @@ pub struct SpilmanChannelExtra {
     pub params: SpilmanChannelParameters,
     /// Keyset information (keys and amounts)
     pub keyset_info: KeysetInfo,
+    /// Shared secret derived from ECDH between Alice and Charlie
+    pub shared_secret: [u8; 32],
 }
 
 impl SpilmanChannelExtra {
-    /// Create new channel extra from parameters and active keys
+    /// Create new channel extra from parameters, active keys, and shared secret
     /// Filters out amounts larger than maximum_amount_for_one_output
-    pub fn new(params: SpilmanChannelParameters, active_keys: Keys) -> anyhow::Result<Self> {
+    pub fn new(params: SpilmanChannelParameters, active_keys: Keys, shared_secret: [u8; 32]) -> anyhow::Result<Self> {
         // Filter out keys with amounts larger than the maximum
         let filtered_map: std::collections::BTreeMap<_, _> = active_keys
             .iter()
@@ -499,7 +506,47 @@ impl SpilmanChannelExtra {
         Ok(Self {
             params,
             keyset_info,
+            shared_secret,
         })
+    }
+
+    /// Create new channel extra by computing the shared secret from a secret key
+    ///
+    /// This is a convenience constructor that computes the ECDH shared secret automatically.
+    /// It auto-detects whether the provided secret key belongs to Alice or Charlie by checking
+    /// if its public key matches either party, then uses the counterparty's public key for ECDH.
+    ///
+    /// # Arguments
+    /// * `params` - Channel parameters (contains both alice_pubkey and charlie_pubkey)
+    /// * `active_keys` - Mint's active keys for this keyset
+    /// * `my_secret` - Either Alice's or Charlie's secret key
+    ///
+    /// # Errors
+    /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
+    pub fn new_with_secret_key(
+        params: SpilmanChannelParameters,
+        active_keys: Keys,
+        my_secret: &SecretKey,
+    ) -> anyhow::Result<Self> {
+        let my_pubkey = my_secret.public_key();
+
+        // Determine which party we are and get the counterparty's pubkey
+        let their_pubkey = if my_pubkey == params.alice_pubkey {
+            // We are Alice, use Charlie's pubkey
+            &params.charlie_pubkey
+        } else if my_pubkey == params.charlie_pubkey {
+            // We are Charlie, use Alice's pubkey
+            &params.alice_pubkey
+        } else {
+            anyhow::bail!(
+                "Secret key's public key doesn't match either alice_pubkey or charlie_pubkey"
+            );
+        };
+
+        // Compute shared secret via ECDH
+        let shared_secret = SharedSecret::new(their_pubkey, my_secret);
+
+        Self::new(params, active_keys, shared_secret.secret_bytes())
     }
 
     /// Get the total funding token amount using double inverse
@@ -624,6 +671,7 @@ impl SpilmanChannelExtra {
             "receiver".to_string(),
             charlie_nominal,
             self.params.clone(),
+            self.shared_secret,
         )?;
 
         // Create outputs for Alice (sender)
@@ -632,6 +680,7 @@ impl SpilmanChannelExtra {
             "sender".to_string(),
             alice_nominal,
             self.params.clone(),
+            self.shared_secret,
         )?;
 
         Ok(CommitmentOutputs::new(charlie_outputs, alice_outputs))
@@ -682,7 +731,7 @@ mod tests {
         )
         .unwrap();
 
-        SpilmanChannelExtra::new(params, keys).unwrap()
+        SpilmanChannelExtra::new_with_secret_key(params, keys, &alice_secret).unwrap()
     }
 
     /// Helper to receive proofs into both wallets
@@ -850,8 +899,8 @@ mod tests {
             maximum_amount_for_one_output,
         ).unwrap();
 
-        // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+        // 5. Create channel extra (computes shared secret internally)
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -981,8 +1030,8 @@ mod tests {
             maximum_amount_for_one_output,
         ).unwrap();
 
-        // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+        // 5. Create channel extra (computes shared secret internally)
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();

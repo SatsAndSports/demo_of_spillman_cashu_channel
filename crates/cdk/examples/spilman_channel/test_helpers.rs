@@ -697,6 +697,7 @@ pub async fn create_funding_proofs(
         "funding".to_string(),
         funding_token_nominal,
         channel_extra.params.clone(),
+        channel_extra.shared_secret,
     )?;
 
     let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
