@@ -191,7 +191,22 @@ mod tests {
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params.clone(), keyset_info.active_keys.clone(), &alice_secret).unwrap();
+
+        // 5b. Create Charlie's view of channel extra (should have identical shared secret and channel_id)
+        let channel_extra_charlie = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &charlie_secret).unwrap();
+
+        // Verify both parties derive the same shared secret and channel ID
+        assert_eq!(
+            channel_extra.shared_secret,
+            channel_extra_charlie.shared_secret,
+            "Alice and Charlie should derive the same shared secret"
+        );
+        assert_eq!(
+            channel_extra.params.get_channel_id(),
+            channel_extra_charlie.params.get_channel_id(),
+            "Alice and Charlie should have the same channel ID"
+        );
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
