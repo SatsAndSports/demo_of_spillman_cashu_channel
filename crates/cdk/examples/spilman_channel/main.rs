@@ -91,8 +91,8 @@ async fn main() -> anyhow::Result<()> {
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}", channel_params.get_channel_id());
 
-    // 4b. CREATE CHANNEL EXTRA (params + mint-specific data)
-    let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone())?;
+    // 4b. CREATE CHANNEL EXTRA (params + mint-specific data, computes shared secret internally)
+    let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret)?;
 
     // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");

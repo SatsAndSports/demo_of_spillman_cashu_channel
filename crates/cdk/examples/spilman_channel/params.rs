@@ -119,20 +119,21 @@ impl SpilmanChannelParameters {
         }
     }
 
-    /// Create a deterministic output with blinding using the channel ID
-    /// Uses channel_id, context, amount, and index in the derivation per NUT-XX spec
+    /// Create a deterministic output with blinding using the channel ID and shared secret
+    /// Uses shared_secret, channel_id, context, amount, and index in the derivation per NUT-XX spec
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
     /// - "sender"/"receiver" create simple P2PK outputs for commitments
     /// - "funding" creates P2PK outputs with 2-of-2 multisig + locktime conditions
     pub fn create_deterministic_output_with_blinding(
         &self,
+        shared_secret: &[u8; 32],
         context: &str,
         amount: u64,
         index: usize,
     ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
         // Derive the deterministic nonce and blinding factor
-        let nonce_and_blinding = self.derive_nonce_and_blinding(context, amount, index)?;
+        let nonce_and_blinding = self.derive_nonce_and_blinding(shared_secret, context, amount, index)?;
 
         // Handle funding context separately (requires both pubkeys + locktime)
         if context == "funding" {
@@ -150,14 +151,15 @@ impl SpilmanChannelParameters {
         }
     }
 
-    /// Derive deterministic nonce and blinding factor using the channel ID
-    /// Uses channel_id, context, amount, and index in the derivation
+    /// Derive deterministic nonce and blinding factor using the shared secret and channel ID
+    /// Uses shared_secret, channel_id, context, amount, and index in the derivation
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
     /// Since the context already identifies which pubkey is involved, the pubkey
     /// itself is not included in the derivation (but is still needed to construct the secret).
     pub fn derive_nonce_and_blinding(
         &self,
+        shared_secret: &[u8; 32],
         context: &str,
         amount: u64,
         index: usize,
@@ -166,8 +168,9 @@ impl SpilmanChannelParameters {
         let amount_bytes = amount.to_le_bytes();
         let index_bytes = index.to_le_bytes();
 
-        // Derive deterministic nonce: SHA256(channel_id || context || amount || "nonce" || index)
+        // Derive deterministic nonce: SHA256(shared_secret || channel_id || context || amount || "nonce" || index)
         let mut nonce_input = Vec::new();
+        nonce_input.extend_from_slice(shared_secret);
         nonce_input.extend_from_slice(channel_id.as_bytes());
         nonce_input.extend_from_slice(context.as_bytes());
         nonce_input.extend_from_slice(&amount_bytes);
@@ -177,8 +180,9 @@ impl SpilmanChannelParameters {
         let nonce_hash = sha256::Hash::hash(&nonce_input);
         let nonce_hex = hex::encode(nonce_hash.as_byte_array());
 
-        // Derive deterministic blinding factor: SHA256(channel_id || context || amount || "blinding" || index)
+        // Derive deterministic blinding factor: SHA256(shared_secret || channel_id || context || amount || "blinding" || index)
         let mut blinding_input = Vec::new();
+        blinding_input.extend_from_slice(shared_secret);
         blinding_input.extend_from_slice(channel_id.as_bytes());
         blinding_input.extend_from_slice(context.as_bytes());
         blinding_input.extend_from_slice(&amount_bytes);

@@ -3,7 +3,6 @@
 //! This module contains the sender's (Alice's) and receiver's (Charlie's) views
 //! of a Spilman payment channel.
 
-use bitcoin::secp256k1::ecdh::SharedSecret;
 use cdk::nuts::{SecretKey, SwapRequest};
 
 use super::established_channel::EstablishedChannel;
@@ -74,10 +73,9 @@ impl SpilmanChannelSender {
         self.channel.extra.params.get_channel_id()
     }
 
-    /// Get the shared secret with Charlie using ECDH
-    pub fn get_shared_secret(&self) -> SharedSecret {
-        let charlie_pubkey = &self.channel.extra.params.charlie_pubkey;
-        SharedSecret::new(charlie_pubkey, &self.alice_secret)
+    /// Get the shared secret with Charlie (stored in channel extra)
+    pub fn get_shared_secret(&self) -> &[u8; 32] {
+        &self.channel.extra.shared_secret
     }
 }
 
@@ -136,10 +134,9 @@ impl SpilmanChannelReceiver {
         self.channel.extra.params.get_channel_id()
     }
 
-    /// Get the shared secret with Alice using ECDH
-    pub fn get_shared_secret(&self) -> SharedSecret {
-        let alice_pubkey = &self.channel.extra.params.alice_pubkey;
-        SharedSecret::new(alice_pubkey, &self.charlie_secret)
+    /// Get the shared secret with Alice (stored in channel extra)
+    pub fn get_shared_secret(&self) -> &[u8; 32] {
+        &self.channel.extra.shared_secret
     }
 }
 
@@ -193,8 +190,8 @@ mod tests {
             maximum_amount_for_one_output,
         ).unwrap();
 
-        // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+        // 5. Create channel extra (computes shared secret internally)
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -332,8 +329,8 @@ mod tests {
             maximum_amount_for_one_output,
         ).unwrap();
 
-        // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+        // 5. Create channel extra (computes shared secret internally)
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -467,8 +464,8 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            // 5. Create channel extra (computes shared secret internally)
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -599,8 +596,8 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            // 5. Create channel extra (computes shared secret internally)
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -731,8 +728,8 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            // 5. Create channel extra (computes shared secret internally)
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -882,8 +879,8 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            // 5. Create channel extra (computes shared secret internally)
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -1033,8 +1030,8 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            // 5. Create channel extra
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            // 5. Create channel extra (computes shared secret internally)
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -1219,7 +1216,7 @@ mod tests {
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
@@ -1324,8 +1321,8 @@ mod tests {
             maximum_amount_for_one_output,
         ).unwrap();
 
-        // 5. Create channel extra
-        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+        // 5. Create channel extra (computes shared secret internally)
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
 
         // 6. Create funding proofs and channel
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -1341,18 +1338,18 @@ mod tests {
         let sender = SpilmanChannelSender::new(alice_secret, channel.clone());
         let receiver = SpilmanChannelReceiver::new(charlie_secret, channel);
 
-        // 8. Get shared secrets from both parties
+        // 8. Get shared secrets from both parties (now stored in channel extra)
         let sender_shared_secret = sender.get_shared_secret();
         let receiver_shared_secret = receiver.get_shared_secret();
 
-        // 9. Assert they are the same
+        // 9. Assert they are the same (both should point to the same shared_secret stored in Extra)
         assert_eq!(
-            sender_shared_secret.secret_bytes(),
-            receiver_shared_secret.secret_bytes(),
-            "Sender and Receiver should derive the same shared secret via ECDH"
+            sender_shared_secret,
+            receiver_shared_secret,
+            "Sender and Receiver should have the same shared secret"
         );
 
-        println!("Shared secret (hex): {}", cdk::util::hex::encode(sender_shared_secret.secret_bytes()));
-        println!("✅ Sender and Receiver derived the same shared secret!");
+        println!("Shared secret (hex): {}", cdk::util::hex::encode(sender_shared_secret));
+        println!("✅ Sender and Receiver have the same shared secret!");
     }
 }
