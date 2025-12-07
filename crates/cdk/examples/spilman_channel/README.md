@@ -78,3 +78,4 @@ Other things that should be done:
  - Alice restoring when Charlie uses an unexpected keyset (see _Keyset Malleability_ in the NUT)
  - Using another mint, not just the CDK mint used in the tests. The earliest iterations of the spilman demo code did work with Nutshell, but that was before the SIG_ALL message update and before other changes. So I should make sure that works again. A `--mint` option can be passed to the example already, and it might still be fully working, but I should test it again and also with any public (test) mints that have the SIG_ALL update.
  - I'd like to try a `unit=millisat` mint too
+ - And make a fun realistic example, like paying for a streaming video within WebSockets
