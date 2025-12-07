@@ -1118,4 +1118,154 @@ mod tests {
 
         println!("\n✅ All {} balance iterations passed!", test_balances.len());
     }
+
+    #[tokio::test]
+    async fn test_many_inexact_payments_across_some_capacities_1_to_4000() {
+        let max_capacity = 4000;
+        let input_fee_ppk = 100;
+
+
+        use crate::test_helpers::setup_mint_and_wallets_for_demo;
+
+        // 1. Generate keys for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // 2. Setup mint with 100ppk fee (10% fee)
+        let channel_unit = CurrencyUnit::Sat;
+        let base = 2; // Powers of 2
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
+
+        // Get keyset info
+        let keyset_info =
+            crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+
+        println!("\n=== Inverse and Double-Inverse Fee Calculations (fee={}ppk) ===", keyset_info.input_fee_ppk);
+        println!("{:>10} | {:>12} {:>12} | {:>12} {:>12}",
+            "target", "inverse_nom", "inverse_act", "dbl_inv_nom", "dbl_inv_act");
+        println!("{}", "-".repeat(70));
+
+        let mut inexact_targets: Vec<u64> = Vec::new();
+
+        for capacity in 1..=max_capacity {
+            // Find capacities where the stage 1 inverse is 'inexact', i.e. where the
+ 
+            // start by finding the nominal value of the stage1 outputs necessary
+            let inverse_of_the_second_stage = keyset_info.inverse_deterministic_value_after_fees(capacity).unwrap();
+
+            // Double inverse: apply inverse a second time, to 'undo' stage 1, like the funding token calculation
+            let double_inverse = keyset_info.inverse_deterministic_value_after_fees(inverse_of_the_second_stage.nominal_value).unwrap();
+
+            // now check of the actual outputs of stage1 are different from (bigger than) the exact
+            // minimum required as input to stage 2:
+            let stage1_is_inexact = double_inverse.actual_balance != inverse_of_the_second_stage.nominal_value;
+
+            if stage1_is_inexact {
+                inexact_targets.push(capacity);
+            }
+        }
+
+        println!("\n✅ Printed inverse calculations for 1-10000");
+        println!("\n=== Inexact targets ({} total) ===", inexact_targets.len());
+        println!("{:?}", inexact_targets);
+
+        // Now test channel creation for each inexact target
+        println!("\n=== Testing channels for inexact targets ===");
+
+        let locktime = unix_time() + 86400;
+        let setup_timestamp = unix_time();
+        let maximum_amount_for_one_output = 10_000u64;
+
+        let mut total_payments = 0u64;
+
+        for (i, &capacity) in inexact_targets.iter().enumerate() {
+            // For each inexact capacity, test only inexact charlie_balance values
+            for charlie_balance in 1..=capacity {
+                let charlie_de_facto_balance = keyset_info.inverse_deterministic_value_after_fees(charlie_balance).unwrap().actual_balance;
+                if charlie_de_facto_balance == charlie_balance {
+                    continue;
+                }
+
+                println!("\ncapacity={}, charlie_balance={}", capacity, charlie_balance);
+
+                let sender_nonce = format!("test_nonce_{}_{}", capacity, charlie_balance);
+                let channel_params = SpilmanChannelParameters::new(
+                alice_pubkey,
+                charlie_pubkey,
+                "local".to_string(),
+                channel_unit.clone(),
+                capacity,
+                locktime,
+                setup_timestamp,
+                sender_nonce,
+                keyset_info.keyset_id,
+                keyset_info.input_fee_ppk,
+                maximum_amount_for_one_output,
+            ).unwrap();
+
+            let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+
+            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+
+            let funding_proofs = crate::test_helpers::create_funding_proofs(
+                &*mint_connection,
+                &channel_extra,
+                funding_token_nominal,
+            ).await.unwrap();
+
+            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+
+            let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
+
+            // Create balance update with charlie_balance == capacity
+            let (balance_update, mut swap_request) = sender.create_signed_balance_update(
+                charlie_balance
+            ).unwrap();
+
+            // Charlie verifies and signs
+            balance_update.verify_sender_signature(&channel).unwrap();
+            swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
+
+            // Execute the swap
+            let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
+
+            // Unblind proofs
+            let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
+                &sender.channel.extra,
+                charlie_balance,
+                swap_response.signatures,
+            ).unwrap();
+
+            // Receive into both wallets
+            let (charlie_received, alice_received) = crate::test_helpers::receive_proofs_into_both_wallets(
+                &charlie_wallet,
+                charlie_stage1_proofs,
+                charlie_secret.clone(),
+                &alice_wallet,
+                alice_stage1_proofs,
+                alice_secret.clone(),
+            ).await.unwrap();
+
+                // Assert Charlie's received amount matches the de facto balance
+                assert_eq!(
+                    charlie_received, charlie_de_facto_balance,
+                    "capacity={}, charlie_balance={}: received ({}) should match de facto balance ({})",
+                    capacity, charlie_balance, charlie_received, charlie_de_facto_balance
+                );
+
+                println!("  charlie_received={}, alice_received={}", charlie_received, alice_received);
+
+                total_payments += 1;
+            }
+
+            if (i + 1) % 100 == 0 {
+                println!("   ✓ Tested {} / {} inexact targets ({} payments so far)", i + 1, inexact_targets.len(), total_payments);
+            }
+        }
+
+        println!("\n✅ All {} inexact target channels passed! ({} total payments)", inexact_targets.len(), total_payments);
+    }
 }
