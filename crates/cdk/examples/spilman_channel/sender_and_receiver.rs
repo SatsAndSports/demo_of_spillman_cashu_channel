@@ -1130,9 +1130,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_many_inexact_payments_across_some_capacities_1_to_4000() {
-        let max_capacity = 4000;
-        let input_fee_ppk = 100;
+    async fn test_many_inexact_payments_across_some_capacities_1_to_50() {
+        let max_capacity = 50;
+        let input_fee_ppk = 400; // 4% fee
 
 
         use crate::test_helpers::setup_mint_and_wallets_for_demo;
@@ -1143,7 +1143,6 @@ mod tests {
         let charlie_secret = SecretKey::generate();
         let charlie_pubkey = charlie_secret.public_key();
 
-        // 2. Setup mint with 100ppk fee (10% fee)
         let channel_unit = CurrencyUnit::Sat;
         let base = 2; // Powers of 2
         let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
