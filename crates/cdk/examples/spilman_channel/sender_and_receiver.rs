@@ -3,6 +3,7 @@
 //! This module contains the sender's (Alice's) and receiver's (Charlie's) views
 //! of a Spilman payment channel.
 
+use bitcoin::secp256k1::ecdh::SharedSecret;
 use cdk::nuts::{SecretKey, SwapRequest};
 
 use super::established_channel::EstablishedChannel;
@@ -72,6 +73,12 @@ impl SpilmanChannelSender {
     pub fn channel_id(&self) -> String {
         self.channel.extra.params.get_channel_id()
     }
+
+    /// Get the shared secret with Charlie using ECDH
+    pub fn get_shared_secret(&self) -> SharedSecret {
+        let charlie_pubkey = &self.channel.extra.params.charlie_pubkey;
+        SharedSecret::new(charlie_pubkey, &self.alice_secret)
+    }
 }
 
 /// The receiver's view of a Spilman payment channel
@@ -127,6 +134,12 @@ impl SpilmanChannelReceiver {
     /// Get the channel ID
     pub fn channel_id(&self) -> String {
         self.channel.extra.params.get_channel_id()
+    }
+
+    /// Get the shared secret with Alice using ECDH
+    pub fn get_shared_secret(&self) -> SharedSecret {
+        let alice_pubkey = &self.channel.extra.params.alice_pubkey;
+        SharedSecret::new(alice_pubkey, &self.charlie_secret)
     }
 }
 
@@ -1267,5 +1280,79 @@ mod tests {
         }
 
         println!("\n✅ All {} inexact target channels passed! ({} total payments)", inexact_targets.len(), total_payments);
+    }
+
+    #[tokio::test]
+    async fn test_shared_secret_matches() {
+        use crate::test_helpers::setup_mint_and_wallets_for_demo;
+
+        // 1. Generate keys for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // 2. Setup mint and wallets
+        let channel_unit = CurrencyUnit::Sat;
+        let input_fee_ppk = 0;
+        let base = 2;
+        let (mint_connection, _alice_wallet, _charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
+
+        // 3. Get active keyset info
+        let keyset_info =
+            crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+
+        // 4. Create channel parameters
+        let capacity = 10_000u64;
+        let locktime = unix_time() + 86400;
+        let setup_timestamp = unix_time();
+        let sender_nonce = "test_shared_secret".to_string();
+        let maximum_amount_for_one_output = 10_000u64;
+
+        let channel_params = SpilmanChannelParameters::new(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            channel_unit.clone(),
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce,
+            keyset_info.keyset_id,
+            keyset_info.input_fee_ppk,
+            maximum_amount_for_one_output,
+        ).unwrap();
+
+        // 5. Create channel extra
+        let channel_extra = SpilmanChannelExtra::new(channel_params, keyset_info.active_keys.clone()).unwrap();
+
+        // 6. Create funding proofs and channel
+        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+        let funding_proofs = crate::test_helpers::create_funding_proofs(
+            &*mint_connection,
+            &channel_extra,
+            funding_token_nominal,
+        ).await.unwrap();
+
+        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+
+        // 7. Create Sender and Receiver
+        let sender = SpilmanChannelSender::new(alice_secret, channel.clone());
+        let receiver = SpilmanChannelReceiver::new(charlie_secret, channel);
+
+        // 8. Get shared secrets from both parties
+        let sender_shared_secret = sender.get_shared_secret();
+        let receiver_shared_secret = receiver.get_shared_secret();
+
+        // 9. Assert they are the same
+        assert_eq!(
+            sender_shared_secret.secret_bytes(),
+            receiver_shared_secret.secret_bytes(),
+            "Sender and Receiver should derive the same shared secret via ECDH"
+        );
+
+        println!("Shared secret (hex): {}", cdk::util::hex::encode(sender_shared_secret.secret_bytes()));
+        println!("✅ Sender and Receiver derived the same shared secret!");
     }
 }
