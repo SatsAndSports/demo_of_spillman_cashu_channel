@@ -692,7 +692,7 @@ pub async fn create_funding_proofs(
     channel_params: &crate::params::SpilmanChannelParameters,
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
-    let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
+    let funding_outputs = crate::extra::DeterministicOutputsForOneContext::new(
         "funding".to_string(),
         funding_token_nominal,
         channel_params.clone(),
