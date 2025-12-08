@@ -155,13 +155,8 @@ impl DeterministicOutputsForOneContext {
     }
 
     /// Calculate the value after stage 2 fees
-    /// Takes the nominal amount and subtracts the fees for spending these outputs
-    pub fn value_after_fees(&self) -> anyhow::Result<u64> {
-        let num_outputs = self.ordered_amounts.len() as u64;
-        let fees_ppk = self.params.keyset_info.input_fee_ppk * num_outputs;
-        let fee = (fees_ppk + 999) / 1000;
-
-        Ok(self.amount - fee)
+    pub fn value_after_fees(&self) -> u64 {
+        self.ordered_amounts.value_after_fees()
     }
 
     /// Get the secrets with blinding for these outputs
