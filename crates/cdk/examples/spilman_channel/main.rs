@@ -4,6 +4,7 @@
 //! allowing Alice and Charlie to set up an offline unidirectional payment channel.
 
 mod deterministic;
+mod keyset_info;
 mod params;
 mod extra;
 mod established_channel;
@@ -79,20 +80,19 @@ async fn main() -> anyhow::Result<()> {
         locktime,
         setup_timestamp,
         sender_nonce,
-        keyset_info.keyset_id,
-        keyset_info.input_fee_ppk,
+        keyset_info,
         maximum_amount_for_one_output,
     )?;
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
-    println!("   Input fee: {} ppk", keyset_info.input_fee_ppk);
+    println!("   Input fee: {} ppk", channel_params.keyset_info.input_fee_ppk);
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}", channel_params.get_channel_id());
 
-    // 4b. CREATE CHANNEL EXTRA (params + mint-specific data, computes shared secret internally)
-    let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret)?;
+    // 4b. CREATE CHANNEL EXTRA (params + shared secret computed internally)
+    let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret)?;
 
     // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
@@ -195,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
     // Unblind the signatures to get the commitment proofs
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
         swap_response.signatures,
-        &channel_fixtures.extra.keyset_info.active_keys,
+        &channel_fixtures.extra.params.keyset_info.active_keys,
     )?;
     println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
 
