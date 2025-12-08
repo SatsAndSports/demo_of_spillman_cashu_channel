@@ -7,7 +7,7 @@ use cdk::nuts::nut10::SpendingConditionVerification;
 use cdk::nuts::SwapRequest;
 
 use super::established_channel::EstablishedChannel;
-use super::extra::CommitmentOutputs;
+use super::deterministic::CommitmentOutputs;
 use super::test_helpers::get_signatures_from_swap_request;
 
 /// A balance update message from Alice to Charlie

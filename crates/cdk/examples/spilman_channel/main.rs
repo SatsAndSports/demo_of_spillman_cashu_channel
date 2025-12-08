@@ -6,7 +6,6 @@
 mod deterministic;
 mod keysets_and_amounts;
 mod params;
-mod extra;
 mod established_channel;
 mod balance_update;
 mod sender_and_receiver;
@@ -18,7 +17,7 @@ use cdk::secret::Secret;
 use clap::Parser;
 
 use params::ChannelParameters;
-use extra::CommitmentOutputs;
+use deterministic::CommitmentOutputs;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
