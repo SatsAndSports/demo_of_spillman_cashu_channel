@@ -7,7 +7,7 @@ use cdk::nuts::{SecretKey, SwapRequest};
 
 use super::established_channel::EstablishedChannel;
 use super::balance_update::BalanceUpdateMessage;
-use super::extra::CommitmentOutputs;
+use super::deterministic::CommitmentOutputs;
 
 /// The sender's view of a Spilman payment channel
 ///
