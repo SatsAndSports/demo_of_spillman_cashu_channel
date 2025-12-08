@@ -693,7 +693,6 @@ pub async fn create_funding_proofs(
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
     let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
-        &channel_extra.amounts_filtered(),
         "funding".to_string(),
         funding_token_nominal,
         channel_extra.params.clone(),
