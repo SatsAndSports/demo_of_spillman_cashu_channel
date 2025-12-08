@@ -579,7 +579,7 @@ pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
 pub async fn get_active_keyset_info(
     mint_connection: &dyn MintConnection,
     unit: &CurrencyUnit,
-) -> anyhow::Result<crate::extra::KeysetInfo> {
+) -> anyhow::Result<crate::keyset_info::KeysetInfo> {
     // Get all keysets and their info
     let all_keysets = mint_connection.get_keys().await?;
     let keysets_info = mint_connection.get_keysets().await?;
@@ -597,7 +597,7 @@ pub async fn get_active_keyset_info(
         .find(|k| k.id == active_keyset_id)
         .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
 
-    Ok(crate::extra::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
+    Ok(crate::keyset_info::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
 }
 
 /// Setup mint and wallets for demo/testing
@@ -693,7 +693,7 @@ pub async fn create_funding_proofs(
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
     let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
-        &channel_extra.keyset_info.amounts_in_this_keyset_largest_first,
+        &channel_extra.amounts_filtered(),
         "funding".to_string(),
         funding_token_nominal,
         channel_extra.params.clone(),
@@ -708,7 +708,7 @@ pub async fn create_funding_proofs(
         channel_extra.params.unit.clone(),
         funding_blinded_messages,
         funding_secrets_with_blinding,
-        &channel_extra.keyset_info.active_keys,
+        &channel_extra.params.keyset_info.active_keys,
     ).await?;
 
     Ok(funding_proofs)
@@ -731,7 +731,7 @@ pub fn unblind_commitment_proofs(
     // Unblind the signatures to get the commitment proofs
     let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(
         signatures,
-        &channel_extra.keyset_info.active_keys,
+        &channel_extra.params.keyset_info.active_keys,
     )?;
 
     Ok((receiver_stage1_proofs, sender_stage1_proofs))
