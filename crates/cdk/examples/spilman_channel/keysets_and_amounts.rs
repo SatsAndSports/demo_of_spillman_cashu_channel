@@ -101,7 +101,7 @@ impl OrderedListOfAmounts {
     }
 
     /// Get the total nominal value (sum of all amounts)
-    pub fn total(&self) -> u64 {
+    pub fn nominal_total(&self) -> u64 {
         self.amounts.iter().sum()
     }
 
@@ -109,7 +109,7 @@ impl OrderedListOfAmounts {
     ///
     /// Uses the fee formula: (input_fee_ppk * num_outputs + 999) / 1000 (rounds up)
     pub fn value_after_fees(&self) -> u64 {
-        let total = self.total();
+        let total = self.nominal_total();
         if self.input_fee_ppk == 0 {
             return total;
         }
