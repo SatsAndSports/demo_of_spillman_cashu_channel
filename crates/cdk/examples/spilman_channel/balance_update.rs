@@ -7,6 +7,7 @@ use cdk::nuts::nut10::SpendingConditionVerification;
 use cdk::nuts::SwapRequest;
 
 use super::established_channel::EstablishedChannel;
+use super::extra::CommitmentOutputs;
 use super::test_helpers::get_signatures_from_swap_request;
 
 /// A balance update message from Alice to Charlie
@@ -56,8 +57,9 @@ impl BalanceUpdateMessage {
     /// Throws an error if the signature is invalid
     pub fn verify_sender_signature(&self, channel: &EstablishedChannel) -> Result<(), anyhow::Error> {
         // Reconstruct the commitment outputs for this balance
-        let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
+        let commitment_outputs = CommitmentOutputs::for_balance(
             self.amount,
+            &channel.params,
         )?;
 
         // Reconstruct the unsigned swap request
@@ -69,7 +71,7 @@ impl BalanceUpdateMessage {
         let msg_to_sign = swap_request.sig_all_msg_to_sign();
 
         // Verify the signature using Alice's pubkey from channel params
-        channel.extra.params.alice_pubkey
+        channel.params.alice_pubkey
             .verify(msg_to_sign.as_bytes(), &self.signature)
             .map_err(|_| anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update"))?;
 

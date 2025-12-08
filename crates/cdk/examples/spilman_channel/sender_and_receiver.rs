@@ -7,6 +7,7 @@ use cdk::nuts::{SecretKey, SwapRequest};
 
 use super::established_channel::EstablishedChannel;
 use super::balance_update::BalanceUpdateMessage;
+use super::extra::CommitmentOutputs;
 
 /// The sender's view of a Spilman payment channel
 ///
@@ -36,8 +37,9 @@ impl SpilmanChannelSender {
         charlie_balance: u64,
     ) -> anyhow::Result<(BalanceUpdateMessage, SwapRequest)> {
         // Create commitment outputs for this balance
-        let commitment_outputs = self.channel.extra.create_two_sets_of_outputs_for_balance(
+        let commitment_outputs = CommitmentOutputs::for_balance(
             charlie_balance,
+            &self.channel.params,
         )?;
 
         // Create unsigned swap request
@@ -50,7 +52,7 @@ impl SpilmanChannelSender {
 
         // Create the balance update message
         let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-            self.channel.extra.params.get_channel_id(),
+            self.channel.params.get_channel_id(),
             charlie_balance,
             &swap_request,
         )?;
@@ -60,22 +62,22 @@ impl SpilmanChannelSender {
 
     /// Get the de facto balance (after fee rounding) for an intended balance
     pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
-        self.channel.extra.get_de_facto_balance(intended_balance)
+        self.channel.params.get_de_facto_balance(intended_balance)
     }
 
     /// Get the channel capacity
     pub fn capacity(&self) -> u64 {
-        self.channel.extra.params.capacity
+        self.channel.params.capacity
     }
 
     /// Get the channel ID
     pub fn channel_id(&self) -> String {
-        self.channel.extra.params.get_channel_id()
+        self.channel.params.get_channel_id()
     }
 
-    /// Get the shared secret with Charlie (stored in channel extra)
+    /// Get the shared secret with Charlie (stored in channel params)
     pub fn get_shared_secret(&self) -> &[u8; 32] {
-        &self.channel.extra.shared_secret
+        &self.channel.params.shared_secret
     }
 }
 
@@ -121,22 +123,22 @@ impl SpilmanChannelReceiver {
 
     /// Get the de facto balance (after fee rounding) for an intended balance
     pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
-        self.channel.extra.get_de_facto_balance(intended_balance)
+        self.channel.params.get_de_facto_balance(intended_balance)
     }
 
     /// Get the channel capacity
     pub fn capacity(&self) -> u64 {
-        self.channel.extra.params.capacity
+        self.channel.params.capacity
     }
 
     /// Get the channel ID
     pub fn channel_id(&self) -> String {
-        self.channel.extra.params.get_channel_id()
+        self.channel.params.get_channel_id()
     }
 
-    /// Get the shared secret with Alice (stored in channel extra)
+    /// Get the shared secret with Alice (stored in channel params)
     pub fn get_shared_secret(&self) -> &[u8; 32] {
-        &self.channel.extra.shared_secret
+        &self.channel.params.shared_secret
     }
 }
 
@@ -146,7 +148,6 @@ mod tests {
     use cdk::nuts::{CurrencyUnit, SecretKey};
     use cdk::util::unix_time;
     use crate::params::SpilmanChannelParameters;
-    use crate::extra::SpilmanChannelExtra;
 
     #[tokio::test]
     async fn test_full_flow() {
@@ -169,14 +170,29 @@ mod tests {
         let keyset_info =
             crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
-        // 4. Create channel parameters
+        // 4. Create channel parameters with shared secret (Alice's view)
         let capacity = 100_000u64;
         let locktime = unix_time() + 86400;
         let setup_timestamp = unix_time();
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new(
+        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            channel_unit.clone(),
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce.clone(),
+            keyset_info.clone(),
+            maximum_amount_for_one_output,
+            &alice_secret,
+        ).unwrap();
+
+        // 4b. Create Charlie's view of channel params (should have identical shared secret and channel_id)
+        let channel_params_charlie = SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -185,39 +201,34 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.clone(),
+            keyset_info,
             maximum_amount_for_one_output,
+            &charlie_secret,
         ).unwrap();
-
-        // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params.clone(), &alice_secret).unwrap();
-
-        // 5b. Create Charlie's view of channel extra (should have identical shared secret and channel_id)
-        let channel_extra_charlie = SpilmanChannelExtra::new_with_secret_key(channel_params, &charlie_secret).unwrap();
 
         // Verify both parties derive the same shared secret and channel ID
         assert_eq!(
-            channel_extra.shared_secret,
-            channel_extra_charlie.shared_secret,
+            channel_params.shared_secret,
+            channel_params_charlie.shared_secret,
             "Alice and Charlie should derive the same shared secret"
         );
         assert_eq!(
-            channel_extra.params.get_channel_id(),
-            channel_extra_charlie.params.get_channel_id(),
+            channel_params.get_channel_id(),
+            channel_params_charlie.get_channel_id(),
             "Alice and Charlie should have the same channel ID"
         );
 
-        // 6. Calculate funding token size and mint it
-        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+        // 5. Calculate funding token size and mint it
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
         let funding_proofs = crate::test_helpers::create_funding_proofs(
             &*mint_connection,
-            &channel_extra,
+            &channel_params,
             funding_token_nominal,
         ).await.unwrap();
 
-        // 7. Create established channel
-        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+        // 6. Create established channel
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
         // 8. Create SpilmanChannelSender (Alice's view) and SpilmanChannelReceiver (Charlie's view)
         let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -246,7 +257,7 @@ mod tests {
 
         // 13. Unblind the swap signatures to get stage 1 proofs for both parties
         let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-            &sender.channel.extra,
+            &sender.channel.params,
             charlie_balance,
             swap_response.signatures,
         ).unwrap();
@@ -260,9 +271,9 @@ mod tests {
         // 14. Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage 2 fees)
         let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+        let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
             charlie_balance,
-            sender.channel.extra.params.maximum_amount_for_one_output
+            sender.channel.params.maximum_amount_for_one_output
         ).unwrap();
         let expected_nominal = inverse_result.nominal_value;
         assert_eq!(
@@ -273,7 +284,7 @@ mod tests {
 
         // 15. Verify that Alice's proofs total the remainder after Charlie's allocation
         let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+        let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
         let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
         assert_eq!(
             alice_total_after_stage1, expected_alice_total,
@@ -330,7 +341,7 @@ mod tests {
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new(
+        let channel_params = SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -341,22 +352,20 @@ mod tests {
             sender_nonce,
             keyset_info.clone(),
             maximum_amount_for_one_output,
+            &alice_secret,
         ).unwrap();
 
-        // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
         // 6. Calculate funding token size and mint it
-        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
         let funding_proofs = crate::test_helpers::create_funding_proofs(
             &*mint_connection,
-            &channel_extra,
+            &channel_params,
             funding_token_nominal,
         ).await.unwrap();
 
         // 7. Create established channel
-        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
         // 8. Create SpilmanChannelSender (Alice's view)
         let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -386,7 +395,7 @@ mod tests {
 
         // 14. Unblind the swap signatures to get stage 1 proofs for both parties
         let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-            &sender.channel.extra,
+            &sender.channel.params,
             charlie_balance,
             swap_response.signatures,
         ).unwrap();
@@ -400,9 +409,9 @@ mod tests {
         // Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage1 fees
         let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+        let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
             charlie_balance,
-            sender.channel.extra.params.maximum_amount_for_one_output
+            sender.channel.params.maximum_amount_for_one_output
         ).unwrap();
         let expected_nominal = inverse_result.nominal_value;
         assert_eq!(
@@ -413,7 +422,7 @@ mod tests {
 
         // Verify that Alice's proofs total the remainder after Charlie's allocation
         let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+        let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
         let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
         assert_eq!(
             alice_total_after_stage1, expected_alice_total,
@@ -465,7 +474,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new(
+            let channel_params = SpilmanChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -476,22 +485,20 @@ mod tests {
                 sender_nonce,
                 keyset_info.clone(),
                 maximum_amount_for_one_output,
+                &alice_secret,
             ).unwrap();
 
-            // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
             // 6. Calculate funding token size and mint it
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
             // 7. Create established channel
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             // 8. Create SpilmanChannelSender (Alice's view)
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -520,7 +527,7 @@ mod tests {
 
             // 14. Unblind the swap signatures to get stage 1 proofs for both parties
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 *charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -533,9 +540,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
                 *charlie_balance,
-                sender.channel.extra.params.maximum_amount_for_one_output
+                sender.channel.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -546,7 +553,7 @@ mod tests {
 
             // Verify that Alice's proofs total the remainder after Charlie's allocation
             let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+            let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
             let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
             assert_eq!(
                 alice_total_after_stage1, expected_alice_total,
@@ -597,7 +604,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new(
+            let channel_params = SpilmanChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -608,22 +615,20 @@ mod tests {
                 sender_nonce,
                 keyset_info.clone(),
                 maximum_amount_for_one_output,
+                &alice_secret,
             ).unwrap();
 
-            // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
             // 6. Calculate funding token size and mint it
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
             // 7. Create established channel
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             // 8. Create SpilmanChannelSender (Alice's view)
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -652,7 +657,7 @@ mod tests {
 
             // 14. Unblind the swap signatures to get stage 1 proofs for both parties
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 *charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -665,9 +670,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
                 *charlie_balance,
-                sender.channel.extra.params.maximum_amount_for_one_output
+                sender.channel.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -678,7 +683,7 @@ mod tests {
 
             // Verify that Alice's proofs total the remainder after Charlie's allocation
             let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+            let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
             let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
             assert_eq!(
                 alice_total_after_stage1, expected_alice_total,
@@ -729,7 +734,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new(
+            let channel_params = SpilmanChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -740,22 +745,20 @@ mod tests {
                 sender_nonce,
                 keyset_info.clone(),
                 maximum_amount_for_one_output,
+                &alice_secret,
             ).unwrap();
 
-            // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
             // 6. Calculate funding token size and mint it
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
             // 7. Create established channel
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             // 8. Create SpilmanChannelSender (Alice's view)
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -784,7 +787,7 @@ mod tests {
 
             // 14. Unblind the swap signatures to get stage 1 proofs for both parties
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 *charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -797,9 +800,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
                 *charlie_balance,
-                sender.channel.extra.params.maximum_amount_for_one_output
+                sender.channel.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -810,7 +813,7 @@ mod tests {
 
             // Verify that Alice's proofs total the remainder after Charlie's allocation
             let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+            let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
             let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
             assert_eq!(
                 alice_total_after_stage1, expected_alice_total,
@@ -880,7 +883,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new(
+            let channel_params = SpilmanChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -891,22 +894,20 @@ mod tests {
                 sender_nonce,
                 keyset_info.clone(),
                 maximum_amount_for_one_output,
+                &alice_secret,
             ).unwrap();
 
-            // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
             // 6. Calculate funding token size and mint it
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
             // 7. Create established channel
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             // 8. Create SpilmanChannelSender (Alice's view)
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -935,7 +936,7 @@ mod tests {
 
             // 14. Unblind the swap signatures to get stage 1 proofs for both parties
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 *charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -948,9 +949,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
                 *charlie_balance,
-                sender.channel.extra.params.maximum_amount_for_one_output
+                sender.channel.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -961,7 +962,7 @@ mod tests {
 
             // Verify that Alice's proofs total the remainder after Charlie's allocation
             let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+            let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
             let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
             assert_eq!(
                 alice_total_after_stage1, expected_alice_total,
@@ -1031,7 +1032,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new(
+            let channel_params = SpilmanChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -1042,22 +1043,20 @@ mod tests {
                 sender_nonce,
                 keyset_info.clone(),
                 maximum_amount_for_one_output,
+                &alice_secret,
             ).unwrap();
 
-            // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
             // 6. Calculate funding token size and mint it
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
             // 7. Create established channel
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             // 8. Create SpilmanChannelSender (Alice's view)
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
@@ -1086,7 +1085,7 @@ mod tests {
 
             // 14. Unblind the swap signatures to get stage 1 proofs for both parties
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 *charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -1099,9 +1098,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            let inverse_result = sender.channel.params.keyset_info.inverse_deterministic_value_after_fees(
                 *charlie_balance,
-                sender.channel.extra.params.maximum_amount_for_one_output
+                sender.channel.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -1112,7 +1111,7 @@ mod tests {
 
             // Verify that Alice's proofs total the remainder after Charlie's allocation
             let alice_total_after_stage1: u64 = alice_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let value_after_stage1 = sender.channel.extra.get_value_after_stage1().unwrap();
+            let value_after_stage1 = sender.channel.params.get_value_after_stage1().unwrap();
             let expected_alice_total = value_after_stage1 - charlie_total_after_stage1;
             assert_eq!(
                 alice_total_after_stage1, expected_alice_total,
@@ -1218,30 +1217,29 @@ mod tests {
                 println!("\ncapacity={}, charlie_balance={}", capacity, charlie_balance);
 
                 let sender_nonce = format!("test_nonce_{}_{}", capacity, charlie_balance);
-                let channel_params = SpilmanChannelParameters::new(
-                alice_pubkey,
-                charlie_pubkey,
-                "local".to_string(),
-                channel_unit.clone(),
-                capacity,
-                locktime,
-                setup_timestamp,
-                sender_nonce,
-                keyset_info.clone(),
-                maximum_amount_for_one_output,
-            ).unwrap();
+                let channel_params = SpilmanChannelParameters::new_with_secret_key(
+                    alice_pubkey,
+                    charlie_pubkey,
+                    "local".to_string(),
+                    channel_unit.clone(),
+                    capacity,
+                    locktime,
+                    setup_timestamp,
+                    sender_nonce,
+                    keyset_info.clone(),
+                    maximum_amount_for_one_output,
+                    &alice_secret,
+                ).unwrap();
 
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
-            let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+            let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
             let funding_proofs = crate::test_helpers::create_funding_proofs(
                 &*mint_connection,
-                &channel_extra,
+                &channel_params,
                 funding_token_nominal,
             ).await.unwrap();
 
-            let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+            let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
             let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
 
@@ -1259,7 +1257,7 @@ mod tests {
 
             // Unblind proofs
             let (charlie_stage1_proofs, alice_stage1_proofs) = crate::test_helpers::unblind_commitment_proofs(
-                &sender.channel.extra,
+                &sender.channel.params,
                 charlie_balance,
                 swap_response.signatures,
             ).unwrap();
@@ -1322,7 +1320,7 @@ mod tests {
         let sender_nonce = "test_shared_secret".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new(
+        let channel_params = SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -1333,20 +1331,18 @@ mod tests {
             sender_nonce,
             keyset_info.clone(),
             maximum_amount_for_one_output,
+            &alice_secret,
         ).unwrap();
 
-        // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
-
         // 6. Create funding proofs and channel
-        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
         let funding_proofs = crate::test_helpers::create_funding_proofs(
             &*mint_connection,
-            &channel_extra,
+            &channel_params,
             funding_token_nominal,
         ).await.unwrap();
 
-        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
         // 7. Create Sender and Receiver
         let sender = SpilmanChannelSender::new(alice_secret, channel.clone());

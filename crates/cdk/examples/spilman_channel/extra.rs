@@ -1,12 +1,11 @@
-//! Spilman Channel Extra
+//! Spilman Channel Outputs
 //!
-//! Contains channel parameters plus shared secret derived from ECDH
+//! Contains deterministic output types for commitment transactions
 
-use bitcoin::secp256k1::ecdh::SharedSecret;
-use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest, SecretKey};
+use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest};
 use cdk::Amount;
 
-use super::keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
+use super::keysets_and_amounts::OrderedListOfAmounts;
 use super::params::SpilmanChannelParameters;
 
 /// A set of deterministic outputs for a specific pubkey and amount
@@ -20,10 +19,8 @@ pub struct SetOfDeterministicOutputs {
     pub amount: u64,
     /// The breakdown of amounts (largest-first)
     pub ordered_amounts: OrderedListOfAmounts,
-    /// Channel parameters
+    /// Channel parameters (includes shared_secret)
     pub params: SpilmanChannelParameters,
-    /// Shared secret for deterministic derivation
-    pub shared_secret: [u8; 32],
 }
 
 /// Commitment outputs for a specific balance distribution
@@ -47,6 +44,76 @@ impl CommitmentOutputs {
             receiver_outputs,
             sender_outputs,
         }
+    }
+
+    /// Create commitment outputs for a given receiver balance
+    ///
+    /// Given the receiver's (Charlie's) desired final balance, this creates:
+    /// - One SetOfDeterministicOutputs for the receiver (Charlie)
+    /// - One SetOfDeterministicOutputs for the sender (Alice) with the remainder
+    ///
+    /// The process:
+    /// 1. Use inverse function to find nominal value for receiver's deterministic outputs
+    /// 2. Calculate sender's nominal value as: amount_after_stage1 - receiver_nominal
+    /// 3. Create both sets of outputs wrapped in CommitmentOutputs
+    ///
+    /// Parameters:
+    /// - receiver_balance: The desired final balance for the receiver (after stage 2 fees)
+    /// - params: Channel parameters
+    ///
+    /// Returns CommitmentOutputs containing both receiver and sender outputs
+    pub fn for_balance(
+        receiver_balance: u64,
+        params: &SpilmanChannelParameters,
+    ) -> anyhow::Result<Self> {
+        // Validate that receiver balance doesn't exceed channel capacity
+        if receiver_balance > params.capacity {
+            anyhow::bail!(
+                "Receiver balance {} exceeds channel capacity {}",
+                receiver_balance,
+                params.capacity
+            );
+        }
+
+        let max_amount = params.maximum_amount_for_one_output;
+
+        // Get the amount available after stage 1 fees
+        let amount_after_stage1 = params.get_value_after_stage1()?;
+
+        // Find the nominal value needed for Charlie's deterministic outputs
+        let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(
+            receiver_balance,
+            max_amount,
+        )?;
+        let charlie_nominal = inverse_result.nominal_value;
+
+        // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
+        if charlie_nominal > amount_after_stage1 {
+            anyhow::bail!(
+                "Receiver balance {} requires nominal value {} which exceeds available amount {} after stage 1 fees",
+                receiver_balance,
+                charlie_nominal,
+                amount_after_stage1
+            );
+        }
+
+        let alice_nominal = amount_after_stage1 - charlie_nominal;
+
+        // Create outputs for Charlie (receiver)
+        let charlie_outputs = SetOfDeterministicOutputs::new(
+            "receiver".to_string(),
+            charlie_nominal,
+            params.clone(),
+        )?;
+
+        // Create outputs for Alice (sender)
+        let alice_outputs = SetOfDeterministicOutputs::new(
+            "sender".to_string(),
+            alice_nominal,
+            params.clone(),
+        )?;
+
+        Ok(Self::new(charlie_outputs, alice_outputs))
     }
 
     /// Create an unsigned swap request from this commitment
@@ -208,7 +275,6 @@ impl SetOfDeterministicOutputs {
         context: String,
         amount: u64,
         params: SpilmanChannelParameters,
-        shared_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = OrderedListOfAmounts::from_target(
@@ -222,7 +288,6 @@ impl SetOfDeterministicOutputs {
             amount,
             ordered_amounts,
             params,
-            shared_secret,
         })
     }
 
@@ -251,7 +316,7 @@ impl SetOfDeterministicOutputs {
         // Use iter_smallest_first to track index per amount (Cashu protocol recommendation)
         for (&single_amount, &count) in self.ordered_amounts.iter_smallest_first() {
             for index in 0..count {
-                let det_output = self.params.create_deterministic_output_with_blinding(&self.shared_secret, &self.context, single_amount, index)?;
+                let det_output = self.params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
                 outputs.push(det_output);
             }
         }
@@ -278,221 +343,13 @@ impl SetOfDeterministicOutputs {
     }
 }
 
-/// Channel parameters plus shared secret
-#[derive(Debug, Clone)]
-pub struct SpilmanChannelExtra {
-    /// Channel parameters (includes keyset_info)
-    pub params: SpilmanChannelParameters,
-    /// Shared secret derived from ECDH between Alice and Charlie
-    pub shared_secret: [u8; 32],
-}
-
-impl SpilmanChannelExtra {
-    /// Create new channel extra from parameters and shared secret
-    pub fn new(params: SpilmanChannelParameters, shared_secret: [u8; 32]) -> anyhow::Result<Self> {
-        Ok(Self {
-            params,
-            shared_secret,
-        })
-    }
-
-    /// Create new channel extra by computing the shared secret from a secret key
-    ///
-    /// This is a convenience constructor that computes the ECDH shared secret automatically.
-    /// It auto-detects whether the provided secret key belongs to Alice or Charlie by checking
-    /// if its public key matches either party, then uses the counterparty's public key for ECDH.
-    ///
-    /// # Arguments
-    /// * `params` - Channel parameters (contains both alice_pubkey, charlie_pubkey, and keyset_info)
-    /// * `my_secret` - Either Alice's or Charlie's secret key
-    ///
-    /// # Errors
-    /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
-    pub fn new_with_secret_key(
-        params: SpilmanChannelParameters,
-        my_secret: &SecretKey,
-    ) -> anyhow::Result<Self> {
-        let my_pubkey = my_secret.public_key();
-
-        // Determine which party we are and get the counterparty's pubkey
-        let their_pubkey = if my_pubkey == params.alice_pubkey {
-            // We are Alice, use Charlie's pubkey
-            &params.charlie_pubkey
-        } else if my_pubkey == params.charlie_pubkey {
-            // We are Charlie, use Alice's pubkey
-            &params.alice_pubkey
-        } else {
-            anyhow::bail!(
-                "Secret key's public key doesn't match either alice_pubkey or charlie_pubkey"
-            );
-        };
-
-        // Compute shared secret via ECDH
-        let shared_secret = SharedSecret::new(their_pubkey, my_secret);
-
-        Self::new(params, shared_secret.secret_bytes())
-    }
-
-    /// Helper to get the maximum amount for one output
-    fn max_amount(&self) -> u64 {
-        self.params.maximum_amount_for_one_output
-    }
-
-    /// Get the total funding token amount using double inverse
-    ///
-    /// Applies the inverse fee calculation twice to the capacity:
-    /// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
-    /// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-    ///
-    /// Returns the nominal value needed for the funding token
-    pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
-        let max_amt = self.max_amount();
-
-        // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let first_inverse = self.params.keyset_info.inverse_deterministic_value_after_fees(
-            self.params.capacity,
-            max_amt,
-        )?;
-        let post_stage1_nominal = first_inverse.nominal_value;
-
-        // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-        let second_inverse = self.params.keyset_info.inverse_deterministic_value_after_fees(
-            post_stage1_nominal,
-            max_amt,
-        )?;
-        let funding_token_nominal = second_inverse.nominal_value;
-
-        Ok(funding_token_nominal)
-    }
-
-    /// Get the value available after stage 1 fees
-    ///
-    /// Takes the funding token nominal and applies the forward fee calculation
-    /// to determine the actual amount available after the swap transaction (stage 1).
-    ///
-    /// This represents the total amount that will be distributed between Alice and Charlie
-    /// in the commitment transaction outputs.
-    ///
-    /// Returns the actual value after stage 1 fees
-    pub fn get_value_after_stage1(&self) -> anyhow::Result<u64> {
-        // Get the funding token nominal
-        let funding_token_nominal = self.get_total_funding_token_amount()?;
-
-        // Apply forward to get actual value after stage 1 fees (spending the funding token)
-        let value_after_stage1 = self.params.keyset_info.deterministic_value_after_fees(
-            funding_token_nominal,
-            self.max_amount(),
-        )?;
-
-        Ok(value_after_stage1)
-    }
-
-    /// Compute the actual de facto balance from an intended balance
-    ///
-    /// Due to output denomination constraints and fee rounding, the actual balance
-    /// that can be created may differ slightly from the intended balance.
-    ///
-    /// This method:
-    /// 1. Applies inverse to find the nominal value needed for the intended balance
-    /// 2. Applies deterministic_value to that nominal to get the actual de facto balance
-    ///
-    /// Returns the actual balance that will be created
-    pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
-        let max_amt = self.max_amount();
-
-        // Apply inverse to get nominal value needed
-        let inverse_result = self.params.keyset_info.inverse_deterministic_value_after_fees(
-            intended_balance,
-            max_amt,
-        )?;
-        let nominal_value = inverse_result.nominal_value;
-
-        // Apply deterministic_value to get actual balance
-        let actual_balance = self.params.keyset_info.deterministic_value_after_fees(
-            nominal_value,
-            max_amt,
-        )?;
-
-        Ok(actual_balance)
-    }
-
-    /// Create two sets of deterministic outputs for a given receiver balance
-    ///
-    /// Given the receiver's (Charlie's) desired final balance, this creates:
-    /// - One SetOfDeterministicOutputs for the receiver (Charlie)
-    /// - One SetOfDeterministicOutputs for the sender (Alice) with the remainder
-    ///
-    /// The process:
-    /// 1. Use inverse function to find nominal value for receiver's deterministic outputs
-    /// 2. Calculate sender's nominal value as: amount_after_stage1 - receiver_nominal
-    /// 3. Create both sets of outputs wrapped in CommitmentOutputs
-    ///
-    /// Parameters:
-    /// - receiver_balance: The desired final balance for the receiver (after stage 2 fees)
-    ///
-    /// Returns CommitmentOutputs containing both receiver and sender outputs
-    pub fn create_two_sets_of_outputs_for_balance(
-        &self,
-        receiver_balance: u64,
-    ) -> anyhow::Result<CommitmentOutputs> {
-        // Validate that receiver balance doesn't exceed channel capacity
-        if receiver_balance > self.params.capacity {
-            anyhow::bail!(
-                "Receiver balance {} exceeds channel capacity {}",
-                receiver_balance,
-                self.params.capacity
-            );
-        }
-
-        // Get the amount available after stage 1 fees
-        let amount_after_stage1 = self.get_value_after_stage1()?;
-
-        // Find the nominal value needed for Charlie's deterministic outputs
-        let inverse_result = self.params.keyset_info.inverse_deterministic_value_after_fees(
-            receiver_balance,
-            self.max_amount(),
-        )?;
-        let charlie_nominal = inverse_result.nominal_value;
-
-        // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
-        if charlie_nominal > amount_after_stage1 {
-            anyhow::bail!(
-                "Receiver balance {} requires nominal value {} which exceeds available amount {} after stage 1 fees",
-                receiver_balance,
-                charlie_nominal,
-                amount_after_stage1
-            );
-        }
-
-        let alice_nominal = amount_after_stage1 - charlie_nominal;
-
-        // Create outputs for Charlie (receiver)
-        let charlie_outputs = SetOfDeterministicOutputs::new(
-            "receiver".to_string(),
-            charlie_nominal,
-            self.params.clone(),
-            self.shared_secret,
-        )?;
-
-        // Create outputs for Alice (sender)
-        let alice_outputs = SetOfDeterministicOutputs::new(
-            "sender".to_string(),
-            alice_nominal,
-            self.params.clone(),
-            self.shared_secret,
-        )?;
-
-        Ok(CommitmentOutputs::new(charlie_outputs, alice_outputs))
-    }
-
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use cdk::nuts::{CurrencyUnit, Id, Keys};
+    use super::super::keysets_and_amounts::KeysetInfo;
 
-    fn create_test_extra(input_fee_ppk: u64, power: u64) -> SpilmanChannelExtra {
+    fn create_test_params(input_fee_ppk: u64, power: u64) -> SpilmanChannelParameters {
         // Create a simple keyset with powers of the given base for testing
         // power=2 gives powers-of-2: 1, 2, 4, 8, 16, ...
         // power=10 gives powers-of-10: 1, 10, 100, 1000, ...
@@ -519,7 +376,7 @@ mod tests {
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
         let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
 
-        let params = SpilmanChannelParameters::new(
+        SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -530,10 +387,9 @@ mod tests {
             "test".to_string(),
             keyset_info,
             100_000, // maximum_amount_for_one_output
+            &alice_secret,
         )
-        .unwrap();
-
-        SpilmanChannelExtra::new_with_secret_key(params, &alice_secret).unwrap()
+        .unwrap()
     }
 
     /// Helper to receive proofs into both wallets
@@ -568,9 +424,9 @@ mod tests {
 
     #[test]
     fn test_count_by_amount() {
-        let extra = create_test_extra(0, 2); // Powers of 2, no fees
-        let max_amount = extra.params.maximum_amount_for_one_output;
-        let keyset_info = &extra.params.keyset_info;
+        let params = create_test_params(0, 2); // Powers of 2, no fees
+        let max_amount = params.maximum_amount_for_one_output;
+        let keyset_info = &params.keyset_info;
 
         // Test a specific example: 42 = 32 + 8 + 2
         let amounts = OrderedListOfAmounts::from_target(42, max_amount, keyset_info).unwrap();
@@ -612,12 +468,12 @@ mod tests {
 
     #[test]
     fn test_roundtrip_property_powers_of_2() {
-        let extra = create_test_extra(400, 2); // Powers of 2
-        let max_amount = extra.params.maximum_amount_for_one_output;
+        let params = create_test_params(400, 2); // Powers of 2
+        let max_amount = params.maximum_amount_for_one_output;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+            let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -628,7 +484,7 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra.params.keyset_info
+            let forward_result = params.keyset_info
                 .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
@@ -637,12 +493,12 @@ mod tests {
 
     #[test]
     fn test_roundtrip_property_powers_of_10() {
-        let extra = create_test_extra(400, 10); // Powers of 10
-        let max_amount = extra.params.maximum_amount_for_one_output;
+        let params = create_test_params(400, 10); // Powers of 10
+        let max_amount = params.maximum_amount_for_one_output;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+            let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -653,7 +509,7 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra.params.keyset_info
+            let forward_result = params.keyset_info
                 .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
@@ -684,14 +540,14 @@ mod tests {
         // 3. Get active keyset info
         let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
-        // 4. Create channel parameters
+        // 4. Create channel parameters with shared secret
         let capacity = 100_000u64;
         let locktime = unix_time() + 86400; // 1 day from now
         let setup_timestamp = unix_time();
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 100_000u64;
 
-        let channel_params = SpilmanChannelParameters::new(
+        let channel_params = SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -702,62 +558,61 @@ mod tests {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
+            &alice_secret,
         ).unwrap();
 
-        // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
+        // 5. Calculate funding token size
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
-        // 6. Calculate funding token size
-        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
-
-        // 7. Create and mint funding token
+        // 6. Create and mint funding token
         let funding_proofs = create_funding_proofs(
             &*mint_connection,
-            &channel_extra,
+            &channel_params,
             funding_token_nominal,
         ).await.unwrap();
 
-        // 8. Create established channel
-        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+        // 7. Create established channel
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
-        // 9. Create commitment transaction for Charlie to receive 10,000 sats
+        // 8. Create commitment transaction for Charlie to receive 10,000 sats
         let charlie_balance = 10_000u64;
-        let charlie_de_facto_balance = channel.extra.get_de_facto_balance(charlie_balance).unwrap();
+        let charlie_de_facto_balance = channel.params.get_de_facto_balance(charlie_balance).unwrap();
 
         dbg!(capacity, funding_token_nominal, charlie_balance, charlie_de_facto_balance);
 
-        let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
+        let commitment_outputs = CommitmentOutputs::for_balance(
             charlie_balance,
+            &channel.params,
         ).unwrap();
 
-        // 10. Create unsigned swap request
+        // 9. Create unsigned swap request
         let mut swap_request = commitment_outputs.create_swap_request(
             channel.funding_proofs.clone(),
         ).unwrap();
 
-        // 11. Alice signs the swap request
+        // 10. Alice signs the swap request
         swap_request.sign_sig_all(alice_secret.clone()).unwrap();
 
-        // 12. Create balance update message
+        // 11. Create balance update message
         let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-            channel.extra.params.get_channel_id(),
+            channel.params.get_channel_id(),
             charlie_balance,
             &swap_request,
         ).unwrap();
 
-        // 13. Charlie verifies Alice's signature
+        // 12. Charlie verifies Alice's signature
         balance_update.verify_sender_signature(&channel).unwrap();
 
-        // 14. Charlie signs the swap request
+        // 13. Charlie signs the swap request
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
-        // 15. Execute the swap
+        // 14. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request.clone()).await.unwrap();
 
-        // 16. Unblind the signatures to get proofs
+        // 15. Unblind the signatures to get proofs
         let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
             swap_response.signatures,
-            &channel.extra.params.keyset_info.active_keys,
+            &channel.params.keyset_info.active_keys,
         ).unwrap();
 
         // 17. Both parties receive their proofs
@@ -774,7 +629,7 @@ mod tests {
         assert_eq!(charlie_received, charlie_balance, "Charlie should receive the de facto balance");
 
         // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
-        let expected_received = channel.extra.get_de_facto_balance(charlie_balance).unwrap();
+        let expected_received = channel.params.get_de_facto_balance(charlie_balance).unwrap();
         assert_eq!(charlie_received, expected_received,
             "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
 
@@ -814,14 +669,14 @@ mod tests {
         // 3. Get active keyset info
         let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
 
-        // 4. Create channel parameters - Charlie tries to take entire capacity
+        // 4. Create channel parameters with shared secret - Charlie tries to take entire capacity
         let capacity = 100_000u64;
         let locktime = unix_time() + 86400; // 1 day from now
         let setup_timestamp = unix_time();
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 100_000u64;
 
-        let channel_params = SpilmanChannelParameters::new(
+        let channel_params = SpilmanChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -832,59 +687,58 @@ mod tests {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
+            &alice_secret,
         ).unwrap();
 
-        // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
+        // 5. Calculate funding token size
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
 
-        // 6. Calculate funding token size
-        let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
-
-        // 7. Create and mint funding token
+        // 6. Create and mint funding token
         let funding_proofs = create_funding_proofs(
             &*mint_connection,
-            &channel_extra,
+            &channel_params,
             funding_token_nominal,
         ).await.unwrap();
 
-        // 8. Create established channel
-        let channel = EstablishedChannel::new(channel_extra, funding_proofs).unwrap();
+        // 7. Create established channel
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
 
-        // 9. Create commitment transaction for Charlie to receive ENTIRE capacity
+        // 8. Create commitment transaction for Charlie to receive ENTIRE capacity
         let charlie_balance = capacity;  // Same as capacity!
 
-        let commitment_outputs = channel.extra.create_two_sets_of_outputs_for_balance(
+        let commitment_outputs = CommitmentOutputs::for_balance(
             charlie_balance,
+            &channel.params,
         ).unwrap();
 
-        // 10. Create unsigned swap request
+        // 9. Create unsigned swap request
         let mut swap_request = commitment_outputs.create_swap_request(
             channel.funding_proofs.clone(),
         ).unwrap();
 
-        // 11. Alice signs the swap request
+        // 10. Alice signs the swap request
         swap_request.sign_sig_all(alice_secret.clone()).unwrap();
 
-        // 12. Create balance update message
+        // 11. Create balance update message
         let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-            channel.extra.params.get_channel_id(),
+            channel.params.get_channel_id(),
             charlie_balance,
             &swap_request,
         ).unwrap();
 
-        // 13. Charlie verifies Alice's signature
+        // 12. Charlie verifies Alice's signature
         balance_update.verify_sender_signature(&channel).unwrap();
 
-        // 14. Charlie signs the swap request
+        // 13. Charlie signs the swap request
         swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
 
-        // 15. Execute the swap
+        // 14. Execute the swap
         let swap_response = mint_connection.process_swap(swap_request.clone()).await.unwrap();
 
-        // 16. Unblind the signatures to get proofs
+        // 15. Unblind the signatures to get proofs
         let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
             swap_response.signatures,
-            &channel.extra.params.keyset_info.active_keys,
+            &channel.params.keyset_info.active_keys,
         ).unwrap();
 
         // 17. Both parties receive their proofs
@@ -899,7 +753,7 @@ mod tests {
         ).await.unwrap();
 
         // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
-        let expected_received = channel.extra.get_de_facto_balance(charlie_balance).unwrap();
+        let expected_received = channel.params.get_de_facto_balance(charlie_balance).unwrap();
         assert_eq!(charlie_received, expected_received,
             "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
 
