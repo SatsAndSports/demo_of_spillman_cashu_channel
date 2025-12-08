@@ -3,10 +3,11 @@
 //! Contains the protocol parameters for a Spilman payment channel
 
 use bitcoin::hashes::{sha256, Hash};
-use cdk::nuts::{CurrencyUnit, Id, SecretKey};
+use cdk::nuts::{CurrencyUnit, SecretKey};
 use cdk::util::hex;
 
 use super::deterministic::{create_deterministic_commitment_output, DeterministicNonceAndBlinding, DeterministicSecretWithBlinding};
+use super::keyset_info::KeysetInfo;
 
 /// Parameters for a Spilman payment channel (protocol parameters only)
 #[derive(Debug, Clone)]
@@ -27,10 +28,8 @@ pub struct SpilmanChannelParameters {
     pub setup_timestamp: u64,
     /// Sender nonce (random value created by Alice for channel identification)
     pub sender_nonce: String,
-    /// Active keyset ID from the mint
-    pub active_keyset_id: Id,
-    /// Input fee in parts per thousand for this keyset
-    pub input_fee_ppk: u64,
+    /// Keyset information (ID, keys, amounts, fees)
+    pub keyset_info: KeysetInfo,
     /// Maximum amount for one output (amounts larger than this are filtered out)
     pub maximum_amount_for_one_output: u64,
 }
@@ -46,15 +45,14 @@ impl SpilmanChannelParameters {
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
-        active_keyset_id: Id,
-        input_fee_ppk: u64,
+        keyset_info: KeysetInfo,
         maximum_amount_for_one_output: u64,
     ) -> anyhow::Result<Self> {
         // Validate input_fee_ppk is in valid range
-        if input_fee_ppk > 999 {
+        if keyset_info.input_fee_ppk > 999 {
             anyhow::bail!(
                 "input_fee_ppk must be between 0 and 999 (inclusive), got {}",
-                input_fee_ppk
+                keyset_info.input_fee_ppk
             );
         }
 
@@ -67,8 +65,7 @@ impl SpilmanChannelParameters {
             locktime,
             setup_timestamp,
             sender_nonce,
-            active_keyset_id,
-            input_fee_ppk,
+            keyset_info,
             maximum_amount_for_one_output,
         })
     }

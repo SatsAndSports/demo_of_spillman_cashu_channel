@@ -185,16 +185,15 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.keyset_id,
-            keyset_info.input_fee_ppk,
+            keyset_info.clone(),
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params.clone(), keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params.clone(), &alice_secret).unwrap();
 
         // 5b. Create Charlie's view of channel extra (should have identical shared secret and channel_id)
-        let channel_extra_charlie = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &charlie_secret).unwrap();
+        let channel_extra_charlie = SpilmanChannelExtra::new_with_secret_key(channel_params, &charlie_secret).unwrap();
 
         // Verify both parties derive the same shared secret and channel ID
         assert_eq!(
@@ -261,8 +260,9 @@ mod tests {
         // 14. Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage 2 fees)
         let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-            charlie_balance
+        let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            charlie_balance,
+            sender.channel.extra.params.maximum_amount_for_one_output
         ).unwrap();
         let expected_nominal = inverse_result.nominal_value;
         assert_eq!(
@@ -339,13 +339,12 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.keyset_id,
-            keyset_info.input_fee_ppk,
+            keyset_info.clone(),
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
         // 6. Calculate funding token size and mint it
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -401,8 +400,9 @@ mod tests {
         // Verify that Charlie's proofs total the inverse of the balance
         // (the nominal value needed to achieve (de facto) charlie_balance after stage1 fees
         let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-        let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-            charlie_balance
+        let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+            charlie_balance,
+            sender.channel.extra.params.maximum_amount_for_one_output
         ).unwrap();
         let expected_nominal = inverse_result.nominal_value;
         assert_eq!(
@@ -474,13 +474,12 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -534,8 +533,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-                *charlie_balance
+            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+                *charlie_balance,
+                sender.channel.extra.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -606,13 +606,12 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -666,8 +665,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-                *charlie_balance
+            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+                *charlie_balance,
+                sender.channel.extra.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -738,13 +738,12 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -798,8 +797,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-                *charlie_balance
+            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+                *charlie_balance,
+                sender.channel.extra.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -889,13 +889,12 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -949,8 +948,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-                *charlie_balance
+            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+                *charlie_balance,
+                sender.channel.extra.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -1040,13 +1040,12 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
             // 5. Create channel extra (computes shared secret internally)
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             // 6. Calculate funding token size and mint it
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -1100,8 +1099,9 @@ mod tests {
 
             // Verify that Charlie's proofs total the inverse of the balance
             let charlie_total_after_stage1: u64 = charlie_stage1_proofs.iter().map(|p| u64::from(p.amount)).sum();
-            let inverse_result = sender.channel.extra.keyset_info.inverse_deterministic_value_after_fees(
-                *charlie_balance
+            let inverse_result = sender.channel.extra.params.keyset_info.inverse_deterministic_value_after_fees(
+                *charlie_balance,
+                sender.channel.extra.params.maximum_amount_for_one_output
             ).unwrap();
             let expected_nominal = inverse_result.nominal_value;
             assert_eq!(
@@ -1174,14 +1174,16 @@ mod tests {
 
         let mut inexact_targets: Vec<u64> = Vec::new();
 
+        let max_amount = 10_000u64; // Match the maximum_amount_for_one_output used later in the test
+
         for capacity in 1..=max_capacity {
             // Find capacities where the stage 1 inverse is 'inexact', i.e. where the
- 
+
             // start by finding the nominal value of the stage1 outputs necessary
-            let inverse_of_the_second_stage = keyset_info.inverse_deterministic_value_after_fees(capacity).unwrap();
+            let inverse_of_the_second_stage = keyset_info.inverse_deterministic_value_after_fees(capacity, max_amount).unwrap();
 
             // Double inverse: apply inverse a second time, to 'undo' stage 1, like the funding token calculation
-            let double_inverse = keyset_info.inverse_deterministic_value_after_fees(inverse_of_the_second_stage.nominal_value).unwrap();
+            let double_inverse = keyset_info.inverse_deterministic_value_after_fees(inverse_of_the_second_stage.nominal_value, max_amount).unwrap();
 
             // now check of the actual outputs of stage1 are different from (bigger than) the exact
             // minimum required as input to stage 2:
@@ -1208,7 +1210,7 @@ mod tests {
         for (i, &capacity) in inexact_targets.iter().enumerate() {
             // For each inexact capacity, test only inexact charlie_balance values
             for charlie_balance in 1..=capacity {
-                let charlie_de_facto_balance = keyset_info.inverse_deterministic_value_after_fees(charlie_balance).unwrap().actual_balance;
+                let charlie_de_facto_balance = keyset_info.inverse_deterministic_value_after_fees(charlie_balance, max_amount).unwrap().actual_balance;
                 if charlie_de_facto_balance == charlie_balance {
                     continue;
                 }
@@ -1225,12 +1227,11 @@ mod tests {
                 locktime,
                 setup_timestamp,
                 sender_nonce,
-                keyset_info.keyset_id,
-                keyset_info.input_fee_ppk,
+                keyset_info.clone(),
                 maximum_amount_for_one_output,
             ).unwrap();
 
-            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+            let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
             let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
 
@@ -1330,13 +1331,12 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.keyset_id,
-            keyset_info.input_fee_ppk,
+            keyset_info.clone(),
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
         // 6. Create funding proofs and channel
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();

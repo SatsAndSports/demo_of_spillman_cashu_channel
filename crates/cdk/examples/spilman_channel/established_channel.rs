@@ -27,7 +27,7 @@ impl EstablishedChannel {
 
 
         // Assert all proofs have the expected keyset_id from params
-        let expected_keyset_id = extra.params.active_keyset_id;
+        let expected_keyset_id = extra.params.keyset_info.keyset_id;
         for proof in &funding_proofs {
             if proof.keyset_id != expected_keyset_id {
                 anyhow::bail!(

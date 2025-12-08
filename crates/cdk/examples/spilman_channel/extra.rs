@@ -1,110 +1,13 @@
 //! Spilman Channel Extra
 //!
-//! Contains channel parameters plus mint-specific data (keys and amounts)
+//! Contains channel parameters plus shared secret derived from ECDH
 
 use bitcoin::secp256k1::ecdh::SharedSecret;
-use cdk::nuts::{BlindedMessage, BlindSignature, Id, Keys, RestoreRequest, SecretKey};
+use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest, SecretKey};
 use cdk::Amount;
 
+use super::keyset_info::{KeysetInfo, OrderedListOfAmounts, select_amounts_to_reach_a_target};
 use super::params::SpilmanChannelParameters;
-
-/// Result of inverse_deterministic_value_after_fees
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InverseFeeResult {
-    /* Certain post-fee balances are impossible, if there are non-zero fees,
-     * in this deterministic system. So even if we intend the post-fee
-     * balance to be 100 sats, it may need to be 101 sats (actual_balance)
-     * and the pre-fee amount may need to be larger, e.g. 104 sats (nominal). 
-     * So the funding token it swapped to created 104 sats of P2PK commitment
-     * outputs to Charlie, which become 101 sats after he swaps them into his
-     * own wallet
-     */
-
-    /// The nominal value to allocate in deterministic outputs
-    pub nominal_value: u64,
-    /// The actual balance after fees (may be >= target due to discrete amounts)
-    pub actual_balance: u64,
-}
-
-/// Select amounts from the keyset to reach a target value
-/// Uses a largest-first greedy algorithm to minimize the number of outputs
-/// Returns amounts in a BTreeMap which can be iterated smallest-first or largest-first
-/// Returns an error if the target amount cannot be represented
-pub fn select_amounts_to_reach_a_target(
-    amounts_in_keyset: &[u64],
-    target: u64,
-) -> anyhow::Result<OrderedListOfAmounts> {
-    use std::collections::BTreeMap;
-
-    if target == 0 {
-        return Ok(OrderedListOfAmounts::new(BTreeMap::new()));
-    }
-
-    let mut remaining = target;
-    let mut count_by_amount = BTreeMap::new();
-
-    // Greedy algorithm: use largest amounts first to minimize number of outputs
-    // (The outputs will be ordered smallest-first when sent, per Cashu protocol)
-    for &amount in amounts_in_keyset {
-        let mut count = 0;
-        while remaining >= amount {
-            remaining -= amount;
-            count += 1;
-        }
-        if count > 0 {
-            count_by_amount.insert(amount, count);
-        }
-    }
-
-    if remaining != 0 {
-        anyhow::bail!(
-            "Cannot represent {} using available amounts {:?}",
-            target,
-            amounts_in_keyset
-        );
-    }
-
-    // Constructor will build the amounts vec from the map
-    Ok(OrderedListOfAmounts::new(count_by_amount))
-}
-
-/// An ordered list of amounts that sum to a target value
-///
-/// Created by the greedy algorithm in select_amounts_to_reach_a_target.
-/// The amounts are stored in a BTreeMap (sorted by the amount).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderedListOfAmounts {
-    amounts: Vec<u64>,
-    count_by_amount: std::collections::BTreeMap<u64, usize>,
-}
-
-impl OrderedListOfAmounts {
-    /// Create a new ordered list of amounts from a count map
-    /// Builds the amounts vector from the map, ordered largest-first
-    pub fn new(count_by_amount: std::collections::BTreeMap<u64, usize>) -> Self {
-        // Build amounts vector by iterating in reverse (largest-first)
-        let mut amounts = Vec::new();
-        for (&amount, &count) in count_by_amount.iter().rev() {
-            for _ in 0..count {
-                amounts.push(amount);
-            }
-        }
-
-        Self { amounts, count_by_amount }
-    }
-
-    /// Get the number of amounts in the list
-    pub fn len(&self) -> usize {
-        self.amounts.len()
-    }
-
-    /// Iterate over the count map in normal order (smallest-first)
-    /// Returns an iterator over (&amount, &count) pairs in ascending order by amount
-    /// This is the recommended order for Cashu protocol outputs
-    pub fn iter_smallest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
-        self.count_by_amount.iter()
-    }
-}
 
 /// A set of deterministic outputs for a specific pubkey and amount
 /// This represents all the deterministic blinded messages, secrets, and blinding factors
@@ -324,7 +227,7 @@ impl SetOfDeterministicOutputs {
     /// Takes the nominal amount and subtracts the fees for spending these outputs
     pub fn value_after_fees(&self) -> anyhow::Result<u64> {
         let num_outputs = self.ordered_amounts.len() as u64;
-        let fees_ppk = self.params.input_fee_ppk * num_outputs;
+        let fees_ppk = self.params.keyset_info.input_fee_ppk * num_outputs;
         let fee = (fees_ppk + 999) / 1000;
 
         Ok(self.amount - fee)
@@ -367,145 +270,25 @@ impl SetOfDeterministicOutputs {
 
         // Convert each secret to a blinded message
         secrets.iter().zip(amounts.iter())
-            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), self.params.active_keyset_id))
+            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), self.params.keyset_info.keyset_id))
             .collect()
     }
 }
 
-/// Keyset information for fee calculations and amount selection
-#[derive(Debug, Clone)]
-pub struct KeysetInfo {
-    /// Keyset ID
-    pub keyset_id: Id,
-    /// Set of active keys from the mint (map from amount to pubkey)
-    pub active_keys: Keys,
-    /// Available amounts in the keyset, sorted largest first
-    pub amounts_in_this_keyset_largest_first: Vec<u64>,
-    /// Input fee in parts per thousand
-    pub input_fee_ppk: u64,
-}
-
-impl KeysetInfo {
-    /// Create new keyset info from active keys
-    pub fn new(keyset_id: Id, active_keys: Keys, input_fee_ppk: u64) -> Self {
-        // Extract and sort amounts from the keyset (largest first)
-        let mut amounts_in_this_keyset_largest_first: Vec<u64> = active_keys
-            .iter()
-            .map(|(amt, _)| u64::from(*amt))
-            .collect();
-        amounts_in_this_keyset_largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
-
-        Self {
-            keyset_id,
-            active_keys,
-            amounts_in_this_keyset_largest_first,
-            input_fee_ppk,
-        }
-    }
-
-    /// Select amounts from the keyset to reach a target value
-    /// Uses a largest-first greedy algorithm to minimize the number of outputs
-    /// Returns amounts in a BTreeMap which can be iterated smallest-first or largest-first
-    /// Returns an error if the target amount cannot be represented
-    pub fn select_amounts_to_reach_a_target(&self, target: u64) -> anyhow::Result<OrderedListOfAmounts> {
-        select_amounts_to_reach_a_target(&self.amounts_in_this_keyset_largest_first, target)
-    }
-
-    /// Calculate the value after stage 2 fees for a given nominal value
-    ///
-    /// Given a nominal value (what you allocate in deterministic outputs),
-    /// this calculates what remains after paying the input fees when those outputs are used.
-    pub fn deterministic_value_after_fees(&self, nominal_value: u64) -> anyhow::Result<u64> {
-        if nominal_value == 0 {
-            return Ok(0);
-        }
-
-        // If there are no fees, just return the nominal value
-        if self.input_fee_ppk == 0 {
-            return Ok(nominal_value);
-        }
-
-        // Get the number of outputs needed to represent this nominal value
-        let amounts = self.select_amounts_to_reach_a_target(nominal_value)?;
-        let num_outputs = amounts.len() as u64;
-
-        // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
-        // The +999 ensures we round up
-        let fee = (self.input_fee_ppk * num_outputs + 999) / 1000;
-
-        // Return the value after fees
-        Ok(nominal_value - fee)
-    }
-
-    /// Find the inverse of deterministic_value_after_fees
-    ///
-    /// Given a target final balance, this returns the smallest nominal value
-    /// that achieves at least the target balance, along with the actual balance
-    /// you'll get (which may be slightly higher due to discrete denominations).
-    pub fn inverse_deterministic_value_after_fees(&self, target_balance: u64) -> anyhow::Result<InverseFeeResult> {
-        if target_balance == 0 {
-            return Ok(InverseFeeResult {
-                nominal_value: 0,
-                actual_balance: 0,
-            });
-        }
-
-        // If there are no fees, the inverse is trivial
-        if self.input_fee_ppk == 0 {
-            return Ok(InverseFeeResult {
-                nominal_value: target_balance,
-                actual_balance: target_balance,
-            });
-        }
-
-        // Start with the target as initial guess and search upward
-        let mut nominal = target_balance;
-
-        loop {
-            let actual_balance = self.deterministic_value_after_fees(nominal)?;
-
-            if actual_balance >= target_balance {
-                // Found it! Return the nominal value and what we actually get
-                return Ok(InverseFeeResult {
-                    nominal_value: nominal,
-                    actual_balance,
-                });
-            }
-
-            // actual_balance < target_balance, need to increase nominal
-            nominal += 1;
-        }
-    }
-}
-
-/// Channel parameters plus mint-specific data (keys)
+/// Channel parameters plus shared secret
 #[derive(Debug, Clone)]
 pub struct SpilmanChannelExtra {
-    /// Channel parameters
+    /// Channel parameters (includes keyset_info)
     pub params: SpilmanChannelParameters,
-    /// Keyset information (keys and amounts)
-    pub keyset_info: KeysetInfo,
     /// Shared secret derived from ECDH between Alice and Charlie
     pub shared_secret: [u8; 32],
 }
 
 impl SpilmanChannelExtra {
-    /// Create new channel extra from parameters, active keys, and shared secret
-    /// Filters out amounts larger than maximum_amount_for_one_output
-    pub fn new(params: SpilmanChannelParameters, active_keys: Keys, shared_secret: [u8; 32]) -> anyhow::Result<Self> {
-        // Filter out keys with amounts larger than the maximum
-        let filtered_map: std::collections::BTreeMap<_, _> = active_keys
-            .iter()
-            .filter(|(amount, _)| u64::from(**amount) <= params.maximum_amount_for_one_output)
-            .map(|(amount, pubkey)| (*amount, *pubkey))
-            .collect();
-
-        let filtered_keys = Keys::new(filtered_map);
-        let keyset_info = KeysetInfo::new(params.active_keyset_id, filtered_keys, params.input_fee_ppk);
-
+    /// Create new channel extra from parameters and shared secret
+    pub fn new(params: SpilmanChannelParameters, shared_secret: [u8; 32]) -> anyhow::Result<Self> {
         Ok(Self {
             params,
-            keyset_info,
             shared_secret,
         })
     }
@@ -517,15 +300,13 @@ impl SpilmanChannelExtra {
     /// if its public key matches either party, then uses the counterparty's public key for ECDH.
     ///
     /// # Arguments
-    /// * `params` - Channel parameters (contains both alice_pubkey and charlie_pubkey)
-    /// * `active_keys` - Mint's active keys for this keyset
+    /// * `params` - Channel parameters (contains both alice_pubkey, charlie_pubkey, and keyset_info)
     /// * `my_secret` - Either Alice's or Charlie's secret key
     ///
     /// # Errors
     /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
     pub fn new_with_secret_key(
         params: SpilmanChannelParameters,
-        active_keys: Keys,
         my_secret: &SecretKey,
     ) -> anyhow::Result<Self> {
         let my_pubkey = my_secret.public_key();
@@ -546,7 +327,17 @@ impl SpilmanChannelExtra {
         // Compute shared secret via ECDH
         let shared_secret = SharedSecret::new(their_pubkey, my_secret);
 
-        Self::new(params, active_keys, shared_secret.secret_bytes())
+        Self::new(params, shared_secret.secret_bytes())
+    }
+
+    /// Helper to get the maximum amount for one output
+    fn max_amount(&self) -> u64 {
+        self.params.maximum_amount_for_one_output
+    }
+
+    /// Helper to get filtered amounts (respecting maximum_amount_for_one_output)
+    pub fn amounts_filtered(&self) -> Vec<u64> {
+        self.params.keyset_info.amounts_filtered_by_max(self.max_amount())
     }
 
     /// Get the total funding token amount using double inverse
@@ -557,15 +348,19 @@ impl SpilmanChannelExtra {
     ///
     /// Returns the nominal value needed for the funding token
     pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
+        let max_amt = self.max_amount();
+
         // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let first_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            self.params.capacity
+        let first_inverse = self.params.keyset_info.inverse_deterministic_value_after_fees(
+            self.params.capacity,
+            max_amt,
         )?;
         let post_stage1_nominal = first_inverse.nominal_value;
 
         // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-        let second_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            post_stage1_nominal
+        let second_inverse = self.params.keyset_info.inverse_deterministic_value_after_fees(
+            post_stage1_nominal,
+            max_amt,
         )?;
         let funding_token_nominal = second_inverse.nominal_value;
 
@@ -586,8 +381,9 @@ impl SpilmanChannelExtra {
         let funding_token_nominal = self.get_total_funding_token_amount()?;
 
         // Apply forward to get actual value after stage 1 fees (spending the funding token)
-        let value_after_stage1 = self.keyset_info.deterministic_value_after_fees(
-            funding_token_nominal
+        let value_after_stage1 = self.params.keyset_info.deterministic_value_after_fees(
+            funding_token_nominal,
+            self.max_amount(),
         )?;
 
         Ok(value_after_stage1)
@@ -604,15 +400,19 @@ impl SpilmanChannelExtra {
     ///
     /// Returns the actual balance that will be created
     pub fn get_de_facto_balance(&self, intended_balance: u64) -> anyhow::Result<u64> {
+        let max_amt = self.max_amount();
+
         // Apply inverse to get nominal value needed
-        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(
-            intended_balance
+        let inverse_result = self.params.keyset_info.inverse_deterministic_value_after_fees(
+            intended_balance,
+            max_amt,
         )?;
         let nominal_value = inverse_result.nominal_value;
 
         // Apply deterministic_value to get actual balance
-        let actual_balance = self.keyset_info.deterministic_value_after_fees(
-            nominal_value
+        let actual_balance = self.params.keyset_info.deterministic_value_after_fees(
+            nominal_value,
+            max_amt,
         )?;
 
         Ok(actual_balance)
@@ -650,7 +450,10 @@ impl SpilmanChannelExtra {
         let amount_after_stage1 = self.get_value_after_stage1()?;
 
         // Find the nominal value needed for Charlie's deterministic outputs
-        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(receiver_balance)?;
+        let inverse_result = self.params.keyset_info.inverse_deterministic_value_after_fees(
+            receiver_balance,
+            self.max_amount(),
+        )?;
         let charlie_nominal = inverse_result.nominal_value;
 
         // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
@@ -665,9 +468,12 @@ impl SpilmanChannelExtra {
 
         let alice_nominal = amount_after_stage1 - charlie_nominal;
 
+        // Get filtered amounts for output creation
+        let filtered_amounts = self.amounts_filtered();
+
         // Create outputs for Charlie (receiver)
         let charlie_outputs = SetOfDeterministicOutputs::new(
-            &self.keyset_info.amounts_in_this_keyset_largest_first,
+            &filtered_amounts,
             "receiver".to_string(),
             charlie_nominal,
             self.params.clone(),
@@ -676,7 +482,7 @@ impl SpilmanChannelExtra {
 
         // Create outputs for Alice (sender)
         let alice_outputs = SetOfDeterministicOutputs::new(
-            &self.keyset_info.amounts_in_this_keyset_largest_first,
+            &filtered_amounts,
             "sender".to_string(),
             alice_nominal,
             self.params.clone(),
@@ -691,7 +497,7 @@ impl SpilmanChannelExtra {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cdk::nuts::{CurrencyUnit, Id};
+    use cdk::nuts::{CurrencyUnit, Id, Keys};
 
     fn create_test_extra(input_fee_ppk: u64, power: u64) -> SpilmanChannelExtra {
         // Create a simple keyset with powers of the given base for testing
@@ -716,6 +522,10 @@ mod tests {
         }
         let keys = Keys::new(keys_map);
 
+        // Create keyset info
+        let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
+        let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
+
         let params = SpilmanChannelParameters::new(
             alice_pubkey,
             charlie_pubkey,
@@ -725,13 +535,12 @@ mod tests {
             0,     // locktime
             0,     // setup_timestamp
             "test".to_string(),
-            Id::from_bytes(&[0; 8]).unwrap(),
-            input_fee_ppk,
+            keyset_info,
             100_000, // maximum_amount_for_one_output
         )
         .unwrap();
 
-        SpilmanChannelExtra::new_with_secret_key(params, keys, &alice_secret).unwrap()
+        SpilmanChannelExtra::new_with_secret_key(params, &alice_secret).unwrap()
     }
 
     /// Helper to receive proofs into both wallets
@@ -767,9 +576,10 @@ mod tests {
     #[test]
     fn test_count_by_amount() {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
+        let max_amount = extra.params.maximum_amount_for_one_output;
 
         // Test a specific example: 42 = 32 + 8 + 2
-        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(42).unwrap();
+        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(42, max_amount).unwrap();
         let count_map = &amounts.count_by_amount;
 
         // Should have 1×32, 1×8, 1×2
@@ -783,7 +593,7 @@ mod tests {
         assert_eq!(forward, vec![(2, 1), (8, 1), (32, 1)]);
 
         // Test another: 15 = 8 + 4 + 2 + 1
-        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(15).unwrap();
+        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(15, max_amount).unwrap();
         let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
@@ -796,7 +606,7 @@ mod tests {
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1), (8, 1)]);
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
-        let amounts = extra.keyset_info.select_amounts_to_reach_a_target(7).unwrap();
+        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(7, max_amount).unwrap();
         let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
@@ -809,10 +619,11 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_2() {
         let extra = create_test_extra(400, 2); // Powers of 2
+        let max_amount = extra.params.maximum_amount_for_one_output;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target).unwrap();
+            let inverse_result = extra.params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -823,8 +634,8 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value)
+            let forward_result = extra.params.keyset_info
+                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
@@ -833,10 +644,11 @@ mod tests {
     #[test]
     fn test_roundtrip_property_powers_of_10() {
         let extra = create_test_extra(400, 10); // Powers of 10
+        let max_amount = extra.params.maximum_amount_for_one_output;
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = extra.keyset_info.inverse_deterministic_value_after_fees(target).unwrap();
+            let inverse_result = extra.params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -847,8 +659,8 @@ mod tests {
             );
 
             // Verify by computing forward
-            let forward_result = extra.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value)
+            let forward_result = extra.params.keyset_info
+                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
                 .unwrap();
             assert_eq!(forward_result, inverse_result.actual_balance);
         }
@@ -894,13 +706,12 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.keyset_id,
-            keyset_info.input_fee_ppk,
+            keyset_info,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -952,7 +763,7 @@ mod tests {
         // 16. Unblind the signatures to get proofs
         let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
             swap_response.signatures,
-            &channel.extra.keyset_info.active_keys,
+            &channel.extra.params.keyset_info.active_keys,
         ).unwrap();
 
         // 17. Both parties receive their proofs
@@ -1025,13 +836,12 @@ mod tests {
             locktime,
             setup_timestamp,
             sender_nonce,
-            keyset_info.keyset_id,
-            keyset_info.input_fee_ppk,
+            keyset_info,
             maximum_amount_for_one_output,
         ).unwrap();
 
         // 5. Create channel extra (computes shared secret internally)
-        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, keyset_info.active_keys.clone(), &alice_secret).unwrap();
+        let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret).unwrap();
 
         // 6. Calculate funding token size
         let funding_token_nominal = channel_extra.get_total_funding_token_amount().unwrap();
@@ -1080,7 +890,7 @@ mod tests {
         // 16. Unblind the signatures to get proofs
         let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
             swap_response.signatures,
-            &channel.extra.keyset_info.active_keys,
+            &channel.extra.params.keyset_info.active_keys,
         ).unwrap();
 
         // 17. Both parties receive their proofs
