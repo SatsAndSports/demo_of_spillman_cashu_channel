@@ -12,7 +12,7 @@ use super::params::SpilmanChannelParameters;
 /// This represents all the deterministic blinded messages, secrets, and blinding factors
 /// for splitting a given amount into ecash outputs
 #[derive(Debug, Clone)]
-pub struct SetOfDeterministicOutputs {
+pub struct DeterministicOutputsForOneContext {
     /// The context for these outputs: "sender", "receiver", or "funding"
     pub context: String,
     /// The total amount to allocate
@@ -29,16 +29,16 @@ pub struct SetOfDeterministicOutputs {
 #[derive(Debug, Clone)]
 pub struct CommitmentOutputs {
     /// Receiver's (Charlie's) deterministic outputs
-    pub receiver_outputs: SetOfDeterministicOutputs,
+    pub receiver_outputs: DeterministicOutputsForOneContext,
     /// Sender's (Alice's) deterministic outputs
-    pub sender_outputs: SetOfDeterministicOutputs,
+    pub sender_outputs: DeterministicOutputsForOneContext,
 }
 
 impl CommitmentOutputs {
     /// Create new commitment outputs
     pub fn new(
-        receiver_outputs: SetOfDeterministicOutputs,
-        sender_outputs: SetOfDeterministicOutputs,
+        receiver_outputs: DeterministicOutputsForOneContext,
+        sender_outputs: DeterministicOutputsForOneContext,
     ) -> Self {
         Self {
             receiver_outputs,
@@ -49,8 +49,8 @@ impl CommitmentOutputs {
     /// Create commitment outputs for a given receiver balance
     ///
     /// Given the receiver's (Charlie's) desired final balance, this creates:
-    /// - One SetOfDeterministicOutputs for the receiver (Charlie)
-    /// - One SetOfDeterministicOutputs for the sender (Alice) with the remainder
+    /// - One DeterministicOutputsForOneContext for the receiver (Charlie)
+    /// - One DeterministicOutputsForOneContext for the sender (Alice) with the remainder
     ///
     /// The process:
     /// 1. Use inverse function to find nominal value for receiver's deterministic outputs
@@ -100,14 +100,14 @@ impl CommitmentOutputs {
         let alice_nominal = amount_after_stage1 - charlie_nominal;
 
         // Create outputs for Charlie (receiver)
-        let charlie_outputs = SetOfDeterministicOutputs::new(
+        let charlie_outputs = DeterministicOutputsForOneContext::new(
             "receiver".to_string(),
             charlie_nominal,
             params.clone(),
         )?;
 
         // Create outputs for Alice (sender)
-        let alice_outputs = SetOfDeterministicOutputs::new(
+        let alice_outputs = DeterministicOutputsForOneContext::new(
             "sender".to_string(),
             alice_nominal,
             params.clone(),
@@ -269,7 +269,7 @@ impl CommitmentOutputs {
     }
 }
 
-impl SetOfDeterministicOutputs {
+impl DeterministicOutputsForOneContext {
     /// Create a new set of deterministic outputs
     pub fn new(
         context: String,
