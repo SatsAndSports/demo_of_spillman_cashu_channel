@@ -692,7 +692,7 @@ pub async fn create_funding_proofs(
     channel_params: &crate::params::ChannelParameters,
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
-    let funding_outputs = crate::extra::DeterministicOutputsForOneContext::new(
+    let funding_outputs = crate::deterministic::DeterministicOutputsForOneContext::new(
         "funding".to_string(),
         funding_token_nominal,
         channel_params.clone(),
@@ -724,7 +724,7 @@ pub fn unblind_commitment_proofs(
     signatures: Vec<cdk::nuts::BlindSignature>,
 ) -> anyhow::Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>)> {
     // Create commitment outputs to get the secrets for unblinding
-    let commitment_outputs = crate::extra::CommitmentOutputs::for_balance(balance, channel_params)?;
+    let commitment_outputs = crate::deterministic::CommitmentOutputs::for_balance(balance, channel_params)?;
 
     // Unblind the signatures to get the commitment proofs
     let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(
