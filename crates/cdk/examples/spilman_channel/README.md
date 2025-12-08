@@ -71,7 +71,7 @@ and deleted; I just like keeping them for now in order to thoroughly test the sp
 
 The following are working, or were working, but just haven't been put into a unit test yet:
  - Alice restoring signatures in the 'happy path', where Charlie exited in the expected way.
- - otherwise, Alice restoring when the balance used by Charlie is unknown.
+ - DONE: otherwise, Alice restoring when the balance used by Charlie is unknown.
 
 Other things that should be done:
  - Alice restoring when Charlie uses an unexpected keyset (see _Keyset Malleability_ in the NUT)
