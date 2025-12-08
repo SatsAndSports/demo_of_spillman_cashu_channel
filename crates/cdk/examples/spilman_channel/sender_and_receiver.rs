@@ -3,11 +3,13 @@
 //! This module contains the sender's (Alice's) and receiver's (Charlie's) views
 //! of a Spilman payment channel.
 
-use cdk::nuts::{SecretKey, SwapRequest};
+use cdk::nuts::{Proof, RestoreRequest, SecretKey, SwapRequest};
+use cdk::Amount;
 
 use super::established_channel::EstablishedChannel;
 use super::balance_update::BalanceUpdateMessage;
 use super::deterministic::CommitmentOutputs;
+use super::test_helpers::MintConnection;
 
 /// The sender's view of a Spilman payment channel
 ///
@@ -78,6 +80,88 @@ impl SpilmanChannelSender {
     /// Get the shared secret with Charlie (stored in channel params)
     pub fn get_shared_secret(&self) -> &[u8; 32] {
         &self.channel.params.shared_secret
+    }
+
+    /// Restore sender's proofs after Charlie has exited the channel
+    ///
+    /// When Charlie exits by submitting the commitment transaction, Alice may not
+    /// receive her blind signatures directly. This method uses NUT-09 restore to
+    /// recover Alice's proofs by iterating over all possible (amount, index) pairs.
+    ///
+    /// The algorithm:
+    /// - For each amount in the keyset (ascending, filtered by max_amount):
+    ///   - For index starting at 0:
+    ///     - Try to restore the deterministic output for ("sender", amount, index)
+    ///     - If restore fails (no signature), break to next amount
+    ///     - If restore succeeds, unblind and collect the proof, increment index
+    ///
+    /// Returns all recovered proofs for Alice.
+    pub async fn restore_sender_proofs<M: MintConnection + ?Sized>(
+        &self,
+        mint_connection: &M,
+    ) -> anyhow::Result<Vec<Proof>> {
+        let params = &self.channel.params;
+        let keyset_id = params.keyset_info.keyset_id;
+        let max_amount = params.maximum_amount_for_one_output;
+
+        // Get amounts in ascending order (smallest first)
+        let mut amounts: Vec<u64> = params.keyset_info.amounts_largest_first
+            .iter()
+            .copied()
+            .filter(|&amt| amt <= max_amount)
+            .collect();
+        amounts.reverse(); // Now smallest first
+
+        let mut recovered_proofs = Vec::new();
+
+        for amount in amounts {
+            let mut index = 0usize;
+
+            loop {
+                // Create deterministic output for this (amount, index)
+                let det_output = params.create_deterministic_output_with_blinding(
+                    "sender",
+                    amount,
+                    index,
+                )?;
+
+                // Create blinded message for restore request
+                let blinded_message = det_output.to_blinded_message(
+                    Amount::from(amount),
+                    keyset_id,
+                )?;
+
+                // Try to restore this single output
+                let restore_request = RestoreRequest {
+                    outputs: vec![blinded_message],
+                };
+
+                let restore_response = mint_connection.post_restore(restore_request).await;
+
+                match restore_response {
+                    Ok(response) if !response.signatures.is_empty() => {
+                        // Success! Unblind the signature to get the proof
+                        let blind_signature = response.signatures.into_iter().next().unwrap();
+
+                        let proof = cdk::dhke::construct_proofs(
+                            vec![blind_signature],
+                            vec![det_output.blinding_factor.clone()],
+                            vec![det_output.secret.clone()],
+                            &params.keyset_info.active_keys,
+                        )?.into_iter().next().unwrap();
+
+                        recovered_proofs.push(proof);
+                        index += 1;
+                    }
+                    _ => {
+                        // No signature found for this (amount, index), move to next amount
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(recovered_proofs)
     }
 }
 
@@ -1369,5 +1453,127 @@ mod tests {
 
         println!("Shared secret (hex): {}", cdk::util::hex::encode(sender_shared_secret));
         println!("✅ Sender and Receiver have the same shared secret!");
+    }
+
+    #[tokio::test]
+    async fn test_alice_restores_proofs_after_charlie_exits() {
+        use crate::test_helpers::{setup_mint_and_wallets_for_demo, receive_proofs_into_wallet};
+
+        // 1. Generate keys for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // 2. Setup mint and wallets
+        let channel_unit = CurrencyUnit::Sat;
+        let input_fee_ppk = 400; // 40% fee to make it interesting
+        let base = 2; // Powers of 2
+        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
+            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
+
+        // 3. Get active keyset info
+        let keyset_info =
+            crate::test_helpers::get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
+
+        // 4. Create channel parameters
+        let capacity = 10_000u64;
+        let locktime = unix_time() + 86400;
+        let setup_timestamp = unix_time();
+        let sender_nonce = "test_restore".to_string();
+        let maximum_amount_for_one_output = 10_000u64;
+
+        let channel_params = ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            channel_unit.clone(),
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce,
+            keyset_info.clone(),
+            maximum_amount_for_one_output,
+            &alice_secret,
+        ).unwrap();
+
+        // 5. Create funding proofs and channel
+        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
+        let funding_proofs = crate::test_helpers::create_funding_proofs(
+            &*mint_connection,
+            &channel_params,
+            funding_token_nominal,
+        ).await.unwrap();
+
+        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
+
+        // 6. Create Sender and Receiver
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel.clone());
+        let receiver = SpilmanChannelReceiver::new(charlie_secret.clone(), channel);
+
+        // 7. Alice creates a balance update for Charlie
+        let charlie_balance = 5_000u64;
+        let (balance_update, swap_request) = sender.create_signed_balance_update(charlie_balance).unwrap();
+
+        println!("Alice created balance update for {} sats to Charlie", charlie_balance);
+
+        // 8. Charlie verifies and signs
+        receiver.verify_sender_signature(&balance_update).unwrap();
+        let swap_request = receiver.add_second_signature(&balance_update, swap_request).unwrap();
+
+        // 9. Charlie submits the swap and gets the response
+        let swap_response = mint_connection.process_swap(swap_request).await.unwrap();
+
+        println!("Charlie submitted the swap, got {} blind signatures", swap_response.signatures.len());
+
+        // 10. Charlie unblinds his proofs (he gets both sets of blind signatures)
+        let commitment_outputs = CommitmentOutputs::for_balance(
+            charlie_balance,
+            &sender.channel.params,
+        ).unwrap();
+
+        let (charlie_proofs, _alice_proofs_from_charlie) = commitment_outputs.unblind_all(
+            swap_response.signatures,
+            &sender.channel.params.keyset_info.active_keys,
+        ).unwrap();
+
+        // 11. Charlie receives his proofs into his wallet
+        let charlie_received = receive_proofs_into_wallet(
+            &charlie_wallet,
+            charlie_proofs,
+            charlie_secret,
+        ).await.unwrap();
+
+        println!("Charlie received {} sats into his wallet", charlie_received);
+
+        // 12. Alice was offline and didn't get the blind signatures from Charlie
+        //     She uses NUT-09 restore to recover her proofs
+        println!("\nAlice is now restoring her proofs using NUT-09...");
+
+        let alice_restored_proofs = sender.restore_sender_proofs(&*mint_connection).await.unwrap();
+
+        println!("Alice restored {} proofs", alice_restored_proofs.len());
+
+        // 13. Alice receives her restored proofs into her wallet
+        let alice_received = receive_proofs_into_wallet(
+            &alice_wallet,
+            alice_restored_proofs,
+            alice_secret,
+        ).await.unwrap();
+
+        println!("Alice received {} sats into her wallet", alice_received);
+
+        // 14. Verify the amounts
+        let charlie_de_facto_balance = sender.get_de_facto_balance(charlie_balance).unwrap();
+        assert_eq!(charlie_received, charlie_de_facto_balance,
+            "Charlie should receive the de facto balance");
+
+        assert!(alice_received > 0, "Alice should receive some amount");
+
+        let total_received = charlie_received + alice_received;
+        println!("\n✅ Test passed!");
+        println!("   Charlie received: {} sats", charlie_received);
+        println!("   Alice restored and received: {} sats", alice_received);
+        println!("   Total: {} sats (capacity: {})", total_received, capacity);
     }
 }
