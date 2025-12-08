@@ -23,63 +23,67 @@ pub struct InverseFeeResult {
     pub actual_balance: u64,
 }
 
-/// Select amounts from a list to reach a target value
-/// Uses a largest-first greedy algorithm to minimize the number of outputs
-/// Returns amounts in a BTreeMap which can be iterated smallest-first or largest-first
-/// Returns an error if the target amount cannot be represented
-pub fn select_amounts_to_reach_a_target(
-    amounts_largest_first: &[u64],
-    target: u64,
-) -> anyhow::Result<OrderedListOfAmounts> {
-    use std::collections::BTreeMap;
-
-    if target == 0 {
-        return Ok(OrderedListOfAmounts::new(BTreeMap::new()));
-    }
-
-    let mut remaining = target;
-    let mut count_by_amount = BTreeMap::new();
-
-    // Greedy algorithm: use largest amounts first to minimize number of outputs
-    // (The outputs will be ordered smallest-first when sent, per Cashu protocol)
-    for &amount in amounts_largest_first {
-        let mut count = 0;
-        while remaining >= amount {
-            remaining -= amount;
-            count += 1;
-        }
-        if count > 0 {
-            count_by_amount.insert(amount, count);
-        }
-    }
-
-    if remaining != 0 {
-        anyhow::bail!(
-            "Cannot represent {} using available amounts {:?}",
-            target,
-            amounts_largest_first
-        );
-    }
-
-    // Constructor will build the amounts vec from the map
-    Ok(OrderedListOfAmounts::new(count_by_amount))
-}
-
 /// An ordered list of amounts that sum to a target value
 ///
-/// Created by the greedy algorithm in select_amounts_to_reach_a_target.
+/// Created by the greedy algorithm in from_target.
 /// The amounts are stored in a BTreeMap (sorted by the amount).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedListOfAmounts {
     amounts: Vec<u64>,
     /// Map from amount to count, for iteration/inspection
     pub count_by_amount: std::collections::BTreeMap<u64, usize>,
+    /// Input fee in parts per thousand (from keyset)
+    input_fee_ppk: u64,
 }
 
 impl OrderedListOfAmounts {
-    /// Create a new ordered list of amounts from a count map
-    /// Builds the amounts vector from the map, ordered largest-first
-    pub fn new(count_by_amount: std::collections::BTreeMap<u64, usize>) -> Self {
+    /// Create amounts to reach a target value using keyset info
+    ///
+    /// Uses a largest-first greedy algorithm to minimize the number of outputs.
+    /// Only considers amounts <= maximum_amount from the keyset.
+    pub fn from_target(
+        target: u64,
+        maximum_amount: u64,
+        keyset_info: &KeysetInfo,
+    ) -> anyhow::Result<Self> {
+        use std::collections::BTreeMap;
+
+        let mut count_by_amount = BTreeMap::new();
+
+        if target == 0 {
+            return Ok(Self {
+                amounts: Vec::new(),
+                count_by_amount,
+                input_fee_ppk: keyset_info.input_fee_ppk,
+            });
+        }
+
+        let mut remaining = target;
+
+        // Greedy algorithm: use largest amounts first to minimize number of outputs
+        // keyset_info.amounts_largest_first is already sorted descending
+        for &amount in &keyset_info.amounts_largest_first {
+            if amount > maximum_amount {
+                continue;
+            }
+            let mut count = 0;
+            while remaining >= amount {
+                remaining -= amount;
+                count += 1;
+            }
+            if count > 0 {
+                count_by_amount.insert(amount, count);
+            }
+        }
+
+        if remaining != 0 {
+            anyhow::bail!(
+                "Cannot represent {} using available amounts (max {})",
+                target,
+                maximum_amount
+            );
+        }
+
         // Build amounts vector by iterating in reverse (largest-first)
         let mut amounts = Vec::new();
         for (&amount, &count) in count_by_amount.iter().rev() {
@@ -88,12 +92,30 @@ impl OrderedListOfAmounts {
             }
         }
 
-        Self { amounts, count_by_amount }
+        Ok(Self { amounts, count_by_amount, input_fee_ppk: keyset_info.input_fee_ppk })
     }
 
     /// Get the number of amounts in the list
     pub fn len(&self) -> usize {
         self.amounts.len()
+    }
+
+    /// Get the total nominal value (sum of all amounts)
+    pub fn total(&self) -> u64 {
+        self.amounts.iter().sum()
+    }
+
+    /// Calculate the value after fees
+    ///
+    /// Uses the fee formula: (input_fee_ppk * num_outputs + 999) / 1000 (rounds up)
+    pub fn value_after_fees(&self) -> u64 {
+        let total = self.total();
+        if self.input_fee_ppk == 0 {
+            return total;
+        }
+        let num_outputs = self.amounts.len() as u64;
+        let fee = (self.input_fee_ppk * num_outputs + 999) / 1000;
+        total.saturating_sub(fee)
     }
 
     /// Iterate over the count map in normal order (smallest-first)
@@ -138,27 +160,6 @@ impl KeysetInfo {
         }
     }
 
-    /// Get amounts filtered by maximum, largest first
-    pub fn amounts_filtered_by_max(&self, maximum_amount: u64) -> Vec<u64> {
-        self.amounts_largest_first
-            .iter()
-            .copied()
-            .filter(|&amt| amt <= maximum_amount)
-            .collect()
-    }
-
-    /// Select amounts from the keyset to reach a target value
-    /// Uses a largest-first greedy algorithm to minimize the number of outputs
-    /// Only considers amounts <= maximum_amount
-    pub fn select_amounts_to_reach_a_target(
-        &self,
-        target: u64,
-        maximum_amount: u64,
-    ) -> anyhow::Result<OrderedListOfAmounts> {
-        let filtered_amounts = self.amounts_filtered_by_max(maximum_amount);
-        select_amounts_to_reach_a_target(&filtered_amounts, target)
-    }
-
     /// Calculate the value after fees for a given nominal value
     ///
     /// Given a nominal value (what you allocate in deterministic outputs),
@@ -169,25 +170,8 @@ impl KeysetInfo {
         nominal_value: u64,
         maximum_amount: u64,
     ) -> anyhow::Result<u64> {
-        if nominal_value == 0 {
-            return Ok(0);
-        }
-
-        // If there are no fees, just return the nominal value
-        if self.input_fee_ppk == 0 {
-            return Ok(nominal_value);
-        }
-
-        // Get the number of outputs needed to represent this nominal value
-        let amounts = self.select_amounts_to_reach_a_target(nominal_value, maximum_amount)?;
-        let num_outputs = amounts.len() as u64;
-
-        // Calculate the fee: (input_fee_ppk * num_outputs + 999) // 1000
-        // The +999 ensures we round up
-        let fee = (self.input_fee_ppk * num_outputs + 999) / 1000;
-
-        // Return the value after fees
-        Ok(nominal_value - fee)
+        let amounts = OrderedListOfAmounts::from_target(nominal_value, maximum_amount, self)?;
+        Ok(amounts.value_after_fees())
     }
 
     /// Find the inverse of deterministic_value_after_fees
@@ -217,8 +201,12 @@ impl KeysetInfo {
         }
 
         // Get the smallest amount in the filtered keyset
-        let filtered_amounts = self.amounts_filtered_by_max(maximum_amount);
-        let smallest = filtered_amounts.last().copied().unwrap_or(1);
+        let smallest = self.amounts_largest_first
+            .iter()
+            .copied()
+            .filter(|&amt| amt <= maximum_amount)
+            .last()
+            .unwrap_or(1);
 
         // Start with the target as initial guess and search upward
         let mut nominal = target_balance;
