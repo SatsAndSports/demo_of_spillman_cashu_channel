@@ -6,7 +6,7 @@ use bitcoin::secp256k1::ecdh::SharedSecret;
 use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest, SecretKey};
 use cdk::Amount;
 
-use super::keyset_info::{KeysetInfo, OrderedListOfAmounts};
+use super::keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
 use super::params::SpilmanChannelParameters;
 
 /// A set of deterministic outputs for a specific pubkey and amount

@@ -4,7 +4,7 @@
 //! allowing Alice and Charlie to set up an offline unidirectional payment channel.
 
 mod deterministic;
-mod keyset_info;
+mod keysets_and_amounts;
 mod params;
 mod extra;
 mod established_channel;

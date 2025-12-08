@@ -7,7 +7,7 @@ use cdk::nuts::{CurrencyUnit, SecretKey};
 use cdk::util::hex;
 
 use super::deterministic::{create_deterministic_commitment_output, DeterministicNonceAndBlinding, DeterministicSecretWithBlinding};
-use super::keyset_info::KeysetInfo;
+use super::keysets_and_amounts::KeysetInfo;
 
 /// Parameters for a Spilman payment channel (protocol parameters only)
 #[derive(Debug, Clone)]
