@@ -4,14 +4,14 @@
 
 use cdk::nuts::{CheckStateRequest, Proof};
 
-use super::extra::SpilmanChannelExtra;
+use super::params::SpilmanChannelParameters;
 
 /// An established Spilman payment channel
 /// Contains all channel components after funding transaction is complete
 #[derive(Debug, Clone)]
 pub struct EstablishedChannel {
-    /// Channel parameters plus mint-specific data
-    pub extra: SpilmanChannelExtra,
+    /// Channel parameters (includes shared_secret)
+    pub params: SpilmanChannelParameters,
     /// Locked proofs (2-of-2 multisig with locktime refund)
     pub funding_proofs: Vec<Proof>,
 }
@@ -19,7 +19,7 @@ pub struct EstablishedChannel {
 impl EstablishedChannel {
     /// Create new established channel
     pub fn new(
-        extra: SpilmanChannelExtra,
+        params: SpilmanChannelParameters,
         funding_proofs: Vec<Proof>,
     ) -> Result<Self, anyhow::Error> {
         // TODO: verify everything, especially for Charlie's security, either
@@ -27,7 +27,7 @@ impl EstablishedChannel {
 
 
         // Assert all proofs have the expected keyset_id from params
-        let expected_keyset_id = extra.params.keyset_info.keyset_id;
+        let expected_keyset_id = params.keyset_info.keyset_id;
         for proof in &funding_proofs {
             if proof.keyset_id != expected_keyset_id {
                 anyhow::bail!(
@@ -42,7 +42,7 @@ impl EstablishedChannel {
         let actual_funding_value: u64 = funding_proofs.iter()
             .map(|proof| u64::from(proof.amount))
             .sum();
-        let expected_funding_value = extra.get_total_funding_token_amount()?;
+        let expected_funding_value = params.get_total_funding_token_amount()?;
 
         if actual_funding_value != expected_funding_value {
             anyhow::bail!(
@@ -53,7 +53,7 @@ impl EstablishedChannel {
         }
 
         Ok(Self {
-            extra,
+            params,
             funding_proofs,
         })
     }

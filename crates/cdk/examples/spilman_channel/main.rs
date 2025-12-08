@@ -18,7 +18,7 @@ use cdk::secret::Secret;
 use clap::Parser;
 
 use params::SpilmanChannelParameters;
-use extra::SpilmanChannelExtra;
+use extra::CommitmentOutputs;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
 
@@ -68,10 +68,10 @@ async fn main() -> anyhow::Result<()> {
     // Generate random sender nonce (created by Alice)
     let sender_nonce = Secret::generate().to_string();
 
-    // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID
+    // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID AND SHARED SECRET
     let maximum_amount_for_one_output = 100_000; // 100k sats maximum per output
 
-    let channel_params = SpilmanChannelParameters::new(
+    let channel_params = SpilmanChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         mint_url.clone(),
@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         sender_nonce,
         keyset_info,
         maximum_amount_for_one_output,
+        &alice_secret,
     )?;
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
@@ -91,13 +92,10 @@ async fn main() -> anyhow::Result<()> {
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}", channel_params.get_channel_id());
 
-    // 4b. CREATE CHANNEL EXTRA (params + shared secret computed internally)
-    let channel_extra = SpilmanChannelExtra::new_with_secret_key(channel_params, &alice_secret)?;
-
     // 5. CALCULATE EXACT FUNDING TOKEN SIZE using double inverse
     println!("\n💡 Calculating exact funding token size using double inverse...");
 
-    let funding_token_nominal = channel_extra.get_total_funding_token_amount()?;
+    let funding_token_nominal = channel_params.get_total_funding_token_amount()?;
 
     println!("   Capacity: {} sats   Funding token nominal: {} sats", capacity, funding_token_nominal);
 
@@ -105,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\n🪙 Minting funding token...");
     let funding_proofs = create_funding_proofs(
         &*mint_connection,
-        &channel_extra,
+        &channel_params,
         funding_token_nominal,
     ).await?;
     println!("   ✓ Created {} funding proofs", funding_proofs.len());
@@ -113,19 +111,20 @@ async fn main() -> anyhow::Result<()> {
     // 9. CREATE CHANNEL FIXTURES
 
     let channel_fixtures = EstablishedChannel::new(
-        channel_extra,
+        channel_params,
         funding_proofs,
     )?;
 
     // 10. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_intended_balance = 100_000u64;
-    let charlie_balance = channel_fixtures.extra.get_de_facto_balance(charlie_intended_balance)?;
+    let charlie_balance = channel_fixtures.params.get_de_facto_balance(charlie_intended_balance)?;
     println!("\n💱 Creating commitment transaction for balance: {} sats intended → {} sats de facto for Charlie...",
              charlie_intended_balance, charlie_balance);
 
     // Create commitment outputs for this balance
-    let commitment_outputs = channel_fixtures.extra.create_two_sets_of_outputs_for_balance(
+    let commitment_outputs = CommitmentOutputs::for_balance(
         charlie_balance,
+        &channel_fixtures.params,
     )?;
     println!("   ✓ Created deterministic outputs for both parties");
     let charlie_final = commitment_outputs.receiver_outputs.value_after_fees()?;
@@ -150,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a balance update message (this is what Alice would send to Charlie off-chain)
     let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-        channel_fixtures.extra.params.get_channel_id(),
+        channel_fixtures.params.get_channel_id(),
         charlie_balance,
         &swap_request,
     )?;
@@ -195,7 +194,7 @@ async fn main() -> anyhow::Result<()> {
     // Unblind the signatures to get the commitment proofs
     let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
         swap_response.signatures,
-        &channel_fixtures.extra.params.keyset_info.active_keys,
+        &channel_fixtures.params.keyset_info.active_keys,
     )?;
     println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
 
