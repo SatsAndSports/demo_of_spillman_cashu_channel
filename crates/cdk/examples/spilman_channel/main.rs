@@ -126,8 +126,8 @@ async fn main() -> anyhow::Result<()> {
         &channel_fixtures.params,
     )?;
     println!("   ✓ Created deterministic outputs for both parties");
-    let charlie_final = commitment_outputs.receiver_outputs.value_after_fees()?;
-    let alice_final = commitment_outputs.sender_outputs.value_after_fees()?;
+    let charlie_final = commitment_outputs.receiver_outputs.value_after_fees();
+    let alice_final = commitment_outputs.sender_outputs.value_after_fees();
     println!("      Charlie: {} sats nominal → {} proofs → {} sats final",
         commitment_outputs.receiver_outputs.amount,
         commitment_outputs.receiver_outputs.ordered_amounts.len(),
