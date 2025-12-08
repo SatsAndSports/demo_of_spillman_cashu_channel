@@ -689,7 +689,7 @@ pub async fn receive_proofs_into_wallet(
 /// Returns the minted funding proofs.
 pub async fn create_funding_proofs(
     mint_connection: &dyn MintConnection,
-    channel_params: &crate::params::SpilmanChannelParameters,
+    channel_params: &crate::params::ChannelParameters,
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
     let funding_outputs = crate::extra::DeterministicOutputsForOneContext::new(
@@ -719,7 +719,7 @@ pub async fn create_funding_proofs(
 ///
 /// Returns (receiver_stage1_proofs, sender_stage1_proofs)
 pub fn unblind_commitment_proofs(
-    channel_params: &crate::params::SpilmanChannelParameters,
+    channel_params: &crate::params::ChannelParameters,
     balance: u64,
     signatures: Vec<cdk::nuts::BlindSignature>,
 ) -> anyhow::Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>)> {
