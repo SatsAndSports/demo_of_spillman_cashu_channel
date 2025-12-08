@@ -147,7 +147,7 @@ mod tests {
     use super::*;
     use cdk::nuts::{CurrencyUnit, SecretKey};
     use cdk::util::unix_time;
-    use crate::params::SpilmanChannelParameters;
+    use crate::params::ChannelParameters;
 
     #[tokio::test]
     async fn test_full_flow() {
@@ -177,7 +177,7 @@ mod tests {
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -192,7 +192,7 @@ mod tests {
         ).unwrap();
 
         // 4b. Create Charlie's view of channel params (should have identical shared secret and channel_id)
-        let channel_params_charlie = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params_charlie = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -341,7 +341,7 @@ mod tests {
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -474,7 +474,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            let channel_params = ChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -604,7 +604,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            let channel_params = ChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -734,7 +734,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            let channel_params = ChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -883,7 +883,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            let channel_params = ChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -1032,7 +1032,7 @@ mod tests {
 
             // 4. Create channel parameters (unique nonce for each iteration)
             let sender_nonce = format!("test_nonce_{}", i);
-            let channel_params = SpilmanChannelParameters::new_with_secret_key(
+            let channel_params = ChannelParameters::new_with_secret_key(
                 alice_pubkey,
                 charlie_pubkey,
                 "local".to_string(),
@@ -1217,7 +1217,7 @@ mod tests {
                 println!("\ncapacity={}, charlie_balance={}", capacity, charlie_balance);
 
                 let sender_nonce = format!("test_nonce_{}_{}", capacity, charlie_balance);
-                let channel_params = SpilmanChannelParameters::new_with_secret_key(
+                let channel_params = ChannelParameters::new_with_secret_key(
                     alice_pubkey,
                     charlie_pubkey,
                     "local".to_string(),
@@ -1320,7 +1320,7 @@ mod tests {
         let sender_nonce = "test_shared_secret".to_string();
         let maximum_amount_for_one_output = 10_000u64;
 
-        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),

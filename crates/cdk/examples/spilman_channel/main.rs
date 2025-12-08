@@ -17,7 +17,7 @@ use cdk::util::unix_time;
 use cdk::secret::Secret;
 use clap::Parser;
 
-use params::SpilmanChannelParameters;
+use params::ChannelParameters;
 use extra::CommitmentOutputs;
 use established_channel::EstablishedChannel;
 use balance_update::BalanceUpdateMessage;
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID AND SHARED SECRET
     let maximum_amount_for_one_output = 100_000; // 100k sats maximum per output
 
-    let channel_params = SpilmanChannelParameters::new_with_secret_key(
+    let channel_params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         mint_url.clone(),

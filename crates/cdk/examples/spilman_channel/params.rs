@@ -12,7 +12,7 @@ use super::keysets_and_amounts::KeysetInfo;
 
 /// Parameters for a Spilman payment channel
 #[derive(Debug, Clone)]
-pub struct SpilmanChannelParameters {
+pub struct ChannelParameters {
     /// Alice's public key (sender)
     pub alice_pubkey: cdk::nuts::PublicKey,
     /// Charlie's public key (receiver)
@@ -37,7 +37,7 @@ pub struct SpilmanChannelParameters {
     pub shared_secret: [u8; 32],
 }
 
-impl SpilmanChannelParameters {
+impl ChannelParameters {
     /// Create new channel parameters with a pre-computed shared secret
     pub fn new(
         alice_pubkey: cdk::nuts::PublicKey,

@@ -4,14 +4,14 @@
 
 use cdk::nuts::{CheckStateRequest, Proof};
 
-use super::params::SpilmanChannelParameters;
+use super::params::ChannelParameters;
 
 /// An established Spilman payment channel
 /// Contains all channel components after funding transaction is complete
 #[derive(Debug, Clone)]
 pub struct EstablishedChannel {
     /// Channel parameters (includes shared_secret)
-    pub params: SpilmanChannelParameters,
+    pub params: ChannelParameters,
     /// Locked proofs (2-of-2 multisig with locktime refund)
     pub funding_proofs: Vec<Proof>,
 }
@@ -19,7 +19,7 @@ pub struct EstablishedChannel {
 impl EstablishedChannel {
     /// Create new established channel
     pub fn new(
-        params: SpilmanChannelParameters,
+        params: ChannelParameters,
         funding_proofs: Vec<Proof>,
     ) -> Result<Self, anyhow::Error> {
         // TODO: verify everything, especially for Charlie's security, either
