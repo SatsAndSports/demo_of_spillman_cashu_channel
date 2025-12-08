@@ -6,7 +6,7 @@ use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest};
 use cdk::Amount;
 
 use super::keysets_and_amounts::OrderedListOfAmounts;
-use super::params::SpilmanChannelParameters;
+use super::params::ChannelParameters;
 
 /// A set of deterministic outputs for a specific pubkey and amount
 /// This represents all the deterministic blinded messages, secrets, and blinding factors
@@ -20,7 +20,7 @@ pub struct DeterministicOutputsForOneContext {
     /// The breakdown of amounts (largest-first)
     pub ordered_amounts: OrderedListOfAmounts,
     /// Channel parameters (includes shared_secret)
-    pub params: SpilmanChannelParameters,
+    pub params: ChannelParameters,
 }
 
 /// Commitment outputs for a specific balance distribution
@@ -64,7 +64,7 @@ impl CommitmentOutputs {
     /// Returns CommitmentOutputs containing both receiver and sender outputs
     pub fn for_balance(
         receiver_balance: u64,
-        params: &SpilmanChannelParameters,
+        params: &ChannelParameters,
     ) -> anyhow::Result<Self> {
         // Validate that receiver balance doesn't exceed channel capacity
         if receiver_balance > params.capacity {
@@ -274,7 +274,7 @@ impl DeterministicOutputsForOneContext {
     pub fn new(
         context: String,
         amount: u64,
-        params: SpilmanChannelParameters,
+        params: ChannelParameters,
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = OrderedListOfAmounts::from_target(
@@ -349,7 +349,7 @@ mod tests {
     use cdk::nuts::{CurrencyUnit, Id, Keys};
     use super::super::keysets_and_amounts::KeysetInfo;
 
-    fn create_test_params(input_fee_ppk: u64, power: u64) -> SpilmanChannelParameters {
+    fn create_test_params(input_fee_ppk: u64, power: u64) -> ChannelParameters {
         // Create a simple keyset with powers of the given base for testing
         // power=2 gives powers-of-2: 1, 2, 4, 8, 16, ...
         // power=10 gives powers-of-10: 1, 10, 100, 1000, ...
@@ -376,7 +376,7 @@ mod tests {
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
         let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
 
-        SpilmanChannelParameters::new_with_secret_key(
+        ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -547,7 +547,7 @@ mod tests {
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 100_000u64;
 
-        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
@@ -676,7 +676,7 @@ mod tests {
         let sender_nonce = "test_nonce".to_string();
         let maximum_amount_for_one_output = 100_000u64;
 
-        let channel_params = SpilmanChannelParameters::new_with_secret_key(
+        let channel_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
