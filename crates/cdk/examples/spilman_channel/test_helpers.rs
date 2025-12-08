@@ -579,7 +579,7 @@ pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
 pub async fn get_active_keyset_info(
     mint_connection: &dyn MintConnection,
     unit: &CurrencyUnit,
-) -> anyhow::Result<crate::keyset_info::KeysetInfo> {
+) -> anyhow::Result<crate::keysets_and_amounts::KeysetInfo> {
     // Get all keysets and their info
     let all_keysets = mint_connection.get_keys().await?;
     let keysets_info = mint_connection.get_keysets().await?;
@@ -597,7 +597,7 @@ pub async fn get_active_keyset_info(
         .find(|k| k.id == active_keyset_id)
         .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
 
-    Ok(crate::keyset_info::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
+    Ok(crate::keysets_and_amounts::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
 }
 
 /// Setup mint and wallets for demo/testing
