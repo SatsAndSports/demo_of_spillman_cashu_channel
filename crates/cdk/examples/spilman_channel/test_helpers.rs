@@ -689,14 +689,13 @@ pub async fn receive_proofs_into_wallet(
 /// Returns the minted funding proofs.
 pub async fn create_funding_proofs(
     mint_connection: &dyn MintConnection,
-    channel_extra: &crate::extra::SpilmanChannelExtra,
+    channel_params: &crate::params::SpilmanChannelParameters,
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
     let funding_outputs = crate::extra::SetOfDeterministicOutputs::new(
         "funding".to_string(),
         funding_token_nominal,
-        channel_extra.params.clone(),
-        channel_extra.shared_secret,
+        channel_params.clone(),
     )?;
 
     let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
@@ -704,10 +703,10 @@ pub async fn create_funding_proofs(
 
     let funding_proofs = mint_deterministic_outputs(
         mint_connection,
-        channel_extra.params.unit.clone(),
+        channel_params.unit.clone(),
         funding_blinded_messages,
         funding_secrets_with_blinding,
-        &channel_extra.params.keyset_info.active_keys,
+        &channel_params.keyset_info.active_keys,
     ).await?;
 
     Ok(funding_proofs)
@@ -720,17 +719,17 @@ pub async fn create_funding_proofs(
 ///
 /// Returns (receiver_stage1_proofs, sender_stage1_proofs)
 pub fn unblind_commitment_proofs(
-    channel_extra: &crate::extra::SpilmanChannelExtra,
+    channel_params: &crate::params::SpilmanChannelParameters,
     balance: u64,
     signatures: Vec<cdk::nuts::BlindSignature>,
 ) -> anyhow::Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>)> {
     // Create commitment outputs to get the secrets for unblinding
-    let commitment_outputs = channel_extra.create_two_sets_of_outputs_for_balance(balance)?;
+    let commitment_outputs = crate::extra::CommitmentOutputs::for_balance(balance, channel_params)?;
 
     // Unblind the signatures to get the commitment proofs
     let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(
         signatures,
-        &channel_extra.params.keyset_info.active_keys,
+        &channel_params.keyset_info.active_keys,
     )?;
 
     Ok((receiver_stage1_proofs, sender_stage1_proofs))
