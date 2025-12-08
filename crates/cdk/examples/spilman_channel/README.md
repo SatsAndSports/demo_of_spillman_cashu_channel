@@ -44,12 +44,11 @@ A typical test does the following:
 
 1. generate private and public keys for Alice (the sender) and Charlie (the receiver)
 1. set up the test mint and wallets, with configurable fee rate, and collect the KeysetInfo for the relevant keyset
-1. Define all the channel parameters in `SpilmanChannelParameters`
-1. Define the `SpilmanChannelExtra`, which contains some extra shared non-mutable data for the channel, such as the ECDH _shared secret_. The `SpilmanChannelParameters` are identical for both parties, as is `SpilmanChannelExtra`.
+1. Define all the channel parameters in `ChannelParameters`, including the ECDH _shared secret_. The `ChannelParameters` are identical for both parties.
 1. Alice then creates the funding token. She does it via a 'mint' operation in these tests, but in the real world I guess that 'swap' will be more common.
 1. The `SpilmanChannelSender` (for Alice) and `SpilmanChannelReceiver` (for Charlie) objects are set up, containing all the channel data and the relevant private key. These provide the easy-to-use methods for both parties
 1. Alice calls `sender.create_signed_balance_update(charlie_balance)` to create the `BalanceUpdateMessage` which has all the relevant data (channel_id, new balance, signature) that Alice sends to Charlie to make the payment
-1. Charlie then does some asserts based on the payment just made, primarily `receiver.verify_and_sign_balance_update` - which calls `balance_update.verify_sender_signature` to reconstruct the commitment transaction and verify that Alice's signature is correct
+1. Charlie calls `receiver.verify_sender_signature(&balance_update)` to reconstruct the commitment transaction and verify that Alice's signature is correct, then `receiver.add_second_signature(&balance_update, swap_request)` to add his signature
 1. In most of the tests (currently) Charlie immediately exits by adding his signature and swapping
 1. The results of the swap are _unblinded_ using the deterministic blinding factors
 1. The resulting 1-of-1 P2PK outputs are swapped for anyone-can-spend outputs and added to the wallets of Alice and Charlie, and there is an assertion to ensure that Charlie received the expected amount
