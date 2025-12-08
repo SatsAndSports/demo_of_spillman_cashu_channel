@@ -101,19 +101,24 @@ impl SpilmanChannelReceiver {
         }
     }
 
-    /// Verify a balance update from the sender and add receiver's signature
+    /// Verify a balance update signature from the sender
+    pub fn verify_sender_signature(&self, balance_update: &BalanceUpdateMessage) -> anyhow::Result<()> {
+        balance_update.verify_sender_signature(&self.channel)
+    }
+
+    /// Add receiver's signature to complete the 2-of-2 multisig
     ///
     /// This verifies Alice's signature on the balance update, then adds Charlie's
     /// signature to the swap request, making it ready to submit to the mint.
     ///
     /// Returns the fully-signed SwapRequest ready for execution
-    pub fn verify_and_sign_balance_update(
+    pub fn add_second_signature(
         &self,
         balance_update: &BalanceUpdateMessage,
         mut swap_request: SwapRequest,
     ) -> anyhow::Result<SwapRequest> {
         // Verify that Alice's signature is valid
-        balance_update.verify_sender_signature(&self.channel)?;
+        self.verify_sender_signature(balance_update)?;
 
         // Add Charlie's signature to complete the 2-of-2 multisig
         swap_request.sign_sig_all(self.charlie_secret.clone())?;
@@ -245,8 +250,11 @@ mod tests {
         assert_eq!(balance_update.amount, charlie_balance);
         assert_eq!(balance_update.channel_id, sender.channel_id());
 
-        // 11. Charlie verifies Alice's signature and adds his own
-        let swap_request = receiver.verify_and_sign_balance_update(&balance_update, swap_request).unwrap();
+        // 11. Charlie verifies Alice's signature
+        receiver.verify_sender_signature(&balance_update).unwrap();
+
+        // 12. Charlie adds his signature to complete the 2-of-2 multisig
+        let swap_request = receiver.add_second_signature(&balance_update, swap_request).unwrap();
 
         // Print swap request details
         println!("   Swap inputs: {:?}", swap_request.inputs().iter().map(|p| u64::from(p.amount)).collect::<Vec<_>>());
