@@ -6,7 +6,7 @@ use bitcoin::secp256k1::ecdh::SharedSecret;
 use cdk::nuts::{BlindedMessage, BlindSignature, RestoreRequest, SecretKey};
 use cdk::Amount;
 
-use super::keyset_info::{KeysetInfo, OrderedListOfAmounts, select_amounts_to_reach_a_target};
+use super::keyset_info::{KeysetInfo, OrderedListOfAmounts};
 use super::params::SpilmanChannelParameters;
 
 /// A set of deterministic outputs for a specific pubkey and amount
@@ -205,14 +205,17 @@ impl CommitmentOutputs {
 impl SetOfDeterministicOutputs {
     /// Create a new set of deterministic outputs
     pub fn new(
-        amounts_in_keyset: &[u64],
         context: String,
         amount: u64,
         params: SpilmanChannelParameters,
         shared_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
-        let ordered_amounts = select_amounts_to_reach_a_target(amounts_in_keyset, amount)?;
+        let ordered_amounts = OrderedListOfAmounts::from_target(
+            amount,
+            params.maximum_amount_for_one_output,
+            &params.keyset_info,
+        )?;
 
         Ok(Self {
             context,
@@ -333,11 +336,6 @@ impl SpilmanChannelExtra {
     /// Helper to get the maximum amount for one output
     fn max_amount(&self) -> u64 {
         self.params.maximum_amount_for_one_output
-    }
-
-    /// Helper to get filtered amounts (respecting maximum_amount_for_one_output)
-    pub fn amounts_filtered(&self) -> Vec<u64> {
-        self.params.keyset_info.amounts_filtered_by_max(self.max_amount())
     }
 
     /// Get the total funding token amount using double inverse
@@ -468,12 +466,8 @@ impl SpilmanChannelExtra {
 
         let alice_nominal = amount_after_stage1 - charlie_nominal;
 
-        // Get filtered amounts for output creation
-        let filtered_amounts = self.amounts_filtered();
-
         // Create outputs for Charlie (receiver)
         let charlie_outputs = SetOfDeterministicOutputs::new(
-            &filtered_amounts,
             "receiver".to_string(),
             charlie_nominal,
             self.params.clone(),
@@ -482,7 +476,6 @@ impl SpilmanChannelExtra {
 
         // Create outputs for Alice (sender)
         let alice_outputs = SetOfDeterministicOutputs::new(
-            &filtered_amounts,
             "sender".to_string(),
             alice_nominal,
             self.params.clone(),
@@ -577,9 +570,10 @@ mod tests {
     fn test_count_by_amount() {
         let extra = create_test_extra(0, 2); // Powers of 2, no fees
         let max_amount = extra.params.maximum_amount_for_one_output;
+        let keyset_info = &extra.params.keyset_info;
 
         // Test a specific example: 42 = 32 + 8 + 2
-        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(42, max_amount).unwrap();
+        let amounts = OrderedListOfAmounts::from_target(42, max_amount, keyset_info).unwrap();
         let count_map = &amounts.count_by_amount;
 
         // Should have 1×32, 1×8, 1×2
@@ -593,7 +587,7 @@ mod tests {
         assert_eq!(forward, vec![(2, 1), (8, 1), (32, 1)]);
 
         // Test another: 15 = 8 + 4 + 2 + 1
-        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(15, max_amount).unwrap();
+        let amounts = OrderedListOfAmounts::from_target(15, max_amount, keyset_info).unwrap();
         let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&8), Some(&1));
         assert_eq!(count_map.get(&4), Some(&1));
@@ -606,7 +600,7 @@ mod tests {
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1), (8, 1)]);
 
         // Test with multiple of same amount: 7 = 4 + 2 + 1
-        let amounts = extra.params.keyset_info.select_amounts_to_reach_a_target(7, max_amount).unwrap();
+        let amounts = OrderedListOfAmounts::from_target(7, max_amount, keyset_info).unwrap();
         let count_map = &amounts.count_by_amount;
         assert_eq!(count_map.get(&4), Some(&1));
         assert_eq!(count_map.get(&2), Some(&1));
