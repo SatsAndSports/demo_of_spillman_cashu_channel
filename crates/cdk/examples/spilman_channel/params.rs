@@ -7,7 +7,7 @@ use bitcoin::secp256k1::ecdh::SharedSecret;
 use cdk::nuts::{CurrencyUnit, SecretKey};
 use cdk::util::hex;
 
-use super::deterministic::{create_deterministic_commitment_output, DeterministicNonceAndBlinding, DeterministicSecretWithBlinding};
+use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
 
 /// Parameters for a Spilman payment channel
@@ -174,7 +174,7 @@ impl SpilmanChannelParameters {
         match context {
             "receiver" => Ok(self.charlie_pubkey),
             "sender" => Ok(self.alice_pubkey),
-            "funding" => anyhow::bail!("Funding context requires both pubkeys, use create_deterministic_funding_output instead"),
+            "funding" => anyhow::bail!("Funding context requires both pubkeys, use create_deterministic_output_with_blinding with context=\"funding\" instead"),
             _ => anyhow::bail!("Unknown context: {}", context),
         }
     }
@@ -191,37 +191,6 @@ impl SpilmanChannelParameters {
         amount: u64,
         index: usize,
     ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
-        // Derive the deterministic nonce and blinding factor
-        let nonce_and_blinding = self.derive_nonce_and_blinding(context, amount, index)?;
-
-        // Handle funding context separately (requires both pubkeys + locktime)
-        if context == "funding" {
-            super::deterministic::create_deterministic_funding_output(
-                &self.alice_pubkey,
-                &self.charlie_pubkey,
-                self.locktime,
-                nonce_and_blinding,
-                amount,
-            )
-        } else {
-            // For sender/receiver contexts, create simple P2PK outputs
-            let pubkey = self.get_pubkey_from_commitment_context(context)?;
-            create_deterministic_commitment_output(&pubkey, nonce_and_blinding, amount)
-        }
-    }
-
-    /// Derive deterministic nonce and blinding factor using the shared secret and channel ID
-    /// Uses shared_secret, channel_id, context, amount, and index in the derivation
-    ///
-    /// The context parameter specifies the role: "sender", "receiver", or "funding"
-    /// Since the context already identifies which pubkey is involved, the pubkey
-    /// itself is not included in the derivation (but is still needed to construct the secret).
-    pub fn derive_nonce_and_blinding(
-        &self,
-        context: &str,
-        amount: u64,
-        index: usize,
-    ) -> Result<DeterministicNonceAndBlinding, anyhow::Error> {
         let channel_id = self.get_channel_id();
         let amount_bytes = amount.to_le_bytes();
         let index_bytes = index.to_le_bytes();
@@ -236,7 +205,7 @@ impl SpilmanChannelParameters {
         nonce_input.extend_from_slice(&index_bytes);
 
         let nonce_hash = sha256::Hash::hash(&nonce_input);
-        let nonce_hex = hex::encode(nonce_hash.as_byte_array());
+        let nonce = hex::encode(nonce_hash.as_byte_array());
 
         // Derive deterministic blinding factor: SHA256(shared_secret || channel_id || context || amount || "blinding" || index)
         let mut blinding_input = Vec::new();
@@ -250,10 +219,21 @@ impl SpilmanChannelParameters {
         let blinding_hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
 
-        Ok(DeterministicNonceAndBlinding {
-            nonce: nonce_hex,
-            blinding_factor,
-        })
+        // Handle funding context separately (requires both pubkeys + locktime)
+        if context == "funding" {
+            DeterministicSecretWithBlinding::new_funding(
+                &self.alice_pubkey,
+                &self.charlie_pubkey,
+                self.locktime,
+                nonce,
+                blinding_factor,
+                amount,
+            )
+        } else {
+            // For sender/receiver contexts, create simple P2PK outputs
+            let pubkey = self.get_pubkey_from_commitment_context(context)?;
+            DeterministicSecretWithBlinding::new_p2pk(&pubkey, nonce, blinding_factor, amount)
+        }
     }
 
     /// Get the total funding token amount using double inverse
