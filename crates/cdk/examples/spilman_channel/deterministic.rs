@@ -79,8 +79,9 @@ impl DeterministicSecretWithBlinding {
             Some(1),                              // Only 1 signature needed for refund (Alice)
         )?;
 
-        // Serialize the conditions for the secret
-        let conditions_json = serde_json::to_value(&conditions)
+        // Convert conditions to proper NUT-10/11 tag array format
+        let tags: Vec<Vec<String>> = conditions.into();
+        let tags_json = serde_json::to_value(tags)
             .map_err(|e| anyhow::anyhow!("Failed to serialize spending conditions: {}", e))?;
 
         // Manually construct the NUT-10 P2PK secret JSON with spending conditions
@@ -90,7 +91,7 @@ impl DeterministicSecretWithBlinding {
             {
                 "nonce": nonce,
                 "data": alice_pubkey.to_hex(),
-                "tags": conditions_json
+                "tags": tags_json
             }
         ]);
 
