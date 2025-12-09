@@ -1,0 +1,200 @@
+"""
+Cashu-Gated Video Server
+
+A simple Flask server that serves HLS video segments in exchange for
+Spilman channel balance updates.
+
+For now, payment verification is fake - we just check that the balance
+increases with each request.
+"""
+
+import os
+import json
+import base64
+import logging
+from flask import Flask, request, send_from_directory, abort, jsonify
+from flask_cors import CORS
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+log = logging.getLogger(__name__)
+
+app = Flask(__name__, static_folder='static')
+CORS(app)
+
+# In-memory channel state: channel_id -> current_balance
+channels = {}
+
+# Price per segment in sats
+PRICE_PER_SEGMENT = 1
+
+# Media directory (relative to server.py or absolute)
+MEDIA_DIR = os.environ.get('MEDIA_DIR', '../media')
+
+
+def parse_payment(header_value):
+    """Parse the X-Cashu-Payment header (base64-encoded JSON)."""
+    try:
+        decoded = base64.b64decode(header_value)
+        payment = json.loads(decoded)
+        log.debug(f"Parsed payment: {payment}")
+        return payment
+    except Exception as e:
+        log.warning(f"Failed to parse payment header: {e}")
+        return None
+
+
+def verify_payment(payment):
+    """
+    Verify that the payment is valid.
+
+    For now, just checks that:
+    - channel_id and balance are present
+    - balance has increased since last request
+
+    Returns (success, error_message)
+    """
+    if not payment:
+        return False, "Invalid payment format"
+
+    channel_id = payment.get('channel_id')
+    new_balance = payment.get('balance')
+
+    if not channel_id or new_balance is None:
+        return False, "Missing channel_id or balance"
+
+    current_balance = channels.get(channel_id, 0)
+
+    if new_balance <= current_balance:
+        log.warning(f"Payment rejected: channel={channel_id} current={current_balance} received={new_balance}")
+        return False, f"Balance must increase (current: {current_balance}, received: {new_balance})"
+
+    # Update stored balance
+    channels[channel_id] = new_balance
+    log.info(f"Payment accepted: channel={channel_id} balance={current_balance} -> {new_balance}")
+
+    return True, None
+
+
+@app.route('/')
+def index():
+    """Serve the client app."""
+    log.info("Serving index.html")
+    return send_from_directory('static', 'index.html')
+
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Serve static files (JS, CSS, etc.)."""
+    log.debug(f"Serving static file: {filename}")
+    return send_from_directory('static', filename)
+
+
+@app.route('/videos')
+def list_videos():
+    """List available videos (no payment required)."""
+    videos = []
+    media_path = os.path.abspath(MEDIA_DIR)
+
+    if os.path.exists(media_path):
+        for name in os.listdir(media_path):
+            video_dir = os.path.join(media_path, name)
+            if os.path.isdir(video_dir) and os.path.exists(os.path.join(video_dir, 'master.m3u8')):
+                videos.append({
+                    'name': name,
+                    'manifest': f'/media/{name}/master.m3u8'
+                })
+
+    log.info(f"Listed {len(videos)} videos")
+    return jsonify({'videos': videos, 'price_per_segment': PRICE_PER_SEGMENT})
+
+
+@app.route('/media/<path:filepath>')
+def serve_media(filepath):
+    """
+    Serve media files (manifests and segments).
+    Requires payment header.
+    """
+    log.info(f"Media request: {filepath}")
+
+    payment_header = request.headers.get('X-Cashu-Payment')
+
+    if not payment_header:
+        log.warning(f"No payment header for: {filepath}")
+        abort(402, description="Payment Required - include X-Cashu-Payment header")
+
+    payment = parse_payment(payment_header)
+    valid, error = verify_payment(payment)
+
+    if not valid:
+        log.warning(f"Payment invalid for {filepath}: {error}")
+        abort(402, description=f"Payment Invalid: {error}")
+
+    # Serve the file
+    media_path = os.path.abspath(MEDIA_DIR)
+    full_path = os.path.join(media_path, filepath)
+
+    if not os.path.exists(full_path):
+        log.warning(f"File not found: {full_path}")
+        abort(404, description="File not found")
+
+    directory = os.path.dirname(full_path)
+    filename = os.path.basename(full_path)
+
+    # Set correct content type for HLS
+    mimetype = None
+    if filepath.endswith('.m3u8'):
+        mimetype = 'application/vnd.apple.mpegurl'
+    elif filepath.endswith('.ts'):
+        mimetype = 'video/mp2t'
+
+    log.info(f"Serving: {filepath}")
+    return send_from_directory(directory, filename, mimetype=mimetype)
+
+
+@app.route('/channel/status/<channel_id>')
+def channel_status(channel_id):
+    """Get current channel status (for debugging)."""
+    balance = channels.get(channel_id, 0)
+    log.info(f"Channel status: {channel_id} = {balance}")
+    return jsonify({
+        'channel_id': channel_id,
+        'balance': balance
+    })
+
+
+@app.route('/channel/reset/<channel_id>', methods=['POST'])
+def channel_reset(channel_id):
+    """Reset a channel (for testing)."""
+    old_balance = channels.get(channel_id, 0)
+    if channel_id in channels:
+        del channels[channel_id]
+    log.info(f"Channel reset: {channel_id} (was {old_balance})")
+    return jsonify({'status': 'reset', 'channel_id': channel_id})
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Cashu-Gated Video Server')
+    parser.add_argument('--port', type=int, default=8080, help='Port to listen on')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
+    parser.add_argument('--media', default='../media', help='Path to media directory')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger(__name__).setLevel(logging.DEBUG)
+
+    MEDIA_DIR = args.media
+
+    log.info(f"Starting server on {args.host}:{args.port}")
+    log.info(f"Media directory: {os.path.abspath(MEDIA_DIR)}")
+    log.info(f"Price per segment: {PRICE_PER_SEGMENT} sat")
+
+    app.run(host=args.host, port=args.port, debug=args.debug)
