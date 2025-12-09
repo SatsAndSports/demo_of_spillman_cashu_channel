@@ -75,7 +75,37 @@ The following are working, or were working, but just haven't been put into a uni
 
 Other things that should be done:
  - Alice restoring when Charlie uses an unexpected keyset (see _Keyset Malleability_ in the NUT)
- - Using another mint, not just the CDK mint used in the tests. The earliest iterations of the spilman demo code did work with Nutshell, but that was before the SIG_ALL message update and before other changes. So I should make sure that works again. A `--mint` option can be passed to the example already, and it might still be fully working, but I should test it again and also with any public (test) mints that have the SIG_ALL update.
+ - **Done - it works with Nutshell - see below**. Using another mint, not just the CDK mint used in the tests. The earliest iterations of the spilman demo code did work with Nutshell, but that was before the SIG_ALL message update and before other changes. So I should make sure that works again. A `--mint` option can be passed to the example already, and it might still be fully working, but I should test it again and also with any public (test) mints that have the SIG_ALL update.
  - I'd like to try a `unit=millisat` mint too
  - And make a fun realistic example, like paying for a streaming video within WebSockets
- - a text for the maximum_output thing, as I'm worried my recent refactoring might have broken it
+ - a test for the maximum_output thing, as I'm worried my recent refactoring might have broken it
+
+
+## Running the Spilman example in Nutshell
+
+It works in Nutshell, with a small tweak
+
+In another terminal, run these lines to start a Nutshell mint, listening on port 3338:
+
+```
+git clone https://github.com/cashubtc/nutshell.git
+cd nutshell
+
+# check out the version that I tested this with:
+git checkout 1568e51 # Nutshell version 0.18.2
+
+# Make a tiny tweak to one file, to update it for the SIG_ALL message update: https://github.com/cashubtc/nuts/pull/302/files
+sed -ire 's/\[p.secret for p in proofs\] + \[o.B_ for o in outputs\]/[p.secret \+ p.C for p in proofs\] + \[str(o.amount) \+ o.B_ for o in outputs\]/'   cashu/mint/conditions.py
+
+# Build the docker image:
+docker compose build mint
+
+# and run it:
+docker compose up mint
+```
+
+and then you can run this example pointing that that mint:
+
+```
+cargo run --example spilman_channel -- --mint http://localhost:3338
+```
