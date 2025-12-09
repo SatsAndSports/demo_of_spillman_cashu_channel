@@ -200,14 +200,6 @@ impl KeysetInfo {
             });
         }
 
-        // Get the smallest amount in the filtered keyset
-        let smallest = self.amounts_largest_first
-            .iter()
-            .copied()
-            .filter(|&amt| amt <= maximum_amount)
-            .last()
-            .unwrap_or(1);
-
         // Start with the target as initial guess and search upward
         let mut nominal = target_balance;
 
@@ -222,8 +214,8 @@ impl KeysetInfo {
                 });
             }
 
-            // Need more - increment by the smallest amount in the keyset
-            nominal += smallest;
+            // Need more - increment by 1
+            nominal += 1;
 
             // Safety check to prevent infinite loops
             if nominal > target_balance * 2 {
@@ -341,10 +333,97 @@ mod tests {
     }
 
     #[test]
+    fn test_value_after_fees_500ppk() {
+        // With input_fee_ppk=500, fee = (500 * num_outputs + 999) / 1000
+        // For even num_outputs, this simplifies to exactly num_outputs / 2.
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 500);
+
+        for target in 1..=100 {
+            let result = OrderedListOfAmounts::from_target(target, 64, &keyset).unwrap();
+            assert_eq!(result.nominal_total(), target);
+
+            if result.len() % 2 == 0 {
+                let expected_fee = result.len() as u64 / 2;
+                assert_eq!(result.value_after_fees(), target - expected_fee,
+                    "target={}, num_outputs={}: expected fee={}, got fee={}",
+                    target, result.len(), expected_fee, target - result.value_after_fees());
+            }
+        }
+    }
+
+    #[test]
     fn test_from_target_zero() {
         let keyset = mock_keyset_info(vec![1, 2, 4], 0);
         let result = OrderedListOfAmounts::from_target(0, 4, &keyset).unwrap();
         assert_eq!(result.len(), 0);
         assert_eq!(result.nominal_total(), 0);
+    }
+
+    #[test]
+    fn test_roundtrip_property_zero_fees() {
+        // With zero fees, nominal == actual == target
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let max_amount = 64;
+
+        for target in 0..=100 {
+            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+
+            assert_eq!(inverse_result.nominal_value, target);
+            assert_eq!(inverse_result.actual_balance, target);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_property_powers_of_2() {
+        // Powers of 2: 1, 2, 4, 8, ..., 512
+        let amounts: Vec<u64> = (0..10).map(|i| 2u64.pow(i)).collect();
+        let keyset = mock_keyset_info(amounts, 400);
+        let max_amount = 512;
+
+        // For any target balance, inverse should give us at least that balance
+        for target in 0..=1000 {
+            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+
+            // The actual balance should be >= target
+            assert!(
+                inverse_result.actual_balance >= target,
+                "Target {} gave actual {} which is less than target",
+                target,
+                inverse_result.actual_balance
+            );
+
+            // Verify by computing forward
+            let forward_result = keyset
+                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
+                .unwrap();
+            assert_eq!(forward_result, inverse_result.actual_balance);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_property_powers_of_10() {
+        // Powers of 10: 1, 10, 100, ..., 1_000_000_000
+        let amounts: Vec<u64> = (0..10).map(|i| 10u64.pow(i)).collect();
+        let keyset = mock_keyset_info(amounts, 400);
+        let max_amount = 1_000_000_000;
+
+        // For any target balance, inverse should give us at least that balance
+        for target in 0..=1000 {
+            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+
+            // The actual balance should be >= target
+            assert!(
+                inverse_result.actual_balance >= target,
+                "Target {} gave actual {} which is less than target",
+                target,
+                inverse_result.actual_balance
+            );
+
+            // Verify by computing forward
+            let forward_result = keyset
+                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
+                .unwrap();
+            assert_eq!(forward_result, inverse_result.actual_balance);
+        }
     }
 }

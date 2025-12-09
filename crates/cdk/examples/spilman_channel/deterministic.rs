@@ -569,56 +569,6 @@ mod tests {
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1)]);
     }
 
-    #[test]
-    fn test_roundtrip_property_powers_of_2() {
-        let params = create_test_params(400, 2); // Powers of 2
-        let max_amount = params.maximum_amount_for_one_output;
-
-        // For any target balance, inverse should give us at least that balance
-        for target in 0..=1000 {
-            let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
-
-            // The actual balance should be >= target
-            assert!(
-                inverse_result.actual_balance >= target,
-                "Target {} gave actual {} which is less than target",
-                target,
-                inverse_result.actual_balance
-            );
-
-            // Verify by computing forward
-            let forward_result = params.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
-                .unwrap();
-            assert_eq!(forward_result, inverse_result.actual_balance);
-        }
-    }
-
-    #[test]
-    fn test_roundtrip_property_powers_of_10() {
-        let params = create_test_params(400, 10); // Powers of 10
-        let max_amount = params.maximum_amount_for_one_output;
-
-        // For any target balance, inverse should give us at least that balance
-        for target in 0..=1000 {
-            let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
-
-            // The actual balance should be >= target
-            assert!(
-                inverse_result.actual_balance >= target,
-                "Target {} gave actual {} which is less than target",
-                target,
-                inverse_result.actual_balance
-            );
-
-            // Verify by computing forward
-            let forward_result = params.keyset_info
-                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
-                .unwrap();
-            assert_eq!(forward_result, inverse_result.actual_balance);
-        }
-    }
-
     #[tokio::test]
     async fn test_full_channel_flow() {
         use cdk::util::unix_time;
