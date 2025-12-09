@@ -236,3 +236,115 @@ impl KeysetInfo {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cdk::Amount;
+    use std::str::FromStr;
+
+    // Helper to create a simple KeysetInfo for testing
+    fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
+        use cdk::nuts::{Id, Keys, PublicKey};
+        use std::collections::BTreeMap;
+
+        // Create dummy keys map
+        let mut keys_map = BTreeMap::new();
+        let dummy_pubkey = PublicKey::from_str(
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
+        ).unwrap();
+        for &amt in &amounts {
+            keys_map.insert(Amount::from(amt), dummy_pubkey);
+        }
+
+        let mut amounts_largest_first = amounts;
+        amounts_largest_first.sort_by(|a, b| b.cmp(a));
+
+        KeysetInfo {
+            keyset_id: Id::from_str("00deadbeef123456").unwrap(),
+            active_keys: Keys::new(keys_map),
+            amounts_largest_first,
+            input_fee_ppk,
+        }
+    }
+
+    #[test]
+    fn test_from_target_max_1_count_equals_amount() {
+        // With maximum_amount_for_one_output=1, number of outputs should equal target
+        // as the target is split into one output per sat.
+        // This shows that maximum_amount_for_one_output is being used
+        let maximum_amount_for_one_output = 1;
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
+
+        for target in 1..=20 {
+            let result = OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset).unwrap();
+            assert_eq!(result.len(), target as usize,
+                "target={}: expected {} outputs, got {}", target, target, result.len());
+            assert_eq!(result.nominal_total(), target);
+        }
+    }
+
+    #[test]
+    fn test_from_target_max_2_even_targets() {
+        // With maximum_amount_for_one_output=2 and even targets, number of outputs
+        // equals half the target, because every output is a 2-sat output.
+        let maximum_amount_for_one_output = 2;
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
+
+        for target in (2..=20).step_by(2) {
+            let result = OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset).unwrap();
+            assert_eq!(result.len(), (target / 2) as usize,
+                "target={}: expected {} outputs, got {}", target, target / 2, result.len());
+            assert_eq!(result.nominal_total(), target);
+        }
+    }
+
+    #[test]
+    fn test_from_target_powers_of_2() {
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+
+        // 7 = 4 + 2 + 1 → 3 outputs
+        let result = OrderedListOfAmounts::from_target(7, 64, &keyset).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result.nominal_total(), 7);
+
+        // 15 = 8 + 4 + 2 + 1 → 4 outputs
+        let result = OrderedListOfAmounts::from_target(15, 64, &keyset).unwrap();
+        assert_eq!(result.len(), 4);
+
+        // 64 = 64 → 1 output
+        let result = OrderedListOfAmounts::from_target(64, 64, &keyset).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_from_target_powers_of_10() {
+        let keyset = mock_keyset_info(vec![1, 10, 100, 1000], 0);
+
+        // 111 = 100 + 10 + 1 → 3 outputs
+        let result = OrderedListOfAmounts::from_target(111, 1000, &keyset).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result.nominal_total(), 111);
+
+        // 999 = 9×100 + 9×10 + 9×1 → 27 outputs
+        let result = OrderedListOfAmounts::from_target(999, 1000, &keyset).unwrap();
+        assert_eq!(result.len(), 27);
+        assert_eq!(result.nominal_total(), 999);
+
+        // 1000 = 1000 → 1 output
+        let result = OrderedListOfAmounts::from_target(1000, 1000, &keyset).unwrap();
+        assert_eq!(result.len(), 1);
+
+        // 234 = 2×100 + 3×10 + 4×1 → 9 outputs
+        let result = OrderedListOfAmounts::from_target(234, 1000, &keyset).unwrap();
+        assert_eq!(result.len(), 9);
+    }
+
+    #[test]
+    fn test_from_target_zero() {
+        let keyset = mock_keyset_info(vec![1, 2, 4], 0);
+        let result = OrderedListOfAmounts::from_target(0, 4, &keyset).unwrap();
+        assert_eq!(result.len(), 0);
+        assert_eq!(result.nominal_total(), 0);
+    }
+}
