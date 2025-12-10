@@ -3,12 +3,6 @@
 //! This example will demonstrate a Cashu implementation of Spilman channels,
 //! allowing Alice and Charlie to set up an offline unidirectional payment channel.
 
-mod deterministic;
-mod keysets_and_amounts;
-mod params;
-mod established_channel;
-mod balance_update;
-mod sender_and_receiver;
 mod test_helpers;
 
 use cdk::nuts::{CurrencyUnit, SecretKey};
@@ -16,12 +10,10 @@ use cdk::util::unix_time;
 use cdk::secret::Secret;
 use clap::Parser;
 
-use params::ChannelParameters;
-use deterministic::CommitmentOutputs;
-use established_channel::EstablishedChannel;
-use balance_update::BalanceUpdateMessage;
+// Import Spilman types from the library
+use cdk::spilman::{ChannelParameters, CommitmentOutputs, EstablishedChannel, BalanceUpdateMessage};
 
-use test_helpers::{MintConnection, setup_mint_and_wallets_for_demo, get_active_keyset_info, receive_proofs_into_wallet, create_funding_proofs};
+use test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, receive_proofs_into_wallet, create_funding_proofs};
 
 /// Spilman Payment Channel Demo
 #[derive(Parser, Debug)]
@@ -164,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Submit the signed swap request to the mint
     println!("\n🔄 Submitting swap to mint...");
-    let swap_response = mint_connection.process_swap(swap_request).await?;
+    let swap_response = test_helpers::MintConnection::process_swap(&*mint_connection, swap_request).await?;
     println!("   ✓ Mint processed swap successfully!");
 
     // Check funding token state after swap (should be SPENT)

@@ -25,7 +25,11 @@ use cdk_common::mint_url::MintUrl;
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
 
-use super::deterministic;
+// Import Spilman types from the library
+use cdk::spilman::{
+    DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,
+    MintConnection as SpilmanMintConnection,
+};
 
 /// Extract signatures from the first proof's witness in a swap request
 /// For SigAll, all signatures are stored in the witness of the FIRST proof only
@@ -132,6 +136,10 @@ pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64, base: u64
     Ok(mint)
 }
 
+/// Combined trait for interacting with a mint that supports both example operations and library Spilman operations
+pub trait FullMintConnection: MintConnection + SpilmanMintConnection {}
+impl<T: MintConnection + SpilmanMintConnection> FullMintConnection for T {}
+
 /// Trait for interacting with a mint (either local or HTTP)
 #[async_trait]
 pub trait MintConnection: Send + Sync {
@@ -200,6 +208,23 @@ impl MintConnection for HttpMintConnection {
 
     async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error> {
         self.http_client.get_mint_quote_status(quote_id).await
+    }
+}
+
+// Implement the library's MintConnection trait for HttpMintConnection
+#[async_trait]
+impl SpilmanMintConnection for HttpMintConnection {
+    async fn process_swap(&self, request: SwapRequest) -> anyhow::Result<SwapResponse> {
+        Ok(self.http_client.post_swap(request).await?)
+    }
+
+    async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<RestoreResponse> {
+        Ok(self.http_client.post_restore(request).await?)
+    }
+
+    async fn check_state(&self, ys: Vec<cdk::nuts::PublicKey>) -> anyhow::Result<CheckStateResponse> {
+        let request = CheckStateRequest { ys };
+        Ok(self.http_client.post_check_state(request).await?)
     }
 }
 
@@ -457,6 +482,23 @@ impl MintConnection for DirectMintConnection {
     }
 }
 
+// Implement the library's MintConnection trait for DirectMintConnection
+#[async_trait]
+impl SpilmanMintConnection for DirectMintConnection {
+    async fn process_swap(&self, request: SwapRequest) -> anyhow::Result<SwapResponse> {
+        Ok(self.mint.process_swap_request(request).await?)
+    }
+
+    async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<RestoreResponse> {
+        Ok(self.mint.restore(request).await?)
+    }
+
+    async fn check_state(&self, ys: Vec<cdk::nuts::PublicKey>) -> anyhow::Result<CheckStateResponse> {
+        let request = CheckStateRequest { ys };
+        Ok(self.mint.check_state(&request).await?)
+    }
+}
+
 /// Mint deterministic outputs directly using NUT-20 signed MintRequest
 ///
 /// This helper function:
@@ -480,7 +522,7 @@ pub async fn mint_deterministic_outputs(
     mint_connection: &dyn MintConnection,
     unit: CurrencyUnit,
     blinded_messages: Vec<cdk::nuts::BlindedMessage>,
-    secrets_with_blinding: Vec<deterministic::DeterministicSecretWithBlinding>,
+    secrets_with_blinding: Vec<DeterministicSecretWithBlinding>,
     keyset_keys: &cdk::nuts::Keys,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
     // Calculate total amount
@@ -579,7 +621,7 @@ pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
 pub async fn get_active_keyset_info(
     mint_connection: &dyn MintConnection,
     unit: &CurrencyUnit,
-) -> anyhow::Result<crate::keysets_and_amounts::KeysetInfo> {
+) -> anyhow::Result<cdk::spilman::KeysetInfo> {
     // Get all keysets and their info
     let all_keysets = mint_connection.get_keys().await?;
     let keysets_info = mint_connection.get_keysets().await?;
@@ -597,7 +639,7 @@ pub async fn get_active_keyset_info(
         .find(|k| k.id == active_keyset_id)
         .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
 
-    Ok(crate::keysets_and_amounts::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
+    Ok(cdk::spilman::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
 }
 
 /// Setup mint and wallets for demo/testing
@@ -611,8 +653,8 @@ pub async fn setup_mint_and_wallets_for_demo(
     unit: CurrencyUnit,
     input_fee_ppk: u64, // Fee in parts per thousand (e.g., 400 = 40%)
     base: u64, // Base for amount generation (e.g., 2 for powers of 2, 10 for powers of 10)
-) -> anyhow::Result<(Box<dyn MintConnection>, Wallet, Wallet, String)> {
-    let (mint_connection, alice, charlie, mint_url): (Box<dyn MintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
+) -> anyhow::Result<(Box<dyn FullMintConnection>, Wallet, Wallet, String)> {
+    let (mint_connection, alice, charlie, mint_url): (Box<dyn FullMintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -689,10 +731,10 @@ pub async fn receive_proofs_into_wallet(
 /// Returns the minted funding proofs.
 pub async fn create_funding_proofs(
     mint_connection: &dyn MintConnection,
-    channel_params: &crate::params::ChannelParameters,
+    channel_params: &cdk::spilman::ChannelParameters,
     funding_token_nominal: u64,
 ) -> anyhow::Result<Vec<cdk::nuts::Proof>> {
-    let funding_outputs = crate::deterministic::DeterministicOutputsForOneContext::new(
+    let funding_outputs = DeterministicOutputsForOneContext::new(
         "funding".to_string(),
         funding_token_nominal,
         channel_params.clone(),
@@ -719,12 +761,12 @@ pub async fn create_funding_proofs(
 ///
 /// Returns (receiver_stage1_proofs, sender_stage1_proofs)
 pub fn unblind_commitment_proofs(
-    channel_params: &crate::params::ChannelParameters,
+    channel_params: &cdk::spilman::ChannelParameters,
     balance: u64,
     signatures: Vec<cdk::nuts::BlindSignature>,
 ) -> anyhow::Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>)> {
     // Create commitment outputs to get the secrets for unblinding
-    let commitment_outputs = crate::deterministic::CommitmentOutputs::for_balance(balance, channel_params)?;
+    let commitment_outputs = cdk::spilman::CommitmentOutputs::for_balance(balance, channel_params)?;
 
     // Unblind the signatures to get the commitment proofs
     let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(

@@ -3,12 +3,32 @@
 //! Represents a signed balance update in a Spilman payment channel
 
 use bitcoin::secp256k1::schnorr::Signature;
-use cdk::nuts::nut10::SpendingConditionVerification;
-use cdk::nuts::SwapRequest;
+use crate::nuts::nut10::SpendingConditionVerification;
+use crate::nuts::SwapRequest;
 
 use super::established_channel::EstablishedChannel;
 use super::deterministic::CommitmentOutputs;
-use super::test_helpers::get_signatures_from_swap_request;
+
+/// Extract signatures from a swap request's first proof witness
+pub fn get_signatures_from_swap_request(swap_request: &SwapRequest) -> Result<Vec<Signature>, anyhow::Error> {
+    let first_proof = swap_request.inputs().first()
+        .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
+
+    let signatures = if let Some(ref witness) = first_proof.witness {
+        if let crate::nuts::Witness::P2PKWitness(p2pk_witness) = witness {
+            // Parse all signature strings into Signature objects
+            p2pk_witness.signatures.iter()
+                .filter_map(|sig_str| sig_str.parse::<Signature>().ok())
+                .collect()
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    Ok(signatures)
+}
 
 /// A balance update message from Alice to Charlie
 ///
@@ -43,7 +63,7 @@ impl BalanceUpdateMessage {
             );
         }
 
-        let signature = signatures[0].clone();
+        let signature = signatures[0];
 
         Ok(Self {
             channel_id,
