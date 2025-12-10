@@ -1,9 +1,8 @@
 //! Keyset Information
 //!
 //! Contains keyset-related types and fee calculation functions.
-//! This module is separate to avoid circular dependencies between params.rs and extra.rs.
 
-use cdk::nuts::{Id, Keys};
+use crate::nuts::{Id, Keys};
 
 /// Result of inverse_deterministic_value_after_fees
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +97,11 @@ impl OrderedListOfAmounts {
     /// Get the number of amounts in the list
     pub fn len(&self) -> usize {
         self.amounts.len()
+    }
+
+    /// Check if the list is empty
+    pub fn is_empty(&self) -> bool {
+        self.amounts.is_empty()
     }
 
     /// Get the total nominal value (sum of all amounts)
@@ -232,12 +236,12 @@ impl KeysetInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cdk::Amount;
+    use crate::Amount;
     use std::str::FromStr;
 
     // Helper to create a simple KeysetInfo for testing
     fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
-        use cdk::nuts::{Id, Keys, PublicKey};
+        use crate::nuts::{Id, Keys, PublicKey};
         use std::collections::BTreeMap;
 
         // Create dummy keys map

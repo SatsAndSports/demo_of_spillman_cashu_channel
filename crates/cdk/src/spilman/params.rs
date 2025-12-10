@@ -4,8 +4,8 @@
 
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::ecdh::SharedSecret;
-use cdk::nuts::{CurrencyUnit, SecretKey};
-use cdk::util::hex;
+use crate::nuts::{CurrencyUnit, SecretKey};
+use crate::util::hex;
 
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
@@ -14,9 +14,9 @@ use super::keysets_and_amounts::KeysetInfo;
 #[derive(Debug, Clone)]
 pub struct ChannelParameters {
     /// Alice's public key (sender)
-    pub alice_pubkey: cdk::nuts::PublicKey,
+    pub alice_pubkey: crate::nuts::PublicKey,
     /// Charlie's public key (receiver)
-    pub charlie_pubkey: cdk::nuts::PublicKey,
+    pub charlie_pubkey: crate::nuts::PublicKey,
     /// Mint URL (or "local" for in-process mint)
     pub mint: String,
     /// Currency unit for the channel
@@ -40,8 +40,8 @@ pub struct ChannelParameters {
 impl ChannelParameters {
     /// Create new channel parameters with a pre-computed shared secret
     pub fn new(
-        alice_pubkey: cdk::nuts::PublicKey,
-        charlie_pubkey: cdk::nuts::PublicKey,
+        alice_pubkey: crate::nuts::PublicKey,
+        charlie_pubkey: crate::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -88,8 +88,8 @@ impl ChannelParameters {
     /// # Errors
     /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
     pub fn new_with_secret_key(
-        alice_pubkey: cdk::nuts::PublicKey,
-        charlie_pubkey: cdk::nuts::PublicKey,
+        alice_pubkey: crate::nuts::PublicKey,
+        charlie_pubkey: crate::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -170,7 +170,7 @@ impl ChannelParameters {
     /// Get the pubkey for a commitment context ("sender" or "receiver")
     /// Returns Charlie's pubkey for "receiver", Alice's pubkey for "sender"
     /// Returns an error for "funding" since funding requires both pubkeys
-    pub fn get_pubkey_from_commitment_context(&self, context: &str) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
+    pub fn get_pubkey_from_commitment_context(&self, context: &str) -> Result<crate::nuts::PublicKey, anyhow::Error> {
         match context {
             "receiver" => Ok(self.charlie_pubkey),
             "sender" => Ok(self.alice_pubkey),

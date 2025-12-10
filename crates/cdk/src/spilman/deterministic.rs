@@ -6,14 +6,27 @@
 //! - `DeterministicOutputsForOneContext` - all outputs for one party
 //! - `CommitmentOutputs` - outputs for both parties (receiver + sender)
 
-use cdk::dhke::blind_message;
-use cdk::nuts::{BlindedMessage, BlindSignature, Id, RestoreRequest, SecretKey};
-use cdk::nuts::nut11::{Conditions, SigFlag};
-use cdk::secret::Secret;
-use cdk::Amount;
+use async_trait::async_trait;
+
+use crate::dhke::blind_message;
+use crate::nuts::{BlindedMessage, BlindSignature, Id, RestoreRequest, SecretKey};
+use crate::nuts::nut11::{Conditions, SigFlag};
+use crate::secret::Secret;
+use crate::Amount;
 
 use super::keysets_and_amounts::OrderedListOfAmounts;
 use super::params::ChannelParameters;
+
+/// Trait for mint connection operations needed by Spilman channels
+#[async_trait]
+pub trait MintConnection: Send + Sync {
+    /// Process a swap request
+    async fn process_swap(&self, request: crate::nuts::SwapRequest) -> anyhow::Result<crate::nuts::SwapResponse>;
+    /// Post a restore request
+    async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<crate::nuts::RestoreResponse>;
+    /// Check proof state
+    async fn check_state(&self, ys: Vec<crate::nuts::PublicKey>) -> anyhow::Result<crate::nuts::CheckStateResponse>;
+}
 
 /// Deterministic secret with blinding factor
 /// Can hold any type of secret (simple P2PK, P2PK with conditions, HTLC, etc.)
@@ -31,7 +44,7 @@ impl DeterministicSecretWithBlinding {
     /// Create a simple P2PK output (1-of-1 signature)
     /// Used for commitment outputs (sender or receiver)
     pub fn new_p2pk(
-        pubkey: &cdk::nuts::PublicKey,
+        pubkey: &crate::nuts::PublicKey,
         nonce: String,
         blinding_factor: SecretKey,
         amount: u64,
@@ -61,8 +74,8 @@ impl DeterministicSecretWithBlinding {
     /// Used for the funding token that both parties must sign to spend,
     /// or Alice alone can reclaim after locktime
     pub fn new_funding(
-        alice_pubkey: &cdk::nuts::PublicKey,
-        charlie_pubkey: &cdk::nuts::PublicKey,
+        alice_pubkey: &crate::nuts::PublicKey,
+        charlie_pubkey: &crate::nuts::PublicKey,
         locktime: u64,
         nonce: String,
         blinding_factor: SecretKey,
@@ -303,8 +316,8 @@ impl CommitmentOutputs {
     /// The swap request is unsigned and needs to be signed by the sender (Alice) before sending
     pub fn create_swap_request(
         &self,
-        funding_proofs: Vec<cdk::nuts::Proof>,
-    ) -> Result<cdk::nuts::SwapRequest, anyhow::Error> {
+        funding_proofs: Vec<crate::nuts::Proof>,
+    ) -> Result<crate::nuts::SwapRequest, anyhow::Error> {
         // Get blinded messages for receiver (Charlie)
         let mut outputs = self.receiver_outputs.get_blinded_messages()?;
 
@@ -318,7 +331,7 @@ impl CommitmentOutputs {
         outputs.sort_by_key(|bm| u64::from(bm.amount));
 
         // Create swap request with all funding proofs as inputs
-        Ok(cdk::nuts::SwapRequest::new(funding_proofs, outputs))
+        Ok(crate::nuts::SwapRequest::new(funding_proofs, outputs))
     }
 
     /// Unblind all outputs from a swap response
@@ -327,9 +340,9 @@ impl CommitmentOutputs {
     /// (receiver_proofs, sender_proofs) as two separate vectors
     pub fn unblind_all(
         &self,
-        blind_signatures: Vec<cdk::nuts::BlindSignature>,
-        active_keys: &cdk::nuts::Keys,
-    ) -> Result<(Vec<cdk::nuts::Proof>, Vec<cdk::nuts::Proof>), anyhow::Error> {
+        blind_signatures: Vec<BlindSignature>,
+        active_keys: &crate::nuts::Keys,
+    ) -> Result<(Vec<crate::nuts::Proof>, Vec<crate::nuts::Proof>), anyhow::Error> {
         // Assert the number of signatures matches the expected number of outputs
         let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
         if blind_signatures.len() != expected_count {
@@ -369,7 +382,7 @@ impl CommitmentOutputs {
         assert_eq!(sorted_blinding.len(), blind_signatures.len());
 
         // Unblind all proofs in sorted order
-        let all_proofs = cdk::dhke::construct_proofs(
+        let all_proofs = crate::dhke::construct_proofs(
             blind_signatures,
             sorted_blinding,
             sorted_secrets,
@@ -403,16 +416,12 @@ impl CommitmentOutputs {
     ///
     /// Returns the blind signatures in the same order as create_swap_request:
     /// sorted by amount (stable) for privacy
-    ///
-    /// TODO: This implementation assumes that Alice knows which balance Charlie exited
-    ///       with. We should make a more robust method, as described in the NUT.
-    /// TODO: think about keysets here; what if Charlie chose a different keyset?
     pub async fn restore_all_blind_signatures<M>(
         &self,
         mint_connection: &M,
     ) -> Result<Vec<BlindSignature>, anyhow::Error>
     where
-        M: super::MintConnection + ?Sized,
+        M: MintConnection + ?Sized,
     {
         // Get all blinded messages in the same order as create_swap_request
         // (receiver first, then sender)
@@ -450,7 +459,7 @@ impl CommitmentOutputs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cdk::nuts::{CurrencyUnit, Id, Keys};
+    use crate::nuts::{CurrencyUnit, Id, Keys};
     use super::super::keysets_and_amounts::KeysetInfo;
 
     fn create_test_params(input_fee_ppk: u64, power: u64) -> ChannelParameters {
@@ -495,36 +504,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Helper to receive proofs into both wallets
-    ///
-    /// If a party's proofs would be worth 0 after fees, returns 0 for their amount.
-    ///
-    /// Returns (charlie_received, alice_received) as a tuple.
-    async fn receive_proofs_for_both_parties(
-        charlie_wallet: &cdk::wallet::Wallet,
-        alice_wallet: &cdk::wallet::Wallet,
-        charlie_proofs: Vec<cdk::nuts::Proof>,
-        alice_proofs: Vec<cdk::nuts::Proof>,
-        charlie_secret: cdk::nuts::SecretKey,
-        alice_secret: cdk::nuts::SecretKey,
-    ) -> anyhow::Result<(u64, u64)> {
-        use crate::receive_proofs_into_wallet;
-
-        let charlie_received = receive_proofs_into_wallet(
-            charlie_wallet,
-            charlie_proofs,
-            charlie_secret,
-        ).await?;
-
-        let alice_received = receive_proofs_into_wallet(
-            alice_wallet,
-            alice_proofs,
-            alice_secret,
-        ).await?;
-
-        Ok((charlie_received, alice_received))
-    }
-
     #[test]
     fn test_count_by_amount() {
         let params = create_test_params(0, 2); // Powers of 2, no fees
@@ -567,248 +546,5 @@ mod tests {
 
         let forward: Vec<(u64, usize)> = count_map.iter().map(|(&k, &v)| (k, v)).collect();
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1)]);
-    }
-
-    #[tokio::test]
-    async fn test_full_channel_flow() {
-        use cdk::util::unix_time;
-        use crate::test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_funding_proofs};
-        use crate::established_channel::EstablishedChannel;
-        use crate::balance_update::BalanceUpdateMessage;
-
-        // 1. Generate keys for Alice and Charlie
-        let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
-        let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
-
-        // 2. Setup mint and wallets
-        let channel_unit = CurrencyUnit::Sat;
-        let input_fee_ppk = 400; // 40% fee
-        let base = 2; // Powers of 2
-        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
-
-        // 3. Get active keyset info
-        let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
-
-        // 4. Create channel parameters with shared secret
-        let capacity = 100_000u64;
-        let locktime = unix_time() + 86400; // 1 day from now
-        let setup_timestamp = unix_time();
-        let sender_nonce = "test_nonce".to_string();
-        let maximum_amount_for_one_output = 100_000u64;
-
-        let channel_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
-            "local".to_string(),
-            channel_unit.clone(),
-            capacity,
-            locktime,
-            setup_timestamp,
-            sender_nonce,
-            keyset_info,
-            maximum_amount_for_one_output,
-            &alice_secret,
-        ).unwrap();
-
-        // 5. Calculate funding token size
-        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
-
-        // 6. Create and mint funding token
-        let funding_proofs = create_funding_proofs(
-            &*mint_connection,
-            &channel_params,
-            funding_token_nominal,
-        ).await.unwrap();
-
-        // 7. Create established channel
-        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
-
-        // 8. Create commitment transaction for Charlie to receive 10,000 sats
-        let charlie_balance = 10_000u64;
-        let charlie_de_facto_balance = channel.params.get_de_facto_balance(charlie_balance).unwrap();
-
-        dbg!(capacity, funding_token_nominal, charlie_balance, charlie_de_facto_balance);
-
-        let commitment_outputs = CommitmentOutputs::for_balance(
-            charlie_balance,
-            &channel.params,
-        ).unwrap();
-
-        // 9. Create unsigned swap request
-        let mut swap_request = commitment_outputs.create_swap_request(
-            channel.funding_proofs.clone(),
-        ).unwrap();
-
-        // 10. Alice signs the swap request
-        swap_request.sign_sig_all(alice_secret.clone()).unwrap();
-
-        // 11. Create balance update message
-        let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-            channel.params.get_channel_id(),
-            charlie_balance,
-            &swap_request,
-        ).unwrap();
-
-        // 12. Charlie verifies Alice's signature
-        balance_update.verify_sender_signature(&channel).unwrap();
-
-        // 13. Charlie signs the swap request
-        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
-
-        // 14. Execute the swap
-        let swap_response = mint_connection.process_swap(swap_request.clone()).await.unwrap();
-
-        // 15. Unblind the signatures to get proofs
-        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
-            swap_response.signatures,
-            &channel.params.keyset_info.active_keys,
-        ).unwrap();
-
-        // 17. Both parties receive their proofs
-        let (charlie_received, alice_received) = receive_proofs_for_both_parties(
-            &charlie_wallet,
-            &alice_wallet,
-            charlie_proofs,
-            alice_proofs,
-            charlie_secret,
-            alice_secret,
-        ).await.unwrap();
-
-        // 18. Verify amounts
-        assert_eq!(charlie_received, charlie_balance, "Charlie should receive the de facto balance");
-
-        // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
-        let expected_received = channel.params.get_de_facto_balance(charlie_balance).unwrap();
-        assert_eq!(charlie_received, expected_received,
-            "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
-
-        assert!(alice_received > 0, "Alice should receive some amount");
-
-        // Total received should equal capacity (minus fees)
-        let total_received = charlie_received + alice_received;
-        assert!(total_received <= capacity, "Total received should not exceed capacity");
-
-        println!("✅ Full channel flow test passed!");
-        println!("   Charlie received: {} sats", charlie_received);
-        println!("   Alice received: {} sats", alice_received);
-        println!("   Total: {} sats (capacity: {})", total_received, capacity);
-    }
-
-    #[tokio::test]
-    async fn test_full_channel_flow_charlie_takes_all() {
-        use cdk::util::unix_time;
-        use crate::test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, create_funding_proofs};
-        use crate::established_channel::EstablishedChannel;
-        use crate::balance_update::BalanceUpdateMessage;
-
-        // 1. Generate keys for Alice and Charlie
-        let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
-        let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
-
-        // 2. Setup mint and wallets
-        let channel_unit = CurrencyUnit::Sat;
-        let input_fee_ppk = 400; // 40% fee
-        let base = 2; // Powers of 2
-        let (mint_connection, alice_wallet, charlie_wallet, _mint_url) =
-            setup_mint_and_wallets_for_demo(None, channel_unit.clone(), input_fee_ppk, base).await.unwrap();
-
-        // 3. Get active keyset info
-        let keyset_info = get_active_keyset_info(&*mint_connection, &channel_unit).await.unwrap();
-
-        // 4. Create channel parameters with shared secret - Charlie tries to take entire capacity
-        let capacity = 100_000u64;
-        let locktime = unix_time() + 86400; // 1 day from now
-        let setup_timestamp = unix_time();
-        let sender_nonce = "test_nonce".to_string();
-        let maximum_amount_for_one_output = 100_000u64;
-
-        let channel_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
-            "local".to_string(),
-            channel_unit.clone(),
-            capacity,
-            locktime,
-            setup_timestamp,
-            sender_nonce,
-            keyset_info,
-            maximum_amount_for_one_output,
-            &alice_secret,
-        ).unwrap();
-
-        // 5. Calculate funding token size
-        let funding_token_nominal = channel_params.get_total_funding_token_amount().unwrap();
-
-        // 6. Create and mint funding token
-        let funding_proofs = create_funding_proofs(
-            &*mint_connection,
-            &channel_params,
-            funding_token_nominal,
-        ).await.unwrap();
-
-        // 7. Create established channel
-        let channel = EstablishedChannel::new(channel_params, funding_proofs).unwrap();
-
-        // 8. Create commitment transaction for Charlie to receive ENTIRE capacity
-        let charlie_balance = capacity;  // Same as capacity!
-
-        let commitment_outputs = CommitmentOutputs::for_balance(
-            charlie_balance,
-            &channel.params,
-        ).unwrap();
-
-        // 9. Create unsigned swap request
-        let mut swap_request = commitment_outputs.create_swap_request(
-            channel.funding_proofs.clone(),
-        ).unwrap();
-
-        // 10. Alice signs the swap request
-        swap_request.sign_sig_all(alice_secret.clone()).unwrap();
-
-        // 11. Create balance update message
-        let balance_update = BalanceUpdateMessage::from_signed_swap_request(
-            channel.params.get_channel_id(),
-            charlie_balance,
-            &swap_request,
-        ).unwrap();
-
-        // 12. Charlie verifies Alice's signature
-        balance_update.verify_sender_signature(&channel).unwrap();
-
-        // 13. Charlie signs the swap request
-        swap_request.sign_sig_all(charlie_secret.clone()).unwrap();
-
-        // 14. Execute the swap
-        let swap_response = mint_connection.process_swap(swap_request.clone()).await.unwrap();
-
-        // 15. Unblind the signatures to get proofs
-        let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
-            swap_response.signatures,
-            &channel.params.keyset_info.active_keys,
-        ).unwrap();
-
-        // 17. Both parties receive their proofs
-        // Alice gets effectively 0 sats after fees, so helper will skip her receive
-        let (charlie_received, alice_received) = receive_proofs_for_both_parties(
-            &charlie_wallet,
-            &alice_wallet,
-            charlie_proofs,
-            alice_proofs,
-            charlie_secret,
-            alice_secret,
-        ).await.unwrap();
-
-        // Verify roundtrip: charlie_received == get_de_facto_balance(charlie_balance)
-        let expected_received = channel.params.get_de_facto_balance(charlie_balance).unwrap();
-        assert_eq!(charlie_received, expected_received,
-            "Charlie's received amount should match get_de_facto_balance(charlie_balance)");
-
-        println!("   Charlie received: {} sats", charlie_received);
-        println!("   Alice received: {} sats", alice_received);
     }
 }

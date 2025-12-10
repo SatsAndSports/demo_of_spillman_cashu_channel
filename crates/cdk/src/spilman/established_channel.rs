@@ -2,9 +2,10 @@
 //!
 //! Contains the complete channel state after funding
 
-use cdk::nuts::{CheckStateRequest, Proof};
+use crate::nuts::Proof;
 
 use super::params::ChannelParameters;
+use super::deterministic::MintConnection;
 
 /// An established Spilman payment channel
 /// Contains all channel components after funding transaction is complete
@@ -24,7 +25,6 @@ impl EstablishedChannel {
     ) -> Result<Self, anyhow::Error> {
         // TODO: verify everything, especially for Charlie's security, either
         // here or in another function
-
 
         // Assert all proofs have the expected keyset_id from params
         let expected_keyset_id = params.keyset_info.keyset_id;
@@ -63,7 +63,7 @@ impl EstablishedChannel {
     /// Since all funding proofs are spent together (they're all inputs to the commitment transaction),
     /// checking any one of them is sufficient to determine if the funding token has been spent.
     /// This returns the Y value of the first funding proof for use with NUT-07 state checks.
-    fn get_one_funding_token_y_for_state_check(&self) -> Result<cdk::nuts::PublicKey, anyhow::Error> {
+    fn get_one_funding_token_y_for_state_check(&self) -> Result<crate::nuts::PublicKey, anyhow::Error> {
         let proof = self.funding_proofs.first()
             .ok_or_else(|| anyhow::anyhow!("No funding proofs available"))?;
         Ok(proof.y()?)
@@ -76,15 +76,13 @@ impl EstablishedChannel {
     /// This method checks the first funding proof and returns its state.
     ///
     /// Returns the state (UNSPENT, PENDING, or SPENT) of the funding token.
-    pub async fn check_funding_token_state<M>(&self, mint_connection: &M) -> Result<cdk::nuts::ProofState, anyhow::Error>
+    pub async fn check_funding_token_state<M>(&self, mint_connection: &M) -> Result<crate::nuts::ProofState, anyhow::Error>
     where
-        M: super::MintConnection + ?Sized,
+        M: MintConnection + ?Sized,
     {
         let y = self.get_one_funding_token_y_for_state_check()?;
-        let request = CheckStateRequest { ys: vec![y] };
-        let response = mint_connection.check_state(request).await?;
+        let response = mint_connection.check_state(vec![y]).await?;
         response.states.into_iter().next()
             .ok_or_else(|| anyhow::anyhow!("No state returned for funding token"))
     }
-
 }
