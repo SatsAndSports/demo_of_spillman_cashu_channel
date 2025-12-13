@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cashu Video</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/lib/esm/index.min.js" type="module"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -107,13 +108,55 @@
     <h3>Log</h3>
     <div id="log"></div>
 
-    <script>
+    <script type="module">
+        import * as secp from 'https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/+esm';
+
+        // Helper: bytes to hex
+        function bytesToHex(bytes) {
+            return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Helper: hex to bytes
+        function hexToBytes(hex) {
+            const bytes = new Uint8Array(hex.length / 2);
+            for (let i = 0; i < hex.length; i += 2) {
+                bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+            }
+            return bytes;
+        }
+
+        // Alice's key management
+        const ALICE_KEY_STORAGE = 'cashu_alice_secret';
+
+        function getOrCreateAliceKey() {
+            let secretHex = localStorage.getItem(ALICE_KEY_STORAGE);
+            let isNew = false;
+
+            if (!secretHex) {
+                // Generate new random private key (32 bytes)
+                const secretBytes = secp.utils.randomPrivateKey();
+                secretHex = bytesToHex(secretBytes);
+                localStorage.setItem(ALICE_KEY_STORAGE, secretHex);
+                isNew = true;
+            }
+
+            // Derive public key
+            const secretBytes = hexToBytes(secretHex);
+            const pubkeyBytes = secp.getPublicKey(secretBytes, true); // compressed
+            const pubkeyHex = bytesToHex(pubkeyBytes);
+
+            return { secretHex, pubkeyHex, isNew };
+        }
+
         // Channel state
         const channel = {
             id: 'channel-' + Math.random().toString(36).substring(2, 10),
             balance: 0,
             segments: 0
         };
+
+        // Alice's identity
+        let alice = null;
 
         // Update status display
         function updateStatus() {
@@ -220,6 +263,14 @@
         }
 
         // Initialize
+        alice = getOrCreateAliceKey();
+        if (alice.isNew) {
+            log(`Generated new Alice keypair`);
+        } else {
+            log(`Loaded Alice keypair from storage`);
+        }
+        log(`Alice pubkey: ${alice.pubkeyHex}`);
+
         updateStatus();
         loadVideos();
         log(`Channel initialized: ${channel.id}`);
