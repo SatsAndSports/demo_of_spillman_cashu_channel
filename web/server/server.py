@@ -14,6 +14,7 @@ import base64
 import logging
 from flask import Flask, request, send_from_directory, abort, jsonify
 from flask_cors import CORS
+import secp256k1
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +26,25 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
+
+# Load server's private key
+KEY_FILE = os.path.join(os.path.dirname(__file__), 'server_key.json')
+
+def load_server_key():
+    """Load the server's private key and derive the public key."""
+    with open(KEY_FILE, 'r') as f:
+        key_data = json.load(f)
+    secret_hex = key_data['secret_hex']
+    secret_bytes = bytes.fromhex(secret_hex)
+    privkey = secp256k1.PrivateKey(secret_bytes)
+    pubkey_bytes = privkey.pubkey.serialize()  # compressed, 33 bytes
+    return secret_hex, pubkey_bytes.hex()
+
+SERVER_SECRET_HEX, SERVER_PUBKEY_HEX = load_server_key()
+log.info(f"Server pubkey: {SERVER_PUBKEY_HEX}")
+
+# Approved mints for channel setup
+APPROVED_MINTS = ['http://localhost:3338']
 
 # In-memory channel state: channel_id -> current_balance
 channels = {}
@@ -92,6 +112,17 @@ def serve_static(filename):
     """Serve static files (JS, CSS, etc.)."""
     log.debug(f"Serving static file: {filename}")
     return send_from_directory('static', filename)
+
+
+@app.route('/channel/params')
+def channel_params():
+    """Return parameters the server (receiver) approves for channel setup."""
+    log.info("Channel params requested")
+    return jsonify({
+        'receiver_pubkey': SERVER_PUBKEY_HEX,
+        'approved_mints': APPROVED_MINTS,
+        'price_per_segment': PRICE_PER_SEGMENT
+    })
 
 
 @app.route('/videos')
