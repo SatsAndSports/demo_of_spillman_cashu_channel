@@ -494,6 +494,9 @@
 
             if (Hls.isSupported()) {
                 const hls = new Hls({
+                    // Limit buffer to ~5 seconds to avoid paying for unwatched video
+                    maxBufferLength: 5,
+                    maxMaxBufferLength: 8,
                     xhrSetup: function(xhr, url) {
                         // Only add payment for media requests
                         if (url.includes('/media/')) {
