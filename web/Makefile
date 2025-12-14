@@ -17,10 +17,14 @@ QUALITIES := 720p:1280x720:2800k 480p:854x480:1400k 360p:640x360:800k
 # Segment duration in seconds
 SEGMENT_DURATION := 4
 
-.PHONY: all clean list
+.PHONY: all clean list wasm
 
 all: $(OUTPUTS)
 	@echo "Done. Processed videos: $(VIDEOS)"
+
+# Build WASM module
+wasm:
+	cd ../crates/cdk-wasm && wasm-pack build --target web --out-dir ../../web/wasm
 
 # Process a single video
 media/%: sources/%.mp4
