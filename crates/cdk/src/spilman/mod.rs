@@ -11,6 +11,7 @@
 //! - Final commitment transaction signed by both parties
 
 mod balance_update;
+mod bindings;
 mod deterministic;
 mod established_channel;
 mod keysets_and_amounts;
@@ -18,6 +19,7 @@ mod params;
 mod sender_and_receiver;
 
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
+pub use bindings::{compute_channel_id_from_json_str, compute_shared_secret_from_hex};
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,
     MintConnection,
