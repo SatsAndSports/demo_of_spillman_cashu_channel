@@ -20,8 +20,8 @@ OUTPUTS := $(addprefix media/,$(VIDEOS))
 # Quality levels: name, resolution, bitrate
 QUALITIES := 720p:1280x720:2800k 480p:854x480:1400k 360p:640x360:800k
 
-# Segment duration in seconds
-SEGMENT_DURATION := 4
+# Segment duration in seconds (1 sec = ~1 payment/sec for demo)
+SEGMENT_DURATION := 1
 
 .PHONY: all clean list wasm pyo3 rust run_server
 
@@ -85,6 +85,7 @@ define process_quality
 	ffmpeg -i $(1) -y \
 		-vf scale=$(RES) \
 		-c:v libx264 -b:v $(BITRATE) \
+		-g 30 -keyint_min 30 \
 		-c:a aac -b:a 128k \
 		-f hls \
 		-hls_time $(SEGMENT_DURATION) \
