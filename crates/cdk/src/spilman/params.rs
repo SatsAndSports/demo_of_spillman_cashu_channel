@@ -140,12 +140,16 @@ impl ChannelParameters {
     }
 
     /// Get channel ID as a hash of the channel parameters
-    /// The hash is computed over: mint|unit|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
+    /// The hash is computed over: mint|unit|capacity|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
     pub fn get_channel_id(&self) -> String {
         let params_string = format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.mint,
             self.unit_name(),
+            self.capacity,
+            self.keyset_info.keyset_id.to_string(),
+            self.keyset_info.input_fee_ppk,
+            self.maximum_amount_for_one_output,
             self.setup_timestamp,
             self.alice_pubkey.to_hex(),
             self.charlie_pubkey.to_hex(),
