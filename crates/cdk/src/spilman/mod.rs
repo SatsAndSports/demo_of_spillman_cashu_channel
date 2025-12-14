@@ -24,5 +24,5 @@ pub use deterministic::{
 };
 pub use established_channel::EstablishedChannel;
 pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
-pub use params::ChannelParameters;
+pub use params::{compute_shared_secret, ChannelParameters};
 pub use sender_and_receiver::{SpilmanChannelReceiver, SpilmanChannelSender};

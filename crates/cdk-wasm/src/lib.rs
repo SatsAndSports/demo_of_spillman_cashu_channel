@@ -8,6 +8,26 @@ pub fn init() {
     console_error_panic_hook::set_once();
 }
 
+/// Compute ECDH shared secret from Alice's secret key and Charlie's public key
+///
+/// Returns the x-coordinate of the shared point as a hex string (32 bytes).
+#[wasm_bindgen]
+pub fn compute_shared_secret(alice_secret_hex: &str, charlie_pubkey_hex: &str) -> Result<String, JsValue> {
+    use cdk::nuts::{PublicKey, SecretKey};
+    use cdk::spilman::compute_shared_secret as ecdh;
+    use cdk::util::hex;
+
+    let alice_secret = SecretKey::from_hex(alice_secret_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid secret key: {}", e)))?;
+
+    let charlie_pubkey: PublicKey = charlie_pubkey_hex
+        .parse()
+        .map_err(|e| JsValue::from_str(&format!("Invalid pubkey: {}", e)))?;
+
+    let shared_secret = ecdh(&alice_secret, &charlie_pubkey);
+    Ok(hex::encode(shared_secret))
+}
+
 /// Compute channel_id from params JSON and Alice's secret key
 ///
 /// Takes the JSON produced by `ChannelParameters::get_channel_id_params_json()`
