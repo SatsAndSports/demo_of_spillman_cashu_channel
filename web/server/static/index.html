@@ -328,11 +328,16 @@
             }
 
             // Create payment header for a segment (sync for HLS.js xhrSetup)
+            // TODO: Later, only send params on first payment of a session to save bandwidth
             createPayment() {
                 this.incrementBalance();
+                // TODO: Generate real Schnorr signature via WASM
+                const fakeSignature = '0'.repeat(128);  // 64 bytes = 128 hex chars
                 return btoa(JSON.stringify({
                     channel_id: this.id,
-                    balance: this.balance
+                    balance: this.balance,
+                    signature: fakeSignature,
+                    params: this.params
                 }));
             }
 
