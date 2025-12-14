@@ -28,18 +28,19 @@ pub fn compute_shared_secret(alice_secret_hex: &str, charlie_pubkey_hex: &str) -
     Ok(hex::encode(shared_secret))
 }
 
-/// Compute channel_id from params JSON and Alice's secret key
+/// Compute channel_id from params JSON and a secret key
 ///
 /// Takes the JSON produced by `ChannelParameters::get_channel_id_params_json()`
-/// and Alice's secret key (hex), computes the shared secret via ECDH,
-/// and returns the channel_id.
+/// and either Alice's or Charlie's secret key (hex). The function auto-detects
+/// which party the secret belongs to by matching the derived pubkey against
+/// alice_pubkey and charlie_pubkey in the JSON.
 #[wasm_bindgen]
-pub fn compute_channel_id_from_json(params_json: &str, alice_secret_hex: &str) -> Result<String, JsValue> {
+pub fn compute_channel_id_from_json(params_json: &str, my_secret_hex: &str) -> Result<String, JsValue> {
     use cdk::nuts::SecretKey;
     use cdk::spilman::{ChannelParameters, KeysetInfo};
 
-    // Parse Alice's secret key
-    let alice_secret = SecretKey::from_hex(alice_secret_hex)
+    // Parse the secret key (can be either Alice's or Charlie's)
+    let my_secret = SecretKey::from_hex(my_secret_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid secret key: {}", e)))?;
 
     // Parse JSON to extract keyset_id and input_fee_ppk for the mock
@@ -57,8 +58,8 @@ pub fn compute_channel_id_from_json(params_json: &str, alice_secret_hex: &str) -
     let keyset_info = KeysetInfo::mock_with_id_and_fee(keyset_id_str, input_fee_ppk)
         .map_err(|e| JsValue::from_str(&format!("Failed to create mock keyset: {}", e)))?;
 
-    // Use from_json to construct params (computes shared_secret via ECDH)
-    let params = ChannelParameters::from_json(params_json, keyset_info, &alice_secret)
+    // Use from_json to construct params (auto-detects Alice vs Charlie, computes shared_secret via ECDH)
+    let params = ChannelParameters::from_json(params_json, keyset_info, &my_secret)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse params: {}", e)))?;
 
     Ok(params.get_channel_id())
