@@ -160,6 +160,24 @@ impl ChannelParameters {
         hex::encode(hash.as_byte_array())
     }
 
+    /// Get a JSON string representation of the data that contributes to the channel ID
+    /// This excludes the shared secret and other derived data
+    pub fn get_channel_id_params_json(&self) -> String {
+        serde_json::json!({
+            "mint": self.mint,
+            "unit": self.unit_name(),
+            "capacity": self.capacity,
+            "keyset_id": self.keyset_info.keyset_id.to_string(),
+            "input_fee_ppk": self.keyset_info.input_fee_ppk,
+            "maximum_amount": self.maximum_amount_for_one_output,
+            "setup_timestamp": self.setup_timestamp,
+            "alice_pubkey": self.alice_pubkey.to_hex(),
+            "charlie_pubkey": self.charlie_pubkey.to_hex(),
+            "locktime": self.locktime,
+            "sender_nonce": self.sender_nonce
+        }).to_string()
+    }
+
     /// Get a string representation of the unit
     pub fn unit_name(&self) -> &str {
         match self.unit {
