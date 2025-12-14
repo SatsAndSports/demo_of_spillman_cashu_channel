@@ -142,6 +142,17 @@
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
                     db = request.result;
+                    // Check if object store exists, if not, delete and recreate DB
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.close();
+                        const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
+                        deleteRequest.onsuccess = () => {
+                            // Retry initialization
+                            initDB().then(resolve).catch(reject);
+                        };
+                        deleteRequest.onerror = () => reject(deleteRequest.error);
+                        return;
+                    }
                     resolve(db);
                 };
 
