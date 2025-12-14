@@ -108,12 +108,12 @@
     <h3>Log</h3>
     <div id="log"></div>
 
+    <h3>Dev Tools</h3>
+    <button id="reset-alice" style="background:#533;border:1px solid #744;color:#e0e0e0;padding:8px 16px;border-radius:4px;cursor:pointer;">Reset Alice Key</button>
+
     <script type="module">
         import * as secp from 'https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/+esm';
         import initWasm, { compute_channel_id_from_json } from '/wasm/cdk_wasm.js';
-
-        // WASM module state
-        let wasmReady = false;
 
         // Helper: bytes to hex
         function bytesToHex(bytes) {
@@ -294,37 +294,11 @@
             return bytesToHex(sharedPoint.slice(1, 33));
         }
 
-        // Compute SHA256 hash
-        async function sha256(message) {
-            const msgBuffer = new TextEncoder().encode(message);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-            return bytesToHex(new Uint8Array(hashBuffer));
-        }
-
         // Generate a random nonce
         function generateNonce() {
             const bytes = new Uint8Array(16);
             crypto.getRandomValues(bytes);
             return bytesToHex(bytes);
-        }
-
-        // Compute channel_id from params (must match Rust implementation)
-        // Hash: mint|unit|capacity|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|alice_pubkey|charlie_pubkey|expiry|sender_nonce
-        async function computeChannelId(params) {
-            const paramsString = [
-                params.mint,
-                params.unit,
-                params.capacity,
-                params.keyset_id,
-                params.input_fee_ppk,
-                params.maximum_amount,
-                params.setup_timestamp,
-                params.alice_pubkey,
-                params.charlie_pubkey,
-                params.locktime,
-                params.sender_nonce
-            ].join('|');
-            return await sha256(paramsString);
         }
 
         // Create a new pending channel between Alice and Charlie
@@ -352,24 +326,9 @@
                 sender_nonce: senderNonce
             };
 
-            // Compute channel_id (JS version)
-            const channelIdJS = await computeChannelId(params);
-            log(`Channel ID (JS):   ${channelIdJS}`);
-
-            // Compute channel_id (WASM version)
-            let channelIdWasm = null;
-            if (wasmReady) {
-                try {
-                    const paramsJson = JSON.stringify(params);
-                    channelIdWasm = compute_channel_id_from_json(paramsJson, aliceSecretHex);
-                    log(`Channel ID (WASM): ${channelIdWasm}`);
-                } catch (e) {
-                    log(`WASM channel_id error: ${e}`, 'error');
-                }
-            }
-
-            // Use WASM channel_id if available, otherwise fall back to JS
-            const channelId = channelIdWasm || channelIdJS;
+            // Compute channel_id via WASM
+            const paramsJson = JSON.stringify(params);
+            const channelId = compute_channel_id_from_json(paramsJson, aliceSecretHex);
 
             // Create and save channel record
             const channelRecord = createChannelRecord(
@@ -554,13 +513,8 @@
         // Initialize
         async function init() {
             // Initialize WASM
-            try {
-                await initWasm();
-                wasmReady = true;
-                log(`WASM module loaded`);
-            } catch (e) {
-                log(`Failed to load WASM: ${e}`, 'error');
-            }
+            await initWasm();
+            log(`WASM module loaded`);
 
             // Initialize IndexedDB
             try {
@@ -612,6 +566,12 @@
         }
 
         init();
+
+        // Dev tools
+        document.getElementById('reset-alice').onclick = () => {
+            localStorage.removeItem(ALICE_KEY_STORAGE);
+            log('Alice key deleted. Refresh to generate new keypair.');
+        };
     </script>
 </body>
 </html>
