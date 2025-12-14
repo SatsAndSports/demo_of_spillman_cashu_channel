@@ -114,6 +114,14 @@ def serve_static(filename):
     return send_from_directory('static', filename)
 
 
+@app.route('/wasm/<path:filename>')
+def serve_wasm(filename):
+    """Serve WASM files."""
+    log.debug(f"Serving WASM file: {filename}")
+    wasm_dir = os.path.join(os.path.dirname(__file__), '..', 'wasm')
+    return send_from_directory(wasm_dir, filename)
+
+
 @app.route('/channel/params')
 def channel_params():
     """Return parameters the server (receiver) approves for channel setup."""
