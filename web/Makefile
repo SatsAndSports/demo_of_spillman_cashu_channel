@@ -1,6 +1,12 @@
-# HLS Video Processing Makefile
+# Cashu Video Server Makefile
 #
 # Usage:
+#   make run_server       # Build PyO3 and start the server
+#   make wasm             # Build WASM module (for browser)
+#   make pyo3             # Build PyO3 module (for server)
+#   make rust             # Build both WASM and PyO3
+#
+# Video processing:
 #   make                  # Process all videos in sources/
 #   make media/myvideo    # Process just sources/myvideo.mp4
 #   make clean            # Remove all generated media
@@ -17,14 +23,32 @@ QUALITIES := 720p:1280x720:2800k 480p:854x480:1400k 360p:640x360:800k
 # Segment duration in seconds
 SEGMENT_DURATION := 4
 
-.PHONY: all clean list wasm
+.PHONY: all clean list wasm pyo3 rust run_server
 
 all: $(OUTPUTS)
 	@echo "Done. Processed videos: $(VIDEOS)"
 
-# Build WASM module
+# Build WASM module (for browser)
 wasm:
 	cd ../crates/cdk-wasm && wasm-pack build --target web --out-dir ../../web/wasm
+
+# Create the Python virtual environment. It's for running the
+# server, including compiling the Rust to be used by the server
+server/.venv:
+	python3 -m venv server/.venv
+	. server/.venv/bin/activate && pip install -r server/requirements.txt
+
+
+# Build PyO3 module (for server)
+pyo3: server/.venv
+	. server/.venv/bin/activate && cd ../crates/cdk-py && maturin develop
+
+# Build both WASM and PyO3
+rust: wasm pyo3
+
+# Run the server (does not detach. start this in another terminal)
+run_server: pyo3
+	. server/.venv/bin/activate && cd server && python server.py --debug
 
 # Process a single video
 media/%: sources/%.mp4
