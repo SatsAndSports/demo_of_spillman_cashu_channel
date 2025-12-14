@@ -37,6 +37,16 @@ pub struct ChannelParameters {
     pub shared_secret: [u8; 32],
 }
 
+/// Compute ECDH shared secret from a secret key and counterparty's public key
+///
+/// Returns the 32-byte x-coordinate of the shared point.
+pub fn compute_shared_secret(
+    my_secret: &crate::nuts::SecretKey,
+    their_pubkey: &crate::nuts::PublicKey,
+) -> [u8; 32] {
+    SharedSecret::new(their_pubkey, my_secret).secret_bytes()
+}
+
 impl ChannelParameters {
     /// Create new channel parameters with a pre-computed shared secret
     pub fn new(

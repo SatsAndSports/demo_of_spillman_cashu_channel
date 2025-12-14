@@ -113,7 +113,7 @@
 
     <script type="module">
         import * as secp from 'https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/+esm';
-        import initWasm, { compute_channel_id_from_json } from '/wasm/cdk_wasm.js';
+        import initWasm, { compute_channel_id_from_json, compute_shared_secret } from '/wasm/cdk_wasm.js';
 
         // Helper: bytes to hex
         function bytesToHex(bytes) {
@@ -287,13 +287,6 @@
             };
         }
 
-        // Compute ECDH shared secret
-        function computeSharedSecret(mySecretHex, theirPubkeyHex) {
-            const sharedPoint = secp.getSharedSecret(mySecretHex, theirPubkeyHex);
-            // Return x-coordinate only (32 bytes), skip the 0x04 prefix
-            return bytesToHex(sharedPoint.slice(1, 33));
-        }
-
         // Generate a random nonce
         function generateNonce() {
             const bytes = new Uint8Array(16);
@@ -303,8 +296,8 @@
 
         // Create a new pending channel between Alice and Charlie
         async function createPendingChannel(aliceSecretHex, alicePubkeyHex, charliePubkeyHex, mint) {
-            // Compute shared secret via ECDH
-            const sharedSecretHex = computeSharedSecret(aliceSecretHex, charliePubkeyHex);
+            // Compute shared secret via ECDH (WASM)
+            const sharedSecretHex = compute_shared_secret(aliceSecretHex, charliePubkeyHex);
 
             // Generate channel parameters
             const setupTimestamp = Math.floor(Date.now() / 1000);
