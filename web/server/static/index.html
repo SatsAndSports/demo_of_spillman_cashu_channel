@@ -158,6 +158,9 @@
         // Alice's identity
         let alice = null;
 
+        // Charlie's (server) identity
+        let charlie = null;
+
         // Update status display
         function updateStatus() {
             document.getElementById('channel-id').textContent = channel.id;
@@ -231,6 +234,23 @@
             }
         }
 
+        // Fetch Charlie's (server) channel params
+        async function fetchChannelParams() {
+            try {
+                const response = await fetch('/channel/params');
+                const data = await response.json();
+                charlie = {
+                    pubkeyHex: data.receiver_pubkey,
+                    approvedMints: data.approved_mints,
+                    pricePerSegment: data.price_per_segment
+                };
+                return charlie;
+            } catch (e) {
+                log(`Failed to fetch channel params: ${e}`, 'error');
+                return null;
+            }
+        }
+
         // Load video list
         async function loadVideos() {
             try {
@@ -263,17 +283,27 @@
         }
 
         // Initialize
-        alice = getOrCreateAliceKey();
-        if (alice.isNew) {
-            log(`Generated new Alice keypair`);
-        } else {
-            log(`Loaded Alice keypair from storage`);
-        }
-        log(`Alice pubkey: ${alice.pubkeyHex}`);
+        async function init() {
+            // Get Alice's keypair
+            alice = getOrCreateAliceKey();
+            if (alice.isNew) {
+                log(`Generated new Alice keypair`);
+            } else {
+                log(`Loaded Alice keypair from storage`);
+            }
 
-        updateStatus();
-        loadVideos();
-        log(`Channel initialized: ${channel.id}`);
+            // Fetch Charlie's params
+            await fetchChannelParams();
+
+            // Log both pubkeys
+            log(`Alice pubkey:   ${alice.pubkeyHex}`);
+            log(`Charlie pubkey: ${charlie ? charlie.pubkeyHex : 'unavailable'}`);
+
+            updateStatus();
+            loadVideos();
+        }
+
+        init();
     </script>
 </body>
 </html>
