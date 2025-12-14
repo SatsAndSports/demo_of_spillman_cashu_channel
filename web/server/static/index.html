@@ -244,6 +244,34 @@
             });
         }
 
+        // Update balance for a channel.
+        // The JS client may fire many balance updates in parallel (e.g., during rapid
+        // segment requests) and IndexedDB transactions can complete out of order.
+        // We only write if newBalance > current, ensuring the highest balance wins.
+        async function updateChannelBalance(channelId, newBalance) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const getRequest = store.get(channelId);
+                getRequest.onsuccess = () => {
+                    const record = getRequest.result;
+                    if (record) {
+                        if (newBalance > record.current_balance) {
+                            record.current_balance = newBalance;
+                            const putRequest = store.put(record);
+                            putRequest.onsuccess = () => resolve();
+                            putRequest.onerror = () => reject(putRequest.error);
+                        } else {
+                            resolve();
+                        }
+                    } else {
+                        reject(new Error('Channel not found'));
+                    }
+                };
+                getRequest.onerror = () => reject(getRequest.error);
+            });
+        }
+
         // Find a channel by Alice's and Charlie's pubkeys
         // Returns the first matching channel_id, or null if none exists
         async function findChannelByPubkeys(alicePubkey, charliePubkey) {
@@ -270,72 +298,124 @@
             return null;
         }
 
-        // Create a new channel record
-        function createChannelRecord(channelId, paramsJson, aliceSecretHex, sharedSecretHex, expiry, charliePubkey, mint) {
-            return {
-                channel_id: channelId,
-                params_json: paramsJson,
-                alice_secret_hex: aliceSecretHex,
-                shared_secret_hex: sharedSecretHex,
-                status: 'pending',  // pending | funded | closed
-                current_balance: 0,
-                funding_token_json: null,
-                // Duplicated for indexing:
-                expiry: expiry,
-                charlie_pubkey: charliePubkey,
-                mint: mint
-            };
-        }
+        // ============================================
+        // Channel Class
+        // ============================================
+        class Channel {
+            constructor(record) {
+                this.id = record.channel_id;
+                this.paramsJson = record.params_json;
+                this.aliceSecretHex = record.alice_secret_hex;
+                this.sharedSecretHex = record.shared_secret_hex;
+                this.status = record.status;
+                this.balance = record.current_balance;
+                this.fundingTokenJson = record.funding_token_json;
+                this.expiry = record.expiry;
+                this.charliePubkey = record.charlie_pubkey;
+                this.mint = record.mint;
+                this.segments = 0;  // Session counter (not persisted)
+            }
 
-        // Generate a random nonce
-        function generateNonce() {
-            const bytes = new Uint8Array(16);
-            crypto.getRandomValues(bytes);
-            return bytesToHex(bytes);
-        }
+            get params() {
+                return JSON.parse(this.paramsJson);
+            }
 
-        // Create a new pending channel between Alice and Charlie
-        async function createPendingChannel(aliceSecretHex, alicePubkeyHex, charliePubkeyHex, mint) {
-            // Compute shared secret via ECDH (WASM)
-            const sharedSecretHex = compute_shared_secret(aliceSecretHex, charliePubkeyHex);
+            // Increment balance (sync) and persist in background
+            incrementBalance() {
+                this.balance += 1;
+                this.segments += 1;
+                updateChannelBalance(this.id, this.balance);
+            }
 
-            // Generate channel parameters
-            const setupTimestamp = Math.floor(Date.now() / 1000);
-            const expiry = setupTimestamp + 3600; // 1 hour from now
-            const senderNonce = generateNonce();
+            // Create payment header for a segment (sync for HLS.js xhrSetup)
+            createPayment() {
+                this.incrementBalance();
+                return btoa(JSON.stringify({
+                    channel_id: this.id,
+                    balance: this.balance
+                }));
+            }
 
-            // Channel params (some values are placeholders until funding)
-            const params = {
-                mint: mint,
-                unit: 'sat',
-                capacity: 1000,  // placeholder - will be set during funding
-                keyset_id: '00000000deadbeef',  // placeholder - will come from mint
-                input_fee_ppk: 0,  // placeholder - will come from mint
-                maximum_amount: 64,  // placeholder
-                setup_timestamp: setupTimestamp,
-                alice_pubkey: alicePubkeyHex,
-                charlie_pubkey: charliePubkeyHex,
-                locktime: expiry,
-                sender_nonce: senderNonce
-            };
+            // Convert to IndexedDB record
+            toRecord() {
+                return {
+                    channel_id: this.id,
+                    params_json: this.paramsJson,
+                    alice_secret_hex: this.aliceSecretHex,
+                    shared_secret_hex: this.sharedSecretHex,
+                    status: this.status,
+                    current_balance: this.balance,
+                    funding_token_json: this.fundingTokenJson,
+                    expiry: this.expiry,
+                    charlie_pubkey: this.charliePubkey,
+                    mint: this.mint
+                };
+            }
 
-            // Compute channel_id via WASM
-            const paramsJson = JSON.stringify(params);
-            const channelId = compute_channel_id_from_json(paramsJson, aliceSecretHex);
+            // Save full record to IndexedDB
+            async save() {
+                await saveChannel(this.toRecord());
+            }
 
-            // Create and save channel record
-            const channelRecord = createChannelRecord(
-                channelId,
-                JSON.stringify(params),
-                aliceSecretHex,
-                sharedSecretHex,
-                expiry,
-                charliePubkeyHex,
-                mint
-            );
+            // Static: Generate random nonce
+            static generateNonce() {
+                const bytes = new Uint8Array(16);
+                crypto.getRandomValues(bytes);
+                return bytesToHex(bytes);
+            }
 
-            await saveChannel(channelRecord);
-            return channelRecord;
+            // Static: Create new pending channel
+            static async createPending(aliceSecretHex, alicePubkeyHex, charliePubkeyHex, mint) {
+                const sharedSecretHex = compute_shared_secret(aliceSecretHex, charliePubkeyHex);
+                const setupTimestamp = Math.floor(Date.now() / 1000);
+                const expiry = setupTimestamp + 3600;
+                const senderNonce = Channel.generateNonce();
+
+                const params = {
+                    mint: mint,
+                    unit: 'sat',
+                    capacity: 1000,
+                    keyset_id: '00000000deadbeef',
+                    input_fee_ppk: 0,
+                    maximum_amount: 64,
+                    setup_timestamp: setupTimestamp,
+                    alice_pubkey: alicePubkeyHex,
+                    charlie_pubkey: charliePubkeyHex,
+                    locktime: expiry,
+                    sender_nonce: senderNonce
+                };
+
+                const paramsJson = JSON.stringify(params);
+                const channelId = compute_channel_id_from_json(paramsJson, aliceSecretHex);
+
+                const channel = new Channel({
+                    channel_id: channelId,
+                    params_json: paramsJson,
+                    alice_secret_hex: aliceSecretHex,
+                    shared_secret_hex: sharedSecretHex,
+                    status: 'pending',
+                    current_balance: 0,
+                    funding_token_json: null,
+                    expiry: expiry,
+                    charlie_pubkey: charliePubkeyHex,
+                    mint: mint
+                });
+
+                await channel.save();
+                return channel;
+            }
+
+            // Static: Load by ID
+            static async load(channelId) {
+                const record = await getChannel(channelId);
+                return record ? new Channel(record) : null;
+            }
+
+            // Static: Find by pubkey pair
+            static async findByPubkeys(alicePubkey, charliePubkey) {
+                const channelId = await findChannelByPubkeys(alicePubkey, charliePubkey);
+                return channelId ? await Channel.load(channelId) : null;
+            }
         }
 
         // ============================================
@@ -363,12 +443,8 @@
             return { secretHex, pubkeyHex, isNew };
         }
 
-        // Channel state
-        const channel = {
-            id: 'channel-' + Math.random().toString(36).substring(2, 10),
-            balance: 0,
-            segments: 0
-        };
+        // Current channel instance
+        let currentChannel = null;
 
         // Alice's identity
         let alice = null;
@@ -378,9 +454,9 @@
 
         // Update status display
         function updateStatus() {
-            document.getElementById('channel-id').textContent = channel.id;
-            document.getElementById('balance').textContent = channel.balance;
-            document.getElementById('segments').textContent = channel.segments;
+            document.getElementById('channel-id').textContent = currentChannel ? currentChannel.id : '-';
+            document.getElementById('balance').textContent = currentChannel ? currentChannel.balance : 0;
+            document.getElementById('segments').textContent = currentChannel ? currentChannel.segments : 0;
         }
 
         // Logging
@@ -400,18 +476,11 @@
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
-        // Create payment header
+        // Create payment header (sync, persistence happens in background)
         function createPayment() {
-            channel.balance += 1;
-            channel.segments += 1;
+            const payment = currentChannel.createPayment();
             updateStatus();
-
-            const payment = {
-                channel_id: channel.id,
-                balance: channel.balance
-            };
-
-            return btoa(JSON.stringify(payment));
+            return payment;
         }
 
         // Initialize HLS player with payment injection
@@ -425,7 +494,7 @@
                         if (url.includes('/media/')) {
                             const payment = createPayment();
                             xhr.setRequestHeader('X-Cashu-Payment', payment);
-                            log(`Payment: balance=${channel.balance} for ${url.split('/').pop()}`, 'payment');
+                            log(`Payment: balance=${currentChannel.balance} for ${url.split('/').pop()}`, 'payment');
                         }
                     }
                 });
@@ -535,23 +604,20 @@
 
             // Check for existing channel with this pair, create if none exists
             if (charlie) {
-                let existingChannelId = await findChannelByPubkeys(alice.pubkeyHex, charlie.pubkeyHex);
-                if (existingChannelId) {
-                    log(`Existing channel: ${existingChannelId}`);
+                currentChannel = await Channel.findByPubkeys(alice.pubkeyHex, charlie.pubkeyHex);
+                if (currentChannel) {
+                    log(`Existing channel: ${currentChannel.id} (balance: ${currentChannel.balance})`);
                 } else {
                     log(`No existing channel, creating pending channel...`);
                     const mint = charlie.approvedMints[0];
-                    const newChannel = await createPendingChannel(
+                    currentChannel = await Channel.createPending(
                         alice.secretHex,
                         alice.pubkeyHex,
                         charlie.pubkeyHex,
                         mint
                     );
-                    log(`Created pending channel: ${newChannel.channel_id}`);
-                    existingChannelId = newChannel.channel_id;
+                    log(`Created pending channel: ${currentChannel.id}`);
                 }
-                channel.id = existingChannelId;
-                updateStatus();
             }
 
             updateStatus();
