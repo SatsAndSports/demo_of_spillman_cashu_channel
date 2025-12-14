@@ -125,7 +125,130 @@
             return bytes;
         }
 
+        // ============================================
+        // IndexedDB Channel Storage
+        // ============================================
+        const DB_NAME = 'cashu_channels';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'channels';
+
+        let db = null;
+
+        // Initialize IndexedDB
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    const database = event.target.result;
+
+                    // Create channels object store
+                    const store = database.createObjectStore(STORE_NAME, { keyPath: 'channel_id' });
+
+                    // Create indexes for querying
+                    store.createIndex('status', 'status', { unique: false });
+                    store.createIndex('expiry', 'expiry', { unique: false });
+                    store.createIndex('charlie_pubkey', 'charlie_pubkey', { unique: false });
+                    store.createIndex('mint', 'mint', { unique: false });
+                };
+            });
+        }
+
+        // Save a channel to IndexedDB
+        async function saveChannel(channelData) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.put(channelData);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Get a channel by ID
+        async function getChannel(channelId) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.get(channelId);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Get all channels
+        async function getAllChannels() {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Get channels by status
+        async function getChannelsByStatus(status) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const index = store.index('status');
+                const request = index.getAll(status);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Get channels expiring before a timestamp
+        async function getChannelsExpiringBefore(timestamp) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const index = store.index('expiry');
+                const range = IDBKeyRange.upperBound(timestamp);
+                const request = index.getAll(range);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Delete a channel
+        async function deleteChannel(channelId) {
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.delete(channelId);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        // Create a new channel record
+        function createChannelRecord(channelId, paramsJson, aliceSecretHex, sharedSecretHex, expiry, charliePubkey, mint) {
+            return {
+                channel_id: channelId,
+                params_json: paramsJson,
+                alice_secret_hex: aliceSecretHex,
+                shared_secret_hex: sharedSecretHex,
+                status: 'pending',  // pending | funded | closed
+                current_balance: 0,
+                funding_token_json: null,
+                // Duplicated for indexing:
+                expiry: expiry,
+                charlie_pubkey: charliePubkey,
+                mint: mint
+            };
+        }
+
+        // ============================================
         // Alice's key management
+        // ============================================
         const ALICE_KEY_STORAGE = 'cashu_alice_secret';
 
         function getOrCreateAliceKey() {
@@ -284,6 +407,15 @@
 
         // Initialize
         async function init() {
+            // Initialize IndexedDB
+            try {
+                await initDB();
+                const channels = await getAllChannels();
+                log(`IndexedDB initialized (${channels.length} channels stored)`);
+            } catch (e) {
+                log(`Failed to initialize IndexedDB: ${e}`, 'error');
+            }
+
             // Get Alice's keypair
             alice = getOrCreateAliceKey();
             if (alice.isNew) {
