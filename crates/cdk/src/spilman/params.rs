@@ -133,6 +133,118 @@ impl ChannelParameters {
         )
     }
 
+    /// Create channel parameters from a JSON string and additional required fields
+    ///
+    /// The JSON should contain: mint, unit, capacity, keyset_id, input_fee_ppk,
+    /// maximum_amount, setup_timestamp, alice_pubkey, charlie_pubkey, locktime,
+    /// sender_nonce (as produced by `get_channel_id_params_json`)
+    ///
+    /// Additional parameters needed:
+    /// * `keyset_info` - Keyset information from the mint (keyset_id and input_fee_ppk must match JSON)
+    /// * `my_secret` - Either Alice's or Charlie's secret key for ECDH
+    pub fn from_json(
+        json_str: &str,
+        keyset_info: KeysetInfo,
+        my_secret: &SecretKey,
+    ) -> anyhow::Result<Self> {
+        let json: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
+
+        // Parse keyset_id and input_fee_ppk first to validate against keyset_info
+        let keyset_id_str = json["keyset_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'keyset_id' field"))?;
+        let json_keyset_id: crate::nuts::Id = keyset_id_str
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid keyset_id: {}", e))?;
+
+        let json_input_fee_ppk = json["input_fee_ppk"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'input_fee_ppk' field"))?;
+
+        // Validate keyset_info matches JSON
+        if keyset_info.keyset_id != json_keyset_id {
+            anyhow::bail!(
+                "keyset_id mismatch: JSON has {}, KeysetInfo has {}",
+                json_keyset_id,
+                keyset_info.keyset_id
+            );
+        }
+        if keyset_info.input_fee_ppk != json_input_fee_ppk {
+            anyhow::bail!(
+                "input_fee_ppk mismatch: JSON has {}, KeysetInfo has {}",
+                json_input_fee_ppk,
+                keyset_info.input_fee_ppk
+            );
+        }
+
+        // Parse remaining fields
+        let mint = json["mint"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'mint' field"))?
+            .to_string();
+
+        let unit_str = json["unit"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'unit' field"))?;
+        let unit = match unit_str {
+            "sat" => CurrencyUnit::Sat,
+            "msat" => CurrencyUnit::Msat,
+            "usd" => CurrencyUnit::Usd,
+            "eur" => CurrencyUnit::Eur,
+            _ => anyhow::bail!("Unknown unit: {}", unit_str),
+        };
+
+        let capacity = json["capacity"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'capacity' field"))?;
+
+        let maximum_amount_for_one_output = json["maximum_amount"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'maximum_amount' field"))?;
+
+        let setup_timestamp = json["setup_timestamp"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'setup_timestamp' field"))?;
+
+        let alice_pubkey_hex = json["alice_pubkey"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'alice_pubkey' field"))?;
+        let alice_pubkey: crate::nuts::PublicKey = alice_pubkey_hex
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid alice_pubkey: {}", e))?;
+
+        let charlie_pubkey_hex = json["charlie_pubkey"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'charlie_pubkey' field"))?;
+        let charlie_pubkey: crate::nuts::PublicKey = charlie_pubkey_hex
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
+
+        let locktime = json["locktime"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'locktime' field"))?;
+
+        let sender_nonce = json["sender_nonce"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_nonce' field"))?
+            .to_string();
+
+        Self::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            mint,
+            unit,
+            capacity,
+            locktime,
+            setup_timestamp,
+            sender_nonce,
+            keyset_info,
+            maximum_amount_for_one_output,
+            my_secret,
+        )
+    }
+
     /// Get channel capacity
     /// Returns the maximum final value (after both fee stages) that Charlie can receive
     pub fn get_capacity(&self) -> u64 {
@@ -334,5 +446,92 @@ impl ChannelParameters {
         )?;
 
         Ok(actual_balance)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nuts::{Id, Keys, PublicKey};
+    use crate::Amount;
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
+
+    // Helper to create a simple KeysetInfo for testing
+    fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
+        let mut keys_map = BTreeMap::new();
+        let dummy_pubkey = PublicKey::from_str(
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
+        ).unwrap();
+        for &amt in &amounts {
+            keys_map.insert(Amount::from(amt), dummy_pubkey);
+        }
+
+        let mut amounts_largest_first = amounts;
+        amounts_largest_first.sort_by(|a, b| b.cmp(a));
+
+        KeysetInfo {
+            keyset_id: Id::from_str("00deadbeef123456").unwrap(),
+            active_keys: Keys::new(keys_map),
+            amounts_largest_first,
+            input_fee_ppk,
+        }
+    }
+
+    #[test]
+    fn test_json_roundtrip_preserves_channel_id() {
+        // Create keypairs for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // Create a keyset_info for testing (powers of 2 up to 64, with 100 ppk fee)
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
+
+        // Create channel parameters (as Alice)
+        let original_params = ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "https://testmint.cash".to_string(),
+            CurrencyUnit::Sat,
+            1000,  // capacity
+            1700000000,  // locktime
+            1699999000,  // setup_timestamp
+            "test-nonce-12345".to_string(),
+            keyset_info.clone(),
+            64,  // maximum_amount_for_one_output
+            &alice_secret,
+        ).expect("Failed to create original params");
+
+        // Get the channel ID and JSON
+        let original_channel_id = original_params.get_channel_id();
+        let json = original_params.get_channel_id_params_json();
+
+        println!("Channel ID: {}", original_channel_id);
+        println!("JSON: {}", json);
+
+        // Recreate from JSON (as Charlie this time, to also test ECDH works both ways)
+        let reconstructed_params = ChannelParameters::from_json(
+            &json,
+            keyset_info,
+            &charlie_secret,
+        ).expect("Failed to reconstruct params from JSON");
+
+        let reconstructed_channel_id = reconstructed_params.get_channel_id();
+
+        println!("Reconstructed Channel ID: {}", reconstructed_channel_id);
+
+        // Verify shared secrets match (ECDH should produce same result from both sides)
+        assert_eq!(
+            original_params.shared_secret, reconstructed_params.shared_secret,
+            "Shared secrets should match (ECDH is symmetric)"
+        );
+
+        // Assert channel IDs match
+        assert_eq!(
+            original_channel_id, reconstructed_channel_id,
+            "Channel IDs should match after JSON roundtrip"
+        );
     }
 }
