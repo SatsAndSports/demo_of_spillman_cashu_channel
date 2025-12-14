@@ -164,6 +164,39 @@ impl KeysetInfo {
         }
     }
 
+    /// Create a mock KeysetInfo with a specific keyset_id and fee
+    ///
+    /// Useful for computing channel_id without needing actual mint keys.
+    /// Uses standard power-of-2 amounts (1, 2, 4, ..., 2^20).
+    pub fn mock_with_id_and_fee(keyset_id_str: &str, input_fee_ppk: u64) -> anyhow::Result<Self> {
+        use crate::nuts::{Keys, PublicKey};
+        use crate::Amount;
+        use std::collections::BTreeMap;
+        use std::str::FromStr;
+
+        let keyset_id: Id = keyset_id_str.parse()
+            .map_err(|e| anyhow::anyhow!("Invalid keyset_id: {}", e))?;
+
+        // Create dummy keys map with power-of-2 amounts
+        let mut keys_map = BTreeMap::new();
+        let dummy_pubkey = PublicKey::from_str(
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
+        ).map_err(|e| anyhow::anyhow!("Invalid dummy pubkey: {}", e))?;
+
+        for i in 0..=20 {
+            keys_map.insert(Amount::from(1u64 << i), dummy_pubkey);
+        }
+
+        let amounts_largest_first: Vec<u64> = (0..=20).rev().map(|i| 1u64 << i).collect();
+
+        Ok(Self {
+            keyset_id,
+            active_keys: Keys::new(keys_map),
+            amounts_largest_first,
+            input_fee_ppk,
+        })
+    }
+
     /// Calculate the value after fees for a given nominal value
     ///
     /// Given a nominal value (what you allocate in deterministic outputs),
