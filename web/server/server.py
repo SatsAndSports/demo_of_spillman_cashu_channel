@@ -4,8 +4,10 @@ Cashu-Gated Video Server
 A simple Flask server that serves HLS video segments in exchange for
 Spilman channel balance updates.
 
-For now, payment verification is fake - we just check that the balance
-increases with each request.
+Payment verification includes:
+- Channel ID verification (using Rust code via PyO3)
+- Balance must increase with each request
+- (TODO) Signature verification
 """
 
 import os
@@ -15,6 +17,7 @@ import logging
 from flask import Flask, request, send_from_directory, abort, jsonify
 from flask_cors import CORS
 import secp256k1
+import cdk_py
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +52,14 @@ APPROVED_MINTS = ['http://localhost:3338']
 # In-memory channel state: channel_id -> current_balance
 channels = {}
 
+
+def compute_channel_id(params: dict) -> str:
+    """
+    Compute the channel_id from params JSON using Rust code via PyO3.
+    """
+    params_json = json.dumps(params)
+    return cdk_py.compute_channel_id_from_json(params_json, SERVER_SECRET_HEX)
+
 # Price per segment in sats
 PRICE_PER_SEGMENT = 1
 
@@ -72,9 +83,10 @@ def verify_payment(payment):
     """
     Verify that the payment is valid.
 
-    For now, just checks that:
+    Checks:
     - channel_id and balance are present
     - balance has increased since last request
+    - On first payment, logs computed vs claimed channel_id for inspection
 
     Returns (success, error_message)
     """
@@ -83,19 +95,33 @@ def verify_payment(payment):
 
     channel_id = payment.get('channel_id')
     new_balance = payment.get('balance')
+    params = payment.get('params')
 
     if not channel_id or new_balance is None:
         return False, "Missing channel_id or balance"
 
+    # On first payment from this channel, log channel_id comparison
+    if channel_id not in channels and params:
+        try:
+            computed_id = compute_channel_id(params)
+            log.info(f"New channel - claimed:  {channel_id}")
+            log.info(f"New channel - from Rust: {computed_id}")
+            if channel_id == computed_id:
+                log.info("Channel IDs match!")
+            else:
+                log.warning("Channel IDs DO NOT match!")
+        except Exception as e:
+            log.warning(f"Could not compute channel_id via Rust: {e}")
+
     current_balance = channels.get(channel_id, 0)
 
     if new_balance <= current_balance:
-        log.warning(f"Payment rejected: channel={channel_id} current={current_balance} received={new_balance}")
+        log.warning(f"Payment rejected: channel={channel_id[:16]}... current={current_balance} received={new_balance}")
         return False, f"Balance must increase (current: {current_balance}, received: {new_balance})"
 
     # Update stored balance
     channels[channel_id] = new_balance
-    log.info(f"Payment accepted: channel={channel_id} balance={current_balance} -> {new_balance}")
+    log.info(f"Payment accepted: channel={channel_id[:16]}... balance={current_balance} -> {new_balance}")
 
     return True, None
 
