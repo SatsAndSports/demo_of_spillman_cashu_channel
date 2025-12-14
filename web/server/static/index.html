@@ -110,6 +110,10 @@
 
     <script type="module">
         import * as secp from 'https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/+esm';
+        import initWasm, { compute_channel_id_from_json } from '/wasm/cdk_wasm.js';
+
+        // WASM module state
+        let wasmReady = false;
 
         // Helper: bytes to hex
         function bytesToHex(bytes) {
@@ -348,8 +352,24 @@
                 sender_nonce: senderNonce
             };
 
-            // Compute channel_id
-            const channelId = await computeChannelId(params);
+            // Compute channel_id (JS version)
+            const channelIdJS = await computeChannelId(params);
+            log(`Channel ID (JS):   ${channelIdJS}`);
+
+            // Compute channel_id (WASM version)
+            let channelIdWasm = null;
+            if (wasmReady) {
+                try {
+                    const paramsJson = JSON.stringify(params);
+                    channelIdWasm = compute_channel_id_from_json(paramsJson, aliceSecretHex);
+                    log(`Channel ID (WASM): ${channelIdWasm}`);
+                } catch (e) {
+                    log(`WASM channel_id error: ${e}`, 'error');
+                }
+            }
+
+            // Use WASM channel_id if available, otherwise fall back to JS
+            const channelId = channelIdWasm || channelIdJS;
 
             // Create and save channel record
             const channelRecord = createChannelRecord(
@@ -533,6 +553,15 @@
 
         // Initialize
         async function init() {
+            // Initialize WASM
+            try {
+                await initWasm();
+                wasmReady = true;
+                log(`WASM module loaded`);
+            } catch (e) {
+                log(`Failed to load WASM: ${e}`, 'error');
+            }
+
             // Initialize IndexedDB
             try {
                 await initDB();
