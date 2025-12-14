@@ -272,6 +272,89 @@
             };
         }
 
+        // Compute ECDH shared secret
+        function computeSharedSecret(mySecretHex, theirPubkeyHex) {
+            const sharedPoint = secp.getSharedSecret(mySecretHex, theirPubkeyHex);
+            // Return x-coordinate only (32 bytes), skip the 0x04 prefix
+            return bytesToHex(sharedPoint.slice(1, 33));
+        }
+
+        // Compute SHA256 hash
+        async function sha256(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            return bytesToHex(new Uint8Array(hashBuffer));
+        }
+
+        // Generate a random nonce
+        function generateNonce() {
+            const bytes = new Uint8Array(16);
+            crypto.getRandomValues(bytes);
+            return bytesToHex(bytes);
+        }
+
+        // Compute channel_id from params (must match Rust implementation)
+        // Hash: mint|unit|capacity|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|alice_pubkey|charlie_pubkey|expiry|sender_nonce
+        async function computeChannelId(params) {
+            const paramsString = [
+                params.mint,
+                params.unit,
+                params.capacity,
+                params.keyset_id,
+                params.input_fee_ppk,
+                params.maximum_amount,
+                params.setup_timestamp,
+                params.alice_pubkey,
+                params.charlie_pubkey,
+                params.locktime,
+                params.sender_nonce
+            ].join('|');
+            return await sha256(paramsString);
+        }
+
+        // Create a new pending channel between Alice and Charlie
+        async function createPendingChannel(aliceSecretHex, alicePubkeyHex, charliePubkeyHex, mint) {
+            // Compute shared secret via ECDH
+            const sharedSecretHex = computeSharedSecret(aliceSecretHex, charliePubkeyHex);
+
+            // Generate channel parameters
+            const setupTimestamp = Math.floor(Date.now() / 1000);
+            const expiry = setupTimestamp + 3600; // 1 hour from now
+            const senderNonce = generateNonce();
+
+            // Channel params (some values are placeholders until funding)
+            const params = {
+                mint: mint,
+                unit: 'sat',
+                capacity: 1000,  // placeholder - will be set during funding
+                keyset_id: '00000000deadbeef',  // placeholder - will come from mint
+                input_fee_ppk: 0,  // placeholder - will come from mint
+                maximum_amount: 64,  // placeholder
+                setup_timestamp: setupTimestamp,
+                alice_pubkey: alicePubkeyHex,
+                charlie_pubkey: charliePubkeyHex,
+                locktime: expiry,
+                sender_nonce: senderNonce
+            };
+
+            // Compute channel_id
+            const channelId = await computeChannelId(params);
+
+            // Create and save channel record
+            const channelRecord = createChannelRecord(
+                channelId,
+                JSON.stringify(params),
+                aliceSecretHex,
+                sharedSecretHex,
+                expiry,
+                charliePubkeyHex,
+                mint
+            );
+
+            await saveChannel(channelRecord);
+            return channelRecord;
+        }
+
         // ============================================
         // Alice's key management
         // ============================================
@@ -463,14 +546,25 @@
             log(`Alice pubkey:   ${alice.pubkeyHex}`);
             log(`Charlie pubkey: ${charlie ? charlie.pubkeyHex : 'unavailable'}`);
 
-            // Check for existing channel with this pair
+            // Check for existing channel with this pair, create if none exists
             if (charlie) {
-                const existingChannelId = await findChannelByPubkeys(alice.pubkeyHex, charlie.pubkeyHex);
+                let existingChannelId = await findChannelByPubkeys(alice.pubkeyHex, charlie.pubkeyHex);
                 if (existingChannelId) {
                     log(`Existing channel: ${existingChannelId}`);
                 } else {
-                    log(`Existing channel: <none exists yet>`);
+                    log(`No existing channel, creating pending channel...`);
+                    const mint = charlie.approvedMints[0];
+                    const newChannel = await createPendingChannel(
+                        alice.secretHex,
+                        alice.pubkeyHex,
+                        charlie.pubkeyHex,
+                        mint
+                    );
+                    log(`Created pending channel: ${newChannel.channel_id}`);
+                    existingChannelId = newChannel.channel_id;
                 }
+                channel.id = existingChannelId;
+                updateStatus();
             }
 
             updateStatus();
