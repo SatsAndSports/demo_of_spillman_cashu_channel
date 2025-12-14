@@ -100,18 +100,22 @@ def verify_payment(payment):
     if not channel_id or new_balance is None:
         return False, "Missing channel_id or balance"
 
-    # On first payment from this channel, log channel_id comparison
-    if channel_id not in channels and params:
+    # On first payment from this channel, verify channel_id
+    if channel_id not in channels:
+        if not params:
+            return False, "First payment must include params for channel verification"
+
         try:
             computed_id = compute_channel_id(params)
             log.info(f"New channel - claimed:  {channel_id}")
             log.info(f"New channel - from Rust: {computed_id}")
-            if channel_id == computed_id:
-                log.info("Channel IDs match!")
-            else:
-                log.warning("Channel IDs DO NOT match!")
+            if channel_id != computed_id:
+                log.warning("Channel IDs DO NOT match - rejecting!")
+                return False, "Channel ID verification failed"
+            log.info("Channel IDs match!")
         except Exception as e:
             log.warning(f"Could not compute channel_id via Rust: {e}")
+            return False, f"Channel verification error: {e}"
 
     current_balance = channels.get(channel_id, 0)
 
