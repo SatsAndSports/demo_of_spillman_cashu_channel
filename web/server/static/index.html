@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cashu Video</title>
+    <title>CashuTube</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/lib/esm/index.min.js" type="module"></script>
     <style>
@@ -68,7 +68,7 @@
             border-radius: 8px;
             font-family: monospace;
             font-size: 12px;
-            max-height: 200px;
+            height: 200px;
             overflow-y: auto;
         }
         #log .entry {
@@ -89,7 +89,14 @@
     </style>
 </head>
 <body>
-    <h1>Cashu Video</h1>
+    <div id="dev-tools" style="margin-bottom:10px;">
+        <button id="reset-alice" style="background:#533;border:1px solid #744;color:#e0e0e0;padding:8px 16px;border-radius:4px;cursor:pointer;">Reset Alice Key</button>
+    </div>
+
+    <h1>CashuTube</h1>
+
+    <h3>Log</h3>
+    <div id="log"></div>
 
     <div id="status">
         <span class="label">Channel:</span> <span class="value" id="channel-id">-</span><br>
@@ -104,12 +111,6 @@
     <div id="video-list">
         <em>Loading videos...</em>
     </div>
-
-    <h3>Log</h3>
-    <div id="log"></div>
-
-    <h3>Dev Tools</h3>
-    <button id="reset-alice" style="background:#533;border:1px solid #744;color:#e0e0e0;padding:8px 16px;border-radius:4px;cursor:pointer;">Reset Alice Key</button>
 
     <script type="module">
         import * as secp from 'https://cdn.jsdelivr.net/npm/@noble/secp256k1@2.1.0/+esm';
