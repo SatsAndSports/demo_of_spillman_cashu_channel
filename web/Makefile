@@ -1,10 +1,11 @@
 # Cashu Video Server Makefile
 #
 # Usage:
-#   make run_server       # Build PyO3 and start the server
-#   make wasm             # Build WASM module (for browser)
-#   make pyo3             # Build PyO3 module (for server)
-#   make rust             # Build both WASM and PyO3
+#   make run_server              # Build PyO3 and start the server
+#   make wasm                    # Build WASM module (for browser)
+#   make wasm-to-blossom-server  # Build WASM and copy to blossom-server
+#   make pyo3                    # Build PyO3 module (for server)
+#   make rust                    # Build both WASM and PyO3
 #
 # Video processing:
 #   make                  # Process all videos in sources/
@@ -23,7 +24,7 @@ QUALITIES := 720p:1280x720:2800k 480p:854x480:1400k 360p:640x360:800k
 # Segment duration in seconds (1 sec = ~1 payment/sec for demo)
 SEGMENT_DURATION := 1
 
-.PHONY: all clean list wasm pyo3 rust run_server
+.PHONY: all clean list wasm wasm-to-blossom-server pyo3 rust run_server
 
 all: $(OUTPUTS)
 	@echo "Done. Processed videos: $(VIDEOS)"
@@ -31,6 +32,13 @@ all: $(OUTPUTS)
 # Build WASM module (for browser)
 wasm:
 	cd ../crates/cdk-wasm && wasm-pack build --target web --out-dir ../../web/wasm
+
+# Build WASM and copy to blossom-server
+BLOSSOM_WASM_DIR := blossom-server/public/wasm
+wasm-to-blossom-server: wasm
+	@test -f $(BLOSSOM_WASM_DIR)/.gitkeep || (echo "Error: $(BLOSSOM_WASM_DIR)/.gitkeep not found" && exit 1)
+	cp wasm/cdk_wasm.js wasm/cdk_wasm.d.ts wasm/cdk_wasm_bg.wasm wasm/cdk_wasm_bg.wasm.d.ts wasm/package.json $(BLOSSOM_WASM_DIR)/
+	@echo "WASM copied to $(BLOSSOM_WASM_DIR)/"
 
 # Create the Python virtual environment. It's for running the
 # server, including compiling the Rust to be used by the server
