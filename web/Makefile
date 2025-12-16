@@ -2,8 +2,9 @@
 #
 # Usage:
 #   make run_server              # Build PyO3 and start the server
-#   make wasm                    # Build WASM module (for browser)
-#   make wasm-to-blossom-server  # Build WASM and copy to blossom-server
+#   make wasm-web                # Build WASM module (for browser)
+#   make wasm-nodejs             # Build WASM module (for Node.js)
+#   make wasm-to-blossom-server  # Build both WASM targets and copy to blossom-server
 #   make pyo3                    # Build PyO3 module (for server)
 #   make rust                    # Build both WASM and PyO3
 #
@@ -24,21 +25,29 @@ QUALITIES := 720p:1280x720:2800k 480p:854x480:1400k 360p:640x360:800k
 # Segment duration in seconds (1 sec = ~1 payment/sec for demo)
 SEGMENT_DURATION := 1
 
-.PHONY: all clean list wasm wasm-to-blossom-server pyo3 rust run_server
+.PHONY: all clean list wasm-web wasm-nodejs wasm-to-blossom-server pyo3 rust run_server
 
 all: $(OUTPUTS)
 	@echo "Done. Processed videos: $(VIDEOS)"
 
 # Build WASM module (for browser)
-wasm:
-	cd ../crates/cdk-wasm && wasm-pack build --target web --out-dir ../../web/wasm
+wasm-web:
+	cd ../crates/cdk-wasm && wasm-pack build --target web --out-dir ../../web/wasm-web
 
-# Build WASM and copy to blossom-server
+# Build WASM module (for Node.js)
+wasm-nodejs:
+	cd ../crates/cdk-wasm && wasm-pack build --target nodejs --out-dir ../../web/wasm-nodejs
+
+# Build both WASM targets and copy to blossom-server
 BLOSSOM_WASM_DIR := blossom-server/public/wasm
-wasm-to-blossom-server: wasm
+BLOSSOM_WASM_NODEJS_DIR := blossom-server/src/wasm
+wasm-to-blossom-server: wasm-web wasm-nodejs
 	@test -f $(BLOSSOM_WASM_DIR)/.gitkeep || (echo "Error: $(BLOSSOM_WASM_DIR)/.gitkeep not found" && exit 1)
-	cp wasm/cdk_wasm.js wasm/cdk_wasm.d.ts wasm/cdk_wasm_bg.wasm wasm/cdk_wasm_bg.wasm.d.ts wasm/package.json $(BLOSSOM_WASM_DIR)/
-	@echo "WASM copied to $(BLOSSOM_WASM_DIR)/"
+	cp wasm-web/cdk_wasm.js wasm-web/cdk_wasm.d.ts wasm-web/cdk_wasm_bg.wasm wasm-web/cdk_wasm_bg.wasm.d.ts wasm-web/package.json $(BLOSSOM_WASM_DIR)/
+	@echo "Browser WASM copied to $(BLOSSOM_WASM_DIR)/"
+	@mkdir -p $(BLOSSOM_WASM_NODEJS_DIR)
+	cp wasm-nodejs/cdk_wasm.js wasm-nodejs/cdk_wasm.d.ts wasm-nodejs/cdk_wasm_bg.wasm wasm-nodejs/cdk_wasm_bg.wasm.d.ts wasm-nodejs/package.json $(BLOSSOM_WASM_NODEJS_DIR)/
+	@echo "Node.js WASM copied to $(BLOSSOM_WASM_NODEJS_DIR)/"
 
 # Create the Python virtual environment. It's for running the
 # server, including compiling the Rust to be used by the server
@@ -52,7 +61,7 @@ pyo3: server/.venv
 	. server/.venv/bin/activate && cd ../crates/cdk-py && maturin develop
 
 # Build both WASM and PyO3
-rust: wasm pyo3
+rust: wasm-web pyo3
 
 # Run the server (does not detach. start this in another terminal)
 run_server: pyo3
