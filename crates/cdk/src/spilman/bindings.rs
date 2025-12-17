@@ -7,11 +7,11 @@ use crate::nuts::{PublicKey, SecretKey};
 use crate::util::hex;
 use super::{compute_shared_secret as ecdh, ChannelParameters, KeysetInfo};
 
-/// Compute channel_id from params JSON and shared secret (hex strings)
+/// Get channel_id from params JSON and shared secret (hex strings)
 ///
-/// Takes the JSON produced by `ChannelParameters::get_channel_id_params_json()`
-/// and the pre-computed shared secret (from compute_shared_secret_from_hex).
-pub fn compute_channel_id_from_json_str(
+/// This is effectively a method on ChannelParameters, but takes JSON input
+/// for FFI compatibility. Takes the params JSON and shared secret hex.
+pub fn channel_parameters_get_channel_id(
     params_json: &str,
     shared_secret_hex: &str,
 ) -> Result<String, String> {
