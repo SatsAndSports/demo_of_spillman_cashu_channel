@@ -24,15 +24,13 @@ pub fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Res
         .map_err(|e| JsValue::from_str(&e))
 }
 
-/// Compute channel_id from params JSON and a secret key
+/// Get channel_id from params JSON and shared secret
 ///
-/// Takes the JSON produced by `ChannelParameters::get_channel_id_params_json()`
-/// and either Alice's or Charlie's secret key (hex). The function auto-detects
-/// which party the secret belongs to by matching the derived pubkey against
-/// alice_pubkey and charlie_pubkey in the JSON.
+/// This is effectively a method on ChannelParameters for FFI.
+/// Takes the params JSON and the pre-computed shared secret (hex).
 #[wasm_bindgen]
-pub fn compute_channel_id_from_json(params_json: &str, my_secret_hex: &str) -> Result<String, JsValue> {
-    cdk::spilman::compute_channel_id_from_json_str(params_json, my_secret_hex)
+pub fn channel_parameters_get_channel_id(params_json: &str, shared_secret_hex: &str) -> Result<String, JsValue> {
+    cdk::spilman::channel_parameters_get_channel_id(params_json, shared_secret_hex)
         .map_err(|e| JsValue::from_str(&e))
 }
 
