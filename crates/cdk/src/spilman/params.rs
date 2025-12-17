@@ -143,7 +143,7 @@ impl ChannelParameters {
         )
     }
 
-    /// Create channel parameters from a JSON string and additional required fields
+    /// Create channel parameters from a JSON string and a secret key
     ///
     /// The JSON should contain: mint, unit, capacity, keyset_id, input_fee_ppk,
     /// maximum_amount, setup_timestamp, alice_pubkey, charlie_pubkey, locktime,
@@ -152,10 +152,51 @@ impl ChannelParameters {
     /// Additional parameters needed:
     /// * `keyset_info` - Keyset information from the mint (keyset_id and input_fee_ppk must match JSON)
     /// * `my_secret` - Either Alice's or Charlie's secret key for ECDH
-    pub fn from_json(
+    pub fn from_json_with_secret_key(
         json_str: &str,
         keyset_info: KeysetInfo,
         my_secret: &SecretKey,
+    ) -> anyhow::Result<Self> {
+        // Parse JSON to get pubkeys for ECDH
+        let json: serde_json::Value = serde_json::from_str(json_str)
+            .map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
+
+        let alice_pubkey_hex = json["alice_pubkey"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'alice_pubkey' field"))?;
+        let alice_pubkey: crate::nuts::PublicKey = alice_pubkey_hex
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid alice_pubkey: {}", e))?;
+
+        let charlie_pubkey_hex = json["charlie_pubkey"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'charlie_pubkey' field"))?;
+        let charlie_pubkey: crate::nuts::PublicKey = charlie_pubkey_hex
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
+
+        // Determine counterparty and compute shared secret
+        let my_pubkey = my_secret.public_key();
+        let their_pubkey = if my_pubkey == alice_pubkey {
+            &charlie_pubkey
+        } else if my_pubkey == charlie_pubkey {
+            &alice_pubkey
+        } else {
+            anyhow::bail!("Secret key's public key doesn't match either alice_pubkey or charlie_pubkey");
+        };
+
+        let shared_secret = compute_shared_secret(my_secret, their_pubkey);
+
+        Self::from_json_with_shared_secret(json_str, keyset_info, shared_secret)
+    }
+
+    /// Create channel parameters from a JSON string with a pre-computed shared secret
+    ///
+    /// Same as `from_json` but takes the shared secret directly instead of computing it.
+    pub fn from_json_with_shared_secret(
+        json_str: &str,
+        keyset_info: KeysetInfo,
+        shared_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         let json: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
@@ -240,7 +281,7 @@ impl ChannelParameters {
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_nonce' field"))?
             .to_string();
 
-        Self::new_with_secret_key(
+        Self::new(
             alice_pubkey,
             charlie_pubkey,
             mint,
@@ -251,7 +292,7 @@ impl ChannelParameters {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
-            my_secret,
+            shared_secret,
         )
     }
 
@@ -522,7 +563,7 @@ mod tests {
         println!("JSON: {}", json);
 
         // Recreate from JSON (as Charlie this time, to also test ECDH works both ways)
-        let reconstructed_params = ChannelParameters::from_json(
+        let reconstructed_params = ChannelParameters::from_json_with_secret_key(
             &json,
             keyset_info,
             &charlie_secret,

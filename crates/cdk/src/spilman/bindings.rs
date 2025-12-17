@@ -7,19 +7,24 @@ use crate::nuts::{PublicKey, SecretKey};
 use crate::util::hex;
 use super::{compute_shared_secret as ecdh, ChannelParameters, KeysetInfo};
 
-/// Compute channel_id from params JSON and a secret key (hex strings)
+/// Compute channel_id from params JSON and shared secret (hex strings)
 ///
 /// Takes the JSON produced by `ChannelParameters::get_channel_id_params_json()`
-/// and either Alice's or Charlie's secret key (hex). The function auto-detects
-/// which party the secret belongs to by matching the derived pubkey against
-/// alice_pubkey and charlie_pubkey in the JSON.
+/// and the pre-computed shared secret (from compute_shared_secret_from_hex).
 pub fn compute_channel_id_from_json_str(
     params_json: &str,
-    my_secret_hex: &str,
+    shared_secret_hex: &str,
 ) -> Result<String, String> {
-    // Parse the secret key
-    let my_secret = SecretKey::from_hex(my_secret_hex)
-        .map_err(|e| format!("Invalid secret key: {}", e))?;
+    // Parse the shared secret
+    let shared_secret_bytes = hex::decode(shared_secret_hex)
+        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+
+    if shared_secret_bytes.len() != 32 {
+        return Err(format!("Shared secret must be 32 bytes, got {}", shared_secret_bytes.len()));
+    }
+
+    let mut shared_secret = [0u8; 32];
+    shared_secret.copy_from_slice(&shared_secret_bytes);
 
     // Parse JSON to extract keyset_id and input_fee_ppk for the mock
     let json: serde_json::Value = serde_json::from_str(params_json)
@@ -37,8 +42,8 @@ pub fn compute_channel_id_from_json_str(
     let keyset_info = KeysetInfo::mock_with_id_and_fee(keyset_id_str, input_fee_ppk)
         .map_err(|e| format!("Failed to create mock keyset: {}", e))?;
 
-    // Use from_json to construct params (auto-detects Alice vs Charlie, computes shared_secret via ECDH)
-    let params = ChannelParameters::from_json(params_json, keyset_info, &my_secret)
+    // Use from_json_with_shared_secret to construct params
+    let params = ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
         .map_err(|e| format!("Failed to parse params: {}", e))?;
 
     Ok(params.get_channel_id())
