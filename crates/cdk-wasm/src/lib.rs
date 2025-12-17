@@ -120,7 +120,7 @@ fn create_funding_outputs_inner(
         .map_err(|e| format!("Invalid secret key: {}", e))?;
 
     // Create ChannelParameters from JSON
-    let params = ChannelParameters::from_json(params_json, keyset_info, &my_secret)
+    let params = ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &my_secret)
         .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Get the funding token nominal amount
