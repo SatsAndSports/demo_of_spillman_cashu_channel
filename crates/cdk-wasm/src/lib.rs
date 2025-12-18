@@ -7,10 +7,11 @@ use wasm_bindgen::prelude::*;
 
 use cdk::nuts::{Id, Keys, Proof, PublicKey, SecretKey};
 use cdk::spilman::{
-    ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo,
-    SpilmanChannelSender,
+    BalanceUpdateMessage, ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel,
+    KeysetInfo, SpilmanChannelSender,
 };
 use cdk::Amount;
+use bitcoin::secp256k1::schnorr::Signature;
 
 /// Initialize panic hook for better error messages in browser console
 #[wasm_bindgen(start)]
@@ -253,4 +254,97 @@ fn spilman_channel_sender_create_signed_balance_update_inner(
     });
 
     Ok(result.to_string())
+}
+
+/// Verify a balance update signature from the sender (Alice)
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON (must include keyset_id and input_fee_ppk)
+/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `channel_id`: The channel ID from the balance update
+/// - `balance`: The balance amount from the balance update
+/// - `signature`: Alice's Schnorr signature (hex)
+///
+/// Returns `true` if the signature is valid, or an error if invalid
+#[wasm_bindgen]
+pub fn verify_balance_update_signature(
+    params_json: &str,
+    shared_secret_hex: &str,
+    funding_proofs_json: &str,
+    channel_id: &str,
+    balance: u64,
+    signature: &str,
+) -> Result<bool, JsValue> {
+    verify_balance_update_signature_inner(
+        params_json,
+        shared_secret_hex,
+        funding_proofs_json,
+        channel_id,
+        balance,
+        signature,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+fn verify_balance_update_signature_inner(
+    params_json: &str,
+    shared_secret_hex: &str,
+    funding_proofs_json: &str,
+    channel_id: &str,
+    balance: u64,
+    signature: &str,
+) -> Result<bool, String> {
+    // Parse shared secret from hex
+    let shared_secret_bytes = hex::decode(shared_secret_hex)
+        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes")?;
+
+    // Parse JSON to extract keyset_id and input_fee_ppk for mock keyset
+    let json: serde_json::Value = serde_json::from_str(params_json)
+        .map_err(|e| format!("Invalid params JSON: {}", e))?;
+
+    let keyset_id_str = json["keyset_id"]
+        .as_str()
+        .ok_or_else(|| "Missing 'keyset_id' field in params".to_string())?;
+
+    let input_fee_ppk = json["input_fee_ppk"]
+        .as_u64()
+        .ok_or_else(|| "Missing 'input_fee_ppk' field in params".to_string())?;
+
+    // Create mock KeysetInfo (only need keyset_id and fee for verification)
+    let keyset_info = KeysetInfo::mock_with_id_and_fee(keyset_id_str, input_fee_ppk)
+        .map_err(|e| format!("Failed to create mock keyset: {}", e))?;
+
+    // Create ChannelParameters with shared secret
+    let params = ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Parse funding proofs
+    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
+        .map_err(|e| format!("Failed to parse funding proofs: {}", e))?;
+
+    // Create EstablishedChannel
+    let channel = EstablishedChannel::new(params, funding_proofs)
+        .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
+
+    // Parse signature
+    let sig = Signature::from_str(signature)
+        .map_err(|e| format!("Invalid signature: {}", e))?;
+
+    // Create BalanceUpdateMessage
+    let balance_update = BalanceUpdateMessage {
+        channel_id: channel_id.to_string(),
+        amount: balance,
+        signature: sig,
+    };
+
+    // Verify the signature
+    balance_update
+        .verify_sender_signature(&channel)
+        .map_err(|e| format!("Signature verification failed: {}", e))?;
+
+    Ok(true)
 }
