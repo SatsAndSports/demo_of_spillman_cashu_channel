@@ -5,8 +5,11 @@ use std::str::FromStr;
 
 use wasm_bindgen::prelude::*;
 
-use cdk::nuts::{Id, Keys, PublicKey, SecretKey};
-use cdk::spilman::{ChannelParameters, DeterministicOutputsForOneContext, KeysetInfo};
+use cdk::nuts::{Id, Keys, Proof, PublicKey, SecretKey};
+use cdk::spilman::{
+    ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo,
+    SpilmanChannelSender,
+};
 use cdk::Amount;
 
 /// Initialize panic hook for better error messages in browser console
@@ -170,6 +173,83 @@ fn create_funding_outputs_inner(
         "funding_token_nominal": funding_token_nominal,
         "blinded_messages": blinded_messages_json,
         "secrets_with_blinding": secrets_json
+    });
+
+    Ok(result.to_string())
+}
+
+/// Create a signed balance update message
+///
+/// This is equivalent to calling `SpilmanChannelSender::create_signed_balance_update()` in Rust.
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON
+/// - `keyset_info_json`: KeysetInfo JSON
+/// - `alice_secret_hex`: Alice's secret key (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `charlie_balance`: The new balance for Charlie
+///
+/// Returns JSON with:
+/// - `channel_id`: The channel ID
+/// - `amount`: The balance amount
+/// - `signature`: Alice's Schnorr signature (hex)
+#[wasm_bindgen]
+pub fn spilman_channel_sender_create_signed_balance_update(
+    params_json: &str,
+    keyset_info_json: &str,
+    alice_secret_hex: &str,
+    funding_proofs_json: &str,
+    charlie_balance: u64,
+) -> Result<String, JsValue> {
+    spilman_channel_sender_create_signed_balance_update_inner(
+        params_json,
+        keyset_info_json,
+        alice_secret_hex,
+        funding_proofs_json,
+        charlie_balance,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+fn spilman_channel_sender_create_signed_balance_update_inner(
+    params_json: &str,
+    keyset_info_json: &str,
+    alice_secret_hex: &str,
+    funding_proofs_json: &str,
+    charlie_balance: u64,
+) -> Result<String, String> {
+    // Parse keyset info
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse Alice's secret key
+    let alice_secret = SecretKey::from_hex(alice_secret_hex)
+        .map_err(|e| format!("Invalid secret key: {}", e))?;
+
+    // Create ChannelParameters
+    let params = ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
+        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Parse funding proofs
+    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
+        .map_err(|e| format!("Failed to parse funding proofs: {}", e))?;
+
+    // Create EstablishedChannel
+    let channel = EstablishedChannel::new(params, funding_proofs)
+        .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
+
+    // Create SpilmanChannelSender
+    let sender = SpilmanChannelSender::new(alice_secret, channel);
+
+    // Create signed balance update
+    let (balance_update, _swap_request) = sender
+        .create_signed_balance_update(charlie_balance)
+        .map_err(|e| format!("Failed to create signed balance update: {}", e))?;
+
+    // Serialize the balance update message
+    let result = serde_json::json!({
+        "channel_id": balance_update.channel_id,
+        "amount": balance_update.amount,
+        "signature": balance_update.signature.to_string()
     });
 
     Ok(result.to_string())
