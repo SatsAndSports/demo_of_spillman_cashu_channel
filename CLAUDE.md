@@ -80,14 +80,16 @@ A Spilman channel is a unidirectional payment channel between:
 ### Payment Flow
 
 1. Player fetches `/channel/params` to get Charlie's pubkey
-2. Player creates a channel (stored in IndexedDB)
+2. Player creates and funds a channel (stored in IndexedDB)
 3. For each segment request, player adds `X-Cashu-Channel` header containing:
    - `channel_id` - identifies the channel
    - `balance` - current balance (increments each segment)
-   - `signature` - Schnorr signature (TODO: currently zeros)
-   - `params` - full channel parameters
-4. Server verifies channel_id matches computed value
-5. Server verifies signature (TODO: not yet implemented)
+   - `signature` - Alice's Schnorr signature over the balance update
+   - `params` - full channel parameters (only on first request)
+   - `funding_proofs` - funding token proofs (only on first request)
+4. Server caches params and funding proofs by channel_id
+5. Server verifies channel_id matches computed value
+6. Server verifies Alice's signature using WASM
 
 ### HLS Encoding for Blossom
 
@@ -122,16 +124,40 @@ channel:
   pricePerSegment: 1
 ```
 
+### Video Database Schema
+
+```sql
+CREATE TABLE videos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  master_hash TEXT NOT NULL,
+  duration INTEGER NOT NULL,
+  uploaded INTEGER NOT NULL,
+  description TEXT,        -- Optional description
+  source TEXT              -- Original source file path
+)
+```
+
 ### API Endpoints
 
 **Public:**
 - `GET /channel/params` - Returns receiver pubkey, approved mints, price
-- `GET /videos` - List registered videos (title, master_hash, duration)
+- `GET /videos` - List registered videos (id, title, master_hash, duration, description, source)
 - `GET /<sha256>` - Fetch blob (accepts X-Cashu-Channel header)
 
 **Admin (basic auth):**
-- `POST /api/videos` - Register video `{title, master_hash, duration}`
-- `DELETE /api/videos/:title` - Remove video
+- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?}`
+- `DELETE /api/videos/:id` - Remove video by id
+
+### Player URL Format
+
+Videos can be directly linked using the master_hash in the URL fragment:
+```
+http://localhost:3000/player.html#<master_hash>
+http://localhost:3000/player.html#<master_hash>&t=90      # Start at 90 seconds
+http://localhost:3000/player.html#<master_hash>&t=1m30s   # Start at 1:30
+```
+The player will load the video on page load. Share button provides easy URL copying with optional timestamp.
 
 ## Building WASM
 
@@ -174,15 +200,46 @@ cargo run -p cdk --example spilman_channel
 - ✅ Video player with HLS.js and quality selector
 - ✅ Payment headers sent with each segment request
 - ✅ Channel ID computed and verified (WASM on both client and server)
+- ✅ Real Schnorr signatures from Alice
+- ✅ Signature verification on server (via WASM)
+- ✅ Server caches channel params and funding proofs
 - ✅ Video registration and listing via Blossom
 - ✅ HLS encoding tools with hash-based naming
+- ✅ Direct video linking via URL hash (#master_hash)
 
-**TODO:**
-- ❌ Real Schnorr signatures (currently fake zeros)
-- ❌ Signature verification on server
-- ❌ Payment enforcement (402 responses)
-- ❌ Actual channel funding with Cashu tokens
+**TODO - Payments:**
+- ❌ Payment enforcement (402 responses for insufficient balance)
 - ❌ Channel closure and settlement
+- ❌ Server-side balance persistence (currently in-memory only)
+
+**TODO - Player Improvements:**
+
+*Completed:*
+- ✅ Share button with URL copying
+- ✅ Timestamp in URL (#hash&t=90 or #hash&t=1m30s)
+- ✅ Play/pause action indicator (brief YouTube-style feedback)
+- ✅ Double-tap sides to skip ±10 seconds (mobile)
+
+*High Priority:*
+- ❌ Keyboard shortcuts (M=mute, F=fullscreen)
+- ❌ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
+- ❌ Display video title when playing
+- ❌ Highlight currently playing video in list
+- ❌ Remember playback position (resume where left off)
+
+*Medium Priority:*
+- ❌ Remember preferences (volume, speed, quality) in localStorage
+- ❌ Loop toggle
+- ❌ Picture-in-picture button
+- ❌ Video description panel (expandable)
+
+*Lower Priority:*
+- ❌ Search/filter video list
+- ❌ Sort videos by date, title, duration
+- ❌ Thumbnail previews on seek bar hover
+- ❌ Theater mode (wider video, darker background)
+- ❌ Loading spinner while buffering
+- ❌ Autoplay next video
 
 ## Notes
 
