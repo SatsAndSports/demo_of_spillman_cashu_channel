@@ -34,7 +34,7 @@ pub struct MintBuilder {
     #[cfg(feature = "auth")]
     auth_localstore: Option<DynMintAuthDatabase>,
     payment_processors: HashMap<PaymentProcessorKey, DynMintPayment>,
-    supported_units: HashMap<CurrencyUnit, (u64, u8)>,
+    supported_units: HashMap<CurrencyUnit, (u64, u8, u64)>,
     custom_paths: HashMap<CurrencyUnit, DerivationPath>,
 }
 
@@ -292,7 +292,7 @@ impl MintBuilder {
 
         let mut supported_units = self.supported_units.clone();
 
-        supported_units.insert(key.unit.clone(), (0, 32));
+        supported_units.insert(key.unit.clone(), (0, 32, 2));  // Default: fee=0, max_order=32, base=2
         self.supported_units = supported_units;
 
         self.payment_processors.insert(key, payment_processor);
@@ -302,12 +302,26 @@ impl MintBuilder {
     ///
     /// The unit **MUST** already have been added with a ln backend
     pub fn set_unit_fee(&mut self, unit: &CurrencyUnit, input_fee_ppk: u64) -> Result<(), Error> {
-        let (input_fee, _) = self
+        let (input_fee, _, _) = self
             .supported_units
             .get_mut(unit)
             .ok_or(Error::UnsupportedUnit)?;
 
         *input_fee = input_fee_ppk;
+
+        Ok(())
+    }
+
+    /// Sets the base for amount generation for a given unit (e.g., 2 for powers of 2, 10 for powers of 10)
+    ///
+    /// The unit **MUST** already have been added with a ln backend
+    pub fn set_unit_base(&mut self, unit: &CurrencyUnit, base: u64) -> Result<(), Error> {
+        let (_, _, unit_base) = self
+            .supported_units
+            .get_mut(unit)
+            .ok_or(Error::UnsupportedUnit)?;
+
+        *unit_base = base;
 
         Ok(())
     }
