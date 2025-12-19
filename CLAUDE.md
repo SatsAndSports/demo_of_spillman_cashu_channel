@@ -26,7 +26,7 @@ cdk/
         │   ├── wasm/               # Node.js WASM (copied from wasm-nodejs/)
         │   └── ...
         ├── public/
-        │   ├── player.html         # Video player with payment headers
+        │   ├── index.html          # Video player with payment headers
         │   └── wasm/               # Browser WASM (copied from wasm-web/)
         ├── tools/
         │   ├── hls-encode.sh       # Encode video to HLS with hash-based names
@@ -127,6 +127,9 @@ The encoder:
 - Creates 5 quality levels (1080p, 720p, 480p, 360p, 240p)
 - Rewrites playlists to reference segments by SHA256 hash (no extensions)
 - Creates `hashed/` directory with symlinks for easy Blossom upload
+- Generates `preview.jpg` - best frame thumbnail for video list (280px wide)
+- Generates `sprite.jpg` - sprite sheet for progress bar scrubbing (160x90 thumbs, 5s intervals)
+- Generates `sprite-meta.json` - sprite sheet metadata (dimensions, interval, frame count)
 
 ### Server Configuration
 
@@ -151,7 +154,9 @@ CREATE TABLE videos (
   duration INTEGER NOT NULL,
   uploaded INTEGER NOT NULL,
   description TEXT,        -- Optional description
-  source TEXT              -- Original source file path
+  source TEXT,             -- Original source file path
+  preview_hash TEXT,       -- SHA256 of preview.jpg thumbnail
+  sprite_meta_hash TEXT    -- SHA256 of sprite-meta.json
 )
 ```
 
@@ -159,20 +164,20 @@ CREATE TABLE videos (
 
 **Public:**
 - `GET /channel/params` - Returns receiver pubkey, approved mints, price
-- `GET /videos` - List registered videos (id, title, master_hash, duration, description, source)
+- `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash)
 - `GET /<sha256>` - Fetch blob (accepts X-Cashu-Channel header)
 
 **Admin (basic auth):**
-- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?}`
+- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?}`
 - `DELETE /api/videos/:id` - Remove video by id
 
 ### Player URL Format
 
 Videos can be directly linked using the master_hash in the URL fragment:
 ```
-http://localhost:3000/player.html#<master_hash>
-http://localhost:3000/player.html#<master_hash>&t=90      # Start at 90 seconds
-http://localhost:3000/player.html#<master_hash>&t=1m30s   # Start at 1:30
+http://localhost:3000/#<master_hash>
+http://localhost:3000/#<master_hash>&t=90      # Start at 90 seconds
+http://localhost:3000/#<master_hash>&t=1m30s   # Start at 1:30
 ```
 The player will load the video on page load. Share button provides easy URL copying with optional timestamp.
 
@@ -235,10 +240,15 @@ cargo run -p cdk --example spilman_channel
 - ✅ Share button with URL copying
 - ✅ Timestamp in URL (#hash&t=90 or #hash&t=1m30s)
 - ✅ Play/pause action indicator (brief YouTube-style feedback)
-- ✅ Double-tap sides to skip ±10 seconds (mobile)
+- ✅ Tap sides to skip ±10 seconds (mobile/desktop)
+- ✅ Keyboard shortcuts (Space, arrows, M=mute, F=fullscreen)
+- ✅ Video thumbnails in list (preview.jpg)
+- ✅ Sprite animation on video card hover (cycles through sprite frames)
+- ✅ Sprite thumbnails on progress bar hover (desktop) / drag (mobile)
+- ✅ Balance indicator overlay (shows balance / capacity)
+- ✅ Responsive controls (volume hidden on narrow screens)
 
 *High Priority:*
-- ❌ Keyboard shortcuts (M=mute, F=fullscreen)
 - ❌ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
 - ❌ Display video title when playing
 - ❌ Highlight currently playing video in list
@@ -253,7 +263,6 @@ cargo run -p cdk --example spilman_channel
 *Lower Priority:*
 - ❌ Search/filter video list
 - ❌ Sort videos by date, title, duration
-- ❌ Thumbnail previews on seek bar hover
 - ❌ Theater mode (wider video, darker background)
 - ❌ Loading spinner while buffering
 - ❌ Autoplay next video
@@ -263,4 +272,4 @@ cargo run -p cdk --example spilman_channel
 - Line endings: Use LF (Unix style), not CRLF
 - The approved mint for testing is `http://localhost:3338`
 - Blossom server runs on port 3000 by default
-- Player available at `http://localhost:3000/player.html`
+- Player available at `http://localhost:3000/`
