@@ -91,6 +91,23 @@ A Spilman channel is a unidirectional payment channel between:
 5. Server verifies channel_id matches computed value
 6. Server verifies Alice's signature using WASM
 
+### HLS.js xhrSetup Gotcha
+
+**Important:** When using HLS.js `xhrSetup` to add custom headers, you must call `xhr.open()` before `xhr.setRequestHeader()`. The XHR starts in `UNSENT` state (readyState=0), and `setRequestHeader` only works after `open()` is called.
+
+```javascript
+xhrSetup: function(xhr, url) {
+    if (xhr.readyState === XMLHttpRequest.UNSENT) {
+        xhr.open('GET', url, true);
+    }
+    xhr.setRequestHeader('X-Custom-Header', 'value');
+}
+```
+
+From the HLS.js docs: "xhr.open() should be called in xhrSetup if the callback modifies the XMLHttpRequest instance in ways that require it to be opened first."
+
+See: https://github.com/video-dev/hls.js/blob/master/docs/API.md#xhrsetup
+
 ### HLS Encoding for Blossom
 
 Blossom stores blobs by SHA256 hash (content-addressed). Our HLS tools create hash-based playlists:
