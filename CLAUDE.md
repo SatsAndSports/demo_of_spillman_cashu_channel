@@ -124,12 +124,16 @@ BLOSSOM_ADMIN_PASS=xxx ./tools/hls-publish.sh http://localhost:3000 /path/to/vid
 ```
 
 The encoder:
-- Creates 5 quality levels (1080p, 720p, 480p, 360p, 240p)
+- Detects source height and only encodes qualities at or below it
+- Supports non-standard resolutions (e.g., 500p source → 500p, 480p, 360p, 240p)
+- Caps at 1080p for H.264 level 4.1 browser compatibility
+- Converts 10-bit HDR sources to 8-bit SDR (yuv420p)
 - Rewrites playlists to reference segments by SHA256 hash (no extensions)
 - Creates `hashed/` directory with symlinks for easy Blossom upload
 - Generates `preview.jpg` - best frame thumbnail for video list (280px wide)
 - Generates `sprite.jpg` - sprite sheet for progress bar scrubbing (160x90 thumbs, 5s intervals)
 - Generates `sprite-meta.json` - sprite sheet metadata (dimensions, interval, frame count)
+- Outputs blob stats: count, total size, max blob size
 
 ### Server Configuration
 
@@ -139,9 +143,11 @@ Add to `config.yml`:
 channel:
   enabled: true
   secretKey: "your-64-char-hex-secret-key"  # Charlie's private key
-  approvedMints:
-    - http://localhost:3338
-  pricePerSegment: 1
+  approvedMintsAndUnits:
+    http://localhost:3338:
+      - sat
+  pricePerRequestPpk: 500   # Price per request in parts per thousand (0.5 sat)
+  pricePerMegabytePpk: 1000 # Price per megabyte in parts per thousand (1 sat)
 ```
 
 ### Video Database Schema
@@ -156,19 +162,25 @@ CREATE TABLE videos (
   description TEXT,        -- Optional description
   source TEXT,             -- Original source file path
   preview_hash TEXT,       -- SHA256 of preview.jpg thumbnail
-  sprite_meta_hash TEXT    -- SHA256 of sprite-meta.json
+  sprite_meta_hash TEXT,   -- SHA256 of sprite-meta.json
+  views INTEGER DEFAULT 0, -- View counter
+  width INTEGER,           -- Video width in pixels
+  height INTEGER,          -- Video height in pixels
+  blob_count INTEGER,      -- Number of blobs (segments + playlists + assets)
+  total_size INTEGER,      -- Total size of all blobs in bytes
+  max_blob_size INTEGER    -- Size of largest blob in bytes
 )
 ```
 
 ### API Endpoints
 
 **Public:**
-- `GET /channel/params` - Returns receiver pubkey, approved mints, price
-- `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash)
+- `GET /channel/params` - Returns receiver pubkey, pricing (ppk), approved mints/units/keysets
+- `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash, width, height, blob stats)
 - `GET /<sha256>` - Fetch blob (accepts X-Cashu-Channel header)
 
 **Admin (basic auth):**
-- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?}`
+- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?, width?, height?, blob_count?, total_size?, max_blob_size?}`
 - `DELETE /api/videos/:id` - Remove video by id
 
 ### Player URL Format
@@ -227,7 +239,13 @@ cargo run -p cdk --example spilman_channel
 - ✅ Server caches channel params and funding proofs
 - ✅ Video registration and listing via Blossom
 - ✅ HLS encoding tools with hash-based naming
+- ✅ Adaptive quality encoding (matches source resolution)
+- ✅ HDR to SDR conversion for browser compatibility
 - ✅ Direct video linking via URL hash (#master_hash)
+- ✅ Multi-server support with server selector dropdown
+- ✅ Channels stored in IndexedDB with alice_secret and server_url
+- ✅ View counting for videos
+- ✅ Resolution and blob stats displayed in video list
 
 **TODO - Payments:**
 - ❌ Payment enforcement (402 responses for insufficient balance)
