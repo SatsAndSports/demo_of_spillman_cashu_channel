@@ -134,6 +134,7 @@ The encoder:
 - Generates `sprite.jpg` - sprite sheet for progress bar scrubbing (160x90 thumbs, 5s intervals)
 - Generates `sprite-meta.json` - sprite sheet metadata (dimensions, interval, frame count)
 - Outputs blob stats: count, total size, max blob size
+- Outputs per-quality stats in `quality_stats.json` for cost estimation
 
 ### Server Configuration
 
@@ -146,8 +147,16 @@ channel:
   approvedMintsAndUnits:
     http://localhost:3338:
       - sat
-  pricePerRequestPpk: 500   # Price per request in parts per thousand (0.5 sat)
-  pricePerMegabytePpk: 1000 # Price per megabyte in parts per thousand (1 sat)
+      - usd
+  # Per-unit pricing (ppk = parts per thousand)
+  # cost = (requests * perRequestPpk + megabytes * perMegabytePpk) / 1000
+  pricing:
+    sat:
+      perRequestPpk: 500    # 0.5 sats per request
+      perMegabytePpk: 1000  # 1 sat per MB
+    usd:
+      perRequestPpk: 100    # 0.1 cents per request
+      perMegabytePpk: 200   # 0.2 cents per MB
 ```
 
 ### Video Database Schema
@@ -168,7 +177,8 @@ CREATE TABLE videos (
   height INTEGER,          -- Video height in pixels
   blob_count INTEGER,      -- Number of blobs (segments + playlists + assets)
   total_size INTEGER,      -- Total size of all blobs in bytes
-  max_blob_size INTEGER    -- Size of largest blob in bytes
+  max_blob_size INTEGER,   -- Size of largest blob in bytes
+  quality_stats TEXT       -- JSON with per-quality blob stats for cost estimation
 )
 ```
 
@@ -180,7 +190,7 @@ CREATE TABLE videos (
 - `GET /<sha256>` - Fetch blob (accepts X-Cashu-Channel header)
 
 **Admin (basic auth):**
-- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?, width?, height?, blob_count?, total_size?, max_blob_size?}`
+- `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?, width?, height?, blob_count?, total_size?, max_blob_size?, quality_stats?}`
 - `DELETE /api/videos/:id` - Remove video by id
 
 ### Player URL Format
@@ -242,7 +252,9 @@ cargo run -p cdk --example spilman_channel
 - ✅ Adaptive quality encoding (matches source resolution)
 - ✅ HDR to SDR conversion for browser compatibility
 - ✅ Direct video linking via URL hash (#master_hash)
-- ✅ Multi-server support with server selector dropdown
+- ✅ Multi-server/multi-unit support with (server, unit) dropdown
+- ✅ Per-unit pricing (sat, usd, eur, etc.)
+- ✅ Per-quality cost estimation displayed in video cards
 - ✅ Channels stored in IndexedDB with alice_secret and server_url
 - ✅ View counting for videos
 - ✅ Resolution and blob stats displayed in video list
