@@ -5,7 +5,9 @@ use std::str::FromStr;
 
 use wasm_bindgen::prelude::*;
 
-use cdk::nuts::{Id, Keys, Proof, PublicKey, SecretKey};
+use cdk::dhke::construct_proofs as dhke_construct_proofs;
+use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Keys, Proof, PublicKey, SecretKey};
+use cdk::secret::Secret;
 use cdk::spilman::{
     BalanceUpdateMessage, ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel,
     KeysetInfo, SpilmanChannelSender,
@@ -347,4 +349,116 @@ fn verify_balance_update_signature_inner(
         .map_err(|e| format!("Signature verification failed: {}", e))?;
 
     Ok(true)
+}
+
+/// Construct proofs from blind signatures
+///
+/// Takes the blind signatures from the mint and unblinds them using the
+/// secrets and blinding factors from `create_funding_outputs`.
+///
+/// Takes:
+/// - `blind_signatures_json`: JSON array of blind signatures from mint response
+///   Format: [{"amount": 1, "id": "00...", "C_": "02..."}, ...]
+/// - `secrets_with_blinding_json`: JSON array from `create_funding_outputs`
+///   Format: [{"secret": "...", "blinding_factor": "...", "amount": 1}, ...]
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+///
+/// Returns JSON array of proofs ready for use
+#[wasm_bindgen]
+pub fn construct_proofs(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    keyset_info_json: &str,
+) -> Result<String, JsValue> {
+    construct_proofs_inner(blind_signatures_json, secrets_with_blinding_json, keyset_info_json)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+fn construct_proofs_inner(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    keyset_info_json: &str,
+) -> Result<String, String> {
+    // Parse keyset info to get the keys
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+    let keys = keyset_info.active_keys.clone();
+
+    // Parse blind signatures from mint
+    let blind_sigs_raw: Vec<serde_json::Value> = serde_json::from_str(blind_signatures_json)
+        .map_err(|e| format!("Failed to parse blind signatures: {}", e))?;
+
+    let mut blind_signatures: Vec<BlindSignature> = Vec::new();
+    for sig in blind_sigs_raw {
+        let amount = sig["amount"]
+            .as_u64()
+            .ok_or("Missing 'amount' in blind signature")?;
+        let id_str = sig["id"]
+            .as_str()
+            .ok_or("Missing 'id' in blind signature")?;
+        let c_str = sig["C_"]
+            .as_str()
+            .ok_or("Missing 'C_' in blind signature")?;
+
+        let keyset_id: Id = id_str.parse()
+            .map_err(|e| format!("Invalid keyset id: {}", e))?;
+        let c = PublicKey::from_str(c_str)
+            .map_err(|e| format!("Invalid C_ pubkey: {}", e))?;
+
+        // Parse DLEQ - required for Spilman channels
+        let dleq_obj = sig["dleq"]
+            .as_object()
+            .ok_or("Missing 'dleq' in blind signature - DLEQ proofs are required")?;
+        let e_str = dleq_obj.get("e")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing 'e' in dleq")?;
+        let s_str = dleq_obj.get("s")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing 's' in dleq")?;
+        let e = SecretKey::from_hex(e_str)
+            .map_err(|e| format!("Invalid dleq.e: {}", e))?;
+        let s = SecretKey::from_hex(s_str)
+            .map_err(|e| format!("Invalid dleq.s: {}", e))?;
+        let dleq = BlindSignatureDleq { e, s };
+
+        blind_signatures.push(BlindSignature {
+            amount: Amount::from(amount),
+            keyset_id,
+            c,
+            dleq: Some(dleq),
+        });
+    }
+
+    // Parse secrets with blinding factors
+    let secrets_raw: Vec<serde_json::Value> = serde_json::from_str(secrets_with_blinding_json)
+        .map_err(|e| format!("Failed to parse secrets with blinding: {}", e))?;
+
+    let mut secrets: Vec<Secret> = Vec::new();
+    let mut rs: Vec<SecretKey> = Vec::new();
+
+    for swb in secrets_raw {
+        let secret_str = swb["secret"]
+            .as_str()
+            .ok_or("Missing 'secret' in secrets_with_blinding")?;
+        let blinding_factor_hex = swb["blinding_factor"]
+            .as_str()
+            .ok_or("Missing 'blinding_factor' in secrets_with_blinding")?;
+
+        let secret: Secret = secret_str.parse()
+            .map_err(|e| format!("Invalid secret: {}", e))?;
+        let r = SecretKey::from_hex(blinding_factor_hex)
+            .map_err(|e| format!("Invalid blinding factor: {}", e))?;
+
+        secrets.push(secret);
+        rs.push(r);
+    }
+
+    // Construct the proofs
+    let proofs = dhke_construct_proofs(blind_signatures, rs, secrets, &keys)
+        .map_err(|e| format!("Failed to construct proofs: {}", e))?;
+
+    // Serialize proofs to JSON
+    let proofs_json = serde_json::to_string(&proofs)
+        .map_err(|e| format!("Failed to serialize proofs: {}", e))?;
+
+    Ok(proofs_json)
 }
