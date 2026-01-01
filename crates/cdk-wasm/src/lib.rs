@@ -351,6 +351,46 @@ fn verify_balance_update_signature_inner(
     Ok(true)
 }
 
+/// Verify DLEQ proof on a Proof (offline signature verification)
+///
+/// This allows anyone to verify that the mint really signed this token,
+/// without needing to contact the mint. The proof must include the DLEQ
+/// data (e, s, r) from construct_proofs.
+///
+/// Takes:
+/// - `proof_json`: A single proof with DLEQ data
+///   Format: {"amount": 1, "id": "00...", "secret": "...", "C": "02...", "dleq": {"e": "...", "s": "...", "r": "..."}}
+/// - `mint_pubkey_hex`: The mint's public key for this amount (from keyset keys)
+///
+/// Returns `true` if the DLEQ is valid, throws error otherwise
+#[wasm_bindgen]
+pub fn verify_proof_dleq(
+    proof_json: &str,
+    mint_pubkey_hex: &str,
+) -> Result<bool, JsValue> {
+    verify_proof_dleq_inner(proof_json, mint_pubkey_hex)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+fn verify_proof_dleq_inner(
+    proof_json: &str,
+    mint_pubkey_hex: &str,
+) -> Result<bool, String> {
+    // Parse the proof
+    let proof: Proof = serde_json::from_str(proof_json)
+        .map_err(|e| format!("Failed to parse proof: {}", e))?;
+
+    // Parse the mint pubkey
+    let mint_pubkey = PublicKey::from_str(mint_pubkey_hex)
+        .map_err(|e| format!("Invalid mint pubkey: {}", e))?;
+
+    // Verify the DLEQ
+    proof.verify_dleq(mint_pubkey)
+        .map_err(|e| format!("DLEQ verification failed: {}", e))?;
+
+    Ok(true)
+}
+
 /// Construct proofs from blind signatures
 ///
 /// Takes the blind signatures from the mint and unblinds them using the
