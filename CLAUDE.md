@@ -303,3 +303,4 @@ cargo run -p cdk --example spilman_channel
 - The approved mint for testing is `http://localhost:3338`
 - Blossom server runs on port 3000 by default
 - Player available at `http://localhost:3000/`
+- our Makefile is at /home/aaron/MyCode/Cashu/CashuChannel/cdk/web/Makefile , i.e. in the 'web' subdirectory of our main 'cdk' folder
