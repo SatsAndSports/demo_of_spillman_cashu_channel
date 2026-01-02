@@ -10,7 +10,7 @@ use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Keys, Proof, PublicKey, 
 use cdk::secret::Secret;
 use cdk::spilman::{
     BalanceUpdateMessage, ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel,
-    KeysetInfo, SpilmanChannelSender,
+    KeysetInfo, SpilmanChannelSender, verify_valid_channel,
 };
 use cdk::Amount;
 use bitcoin::secp256k1::schnorr::Signature;
@@ -389,6 +389,63 @@ fn verify_proof_dleq_inner(
         .map_err(|e| format!("DLEQ verification failed: {}", e))?;
 
     Ok(true)
+}
+
+/// Verify that a channel is valid
+///
+/// This verifies everything about a channel that the receiver (Charlie)
+/// needs to check before accepting it:
+///
+/// 1. DLEQ proofs - the mint actually signed each funding proof
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON
+/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+///
+/// Returns JSON: {"valid": true, "errors": []} or {"valid": false, "errors": [...]}
+#[wasm_bindgen]
+pub fn verify_channel(
+    params_json: &str,
+    shared_secret_hex: &str,
+    funding_proofs_json: &str,
+    keyset_info_json: &str,
+) -> Result<String, JsValue> {
+    verify_channel_inner(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+fn verify_channel_inner(
+    params_json: &str,
+    shared_secret_hex: &str,
+    funding_proofs_json: &str,
+    keyset_info_json: &str,
+) -> Result<String, String> {
+    // Parse shared secret from hex
+    let shared_secret_bytes = hex::decode(shared_secret_hex)
+        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes")?;
+
+    // Parse keyset info
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Create ChannelParameters with shared secret
+    let params = ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Parse funding proofs
+    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
+        .map_err(|e| format!("Failed to parse funding proofs: {}", e))?;
+
+    // Verify the channel
+    let result = verify_valid_channel(&funding_proofs, &params);
+
+    // Serialize result to JSON
+    serde_json::to_string(&result)
+        .map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 /// Construct proofs from blind signatures

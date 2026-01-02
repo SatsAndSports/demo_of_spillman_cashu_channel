@@ -1,14 +1,154 @@
 //! Spilman Channel Sender and Receiver
 //!
 //! This module contains the sender's (Alice's) and receiver's (Charlie's) views
-//! of a Spilman payment channel.
+//! of a Spilman payment channel, plus standalone verification functions.
 
-use crate::nuts::{Proof, RestoreRequest, SecretKey, SwapRequest};
+use serde::Serialize;
+
+use crate::nuts::{Proof, PublicKey, RestoreRequest, SecretKey, SwapRequest};
 use crate::Amount;
 
 use super::established_channel::EstablishedChannel;
 use super::balance_update::BalanceUpdateMessage;
 use super::deterministic::{CommitmentOutputs, MintConnection};
+use super::params::ChannelParameters;
+
+// ============================================================================
+// Channel Verification
+// ============================================================================
+
+/// Errors that can occur during channel verification
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum ChannelVerificationError {
+    /// DLEQ proof is missing for a proof
+    MissingDleq { proof_index: usize, amount: u64 },
+    /// DLEQ proof is invalid (cryptographic verification failed)
+    InvalidDleq { proof_index: usize, amount: u64, reason: String },
+    /// No mint public key found for this amount in the keyset
+    MissingMintKey { proof_index: usize, amount: u64 },
+    /// Keyset ID doesn't match the keys (keys may have been tampered with)
+    InvalidKeysetId { expected: String, computed: String },
+}
+
+/// Result of verifying a channel
+#[derive(Debug, Serialize)]
+pub struct ChannelVerificationResult {
+    /// Whether all verifications passed
+    pub valid: bool,
+    /// List of errors found (empty if valid)
+    pub errors: Vec<ChannelVerificationError>,
+}
+
+impl ChannelVerificationResult {
+    /// Create a successful result
+    pub fn ok() -> Self {
+        Self {
+            valid: true,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Create a failed result with errors
+    pub fn failed(errors: Vec<ChannelVerificationError>) -> Self {
+        Self {
+            valid: false,
+            errors,
+        }
+    }
+
+    /// Check if verification passed
+    pub fn is_ok(&self) -> bool {
+        self.valid
+    }
+}
+
+/// Verify that a channel is valid
+///
+/// This function verifies everything about a channel that the receiver (Charlie)
+/// needs to check before accepting it:
+///
+/// 1. Keyset ID matches the keys (prevents key substitution attacks)
+/// 2. DLEQ proofs - the mint actually signed each funding proof (offline verification)
+///
+/// Future verifications to add:
+/// - Secret structure matches expected deterministic derivation
+/// - Spending conditions are correct (2-of-2 multisig with locktime)
+/// - Total value matches expected funding amount
+///
+/// Returns a result containing all verification errors found (if any)
+pub fn verify_valid_channel(
+    funding_proofs: &[Proof],
+    params: &ChannelParameters,
+) -> ChannelVerificationResult {
+    use crate::nuts::Id;
+
+    let mut errors = Vec::new();
+
+    // 1. Verify keyset ID matches the keys
+    // This prevents an attacker from providing fake keys while claiming a legitimate keyset ID
+    let expected_keyset_id = params.keyset_info.keyset_id;
+    let computed_keyset_id = Id::v1_from_keys(&params.keyset_info.active_keys);
+
+    if expected_keyset_id != computed_keyset_id {
+        errors.push(ChannelVerificationError::InvalidKeysetId {
+            expected: expected_keyset_id.to_string(),
+            computed: computed_keyset_id.to_string(),
+        });
+        // Don't continue with DLEQ verification if keys are invalid
+        return ChannelVerificationResult::failed(errors);
+    }
+
+    // 2. Verify DLEQ for each funding proof
+    for (i, proof) in funding_proofs.iter().enumerate() {
+        let amount = u64::from(proof.amount);
+
+        // Check that DLEQ is present
+        if proof.dleq.is_none() {
+            errors.push(ChannelVerificationError::MissingDleq {
+                proof_index: i,
+                amount,
+            });
+            continue;
+        }
+
+        // Get the mint's public key for this amount
+        let mint_pubkey: Option<PublicKey> = params
+            .keyset_info
+            .active_keys
+            .amount_key(proof.amount);
+
+        let mint_pubkey = match mint_pubkey {
+            Some(key) => key,
+            None => {
+                errors.push(ChannelVerificationError::MissingMintKey {
+                    proof_index: i,
+                    amount,
+                });
+                continue;
+            }
+        };
+
+        // Verify the DLEQ cryptographically
+        if let Err(e) = proof.verify_dleq(mint_pubkey) {
+            errors.push(ChannelVerificationError::InvalidDleq {
+                proof_index: i,
+                amount,
+                reason: e.to_string(),
+            });
+        }
+    }
+
+    if errors.is_empty() {
+        ChannelVerificationResult::ok()
+    } else {
+        ChannelVerificationResult::failed(errors)
+    }
+}
+
+// ============================================================================
+// Sender and Receiver
+// ============================================================================
 
 /// The sender's view of a Spilman payment channel
 ///
