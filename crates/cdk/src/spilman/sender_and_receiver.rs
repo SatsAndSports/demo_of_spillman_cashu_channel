@@ -95,8 +95,7 @@ pub fn verify_valid_channel(
             expected: expected_keyset_id.to_string(),
             computed: computed_keyset_id.to_string(),
         });
-        // Don't continue with DLEQ verification if keys are invalid
-        return ChannelVerificationResult::failed(errors);
+        // Continue to collect other errors
     }
 
     // 2. Verify DLEQ for each funding proof
