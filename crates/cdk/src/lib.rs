@@ -26,6 +26,8 @@ pub mod mint;
 #[cfg(feature = "wallet")]
 pub mod wallet;
 
+pub mod spilman;
+
 #[cfg(test)]
 mod test_helpers;
 
