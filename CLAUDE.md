@@ -19,9 +19,9 @@ cdk/
     ├── wasm-nodejs/                # Node.js WASM output (--target nodejs)
     └── blossom-server/             # Modified Blossom server + video player
         ├── src/
-        │   ├── api/channel.ts      # GET /channel/params endpoint
+        │   ├── api/channel.ts      # GET /channel/params + keyset caching
         │   ├── api/videos.ts       # GET /videos (public listing)
-        │   ├── api/fetch.ts        # Payment header logging + verification
+        │   ├── api/fetch.ts        # Payment validation + 402 responses
         │   ├── admin-api/videos.ts # POST/DELETE /api/videos (admin)
         │   ├── wasm/               # Node.js WASM (copied from wasm-nodejs/)
         │   └── ...
@@ -32,6 +32,11 @@ cdk/
         │   ├── hls-encode.sh       # Encode video to HLS with hash-based names
         │   ├── hls-upload.sh       # Upload HLS content to Blossom
         │   └── hls-publish.sh      # Combined encode + upload + register
+        ├── tests/
+        │   ├── blobs.test.ts       # Basic blob operations
+        │   ├── channel.test.ts     # Channel params endpoint
+        │   ├── minting.test.ts     # Channel funding + DLEQ verification
+        │   └── payment.test.ts     # Full payment flow tests
         └── config.example.yml      # Example config with channel settings
 ```
 
@@ -51,6 +56,8 @@ A Spilman channel is a unidirectional payment channel between:
 
 4. **Channel ID**: SHA256 hash of channel parameters (mint, pubkeys, locktime, nonce, etc.)
 
+5. **DLEQ Verification**: Server verifies funding proofs include valid DLEQ proofs from the mint
+
 ### Core Rust Files
 
 - `spilman/params.rs` - ChannelParameters struct with channel ID derivation
@@ -60,6 +67,18 @@ A Spilman channel is a unidirectional payment channel between:
 - `spilman/sender_and_receiver.rs` - SpilmanChannelSender, SpilmanChannelReceiver
 - `spilman/established_channel.rs` - EstablishedChannel state machine
 - `spilman/bindings.rs` - FFI-friendly functions for WASM/PyO3
+
+### WASM Functions (cdk-wasm)
+
+Key functions exported for browser and Node.js:
+
+- `compute_shared_secret(my_secret_hex, their_pubkey_hex)` - ECDH shared secret
+- `channel_parameters_get_channel_id(params_json, shared_secret_hex)` - Derive channel ID
+- `create_funding_outputs(params_json, alice_secret_hex, keyset_info_json)` - Create blinded messages for funding
+- `construct_proofs(signatures_json, secrets_with_blinding_json, keyset_info_json)` - Unblind mint signatures
+- `verify_channel(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)` - Verify DLEQ proofs
+- `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
+- `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
 
 ## CashuTube Video Streaming
 
@@ -85,11 +104,67 @@ A Spilman channel is a unidirectional payment channel between:
    - `channel_id` - identifies the channel
    - `balance` - current balance (increments each segment)
    - `signature` - Alice's Schnorr signature over the balance update
-   - `params` - full channel parameters (only on first request)
-   - `funding_proofs` - funding token proofs (only on first request)
-4. Server caches params and funding proofs by channel_id
-5. Server verifies channel_id matches computed value
-6. Server verifies Alice's signature using WASM
+   - `params` - full channel parameters (can be sent on any request, cached by server)
+   - `funding_proofs` - funding token proofs with DLEQ (can be sent on any request, cached by server)
+4. Server validates payment and returns 402 if invalid
+
+### Server-Side Payment Validation
+
+The server's `validatePayment()` function in `src/api/fetch.ts` performs these checks in order:
+
+1. **Header parsing**: Parse JSON from `X-Cashu-Channel` header
+2. **Required fields**: Check `channel_id` (string), `balance` (number, not NaN), `signature` (string)
+3. **If params + funding_proofs provided**:
+   - Verify server has a secret key configured
+   - Compute shared secret via ECDH
+   - Verify channel_id matches computed value from params
+   - Check keyset is from an approved mint (cached at startup)
+   - Run full channel verification (DLEQ proofs, keyset ID match) via WASM
+   - Cache funding data in `channelFunding` store
+4. **Look up cached funding** (from step 3 or previous request)
+5. **Verify signature** using cached params and shared secret via WASM
+6. **Check balance** covers usage:
+   - Look up existing usage (blobs served, bytes served)
+   - Compute amount due based on pricing (per-request + per-megabyte)
+   - Return 402 if balance < amount_due
+
+### Server-Side Data Stores (In-Memory)
+
+Three separate stores for channel state:
+
+1. **`channelFunding`** (immutable after insert):
+   - `paramsJson` - serialized channel parameters
+   - `fundingProofsJson` - serialized funding proofs
+   - `sharedSecret` - ECDH shared secret (hex)
+   - `secretKey` - server's secret key (for future channel closure)
+
+2. **`channelBalance`** (updated on each payment):
+   - `balance` - highest balance seen
+   - `signature` - signature for that balance (for channel closure)
+
+3. **`channelUsage`** (updated after successful validation):
+   - `blobsServed` - count of blobs served
+   - `bytesServed` - total bytes served
+
+### 402 Payment Required Response
+
+When payment validation fails, server returns:
+- Status: 402
+- Header: `X-Cashu-Channel: {"error": "...", "size": N, ...}`
+- Body: `{"error": "Payment required", "reason": "...", ...}`
+
+Error types:
+- `missing` - no X-Cashu-Channel header
+- `invalid JSON` - header not valid JSON
+- `invalid or missing channel_id/balance/signature` - required field issues
+- `server misconfigured` - no secret key configured
+- `channel_id mismatch` - computed ID doesn't match provided
+- `keyset not from approved mint` - keyset not cached at startup
+- `channel validation failed` - DLEQ verification failed (includes `validation_errors`)
+- `unknown channel` - no cached funding and no params/funding_proofs provided
+- `invalid signature` - Alice's signature doesn't verify
+- `insufficient balance` - balance < amount_due (includes `amount_due`)
+- `unsupported unit` - no pricing configured for channel's unit
 
 ### HLS.js xhrSetup Gotcha
 
@@ -149,7 +224,8 @@ channel:
       - sat
       - usd
   # Per-unit pricing (ppk = parts per thousand)
-  # cost = (requests * perRequestPpk + megabytes * perMegabytePpk) / 1000
+  # cost = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000)
+  # Note: megabytes = bytes / 1,000,000 (not mebibytes)
   pricing:
     sat:
       perRequestPpk: 500    # 0.5 sats per request
@@ -187,7 +263,8 @@ CREATE TABLE videos (
 **Public:**
 - `GET /channel/params` - Returns receiver pubkey, pricing (ppk), approved mints/units/keysets
 - `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash, width, height, blob stats)
-- `GET /<sha256>` - Fetch blob (accepts X-Cashu-Channel header)
+- `GET /<sha256>` - Fetch blob (requires X-Cashu-Channel header if channel.enabled)
+- `HEAD /<sha256>` - Check blob exists (no payment required)
 
 **Admin (basic auth):**
 - `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?, width?, height?, blob_count?, total_size?, max_blob_size?, quality_stats?}`
@@ -228,15 +305,21 @@ npx pnpm start
 ## Running Tests
 
 ```bash
-# All CDK tests
+# CDK Rust tests
 cargo test -p cdk
+cargo test -p cdk spilman  # Spilman-specific
 
-# Spilman-specific tests
-cargo test -p cdk spilman
-
-# Run the example
-cargo run -p cdk --example spilman_channel
+# Blossom server tests (requires mint at localhost:3338)
+cd web/blossom-server
+npm test                    # All tests
+npm test -- tests/payment.test.ts  # Specific file
 ```
+
+The test suite includes:
+- **blobs.test.ts**: Upload, fetch (402), HEAD, 404 cases
+- **channel.test.ts**: `/channel/params` endpoint
+- **minting.test.ts**: Funding token creation, DLEQ verification, keyset tampering detection
+- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection
 
 ## Current Status
 
@@ -246,7 +329,11 @@ cargo run -p cdk --example spilman_channel
 - ✅ Channel ID computed and verified (WASM on both client and server)
 - ✅ Real Schnorr signatures from Alice
 - ✅ Signature verification on server (via WASM)
+- ✅ DLEQ proof verification (detects tampered funding proofs)
+- ✅ Keyset validation (only approved mints accepted)
 - ✅ Server caches channel params and funding proofs
+- ✅ 402 responses with detailed error info
+- ✅ Balance checking against usage (requests + megabytes)
 - ✅ Video registration and listing via Blossom
 - ✅ HLS encoding tools with hash-based naming
 - ✅ Adaptive quality encoding (matches source resolution)
@@ -258,11 +345,12 @@ cargo run -p cdk --example spilman_channel
 - ✅ Channels stored in IndexedDB with alice_secret and server_url
 - ✅ View counting for videos
 - ✅ Resolution and blob stats displayed in video list
+- ✅ Comprehensive test suite for payment flow
 
 **TODO - Payments:**
-- ❌ Payment enforcement (402 responses for insufficient balance)
-- ❌ Channel closure and settlement
+- ❌ Channel closure and settlement (server has secretKey stored for this)
 - ❌ Server-side balance persistence (currently in-memory only)
+- ❌ Client-side balance tracking and top-up prompts
 
 **TODO - Player Improvements:**
 
@@ -303,4 +391,5 @@ cargo run -p cdk --example spilman_channel
 - The approved mint for testing is `http://localhost:3338`
 - Blossom server runs on port 3000 by default
 - Player available at `http://localhost:3000/`
-- our Makefile is at /home/aaron/MyCode/Cashu/CashuChannel/cdk/web/Makefile , i.e. in the 'web' subdirectory of our main 'cdk' folder
+- Makefile is at `web/Makefile` (in the 'web' subdirectory of main 'cdk' folder)
+- Tests run on port 3099 with a separate test config
