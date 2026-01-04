@@ -559,3 +559,158 @@ fn construct_proofs_inner(
 
     Ok(proofs_json)
 }
+
+/// Create a fully-signed swap request for channel closing (Charlie's side)
+///
+/// Charlie (the receiver/server) uses this to:
+/// 1. Verify Alice's signature on the balance update
+/// 2. Add his own signature to complete the 2-of-2 multisig
+/// 3. Get the swap request ready to submit to the mint
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON
+/// - `keyset_info_json`: KeysetInfo JSON (with full keys for output computation)
+/// - `charlie_secret_hex`: Charlie's secret key (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `channel_id`: The channel ID
+/// - `balance`: Charlie's balance (the amount_due)
+/// - `alice_signature`: Alice's Schnorr signature (hex) from the close request
+///
+/// Returns JSON with:
+/// - `swap_request`: The fully-signed swap request ready for mint
+/// - `expected_total`: Expected total output amount (value after stage 1 fees)
+#[wasm_bindgen]
+pub fn create_close_swap_request(
+    params_json: &str,
+    keyset_info_json: &str,
+    charlie_secret_hex: &str,
+    funding_proofs_json: &str,
+    channel_id: &str,
+    balance: u64,
+    alice_signature: &str,
+) -> Result<String, JsValue> {
+    create_close_swap_request_inner(
+        params_json,
+        keyset_info_json,
+        charlie_secret_hex,
+        funding_proofs_json,
+        channel_id,
+        balance,
+        alice_signature,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+fn create_close_swap_request_inner(
+    params_json: &str,
+    keyset_info_json: &str,
+    charlie_secret_hex: &str,
+    funding_proofs_json: &str,
+    channel_id: &str,
+    balance: u64,
+    alice_signature: &str,
+) -> Result<String, String> {
+    use cdk::spilman::{CommitmentOutputs, SpilmanChannelReceiver};
+
+    // Parse keyset info (need full keys for output computation)
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse Charlie's secret key
+    let charlie_secret = SecretKey::from_hex(charlie_secret_hex)
+        .map_err(|e| format!("Invalid Charlie secret key: {}", e))?;
+
+    // Compute shared secret from Charlie's perspective
+    // We need Alice's pubkey from the params to do this
+    let json: serde_json::Value =
+        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
+    let alice_pubkey_hex = json["alice_pubkey"]
+        .as_str()
+        .ok_or_else(|| "Missing 'alice_pubkey' field in params".to_string())?;
+
+    let shared_secret_hex =
+        cdk::spilman::compute_shared_secret_from_hex(charlie_secret_hex, alice_pubkey_hex)?;
+    let shared_secret_bytes =
+        hex::decode(&shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes")?;
+
+    // Create ChannelParameters with shared secret
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Parse funding proofs
+    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
+        .map_err(|e| format!("Failed to parse funding proofs: {}", e))?;
+
+    // Create EstablishedChannel
+    let channel = EstablishedChannel::new(params.clone(), funding_proofs.clone())
+        .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
+
+    // Create SpilmanChannelReceiver (Charlie's view)
+    let receiver = SpilmanChannelReceiver::new(charlie_secret, channel);
+
+    // Create CommitmentOutputs for this balance
+    let commitment_outputs = CommitmentOutputs::for_balance(balance, &params)
+        .map_err(|e| format!("Failed to create commitment outputs: {}", e))?;
+
+    // Create unsigned swap request
+    let mut swap_request = commitment_outputs
+        .create_swap_request(funding_proofs)
+        .map_err(|e| format!("Failed to create swap request: {}", e))?;
+
+    // Parse Alice's signature
+    let alice_sig = Signature::from_str(alice_signature)
+        .map_err(|e| format!("Invalid Alice signature: {}", e))?;
+
+    // Create BalanceUpdateMessage from the close request
+    let balance_update = BalanceUpdateMessage {
+        channel_id: channel_id.to_string(),
+        amount: balance,
+        signature: alice_sig.clone(),
+    };
+
+    // Add Alice's signature to the swap request witness
+    // (This is what Alice would have done before sending the balance update)
+    {
+        use cdk::nuts::{nut00::Witness, nut11::P2PKWitness};
+        let first_input = swap_request
+            .inputs_mut()
+            .first_mut()
+            .ok_or_else(|| "Swap request has no inputs".to_string())?;
+
+        match first_input.witness.as_mut() {
+            Some(witness) => {
+                witness.add_signatures(vec![alice_sig.to_string()]);
+            }
+            None => {
+                let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
+                p2pk_witness.add_signatures(vec![alice_sig.to_string()]);
+                first_input.witness = Some(p2pk_witness);
+            }
+        }
+    }
+
+    // Verify Alice's signature and add Charlie's signature
+    let signed_swap_request = receiver
+        .add_second_signature(&balance_update, swap_request)
+        .map_err(|e| format!("Failed to add second signature: {}", e))?;
+
+    // Get expected total (value after stage 1 fees)
+    let expected_total = params
+        .get_value_after_stage1()
+        .map_err(|e| format!("Failed to get value after stage 1: {}", e))?;
+
+    // Serialize the swap request
+    let swap_request_json = serde_json::to_value(&signed_swap_request)
+        .map_err(|e| format!("Failed to serialize swap request: {}", e))?;
+
+    // Build result
+    let result = serde_json::json!({
+        "swap_request": swap_request_json,
+        "expected_total": expected_total
+    });
+
+    Ok(result.to_string())
+}
