@@ -1,5 +1,13 @@
 # Cashu Development Kit (CDK) with Spilman Channels
 
+## Baseline Commits (for diffing)
+
+To see all Spilman channel changes, compare against these pre-channel commits:
+- **CDK repo:** `bcc68a79`
+- **Blossom-server repo:** `8cc518e`
+
+Example: `git diff bcc68a79 --stat` in cdk repo, `git diff 8cc518e --stat` in blossom-server.
+
 ## Project Overview
 
 This is a fork/extension of CDK that adds Spilman-style unidirectional payment channels for Cashu ecash. The primary demo application is **CashuTube** - a pay-per-segment video streaming service built on Blossom (decentralized blob storage).
@@ -79,6 +87,7 @@ Key functions exported for browser and Node.js:
 - `verify_channel(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)` - Verify DLEQ proofs
 - `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
 - `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
+- `create_close_swap_request(params_json, keyset_info_json, charlie_secret_hex, funding_proofs_json, channel_id, balance, alice_signature)` - Server-side: create fully-signed swap request for channel closing
 
 ## CashuTube Video Streaming
 
@@ -262,6 +271,11 @@ CREATE TABLE videos (
 
 **Public:**
 - `GET /channel/params` - Returns receiver pubkey, pricing (ppk), approved mints/units/keysets
+- `GET /channel/:channel_id/status` - Returns channel status (capacity, balance, usage, amount_due)
+- `POST /channel/:channel_id/close` - Close channel and settle with mint
+  - Body: `{ balance, signature, params?, funding_proofs? }`
+  - Requires `balance === amount_due` (exact match)
+  - Returns: `{ success, channel_id, total_value }`
 - `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash, width, height, blob stats)
 - `GET /<sha256>` - Fetch blob (requires X-Cashu-Channel header if channel.enabled)
 - `HEAD /<sha256>` - Check blob exists (no payment required)
@@ -319,7 +333,7 @@ The test suite includes:
 - **blobs.test.ts**: Upload, fetch (402), HEAD, 404 cases
 - **channel.test.ts**: `/channel/params` endpoint
 - **minting.test.ts**: Funding token creation, DLEQ verification, keyset tampering detection
-- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection
+- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, channel closing
 
 ## Current Status
 
@@ -346,11 +360,13 @@ The test suite includes:
 - ✅ View counting for videos
 - ✅ Resolution and blob stats displayed in video list
 - ✅ Comprehensive test suite for payment flow
+- ✅ Channel closure and settlement (server closes, submits swap to mint)
 
 **TODO - Payments:**
-- ❌ Channel closure and settlement (server has secretKey stored for this)
+- ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
 - ❌ Client-side balance tracking and top-up prompts
+- ❌ Client-side close UI (button to close channel)
 
 **TODO - Player Improvements:**
 
