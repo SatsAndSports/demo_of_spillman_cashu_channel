@@ -557,4 +557,182 @@ mod tests {
         let forward: Vec<(u64, usize)> = count_map.iter().map(|(&k, &v)| (k, v)).collect();
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1)]);
     }
+
+    /// Create test params with a specific locktime (for funding token tests)
+    fn create_test_params_with_locktime(input_fee_ppk: u64, power: u64, locktime: u64) -> ChannelParameters {
+        use std::collections::BTreeMap;
+
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        let mint_secret = SecretKey::generate();
+        let mint_pubkey = mint_secret.public_key();
+
+        let mut keys_map = BTreeMap::new();
+        for i in 0..10 {
+            let amount = Amount::from(power.pow(i as u32));
+            keys_map.insert(amount, mint_pubkey);
+        }
+        let keys = Keys::new(keys_map);
+
+        let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
+        let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
+
+        ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "local".to_string(),
+            CurrencyUnit::Sat,
+            1000,     // capacity
+            locktime, // locktime (configurable)
+            0,        // setup_timestamp
+            "test".to_string(),
+            keyset_info,
+            100_000, // maximum_amount_for_one_output
+            &alice_secret,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_funding_token_uses_correct_blinded_pubkeys() {
+        // Test that funding token P2PK secret contains the correct blinded pubkeys:
+        // - "data" field: Alice's blinded pubkey (sender_stage1)
+        // - "pubkeys" tag: Charlie's blinded pubkey (receiver_stage1) for 2-of-2
+        // - refund "pubkeys" tag: Alice's REFUND blinded pubkey (sender_stage1_refund)
+
+        // Use a future locktime to pass Conditions::new() validation
+        let future_locktime = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600; // 1 hour in the future
+
+        let params = create_test_params_with_locktime(0, 2, future_locktime);
+
+        // Get the expected blinded pubkeys
+        let expected_alice_blinded = params
+            .get_sender_blinded_pubkey_for_stage1()
+            .expect("Failed to get sender blinded pubkey");
+        let expected_charlie_blinded = params
+            .get_receiver_blinded_pubkey_for_stage1()
+            .expect("Failed to get receiver blinded pubkey");
+        let expected_alice_refund = params
+            .get_sender_blinded_pubkey_for_stage1_refund()
+            .expect("Failed to get refund blinded pubkey");
+
+        println!("Expected Alice blinded (data):   {}", expected_alice_blinded.to_hex());
+        println!("Expected Charlie blinded (2of2): {}", expected_charlie_blinded.to_hex());
+        println!("Expected Alice refund:           {}", expected_alice_refund.to_hex());
+
+        // Verify all three are distinct
+        assert_ne!(
+            expected_alice_blinded.to_hex(),
+            expected_charlie_blinded.to_hex(),
+            "Alice and Charlie blinded pubkeys should differ"
+        );
+        assert_ne!(
+            expected_alice_blinded.to_hex(),
+            expected_alice_refund.to_hex(),
+            "Alice blinded and refund pubkeys should differ"
+        );
+        assert_ne!(
+            expected_charlie_blinded.to_hex(),
+            expected_alice_refund.to_hex(),
+            "Charlie blinded and Alice refund pubkeys should differ"
+        );
+
+        // Create a funding output
+        let funding_output = params
+            .create_deterministic_output_with_blinding("funding", 64, 0)
+            .expect("Failed to create funding output");
+
+        // Parse the secret as JSON to inspect the P2PK structure
+        let secret_str = funding_output.secret.to_string();
+        println!("Funding secret: {}", secret_str);
+
+        let secret_json: serde_json::Value =
+            serde_json::from_str(&secret_str).expect("Failed to parse secret as JSON");
+
+        // Structure is: ["P2PK", {"nonce": "...", "data": "pubkey_hex", "tags": [...]}]
+        let inner = secret_json
+            .as_array()
+            .expect("Secret should be an array")
+            .get(1)
+            .expect("Secret should have inner object");
+
+        // Check "data" field contains Alice's blinded pubkey
+        let data_pubkey = inner["data"]
+            .as_str()
+            .expect("data field should be a string");
+        assert_eq!(
+            data_pubkey,
+            expected_alice_blinded.to_hex(),
+            "data field should contain Alice's blinded pubkey"
+        );
+        println!("✓ data field contains Alice's blinded pubkey");
+
+        // Parse tags to find pubkeys and refund keys
+        let tags = inner["tags"]
+            .as_array()
+            .expect("tags should be an array");
+
+        // Find the "pubkeys" tag (Charlie's key for 2-of-2)
+        let pubkeys_tag = tags
+            .iter()
+            .find(|tag| {
+                tag.as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    == Some("pubkeys")
+            })
+            .expect("Should have pubkeys tag");
+
+        let charlie_pubkey_in_tag = pubkeys_tag
+            .as_array()
+            .and_then(|arr| arr.get(1))
+            .and_then(|v| v.as_str())
+            .expect("pubkeys tag should have a pubkey value");
+
+        assert_eq!(
+            charlie_pubkey_in_tag,
+            expected_charlie_blinded.to_hex(),
+            "pubkeys tag should contain Charlie's blinded pubkey"
+        );
+        println!("✓ pubkeys tag contains Charlie's blinded pubkey");
+
+        // Find the "refund" tag (Alice's refund key)
+        let refund_tag = tags
+            .iter()
+            .find(|tag| {
+                tag.as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    == Some("refund")
+            })
+            .expect("Should have refund tag");
+
+        let alice_refund_in_tag = refund_tag
+            .as_array()
+            .and_then(|arr| arr.get(1))
+            .and_then(|v| v.as_str())
+            .expect("refund tag should have a pubkey value");
+
+        assert_eq!(
+            alice_refund_in_tag,
+            expected_alice_refund.to_hex(),
+            "refund tag should contain Alice's REFUND blinded pubkey (different tweak)"
+        );
+        println!("✓ refund tag contains Alice's refund blinded pubkey");
+
+        // Verify it's NOT the same as the data field (different tweak)
+        assert_ne!(
+            data_pubkey, alice_refund_in_tag,
+            "data and refund pubkeys should use different tweaks"
+        );
+        println!("✓ data and refund pubkeys are distinct (different tweaks)");
+    }
 }
