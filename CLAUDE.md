@@ -84,10 +84,11 @@ Key functions exported for browser and Node.js:
 - `channel_parameters_get_channel_id(params_json, shared_secret_hex)` - Derive channel ID
 - `create_funding_outputs(params_json, alice_secret_hex, keyset_info_json)` - Create blinded messages for funding
 - `construct_proofs(signatures_json, secrets_with_blinding_json, keyset_info_json)` - Unblind mint signatures
-- `verify_channel(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)` - Verify DLEQ proofs
+- `verify_channel(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)` - Verify DLEQ proofs on funding proofs
 - `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
 - `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
-- `create_close_swap_request(params_json, keyset_info_json, charlie_secret_hex, funding_proofs_json, channel_id, balance, alice_signature)` - Server-side: create fully-signed swap request for channel closing
+- `create_close_swap_request(...)` - Server-side: create fully-signed swap request for channel closing. Returns `{swap_request, expected_total, secrets_with_blinding}`
+- `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's pubkey. Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
 
 ## CashuTube Video Streaming
 
@@ -139,13 +140,14 @@ The server's `validatePayment()` function in `src/api/fetch.ts` performs these c
 
 ### Server-Side Data Stores (In-Memory)
 
-Three separate stores for channel state:
+Four separate stores for channel state:
 
 1. **`channelFunding`** (immutable after insert):
    - `paramsJson` - serialized channel parameters
    - `fundingProofsJson` - serialized funding proofs
    - `sharedSecret` - ECDH shared secret (hex)
-   - `secretKey` - server's secret key (for future channel closure)
+   - `secretKey` - server's secret key (for channel closure)
+   - `keysetInfoJson` - serialized keyset info (for unblinding)
 
 2. **`channelBalance`** (updated on each payment):
    - `balance` - highest balance seen
@@ -154,6 +156,11 @@ Three separate stores for channel state:
 3. **`channelUsage`** (updated after successful validation):
    - `blobsServed` - count of blobs served
    - `bytesServed` - total bytes served
+
+4. **`channelClosed`** (set when channel is closed):
+   - `locktime` - channel locktime (for future: allow reuse after expiry)
+   - `closedAmount` - the balance at which channel was closed
+   - `valueAfterStage1` - total value of stage 1 proofs
 
 ### 402 Payment Required Response
 
@@ -174,6 +181,62 @@ Error types:
 - `invalid signature` - Alice's signature doesn't verify
 - `insufficient balance` - balance < amount_due (includes `amount_due`)
 - `unsupported unit` - no pricing configured for channel's unit
+- `channel closed` - channel has already been closed, use a different channel
+
+### Channel Closing Flow
+
+When a client wants to close a channel, the server performs a "stage 1" swap with the mint:
+
+```
+Client                          Server                          Mint
+   |                               |                               |
+   |  POST /channel/:id/close      |                               |
+   |  {balance, signature,         |                               |
+   |   params?, funding_proofs?}   |                               |
+   |------------------------------>|                               |
+   |                               |                               |
+   |                    1. Validate signature                      |
+   |                    2. Verify balance === amount_due           |
+   |                    3. Create swap request (WASM)              |
+   |                       - 2-of-2 signed (Alice + Charlie)       |
+   |                       - Outputs: P2PK to Charlie + Alice      |
+   |                               |                               |
+   |                               |  POST /v1/swap                |
+   |                               |  {inputs: funding_proofs,     |
+   |                               |   outputs: commitment_outputs}|
+   |                               |------------------------------>|
+   |                               |                               |
+   |                               |  {signatures: blind_sigs}     |
+   |                               |<------------------------------|
+   |                               |                               |
+   |                    4. Unblind signatures (WASM)               |
+   |                    5. Verify DLEQ on all proofs               |
+   |                    6. Verify receiver proofs P2PK             |
+   |                       locked to Charlie's pubkey              |
+   |                    7. Mark channel as closed                  |
+   |                               |                               |
+   |  {success, total_value}       |                               |
+   |<------------------------------|                               |
+```
+
+**Stage 1 outputs:**
+- **Receiver proofs (Charlie)**: P2PK locked to Charlie's pubkey - he can spend them
+- **Sender proofs (Alice)**: P2PK locked to Alice's pubkey - her "change"
+
+**Verifications performed:**
+1. Alice's balance update signature is valid
+2. Balance equals amount_due (exact match required)
+3. DLEQ proofs valid on all unblinded proofs (mint actually signed them)
+4. Receiver proofs are P2PK secrets with `data` = Charlie's pubkey
+5. Receiver nominal sum matches `inverse_deterministic_value_after_fees(balance)`
+
+**Idempotent closing:**
+- If channel already closed with same amount → returns success with `already_closed: true`
+- If channel already closed with different amount → returns 400 error
+- Closed channels reject all further payments with "channel closed" error
+
+**Future work (Stage 2):**
+Charlie's proofs are P2PK-locked to his key. A stage 2 swap would convert them to anyone-can-spend proofs. Currently not implemented - Charlie can spend the P2PK proofs directly by signing.
 
 ### HLS.js xhrSetup Gotcha
 
@@ -271,11 +334,13 @@ CREATE TABLE videos (
 
 **Public:**
 - `GET /channel/params` - Returns receiver pubkey, pricing (ppk), approved mints/units/keysets
-- `GET /channel/:channel_id/status` - Returns channel status (capacity, balance, usage, amount_due)
+- `GET /channel/:channel_id/status` - Returns channel status (capacity, balance, usage, amount_due, closed, closed_amount)
 - `POST /channel/:channel_id/close` - Close channel and settle with mint
   - Body: `{ balance, signature, params?, funding_proofs? }`
   - Requires `balance === amount_due` (exact match)
-  - Returns: `{ success, channel_id, total_value }`
+  - Idempotent: same amount returns success with `already_closed: true`
+  - Different amount on closed channel returns 400 error
+  - Returns: `{ success, channel_id, total_value, already_closed }`
 - `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash, width, height, blob stats)
 - `GET /<sha256>` - Fetch blob (requires X-Cashu-Channel header if channel.enabled)
 - `HEAD /<sha256>` - Check blob exists (no payment required)
@@ -333,7 +398,7 @@ The test suite includes:
 - **blobs.test.ts**: Upload, fetch (402), HEAD, 404 cases
 - **channel.test.ts**: `/channel/params` endpoint
 - **minting.test.ts**: Funding token creation, DLEQ verification, keyset tampering detection
-- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, channel closing
+- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, channel closing, idempotent close, closed channel rejection
 
 ## Current Status
 
@@ -361,6 +426,10 @@ The test suite includes:
 - ✅ Resolution and blob stats displayed in video list
 - ✅ Comprehensive test suite for payment flow
 - ✅ Channel closure and settlement (server closes, submits swap to mint)
+- ✅ Stage 1 unblinding with DLEQ verification
+- ✅ Receiver proof P2PK pubkey verification (ensures proofs are locked to Charlie)
+- ✅ Idempotent channel closing (same amount succeeds, different amount rejected)
+- ✅ Closed channels reject further payments
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
