@@ -72,24 +72,30 @@ impl DeterministicSecretWithBlinding {
 
     /// Create a funding output with 2-of-2 multisig + locktime conditions
     /// Used for the funding token that both parties must sign to spend,
-    /// or Alice alone can reclaim after locktime
+    /// or Alice alone can reclaim after locktime.
+    ///
+    /// Uses BLINDED pubkeys for privacy - the mint cannot correlate
+    /// the funding token to Alice and Charlie's real identities.
     pub fn new_funding(
-        alice_pubkey: &crate::nuts::PublicKey,
-        charlie_pubkey: &crate::nuts::PublicKey,
-        locktime: u64,
+        params: &ChannelParameters,
         nonce: String,
         blinding_factor: SecretKey,
         amount: u64,
     ) -> Result<Self, anyhow::Error> {
+        // Get blinded pubkeys for privacy
+        let blinded_alice_pubkey = params.get_sender_blinded_pubkey_for_stage1()?;
+        let blinded_charlie_pubkey = params.get_receiver_blinded_pubkey_for_stage1()?;
+
         // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before locktime
         // After locktime, Alice can refund with just her signature
+        // All pubkeys are BLINDED for privacy
         let conditions = Conditions::new(
-            Some(locktime),                       // Locktime for Alice's refund
-            Some(vec![*charlie_pubkey]),          // Charlie's key as additional pubkey for 2-of-2
-            Some(vec![*alice_pubkey]),            // Alice can refund after locktime
-            Some(2),                              // Require 2 signatures (Alice + Charlie) before locktime
-            Some(SigFlag::SigAll),                // SigAll: signatures commit to outputs
-            Some(1),                              // Only 1 signature needed for refund (Alice)
+            Some(params.locktime),                      // Locktime for Alice's refund
+            Some(vec![blinded_charlie_pubkey]),         // Charlie's blinded key for 2-of-2
+            Some(vec![blinded_alice_pubkey]),           // Alice's blinded key for refund after locktime
+            Some(2),                                    // Require 2 signatures before locktime
+            Some(SigFlag::SigAll),                      // SigAll: signatures commit to outputs
+            Some(1),                                    // Only 1 signature needed for refund (Alice)
         )?;
 
         // Convert conditions to proper NUT-10/11 tag array format
@@ -99,11 +105,12 @@ impl DeterministicSecretWithBlinding {
 
         // Manually construct the NUT-10 P2PK secret JSON with spending conditions
         // Format: ["P2PK", {"nonce": "...", "data": "pubkey_hex", "tags": [...conditions...]}]
+        // The "data" field contains Alice's BLINDED pubkey
         let secret_json = serde_json::json!([
             "P2PK",
             {
                 "nonce": nonce,
-                "data": alice_pubkey.to_hex(),
+                "data": blinded_alice_pubkey.to_hex(),
                 "tags": tags_json
             }
         ]);
