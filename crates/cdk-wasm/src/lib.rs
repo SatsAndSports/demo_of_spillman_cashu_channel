@@ -5,15 +5,15 @@ use std::str::FromStr;
 
 use wasm_bindgen::prelude::*;
 
+use bitcoin::secp256k1::schnorr::Signature;
 use cdk::dhke::construct_proofs as dhke_construct_proofs;
 use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Keys, Proof, PublicKey, SecretKey};
 use cdk::secret::Secret;
 use cdk::spilman::{
-    BalanceUpdateMessage, ChannelParameters, DeterministicOutputsForOneContext, EstablishedChannel,
-    KeysetInfo, SpilmanChannelSender, verify_valid_channel,
+    verify_valid_channel, BalanceUpdateMessage, ChannelParameters,
+    DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, SpilmanChannelSender,
 };
 use cdk::Amount;
-use bitcoin::secp256k1::schnorr::Signature;
 
 /// Initialize panic hook for better error messages in browser console
 #[wasm_bindgen(start)]
@@ -25,7 +25,10 @@ pub fn init() {
 ///
 /// Returns the x-coordinate of the shared point as a hex string (32 bytes).
 #[wasm_bindgen]
-pub fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Result<String, JsValue> {
+pub fn compute_shared_secret(
+    my_secret_hex: &str,
+    their_pubkey_hex: &str,
+) -> Result<String, JsValue> {
     cdk::spilman::compute_shared_secret_from_hex(my_secret_hex, their_pubkey_hex)
         .map_err(|e| JsValue::from_str(&e))
 }
@@ -35,7 +38,10 @@ pub fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Res
 /// This is effectively a method on ChannelParameters for FFI.
 /// Takes the params JSON and the pre-computed shared secret (hex).
 #[wasm_bindgen]
-pub fn channel_parameters_get_channel_id(params_json: &str, shared_secret_hex: &str) -> Result<String, JsValue> {
+pub fn channel_parameters_get_channel_id(
+    params_json: &str,
+    shared_secret_hex: &str,
+) -> Result<String, JsValue> {
     cdk::spilman::channel_parameters_get_channel_id(params_json, shared_secret_hex)
         .map_err(|e| JsValue::from_str(&e))
 }
@@ -120,8 +126,8 @@ fn create_funding_outputs_inner(
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
     // Parse the secret key
-    let my_secret = SecretKey::from_hex(my_secret_hex)
-        .map_err(|e| format!("Invalid secret key: {}", e))?;
+    let my_secret =
+        SecretKey::from_hex(my_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
 
     // Create ChannelParameters from JSON
     let params = ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &my_secret)
@@ -133,9 +139,12 @@ fn create_funding_outputs_inner(
         .map_err(|e| format!("Failed to compute funding token amount: {}", e))?;
 
     // Create deterministic outputs for "funding" context
-    let funding_outputs =
-        DeterministicOutputsForOneContext::new("funding".to_string(), funding_token_nominal, params)
-            .map_err(|e| format!("Failed to create funding outputs: {}", e))?;
+    let funding_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        funding_token_nominal,
+        params,
+    )
+    .map_err(|e| format!("Failed to create funding outputs: {}", e))?;
 
     // Get blinded messages
     let blinded_messages = funding_outputs
@@ -181,21 +190,238 @@ fn create_funding_outputs_inner(
     Ok(result.to_string())
 }
 
-/// Create a signed balance update message
+/// Unblind blind signatures and verify DLEQ proofs
 ///
-/// This is equivalent to calling `SpilmanChannelSender::create_signed_balance_update()` in Rust.
+/// Takes blind signatures from a mint swap response, unblinds them using the
+/// secrets and blinding factors from create_close_swap_request, verifies DLEQ
+/// proofs, and returns the separated receiver/sender proofs.
 ///
-/// Takes:
-/// - `params_json`: Channel parameters JSON
-/// - `keyset_info_json`: KeysetInfo JSON
-/// - `alice_secret_hex`: Alice's secret key (hex)
-/// - `funding_proofs_json`: JSON array of funding proofs
-/// - `charlie_balance`: The new balance for Charlie
+/// # Arguments
+/// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
+/// * `secrets_with_blinding_json` - JSON array from create_close_swap_request's secrets_with_blinding
+/// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
+/// * `balance` - The receiver's (Charlie's) intended balance (for verification)
 ///
-/// Returns JSON with:
+/// # Returns
+/// JSON object with:
+/// - `receiver_proofs`: Array of Charlie's P2PK proofs (DLEQ verified)
+/// - `sender_proofs`: Array of Alice's P2PK proofs (DLEQ verified)
+/// - `receiver_sum_after_stage1`: Sum of receiver proof amounts
+/// - `sender_sum_after_stage1`: Sum of sender proof amounts
+#[wasm_bindgen]
+pub fn unblind_and_verify_dleq(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    params_json: &str,
+    keyset_info_json: &str,
+    balance: u64,
+) -> Result<String, JsValue> {
+    unblind_and_verify_dleq_inner(
+        blind_signatures_json,
+        secrets_with_blinding_json,
+        params_json,
+        keyset_info_json,
+        balance,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+fn unblind_and_verify_dleq_inner(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    params_json: &str,
+    keyset_info_json: &str,
+    balance: u64,
+) -> Result<String, String> {
+    use cdk::nuts::BlindSignature;
+
+    // Parse keyset info
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse params to get maximum_amount and charlie_pubkey
+    let params_value: serde_json::Value =
+        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
+    let maximum_amount = params_value["maximum_amount"]
+        .as_u64()
+        .ok_or_else(|| "Missing 'maximum_amount' field in params".to_string())?;
+    let charlie_pubkey_hex = params_value["charlie_pubkey"]
+        .as_str()
+        .ok_or_else(|| "Missing 'charlie_pubkey' field in params".to_string())?;
+
+    // Parse blind signatures
+    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
+        .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
+
+    // Parse secrets with blinding
+    let secrets_with_blinding: Vec<serde_json::Value> =
+        serde_json::from_str(secrets_with_blinding_json)
+            .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
+
+    // Validate lengths match
+    if blind_signatures.len() != secrets_with_blinding.len() {
+        return Err(format!(
+            "Length mismatch: {} blind signatures but {} secrets",
+            blind_signatures.len(),
+            secrets_with_blinding.len()
+        ));
+    }
+
+    // Extract secrets, blinding factors, and is_receiver flags
+    let mut secrets = Vec::new();
+    let mut blinding_factors = Vec::new();
+    let mut is_receiver_flags = Vec::new();
+
+    for (i, swb) in secrets_with_blinding.iter().enumerate() {
+        let secret_str = swb["secret"]
+            .as_str()
+            .ok_or_else(|| format!("Missing 'secret' at index {}", i))?;
+        let blinding_hex = swb["blinding_factor"]
+            .as_str()
+            .ok_or_else(|| format!("Missing 'blinding_factor' at index {}", i))?;
+        let is_receiver = swb["is_receiver"]
+            .as_bool()
+            .ok_or_else(|| format!("Missing 'is_receiver' at index {}", i))?;
+
+        let secret = Secret::new(secret_str.to_string());
+        let blinding_bytes = hex::decode(blinding_hex)
+            .map_err(|e| format!("Invalid blinding_factor hex at index {}: {}", i, e))?;
+        let blinding_factor = SecretKey::from_slice(&blinding_bytes)
+            .map_err(|e| format!("Invalid blinding_factor at index {}: {}", i, e))?;
+
+        secrets.push(secret);
+        blinding_factors.push(blinding_factor);
+        is_receiver_flags.push(is_receiver);
+    }
+
+    // Unblind the signatures to get proofs
+    let proofs = cdk::dhke::construct_proofs(
+        blind_signatures,
+        blinding_factors,
+        secrets,
+        &keyset_info.active_keys,
+    )
+    .map_err(|e| format!("Failed to construct proofs: {}", e))?;
+
+    // Verify DLEQ for each proof
+    let mut dleq_failures = 0;
+    for (i, proof) in proofs.iter().enumerate() {
+        // Get mint pubkey for this amount
+        let mint_pubkey = keyset_info
+            .active_keys
+            .amount_key(proof.amount)
+            .ok_or_else(|| format!("No mint key for amount {} at index {}", proof.amount, i))?;
+
+        // Verify DLEQ
+        if let Err(e) = proof.verify_dleq(mint_pubkey) {
+            dleq_failures += 1;
+            // Log but continue to count all failures
+            eprintln!("DLEQ verification failed for proof {}: {}", i, e);
+        }
+    }
+
+    if dleq_failures > 0 {
+        return Err(format!(
+            "DLEQ verification failed: {} of {} proofs failed",
+            dleq_failures,
+            proofs.len()
+        ));
+    }
+
+    // Separate proofs by is_receiver flag and compute sums
+    let mut receiver_proofs = Vec::new();
+    let mut sender_proofs = Vec::new();
+    let mut receiver_sum: u64 = 0;
+    let mut sender_sum: u64 = 0;
+
+    for (proof, is_receiver) in proofs.into_iter().zip(is_receiver_flags.iter()) {
+        let amount = u64::from(proof.amount);
+        if *is_receiver {
+            receiver_sum += amount;
+            receiver_proofs.push(proof);
+        } else {
+            sender_sum += amount;
+            sender_proofs.push(proof);
+        }
+    }
+
+    // Verify each receiver proof is P2PK locked to Charlie's pubkey
+    for (i, proof) in receiver_proofs.iter().enumerate() {
+        let secret_str = proof.secret.to_string();
+        let secret_json: serde_json::Value = serde_json::from_str(&secret_str)
+            .map_err(|e| format!("Failed to parse receiver proof {} secret: {}", i, e))?;
+
+        // Check it's P2PK
+        let kind = secret_json.get(0).and_then(|v| v.as_str());
+        if kind != Some("P2PK") {
+            return Err(format!(
+                "Receiver proof {} is not P2PK (kind={:?})",
+                i, kind
+            ));
+        }
+
+        // Check pubkey matches Charlie's
+        let data = secret_json
+            .get(1)
+            .and_then(|v| v.get("data"))
+            .and_then(|v| v.as_str());
+        if data != Some(charlie_pubkey_hex) {
+            return Err(format!(
+                "Receiver proof {} locked to wrong pubkey: expected {}, got {:?}",
+                i, charlie_pubkey_hex, data
+            ));
+        }
+    }
+
+    // Verify receiver sum matches expected nominal for this balance
+    let inverse_result = keyset_info
+        .inverse_deterministic_value_after_fees(balance, maximum_amount)
+        .map_err(|e| format!("Failed to compute inverse for balance {}: {}", balance, e))?;
+
+    if receiver_sum != inverse_result.nominal_value {
+        return Err(format!(
+            "Receiver nominal mismatch: expected {} for balance {}, got {}",
+            inverse_result.nominal_value, balance, receiver_sum
+        ));
+    }
+
+    // Serialize proofs for JSON output
+    let receiver_proofs_json: Vec<serde_json::Value> = receiver_proofs
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap())
+        .collect();
+    let sender_proofs_json: Vec<serde_json::Value> = sender_proofs
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap())
+        .collect();
+
+    // Build result
+    let result = serde_json::json!({
+        "receiver_proofs": receiver_proofs_json,
+        "sender_proofs": sender_proofs_json,
+        "receiver_sum_after_stage1": receiver_sum,
+        "sender_sum_after_stage1": sender_sum
+    });
+
+    Ok(result.to_string())
+}
+
+/// Create a signed balance update from Alice (sender) to Charlie (receiver)
+///
+/// This function creates a balance update message signed by Alice, which authorizes
+/// Charlie to claim the specified balance when closing the channel.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `alice_secret_hex` - Alice's secret key in hex
+/// * `funding_proofs_json` - JSON array of funding proofs
+/// * `charlie_balance` - The balance to authorize for Charlie
+///
+/// # Returns
+/// JSON object with:
 /// - `channel_id`: The channel ID
-/// - `amount`: The balance amount
-/// - `signature`: Alice's Schnorr signature (hex)
+/// - `amount`: The authorized balance
+/// - `signature`: Alice's signature over the balance update
 #[wasm_bindgen]
 pub fn spilman_channel_sender_create_signed_balance_update(
     params_json: &str,
@@ -225,12 +451,13 @@ fn spilman_channel_sender_create_signed_balance_update_inner(
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
     // Parse Alice's secret key
-    let alice_secret = SecretKey::from_hex(alice_secret_hex)
-        .map_err(|e| format!("Invalid secret key: {}", e))?;
+    let alice_secret =
+        SecretKey::from_hex(alice_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
 
     // Create ChannelParameters
-    let params = ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
-        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let params =
+        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Parse funding proofs
     let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
@@ -298,15 +525,15 @@ fn verify_balance_update_signature_inner(
     signature: &str,
 ) -> Result<bool, String> {
     // Parse shared secret from hex
-    let shared_secret_bytes = hex::decode(shared_secret_hex)
-        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
     let shared_secret: [u8; 32] = shared_secret_bytes
         .try_into()
         .map_err(|_| "Shared secret must be 32 bytes")?;
 
     // Parse JSON to extract keyset_id and input_fee_ppk for mock keyset
-    let json: serde_json::Value = serde_json::from_str(params_json)
-        .map_err(|e| format!("Invalid params JSON: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
 
     let keyset_id_str = json["keyset_id"]
         .as_str()
@@ -321,8 +548,9 @@ fn verify_balance_update_signature_inner(
         .map_err(|e| format!("Failed to create mock keyset: {}", e))?;
 
     // Create ChannelParameters with shared secret
-    let params = ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
-        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Parse funding proofs
     let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
@@ -333,8 +561,7 @@ fn verify_balance_update_signature_inner(
         .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
 
     // Parse signature
-    let sig = Signature::from_str(signature)
-        .map_err(|e| format!("Invalid signature: {}", e))?;
+    let sig = Signature::from_str(signature).map_err(|e| format!("Invalid signature: {}", e))?;
 
     // Create BalanceUpdateMessage
     let balance_update = BalanceUpdateMessage {
@@ -364,28 +591,22 @@ fn verify_balance_update_signature_inner(
 ///
 /// Returns `true` if the DLEQ is valid, throws error otherwise
 #[wasm_bindgen]
-pub fn verify_proof_dleq(
-    proof_json: &str,
-    mint_pubkey_hex: &str,
-) -> Result<bool, JsValue> {
-    verify_proof_dleq_inner(proof_json, mint_pubkey_hex)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool, JsValue> {
+    verify_proof_dleq_inner(proof_json, mint_pubkey_hex).map_err(|e| JsValue::from_str(&e))
 }
 
-fn verify_proof_dleq_inner(
-    proof_json: &str,
-    mint_pubkey_hex: &str,
-) -> Result<bool, String> {
+fn verify_proof_dleq_inner(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool, String> {
     // Parse the proof
-    let proof: Proof = serde_json::from_str(proof_json)
-        .map_err(|e| format!("Failed to parse proof: {}", e))?;
+    let proof: Proof =
+        serde_json::from_str(proof_json).map_err(|e| format!("Failed to parse proof: {}", e))?;
 
     // Parse the mint pubkey
-    let mint_pubkey = PublicKey::from_str(mint_pubkey_hex)
-        .map_err(|e| format!("Invalid mint pubkey: {}", e))?;
+    let mint_pubkey =
+        PublicKey::from_str(mint_pubkey_hex).map_err(|e| format!("Invalid mint pubkey: {}", e))?;
 
     // Verify the DLEQ
-    proof.verify_dleq(mint_pubkey)
+    proof
+        .verify_dleq(mint_pubkey)
         .map_err(|e| format!("DLEQ verification failed: {}", e))?;
 
     Ok(true)
@@ -412,8 +633,13 @@ pub fn verify_channel(
     funding_proofs_json: &str,
     keyset_info_json: &str,
 ) -> Result<String, JsValue> {
-    verify_channel_inner(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)
-        .map_err(|e| JsValue::from_str(&e))
+    verify_channel_inner(
+        params_json,
+        shared_secret_hex,
+        funding_proofs_json,
+        keyset_info_json,
+    )
+    .map_err(|e| JsValue::from_str(&e))
 }
 
 fn verify_channel_inner(
@@ -423,8 +649,8 @@ fn verify_channel_inner(
     keyset_info_json: &str,
 ) -> Result<String, String> {
     // Parse shared secret from hex
-    let shared_secret_bytes = hex::decode(shared_secret_hex)
-        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
     let shared_secret: [u8; 32] = shared_secret_bytes
         .try_into()
         .map_err(|_| "Shared secret must be 32 bytes")?;
@@ -433,8 +659,9 @@ fn verify_channel_inner(
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
     // Create ChannelParameters with shared secret
-    let params = ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
-        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Parse funding proofs
     let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
@@ -444,8 +671,7 @@ fn verify_channel_inner(
     let result = verify_valid_channel(&funding_proofs, &params);
 
     // Serialize result to JSON
-    serde_json::to_string(&result)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+    serde_json::to_string(&result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 /// Construct proofs from blind signatures
@@ -467,8 +693,12 @@ pub fn construct_proofs(
     secrets_with_blinding_json: &str,
     keyset_info_json: &str,
 ) -> Result<String, JsValue> {
-    construct_proofs_inner(blind_signatures_json, secrets_with_blinding_json, keyset_info_json)
-        .map_err(|e| JsValue::from_str(&e))
+    construct_proofs_inner(
+        blind_signatures_json,
+        secrets_with_blinding_json,
+        keyset_info_json,
+    )
+    .map_err(|e| JsValue::from_str(&e))
 }
 
 fn construct_proofs_inner(
@@ -496,25 +726,25 @@ fn construct_proofs_inner(
             .as_str()
             .ok_or("Missing 'C_' in blind signature")?;
 
-        let keyset_id: Id = id_str.parse()
+        let keyset_id: Id = id_str
+            .parse()
             .map_err(|e| format!("Invalid keyset id: {}", e))?;
-        let c = PublicKey::from_str(c_str)
-            .map_err(|e| format!("Invalid C_ pubkey: {}", e))?;
+        let c = PublicKey::from_str(c_str).map_err(|e| format!("Invalid C_ pubkey: {}", e))?;
 
         // Parse DLEQ - required for Spilman channels
         let dleq_obj = sig["dleq"]
             .as_object()
             .ok_or("Missing 'dleq' in blind signature - DLEQ proofs are required")?;
-        let e_str = dleq_obj.get("e")
+        let e_str = dleq_obj
+            .get("e")
             .and_then(|v| v.as_str())
             .ok_or("Missing 'e' in dleq")?;
-        let s_str = dleq_obj.get("s")
+        let s_str = dleq_obj
+            .get("s")
             .and_then(|v| v.as_str())
             .ok_or("Missing 's' in dleq")?;
-        let e = SecretKey::from_hex(e_str)
-            .map_err(|e| format!("Invalid dleq.e: {}", e))?;
-        let s = SecretKey::from_hex(s_str)
-            .map_err(|e| format!("Invalid dleq.s: {}", e))?;
+        let e = SecretKey::from_hex(e_str).map_err(|e| format!("Invalid dleq.e: {}", e))?;
+        let s = SecretKey::from_hex(s_str).map_err(|e| format!("Invalid dleq.s: {}", e))?;
         let dleq = BlindSignatureDleq { e, s };
 
         blind_signatures.push(BlindSignature {
@@ -540,7 +770,8 @@ fn construct_proofs_inner(
             .as_str()
             .ok_or("Missing 'blinding_factor' in secrets_with_blinding")?;
 
-        let secret: Secret = secret_str.parse()
+        let secret: Secret = secret_str
+            .parse()
             .map_err(|e| format!("Invalid secret: {}", e))?;
         let r = SecretKey::from_hex(blinding_factor_hex)
             .map_err(|e| format!("Invalid blinding factor: {}", e))?;
@@ -554,8 +785,8 @@ fn construct_proofs_inner(
         .map_err(|e| format!("Failed to construct proofs: {}", e))?;
 
     // Serialize proofs to JSON
-    let proofs_json = serde_json::to_string(&proofs)
-        .map_err(|e| format!("Failed to serialize proofs: {}", e))?;
+    let proofs_json =
+        serde_json::to_string(&proofs).map_err(|e| format!("Failed to serialize proofs: {}", e))?;
 
     Ok(proofs_json)
 }
@@ -702,6 +933,39 @@ fn create_close_swap_request_inner(
         .get_value_after_stage1()
         .map_err(|e| format!("Failed to get value after stage 1: {}", e))?;
 
+    // Get secrets with blinding factors for unblinding later
+    // Must be in same order as swap_request.outputs (sorted by amount, stable)
+    let receiver_secrets = commitment_outputs
+        .receiver_outputs
+        .get_secrets_with_blinding()
+        .map_err(|e| format!("Failed to get receiver secrets: {}", e))?;
+    let sender_secrets = commitment_outputs
+        .sender_outputs
+        .get_secrets_with_blinding()
+        .map_err(|e| format!("Failed to get sender secrets: {}", e))?;
+
+    // Combine and tag with is_receiver, then sort by amount (stable) to match output order
+    let mut secrets_with_tags: Vec<(cdk::spilman::DeterministicSecretWithBlinding, bool)> =
+        receiver_secrets
+            .into_iter()
+            .map(|s| (s, true))
+            .chain(sender_secrets.into_iter().map(|s| (s, false)))
+            .collect();
+    secrets_with_tags.sort_by_key(|(s, _)| s.amount);
+
+    // Serialize secrets for JSON output
+    let secrets_with_blinding: Vec<serde_json::Value> = secrets_with_tags
+        .into_iter()
+        .map(|(s, is_receiver)| {
+            serde_json::json!({
+                "secret": s.secret.to_string(),
+                "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                "amount": s.amount,
+                "is_receiver": is_receiver
+            })
+        })
+        .collect();
+
     // Serialize the swap request
     let swap_request_json = serde_json::to_value(&signed_swap_request)
         .map_err(|e| format!("Failed to serialize swap request: {}", e))?;
@@ -709,7 +973,8 @@ fn create_close_swap_request_inner(
     // Build result
     let result = serde_json::json!({
         "swap_request": swap_request_json,
-        "expected_total": expected_total
+        "expected_total": expected_total,
+        "secrets_with_blinding": secrets_with_blinding
     });
 
     Ok(result.to_string())
