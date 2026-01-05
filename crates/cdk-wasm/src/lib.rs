@@ -261,11 +261,9 @@ fn unblind_and_verify_dleq_inner(
     // Get maximum_amount from params
     let maximum_amount = params.maximum_amount_for_one_output;
 
-    // Get the BLINDED Charlie pubkey for comparison (P2BK)
-    let blinded_charlie_pubkey = params
-        .get_receiver_blinded_pubkey_for_stage1()
-        .map_err(|e| format!("Failed to get blinded receiver pubkey: {}", e))?;
-    let blinded_charlie_pubkey_hex = blinded_charlie_pubkey.to_hex();
+    // Get Charlie's RAW pubkey for comparison
+    // (Stage 1 outputs use raw pubkeys; only the funding token uses blinded pubkeys)
+    let charlie_pubkey_hex = params.charlie_pubkey.to_hex();
 
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -383,10 +381,10 @@ fn unblind_and_verify_dleq_inner(
             .get(1)
             .and_then(|v| v.get("data"))
             .and_then(|v| v.as_str());
-        if data != Some(blinded_charlie_pubkey_hex.as_str()) {
+        if data != Some(charlie_pubkey_hex.as_str()) {
             return Err(format!(
-                "Receiver proof {} locked to wrong pubkey: expected {} (blinded), got {:?}",
-                i, blinded_charlie_pubkey_hex, data
+                "Receiver proof {} locked to wrong pubkey: expected {} (charlie), got {:?}",
+                i, charlie_pubkey_hex, data
             ));
         }
     }
