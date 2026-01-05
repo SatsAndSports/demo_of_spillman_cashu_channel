@@ -31,3 +31,6 @@ pub use sender_and_receiver::{
     ChannelVerificationError, ChannelVerificationResult, SpilmanChannelReceiver,
     SpilmanChannelSender, verify_valid_channel,
 };
+
+#[cfg(test)]
+mod tests;
