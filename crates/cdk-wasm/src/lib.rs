@@ -200,6 +200,8 @@ fn create_funding_outputs_inner(
 /// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
 /// * `secrets_with_blinding_json` - JSON array from create_close_swap_request's secrets_with_blinding
 /// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
+/// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
+/// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
 /// * `balance` - The receiver's (Charlie's) intended balance (for verification)
 ///
 /// # Returns
@@ -214,6 +216,7 @@ pub fn unblind_and_verify_dleq(
     secrets_with_blinding_json: &str,
     params_json: &str,
     keyset_info_json: &str,
+    shared_secret_hex: &str,
     balance: u64,
 ) -> Result<String, JsValue> {
     unblind_and_verify_dleq_inner(
@@ -221,6 +224,7 @@ pub fn unblind_and_verify_dleq(
         secrets_with_blinding_json,
         params_json,
         keyset_info_json,
+        shared_secret_hex,
         balance,
     )
     .map_err(|e| JsValue::from_str(&e))
@@ -231,6 +235,7 @@ fn unblind_and_verify_dleq_inner(
     secrets_with_blinding_json: &str,
     params_json: &str,
     keyset_info_json: &str,
+    shared_secret_hex: &str,
     balance: u64,
 ) -> Result<String, String> {
     use cdk::nuts::BlindSignature;
@@ -238,15 +243,29 @@ fn unblind_and_verify_dleq_inner(
     // Parse keyset info
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
-    // Parse params to get maximum_amount and charlie_pubkey
-    let params_value: serde_json::Value =
-        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
-    let maximum_amount = params_value["maximum_amount"]
-        .as_u64()
-        .ok_or_else(|| "Missing 'maximum_amount' field in params".to_string())?;
-    let charlie_pubkey_hex = params_value["charlie_pubkey"]
-        .as_str()
-        .ok_or_else(|| "Missing 'charlie_pubkey' field in params".to_string())?;
+    // Parse shared secret
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
+
+    // Create ChannelParameters to compute blinded pubkey
+    let params = ChannelParameters::from_json_with_shared_secret(
+        params_json,
+        keyset_info.clone(),
+        shared_secret,
+    )
+    .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Get maximum_amount from params
+    let maximum_amount = params.maximum_amount_for_one_output;
+
+    // Get the BLINDED Charlie pubkey for comparison (P2BK)
+    let blinded_charlie_pubkey = params
+        .get_receiver_blinded_pubkey_for_stage1()
+        .map_err(|e| format!("Failed to get blinded receiver pubkey: {}", e))?;
+    let blinded_charlie_pubkey_hex = blinded_charlie_pubkey.to_hex();
 
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -364,10 +383,10 @@ fn unblind_and_verify_dleq_inner(
             .get(1)
             .and_then(|v| v.get("data"))
             .and_then(|v| v.as_str());
-        if data != Some(charlie_pubkey_hex) {
+        if data != Some(blinded_charlie_pubkey_hex.as_str()) {
             return Err(format!(
-                "Receiver proof {} locked to wrong pubkey: expected {}, got {:?}",
-                i, charlie_pubkey_hex, data
+                "Receiver proof {} locked to wrong pubkey: expected {} (blinded), got {:?}",
+                i, blinded_charlie_pubkey_hex, data
             ));
         }
     }

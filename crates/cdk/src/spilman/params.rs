@@ -2,10 +2,12 @@
 //!
 //! Contains the protocol parameters for a Spilman payment channel
 
-use bitcoin::hashes::{sha256, Hash};
-use bitcoin::secp256k1::ecdh::SharedSecret;
 use crate::nuts::{CurrencyUnit, SecretKey};
 use crate::util::hex;
+use crate::SECP256K1;
+use bitcoin::hashes::{sha256, Hash};
+use bitcoin::secp256k1::ecdh::SharedSecret;
+use bitcoin::secp256k1::{Parity, Scalar};
 
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
@@ -45,6 +47,74 @@ pub fn compute_shared_secret(
     their_pubkey: &crate::nuts::PublicKey,
 ) -> [u8; 32] {
     SharedSecret::new(their_pubkey, my_secret).secret_bytes()
+}
+
+/// Derive a blinded secret key for P2BK signing
+///
+/// Computes k = p + r (mod n), handling BIP-340 parity.
+/// If the pubkey has odd Y, we use k = -p + r instead.
+///
+/// This ensures that signing with k produces a valid signature for the blinded pubkey P' = P + r*G.
+fn derive_blinded_secret_key(secret: &SecretKey, r: &Scalar) -> anyhow::Result<SecretKey> {
+    // Get parity of the public key by accessing the underlying secp256k1 pubkey
+    // Our wrapper's x_only_public_key() only returns XOnlyPublicKey, but the inner
+    // secp256k1::PublicKey::x_only_public_key() returns (XOnlyPublicKey, Parity)
+    let pubkey = secret.public_key();
+    let inner_pubkey: &bitcoin::secp256k1::PublicKey = &*pubkey;
+    let (_, parity) = inner_pubkey.x_only_public_key();
+
+    // Get the underlying secp256k1 secret key
+    // We need to clone because negate() consumes self
+    let inner_secret: bitcoin::secp256k1::SecretKey = (**secret).clone();
+
+    // If parity is odd, negate the secret key before adding the tweak
+    // This is because BIP-340 signing will use the negated key for odd-Y pubkeys
+    let effective_secret = if parity == Parity::Odd {
+        inner_secret.negate()
+    } else {
+        inner_secret
+    };
+
+    // Add the blinding scalar: k = p + r (or k = -p + r if odd parity)
+    let blinded = effective_secret
+        .add_tweak(r)
+        .map_err(|e| anyhow::anyhow!("Failed to add blinding tweak: {}", e))?;
+
+    Ok(blinded.into())
+}
+
+/// Derive a blinded pubkey for P2BK verification
+///
+/// This is the pubkey-side counterpart to `derive_blinded_secret_key`.
+/// It computes the pubkey that corresponds to the blinded secret key.
+///
+/// For BIP-340 compatibility:
+/// - If pubkey has even Y: P' = P + r*G
+/// - If pubkey has odd Y:  P' = -P + r*G
+///
+/// This ensures that `k*G = P'` where `k` is the blinded secret key.
+fn derive_blinded_pubkey(
+    pubkey: &crate::nuts::PublicKey,
+    r: &Scalar,
+) -> anyhow::Result<crate::nuts::PublicKey> {
+    // Get parity of the public key
+    let inner_pubkey: &bitcoin::secp256k1::PublicKey = &**pubkey;
+    let (_, parity) = inner_pubkey.x_only_public_key();
+
+    // If parity is odd, negate the pubkey before adding the tweak
+    // This matches what derive_blinded_secret_key does with the secret key
+    let effective_pubkey = if parity == Parity::Odd {
+        inner_pubkey.negate(&SECP256K1)
+    } else {
+        *inner_pubkey
+    };
+
+    // Add the tweak: P' = P + r*G (or P' = -P + r*G if odd parity)
+    let blinded = effective_pubkey
+        .add_exp_tweak(&SECP256K1, r)
+        .map_err(|e| anyhow::anyhow!("Failed to blind pubkey: {}", e))?;
+
+    Ok(blinded.into())
 }
 
 impl ChannelParameters {
@@ -158,8 +228,8 @@ impl ChannelParameters {
         my_secret: &SecretKey,
     ) -> anyhow::Result<Self> {
         // Parse JSON to get pubkeys for ECDH
-        let json: serde_json::Value = serde_json::from_str(json_str)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
+        let json: serde_json::Value =
+            serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
 
         let alice_pubkey_hex = json["alice_pubkey"]
             .as_str()
@@ -182,7 +252,9 @@ impl ChannelParameters {
         } else if my_pubkey == charlie_pubkey {
             &alice_pubkey
         } else {
-            anyhow::bail!("Secret key's public key doesn't match either alice_pubkey or charlie_pubkey");
+            anyhow::bail!(
+                "Secret key's public key doesn't match either alice_pubkey or charlie_pubkey"
+            );
         };
 
         let shared_secret = compute_shared_secret(my_secret, their_pubkey);
@@ -198,8 +270,8 @@ impl ChannelParameters {
         keyset_info: KeysetInfo,
         shared_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
-        let json: serde_json::Value = serde_json::from_str(json_str)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
+        let json: serde_json::Value =
+            serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
 
         // Parse keyset_id and input_fee_ppk first to validate against keyset_info
         let keyset_id_str = json["keyset_id"]
@@ -302,9 +374,9 @@ impl ChannelParameters {
         self.capacity
     }
 
-    /// Get channel ID as a hash of the channel parameters
+    /// Get channel ID as raw bytes (32-byte SHA256 hash)
     /// The hash is computed over: mint|unit|capacity|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
-    pub fn get_channel_id(&self) -> String {
+    pub fn get_channel_id_bytes(&self) -> [u8; 32] {
         let params_string = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.mint,
@@ -319,8 +391,12 @@ impl ChannelParameters {
             self.locktime,
             self.sender_nonce
         );
-        let hash = sha256::Hash::hash(params_string.as_bytes());
-        hex::encode(hash.as_byte_array())
+        sha256::Hash::hash(params_string.as_bytes()).to_byte_array()
+    }
+
+    /// Get channel ID as a hex string
+    pub fn get_channel_id(&self) -> String {
+        hex::encode(self.get_channel_id_bytes())
     }
 
     /// Get a JSON string representation of the data that contributes to the channel ID
@@ -338,7 +414,92 @@ impl ChannelParameters {
             "charlie_pubkey": self.charlie_pubkey.to_hex(),
             "locktime": self.locktime,
             "sender_nonce": self.sender_nonce
-        }).to_string()
+        })
+        .to_string()
+    }
+
+    /// Derive a blinding scalar for stage 1 P2BK
+    ///
+    /// The `party` parameter should be "sender_stage1" or "receiver_stage1".
+    ///
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || party || retry_counter)
+    /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
+    fn derive_blinding_scalar_for_stage_1(&self, party: &str) -> anyhow::Result<Scalar> {
+        let channel_id_bytes = self.get_channel_id_bytes();
+
+        for retry_counter in 0u8..=255 {
+            let mut input = Vec::new();
+            input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
+            input.extend_from_slice(&channel_id_bytes);
+            input.extend_from_slice(&self.shared_secret);
+            input.extend_from_slice(party.as_bytes());
+            input.push(retry_counter);
+
+            let hash = sha256::Hash::hash(&input);
+            let bytes: [u8; 32] = hash.to_byte_array();
+
+            // Try to create a valid scalar (must be in range [1, n-1])
+            if let Ok(scalar) = Scalar::from_be_bytes(bytes) {
+                // Scalar::from_be_bytes rejects values >= n, and we also reject zero
+                if scalar != Scalar::ZERO {
+                    return Ok(scalar);
+                }
+            }
+        }
+
+        anyhow::bail!("Failed to derive valid blinding scalar after 256 attempts")
+    }
+
+    /// Get the blinded sender (Alice) pubkey for stage 1 P2BK
+    ///
+    /// Computes the blinded pubkey that corresponds to Alice's blinded secret key.
+    /// This handles BIP-340 parity: if Alice's pubkey has odd Y, we negate it first.
+    ///
+    /// The formula matches `derive_blinded_secret_key`:
+    /// - If even Y: P' = P + r*G (matches k = p + r)
+    /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
+    pub fn get_sender_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1")?;
+        derive_blinded_pubkey(&self.alice_pubkey, &r)
+    }
+
+    /// Get the blinded receiver (Charlie) pubkey for stage 1 P2BK
+    ///
+    /// Computes the blinded pubkey that corresponds to Charlie's blinded secret key.
+    /// This handles BIP-340 parity: if Charlie's pubkey has odd Y, we negate it first.
+    ///
+    /// The formula matches `derive_blinded_secret_key`:
+    /// - If even Y: P' = P + r*G (matches k = p + r)
+    /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
+    pub fn get_receiver_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("receiver_stage1")?;
+        derive_blinded_pubkey(&self.charlie_pubkey, &r)
+    }
+
+    /// Derive the blinded sender secret key for stage 1 signing
+    ///
+    /// For P2BK, Alice must sign with a blinded private key k such that k*G = P'.
+    /// This handles BIP-340 parity: if Alice's pubkey has odd Y, we negate her
+    /// private key before adding the blinding scalar.
+    pub fn get_sender_blinded_secret_key_for_stage1(
+        &self,
+        alice_secret: &SecretKey,
+    ) -> anyhow::Result<SecretKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1")?;
+        derive_blinded_secret_key(alice_secret, &r)
+    }
+
+    /// Derive the blinded receiver secret key for stage 1 signing
+    ///
+    /// For P2BK, Charlie must sign with a blinded private key k such that k*G = P'.
+    /// This handles BIP-340 parity: if Charlie's pubkey has odd Y, we negate his
+    /// private key before adding the blinding scalar.
+    pub fn get_receiver_blinded_secret_key_for_stage1(
+        &self,
+        charlie_secret: &SecretKey,
+    ) -> anyhow::Result<SecretKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("receiver_stage1")?;
+        derive_blinded_secret_key(charlie_secret, &r)
     }
 
     /// Get a string representation of the unit
@@ -352,14 +513,24 @@ impl ChannelParameters {
         }
     }
 
-    /// Get the pubkey for a commitment context ("sender" or "receiver")
-    /// Returns Charlie's pubkey for "receiver", Alice's pubkey for "sender"
-    /// Returns an error for "funding" since funding requires both pubkeys
-    pub fn get_pubkey_from_commitment_context(&self, context: &str) -> Result<crate::nuts::PublicKey, anyhow::Error> {
+    /// Get the RAW pubkey for a stage 1 output context ("sender" or "receiver")
+    ///
+    /// Returns the raw (non-blinded) pubkey for use in stage 1 commitment outputs:
+    /// - "receiver" → Charlie's raw pubkey
+    /// - "sender" → Alice's raw pubkey
+    /// - "funding" → error (funding uses 2-of-2 with blinded pubkeys)
+    ///
+    /// Note: Stage 1 outputs use RAW pubkeys. Blinding is only for the funding token.
+    pub fn get_pubkey_for_stage1_output(
+        &self,
+        context: &str,
+    ) -> Result<crate::nuts::PublicKey, anyhow::Error> {
         match context {
             "receiver" => Ok(self.charlie_pubkey),
             "sender" => Ok(self.alice_pubkey),
-            "funding" => anyhow::bail!("Funding context requires both pubkeys, use create_deterministic_output_with_blinding with context=\"funding\" instead"),
+            "funding" => anyhow::bail!(
+                "Funding context requires 2-of-2 blinded pubkeys, use new_funding() instead"
+            ),
             _ => anyhow::bail!("Unknown context: {}", context),
         }
     }
@@ -404,19 +575,13 @@ impl ChannelParameters {
         let blinding_hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
 
-        // Handle funding context separately (requires both pubkeys + locktime)
+        // Handle funding context separately (requires 2-of-2 blinded pubkeys + locktime)
         if context == "funding" {
-            DeterministicSecretWithBlinding::new_funding(
-                &self.alice_pubkey,
-                &self.charlie_pubkey,
-                self.locktime,
-                nonce,
-                blinding_factor,
-                amount,
-            )
+            DeterministicSecretWithBlinding::new_funding(self, nonce, blinding_factor, amount)
         } else {
-            // For sender/receiver contexts, create simple P2PK outputs
-            let pubkey = self.get_pubkey_from_commitment_context(context)?;
+            // For sender/receiver contexts, create simple P2PK outputs with RAW pubkeys
+            // (Stage 1 outputs use raw keys; blinding is only for the funding token)
+            let pubkey = self.get_pubkey_for_stage1_output(context)?;
             DeterministicSecretWithBlinding::new_p2pk(&pubkey, nonce, blinding_factor, amount)
         }
     }
@@ -432,17 +597,15 @@ impl ChannelParameters {
         let max_amt = self.maximum_amount_for_one_output;
 
         // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let first_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            self.capacity,
-            max_amt,
-        )?;
+        let first_inverse = self
+            .keyset_info
+            .inverse_deterministic_value_after_fees(self.capacity, max_amt)?;
         let post_stage1_nominal = first_inverse.nominal_value;
 
         // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-        let second_inverse = self.keyset_info.inverse_deterministic_value_after_fees(
-            post_stage1_nominal,
-            max_amt,
-        )?;
+        let second_inverse = self
+            .keyset_info
+            .inverse_deterministic_value_after_fees(post_stage1_nominal, max_amt)?;
         let funding_token_nominal = second_inverse.nominal_value;
 
         Ok(funding_token_nominal)
@@ -484,17 +647,15 @@ impl ChannelParameters {
         let max_amt = self.maximum_amount_for_one_output;
 
         // Apply inverse to get nominal value needed
-        let inverse_result = self.keyset_info.inverse_deterministic_value_after_fees(
-            intended_balance,
-            max_amt,
-        )?;
+        let inverse_result = self
+            .keyset_info
+            .inverse_deterministic_value_after_fees(intended_balance, max_amt)?;
         let nominal_value = inverse_result.nominal_value;
 
         // Apply deterministic_value to get actual balance
-        let actual_balance = self.keyset_info.deterministic_value_after_fees(
-            nominal_value,
-            max_amt,
-        )?;
+        let actual_balance = self
+            .keyset_info
+            .deterministic_value_after_fees(nominal_value, max_amt)?;
 
         Ok(actual_balance)
     }
@@ -512,8 +673,9 @@ mod tests {
     fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
         let mut keys_map = BTreeMap::new();
         let dummy_pubkey = PublicKey::from_str(
-            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
-        ).unwrap();
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+        )
+        .unwrap();
         for &amt in &amounts {
             keys_map.insert(Amount::from(amt), dummy_pubkey);
         }
@@ -546,14 +708,15 @@ mod tests {
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,  // capacity
-            1700000000,  // locktime
-            1699999000,  // setup_timestamp
+            1000,       // capacity
+            1700000000, // locktime
+            1699999000, // setup_timestamp
             "test-nonce-12345".to_string(),
             keyset_info.clone(),
-            64,  // maximum_amount_for_one_output
+            64, // maximum_amount_for_one_output
             &alice_secret,
-        ).expect("Failed to create original params");
+        )
+        .expect("Failed to create original params");
 
         // Get the channel ID and JSON
         let original_channel_id = original_params.get_channel_id();
@@ -563,11 +726,9 @@ mod tests {
         println!("JSON: {}", json);
 
         // Recreate from JSON (as Charlie this time, to also test ECDH works both ways)
-        let reconstructed_params = ChannelParameters::from_json_with_secret_key(
-            &json,
-            keyset_info,
-            &charlie_secret,
-        ).expect("Failed to reconstruct params from JSON");
+        let reconstructed_params =
+            ChannelParameters::from_json_with_secret_key(&json, keyset_info, &charlie_secret)
+                .expect("Failed to reconstruct params from JSON");
 
         let reconstructed_channel_id = reconstructed_params.get_channel_id();
 
@@ -584,5 +745,160 @@ mod tests {
             original_channel_id, reconstructed_channel_id,
             "Channel IDs should match after JSON roundtrip"
         );
+    }
+
+    #[test]
+    fn test_p2bk_blinded_pubkey_consistency() {
+        // Test that blinded pubkeys are computed consistently regardless of which
+        // party creates the ChannelParameters (Alice or Charlie)
+
+        // Create keypairs for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // Create keyset_info
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
+
+        // Alice creates params using her secret key
+        let alice_params = ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "https://testmint.cash".to_string(),
+            CurrencyUnit::Sat,
+            1000,
+            1700000000,
+            1699999000,
+            "test-nonce-12345".to_string(),
+            keyset_info.clone(),
+            64,
+            &alice_secret,
+        )
+        .expect("Failed to create Alice's params");
+
+        // Charlie recreates params from JSON using his secret key
+        let json = alice_params.get_channel_id_params_json();
+        let charlie_params =
+            ChannelParameters::from_json_with_secret_key(&json, keyset_info, &charlie_secret)
+                .expect("Failed to create Charlie's params");
+
+        // Verify shared secrets match (ECDH symmetry)
+        assert_eq!(
+            alice_params.shared_secret, charlie_params.shared_secret,
+            "Shared secrets should match"
+        );
+
+        // Verify blinded sender pubkey is the same
+        let alice_blinded_sender = alice_params
+            .get_sender_blinded_pubkey_for_stage1()
+            .expect("Alice failed to get blinded sender pubkey");
+        let charlie_blinded_sender = charlie_params
+            .get_sender_blinded_pubkey_for_stage1()
+            .expect("Charlie failed to get blinded sender pubkey");
+        assert_eq!(
+            alice_blinded_sender.to_hex(),
+            charlie_blinded_sender.to_hex(),
+            "Blinded sender pubkeys should match"
+        );
+
+        // Verify blinded receiver pubkey is the same
+        let alice_blinded_receiver = alice_params
+            .get_receiver_blinded_pubkey_for_stage1()
+            .expect("Alice failed to get blinded receiver pubkey");
+        let charlie_blinded_receiver = charlie_params
+            .get_receiver_blinded_pubkey_for_stage1()
+            .expect("Charlie failed to get blinded receiver pubkey");
+        assert_eq!(
+            alice_blinded_receiver.to_hex(),
+            charlie_blinded_receiver.to_hex(),
+            "Blinded receiver pubkeys should match"
+        );
+
+        println!(
+            "Alice's blinded sender pubkey: {}",
+            alice_blinded_sender.to_hex()
+        );
+        println!(
+            "Charlie's blinded sender pubkey: {}",
+            charlie_blinded_sender.to_hex()
+        );
+        println!(
+            "Alice's blinded receiver pubkey: {}",
+            alice_blinded_receiver.to_hex()
+        );
+        println!(
+            "Charlie's blinded receiver pubkey: {}",
+            charlie_blinded_receiver.to_hex()
+        );
+    }
+
+    #[test]
+    fn test_p2bk_signature_roundtrip() {
+        use bitcoin::secp256k1::Message;
+        use bitcoin::secp256k1::SECP256K1;
+
+        // Create keypairs for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // Create keyset_info
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
+
+        // Alice creates params
+        let alice_params = ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "https://testmint.cash".to_string(),
+            CurrencyUnit::Sat,
+            1000,
+            1700000000,
+            1699999000,
+            "test-nonce-12345".to_string(),
+            keyset_info.clone(),
+            64,
+            &alice_secret,
+        )
+        .expect("Failed to create Alice's params");
+
+        // Alice gets her blinded secret key and signs a message
+        let blinded_secret = alice_params
+            .get_sender_blinded_secret_key_for_stage1(&alice_secret)
+            .expect("Failed to get blinded secret");
+
+        let test_msg = b"test message to sign";
+        let msg_hash = bitcoin::hashes::sha256::Hash::hash(test_msg);
+        let msg = Message::from_digest_slice(msg_hash.as_ref()).unwrap();
+
+        // Get the secp256k1 keypair for signing
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(SECP256K1, &*blinded_secret);
+        let signature = SECP256K1.sign_schnorr(&msg, &keypair);
+
+        println!("Message: {}", hex::encode(msg_hash.to_byte_array()));
+        println!("Signature: {}", hex::encode(signature.serialize()));
+
+        // Charlie recreates params and verifies
+        let json = alice_params.get_channel_id_params_json();
+        let charlie_params =
+            ChannelParameters::from_json_with_secret_key(&json, keyset_info, &charlie_secret)
+                .expect("Failed to create Charlie's params");
+
+        // Charlie gets Alice's blinded pubkey
+        let blinded_pubkey = charlie_params
+            .get_sender_blinded_pubkey_for_stage1()
+            .expect("Failed to get blinded sender pubkey");
+
+        println!("Blinded pubkey: {}", blinded_pubkey.to_hex());
+
+        // Charlie verifies the signature
+        let verify_result = blinded_pubkey.verify(test_msg, &signature);
+        assert!(
+            verify_result.is_ok(),
+            "Signature verification failed: {:?}",
+            verify_result
+        );
+        println!("Signature verified successfully!");
     }
 }
