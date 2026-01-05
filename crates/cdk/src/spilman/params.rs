@@ -489,6 +489,29 @@ impl ChannelParameters {
         derive_blinded_secret_key(alice_secret, &r)
     }
 
+    /// Get the blinded sender (Alice) pubkey for stage 1 locktime refund
+    ///
+    /// Uses a DIFFERENT blinding tweak than the 2-of-2 spending path, so the mint
+    /// cannot correlate Alice's refund to the normal channel close.
+    pub fn get_sender_blinded_pubkey_for_stage1_refund(
+        &self,
+    ) -> anyhow::Result<crate::nuts::PublicKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1_refund")?;
+        derive_blinded_pubkey(&self.alice_pubkey, &r)
+    }
+
+    /// Derive the blinded sender secret key for stage 1 locktime refund
+    ///
+    /// Uses a DIFFERENT blinding tweak than the 2-of-2 spending path.
+    /// Alice uses this to sign when reclaiming funds after locktime.
+    pub fn get_sender_blinded_secret_key_for_stage1_refund(
+        &self,
+        alice_secret: &SecretKey,
+    ) -> anyhow::Result<SecretKey> {
+        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1_refund")?;
+        derive_blinded_secret_key(alice_secret, &r)
+    }
+
     /// Derive the blinded receiver secret key for stage 1 signing
     ///
     /// For P2BK, Charlie must sign with a blinded private key k such that k*G = P'.

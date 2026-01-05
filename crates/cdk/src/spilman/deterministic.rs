@@ -83,16 +83,19 @@ impl DeterministicSecretWithBlinding {
         amount: u64,
     ) -> Result<Self, anyhow::Error> {
         // Get blinded pubkeys for privacy
+        // The 2-of-2 path uses one set of blinded keys
         let blinded_alice_pubkey = params.get_sender_blinded_pubkey_for_stage1()?;
         let blinded_charlie_pubkey = params.get_receiver_blinded_pubkey_for_stage1()?;
+        // The refund path uses a DIFFERENT blinded key for Alice (unlinkable to 2-of-2)
+        let blinded_alice_pubkey_refund = params.get_sender_blinded_pubkey_for_stage1_refund()?;
 
         // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before locktime
         // After locktime, Alice can refund with just her signature
-        // All pubkeys are BLINDED for privacy
+        // All pubkeys are BLINDED for privacy, with refund using a separate tweak
         let conditions = Conditions::new(
             Some(params.locktime),                      // Locktime for Alice's refund
             Some(vec![blinded_charlie_pubkey]),         // Charlie's blinded key for 2-of-2
-            Some(vec![blinded_alice_pubkey]),           // Alice's blinded key for refund after locktime
+            Some(vec![blinded_alice_pubkey_refund]),    // Alice's REFUND blinded key (different tweak)
             Some(2),                                    // Require 2 signatures before locktime
             Some(SigFlag::SigAll),                      // SigAll: signatures commit to outputs
             Some(1),                                    // Only 1 signature needed for refund (Alice)
