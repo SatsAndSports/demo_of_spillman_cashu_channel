@@ -187,8 +187,10 @@ impl SpilmanChannelSender {
             self.channel.funding_proofs.clone(),
         )?;
 
-        // Alice signs the swap request
-        swap_request.sign_sig_all(self.alice_secret.clone())?;
+        // Alice signs the swap request with her BLINDED secret key
+        // (The funding token P2PK uses blinded pubkeys for privacy)
+        let blinded_secret = self.channel.params.get_sender_blinded_secret_key_for_stage1(&self.alice_secret)?;
+        swap_request.sign_sig_all(blinded_secret)?;
 
         // Create the balance update message
         let balance_update = BalanceUpdateMessage::from_signed_swap_request(
@@ -342,8 +344,10 @@ impl SpilmanChannelReceiver {
         // Verify that Alice's signature is valid
         self.verify_sender_signature(balance_update)?;
 
-        // Add Charlie's signature to complete the 2-of-2 multisig
-        swap_request.sign_sig_all(self.charlie_secret.clone())?;
+        // Add Charlie's signature with his BLINDED secret key to complete the 2-of-2 multisig
+        // (The funding token P2PK uses blinded pubkeys for privacy)
+        let blinded_secret = self.channel.params.get_receiver_blinded_secret_key_for_stage1(&self.charlie_secret)?;
+        swap_request.sign_sig_all(blinded_secret)?;
 
         Ok(swap_request)
     }

@@ -2,22 +2,28 @@
 //!
 //! Represents a signed balance update in a Spilman payment channel
 
-use bitcoin::secp256k1::schnorr::Signature;
 use crate::nuts::nut10::SpendingConditionVerification;
 use crate::nuts::SwapRequest;
+use bitcoin::secp256k1::schnorr::Signature;
 
-use super::established_channel::EstablishedChannel;
 use super::deterministic::CommitmentOutputs;
+use super::established_channel::EstablishedChannel;
 
 /// Extract signatures from a swap request's first proof witness
-pub fn get_signatures_from_swap_request(swap_request: &SwapRequest) -> Result<Vec<Signature>, anyhow::Error> {
-    let first_proof = swap_request.inputs().first()
+pub fn get_signatures_from_swap_request(
+    swap_request: &SwapRequest,
+) -> Result<Vec<Signature>, anyhow::Error> {
+    let first_proof = swap_request
+        .inputs()
+        .first()
         .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
 
     let signatures = if let Some(ref witness) = first_proof.witness {
         if let crate::nuts::Witness::P2PKWitness(p2pk_witness) = witness {
             // Parse all signature strings into Signature objects
-            p2pk_witness.signatures.iter()
+            p2pk_witness
+                .signatures
+                .iter()
                 .filter_map(|sig_str| sig_str.parse::<Signature>().ok())
                 .collect()
         } else {
@@ -75,25 +81,28 @@ impl BalanceUpdateMessage {
     /// Verify the signature using the established channel
     /// Charlie reconstructs the swap request from the amount to verify the signature
     /// Throws an error if the signature is invalid
-    pub fn verify_sender_signature(&self, channel: &EstablishedChannel) -> Result<(), anyhow::Error> {
+    pub fn verify_sender_signature(
+        &self,
+        channel: &EstablishedChannel,
+    ) -> Result<(), anyhow::Error> {
         // Reconstruct the commitment outputs for this balance
-        let commitment_outputs = CommitmentOutputs::for_balance(
-            self.amount,
-            &channel.params,
-        )?;
+        let commitment_outputs = CommitmentOutputs::for_balance(self.amount, &channel.params)?;
 
         // Reconstruct the unsigned swap request
-        let swap_request = commitment_outputs.create_swap_request(
-            channel.funding_proofs.clone(),
-        )?;
+        let swap_request =
+            commitment_outputs.create_swap_request(channel.funding_proofs.clone())?;
 
         // Extract the SIG_ALL message from the swap request
         let msg_to_sign = swap_request.sig_all_msg_to_sign();
 
-        // Verify the signature using Alice's pubkey from channel params
-        channel.params.alice_pubkey
+        // Verify the signature using Alice's BLINDED pubkey
+        // Alice signs with her blinded secret key (the funding token uses blinded pubkeys for privacy)
+        let blinded_alice_pubkey = channel.params.get_sender_blinded_pubkey_for_stage1()?;
+        blinded_alice_pubkey
             .verify(msg_to_sign.as_bytes(), &self.signature)
-            .map_err(|_| anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update"))?;
+            .map_err(|_| {
+                anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update")
+            })?;
 
         Ok(())
     }
