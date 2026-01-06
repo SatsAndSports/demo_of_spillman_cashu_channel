@@ -77,8 +77,8 @@ The channel uses **blinded pubkeys** in the funding token so the mint cannot cor
 - All signatures use corresponding **blinded secret keys**
 
 **Stage 1 Outputs (after channel close):**
-- Receiver proofs: P2PK locked to Charlie's **raw** pubkey
-- Sender proofs: P2PK locked to Alice's **raw** pubkey
+- Receiver proofs: P2PK locked to Charlie's **blinded** pubkey (stage2 context)
+- Sender proofs: P2PK locked to Alice's **blinded** pubkey (stage2 context)
 
 **Blinding Derivation:**
 ```
@@ -94,6 +94,8 @@ blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
 - `"sender_stage1"` - Alice's blinded key for 2-of-2 spending
 - `"receiver_stage1"` - Charlie's blinded key for 2-of-2 spending
 - `"sender_stage1_refund"` - Alice's refund key (different tweak, unlinkable to 2-of-2)
+- `"sender_stage2"` - Alice's blinded key for stage 1 outputs (signs in stage 2)
+- `"receiver_stage2"` - Charlie's blinded key for stage 1 outputs (signs in stage 2)
 
 ### Core Rust Files
 
@@ -118,7 +120,9 @@ Key functions exported for browser and Node.js:
 - `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
 - `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
 - `create_close_swap_request(...)` - Server-side: create fully-signed swap request for channel closing. Returns `{swap_request, expected_total, secrets_with_blinding}`
-- `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's **raw** pubkey. Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
+- `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's **blinded** pubkey (stage2 context). Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
+- `get_sender_blinded_secret_key_for_stage2(params_json, keyset_info_json, alice_secret_hex)` - Get Alice's blinded secret key for signing stage 2 swaps
+- `get_receiver_blinded_secret_key_for_stage2(params_json, keyset_info_json, charlie_secret_hex, shared_secret_hex)` - Get Charlie's blinded secret key for signing stage 2 swaps
 
 ## CashuTube Video Streaming
 
@@ -250,14 +254,14 @@ Client                          Server                          Mint
 ```
 
 **Stage 1 outputs:**
-- **Receiver proofs (Charlie)**: P2PK locked to Charlie's pubkey - he can spend them
-- **Sender proofs (Alice)**: P2PK locked to Alice's pubkey - her "change"
+- **Receiver proofs (Charlie)**: P2PK locked to Charlie's blinded pubkey (stage2) - he can spend them with his blinded secret key
+- **Sender proofs (Alice)**: P2PK locked to Alice's blinded pubkey (stage2) - her "change"
 
 **Verifications performed:**
 1. Alice's balance update signature is valid
 2. Balance equals amount_due (exact match required)
 3. DLEQ proofs valid on all unblinded proofs (mint actually signed them)
-4. Receiver proofs are P2PK secrets with `data` = Charlie's **raw** pubkey (not blinded)
+4. Receiver proofs are P2PK secrets with `data` = Charlie's **blinded** pubkey (stage2 context)
 5. Receiver nominal sum matches `inverse_deterministic_value_after_fees(balance)`
 
 **Idempotent closing:**
