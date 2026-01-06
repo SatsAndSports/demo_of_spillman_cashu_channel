@@ -66,15 +66,45 @@ A Spilman channel is a unidirectional payment channel between:
 
 5. **DLEQ Verification**: Server verifies funding proofs include valid DLEQ proofs from the mint
 
+### P2BK (Pay-to-Blinded-Key) Privacy
+
+The channel uses **blinded pubkeys** in the funding token so the mint cannot correlate channels to real identities.
+
+**Funding Token (2-of-2 multisig):**
+- `data` field: Alice's **blinded** pubkey
+- `pubkeys` tag: Charlie's **blinded** pubkey
+- `refund_keys` tag: Alice's **refund blinded** pubkey (different tweak for unlinkability)
+- All signatures use corresponding **blinded secret keys**
+
+**Stage 1 Outputs (after channel close):**
+- Receiver proofs: P2PK locked to Charlie's **raw** pubkey
+- Sender proofs: P2PK locked to Alice's **raw** pubkey
+
+**Blinding Derivation:**
+```
+r = SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || context || retry_counter)
+
+If pubkey has even Y:  blinded_pubkey = raw_pubkey + r*G
+If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity handling)
+
+blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
+```
+
+**Contexts:**
+- `"sender_stage1"` - Alice's blinded key for 2-of-2 spending
+- `"receiver_stage1"` - Charlie's blinded key for 2-of-2 spending
+- `"sender_stage1_refund"` - Alice's refund key (different tweak, unlinkable to 2-of-2)
+
 ### Core Rust Files
 
-- `spilman/params.rs` - ChannelParameters struct with channel ID derivation
+- `spilman/params.rs` - ChannelParameters struct, channel ID derivation, P2BK blinded key derivation
 - `spilman/keysets_and_amounts.rs` - Fee calculations, amount decomposition
 - `spilman/deterministic.rs` - Deterministic output generation
 - `spilman/balance_update.rs` - Balance update messages and signatures
 - `spilman/sender_and_receiver.rs` - SpilmanChannelSender, SpilmanChannelReceiver
 - `spilman/established_channel.rs` - EstablishedChannel state machine
 - `spilman/bindings.rs` - FFI-friendly functions for WASM/PyO3
+- `spilman/tests.rs` - Integration tests (2-of-2 spending, refund path with blinded keys against test mint)
 
 ### WASM Functions (cdk-wasm)
 
@@ -88,7 +118,7 @@ Key functions exported for browser and Node.js:
 - `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
 - `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
 - `create_close_swap_request(...)` - Server-side: create fully-signed swap request for channel closing. Returns `{swap_request, expected_total, secrets_with_blinding}`
-- `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's pubkey. Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
+- `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's **raw** pubkey. Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
 
 ## CashuTube Video Streaming
 
@@ -227,7 +257,7 @@ Client                          Server                          Mint
 1. Alice's balance update signature is valid
 2. Balance equals amount_due (exact match required)
 3. DLEQ proofs valid on all unblinded proofs (mint actually signed them)
-4. Receiver proofs are P2PK secrets with `data` = Charlie's pubkey
+4. Receiver proofs are P2PK secrets with `data` = Charlie's **raw** pubkey (not blinded)
 5. Receiver nominal sum matches `inverse_deterministic_value_after_fees(balance)`
 
 **Idempotent closing:**
@@ -386,7 +416,7 @@ npx pnpm start
 ```bash
 # CDK Rust tests
 cargo test -p cdk
-cargo test -p cdk spilman  # Spilman-specific
+cargo test -p cdk spilman  # Spilman-specific (includes mint integration tests for P2BK)
 
 # Blossom server tests (requires mint at localhost:3338)
 cd web/blossom-server
@@ -430,6 +460,9 @@ The test suite includes:
 - ✅ Receiver proof P2PK pubkey verification (ensures proofs are locked to Charlie)
 - ✅ Idempotent channel closing (same amount succeeds, different amount rejected)
 - ✅ Closed channels reject further payments
+- ✅ P2BK (Pay-to-Blinded-Key) privacy for funding tokens
+- ✅ Separate blinding tweak for refund path (unlinkable to 2-of-2 path)
+- ✅ Integration tests verifying blinded signatures accepted by mint
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -450,12 +483,12 @@ The test suite includes:
 - ✅ Sprite thumbnails on progress bar hover (desktop) / drag (mobile)
 - ✅ Balance indicator overlay (shows balance / capacity)
 - ✅ Responsive controls (volume hidden on narrow screens)
+- ✅ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
+- ✅ Display video title when playing
+- ✅ Remember playback position (resume where left off)
 
 *High Priority:*
-- ❌ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
-- ❌ Display video title when playing
 - ❌ Highlight currently playing video in list
-- ❌ Remember playback position (resume where left off)
 
 *Medium Priority:*
 - ❌ Remember preferences (volume, speed, quality) in localStorage
