@@ -38,6 +38,8 @@ pub struct DeterministicSecretWithBlinding {
     pub blinding_factor: SecretKey,
     /// The amount for this output
     pub amount: u64,
+    /// The index within outputs of the same amount (for per-proof blinding)
+    pub index: usize,
 }
 
 impl DeterministicSecretWithBlinding {
@@ -48,6 +50,7 @@ impl DeterministicSecretWithBlinding {
         nonce: String,
         blinding_factor: SecretKey,
         amount: u64,
+        index: usize,
     ) -> Result<Self, anyhow::Error> {
         // Manually construct the NUT-10 P2PK secret JSON
         // Format: ["P2PK", {"nonce": "...", "data": "pubkey_hex", "tags": null}]
@@ -67,6 +70,7 @@ impl DeterministicSecretWithBlinding {
             secret,
             blinding_factor,
             amount,
+            index,
         })
     }
 
@@ -76,11 +80,16 @@ impl DeterministicSecretWithBlinding {
     ///
     /// Uses BLINDED pubkeys for privacy - the mint cannot correlate
     /// the funding token to Alice and Charlie's real identities.
+    ///
+    /// Note: Funding outputs use SHARED blinding (same pubkey for all proofs)
+    /// because SIG_ALL requires identical keys in every proof. The index
+    /// is stored but not used for blinding derivation in the funding context.
     pub fn new_funding(
         params: &ChannelParameters,
         nonce: String,
         blinding_factor: SecretKey,
         amount: u64,
+        index: usize,
     ) -> Result<Self, anyhow::Error> {
         // Get blinded pubkeys for privacy
         // The 2-of-2 path uses one set of blinded keys
@@ -125,6 +134,7 @@ impl DeterministicSecretWithBlinding {
             secret,
             blinding_factor,
             amount,
+            index,
         })
     }
 
@@ -233,6 +243,22 @@ pub struct CommitmentOutputs {
     pub receiver_outputs: DeterministicOutputsForOneContext,
     /// Sender's (Alice's) deterministic outputs
     pub sender_outputs: DeterministicOutputsForOneContext,
+}
+
+/// A proof with its associated metadata from the channel
+///
+/// Used when unblinding proofs to track which party owns each proof
+/// and the (amount, index) needed for per-proof blinded key derivation.
+#[derive(Debug, Clone)]
+pub struct ProofWithMetadata {
+    /// The unblinded proof
+    pub proof: crate::nuts::Proof,
+    /// The nominal amount of this proof
+    pub amount: u64,
+    /// The index within proofs of the same amount (for per-proof blinding)
+    pub index: usize,
+    /// Whether this proof belongs to the receiver (Charlie) or sender (Alice)
+    pub is_receiver: bool,
 }
 
 impl CommitmentOutputs {
@@ -347,12 +373,15 @@ impl CommitmentOutputs {
     /// Unblind all outputs from a swap response
     ///
     /// Takes the blind signatures from the swap response and returns
-    /// (receiver_proofs, sender_proofs) as two separate vectors
+    /// a vector of `ProofWithMetadata` containing each proof along with
+    /// its amount, index, and ownership flag.
+    ///
+    /// The caller can filter by `is_receiver` to separate receiver/sender proofs.
     pub fn unblind_all(
         &self,
         blind_signatures: Vec<BlindSignature>,
         active_keys: &crate::nuts::Keys,
-    ) -> Result<(Vec<crate::nuts::Proof>, Vec<crate::nuts::Proof>), anyhow::Error> {
+    ) -> Result<Vec<ProofWithMetadata>, anyhow::Error> {
         // Assert the number of signatures matches the expected number of outputs
         let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
         if blind_signatures.len() != expected_count {
@@ -402,19 +431,19 @@ impl CommitmentOutputs {
         // Assert result has the correct length
         assert_eq!(all_proofs.len(), all_outputs.len());
 
-        // Separate proofs back into receiver and sender based on ownership flag
-        let mut receiver_proofs = Vec::new();
-        let mut sender_proofs = Vec::new();
+        // Build result with metadata for each proof
+        let result: Vec<ProofWithMetadata> = all_proofs
+            .into_iter()
+            .zip(all_outputs.iter())
+            .map(|(proof, (output, is_receiver))| ProofWithMetadata {
+                proof,
+                amount: output.amount,
+                index: output.index,
+                is_receiver: *is_receiver,
+            })
+            .collect();
 
-        for (proof, (_, is_receiver)) in all_proofs.into_iter().zip(all_outputs.iter()) {
-            if *is_receiver {
-                receiver_proofs.push(proof);
-            } else {
-                sender_proofs.push(proof);
-            }
-        }
-
-        Ok((receiver_proofs, sender_proofs))
+        Ok(result)
     }
 
     /// Restore blind signatures from the mint using NUT-09
