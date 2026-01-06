@@ -131,14 +131,17 @@ Key functions exported for browser and Node.js:
 ```
 ┌─────────────────┐         ┌─────────────────┐
 │  Browser        │         │  Blossom Server │
-│  (player.html)  │         │  (Node.js)      │
+│  (index.html)   │         │  (Node.js)      │
 ├─────────────────┤         ├─────────────────┤
 │ - HLS.js player │  HTTP   │ - Blob storage  │
 │ - WASM (web)    │◄───────►│ - WASM (nodejs) │
 │ - Payment HDR   │         │ - Channel API   │
 │ - IndexedDB     │         │ - Video registry│
+│ - YouTube layout│         │                 │
 └─────────────────┘         └─────────────────┘
 ```
+
+**Layout:** YouTube-style side-by-side (video left ~70%, scrollable video list right 320px). Responsive: stacks vertically on mobile (≤900px).
 
 ### Payment Flow
 
@@ -150,7 +153,20 @@ Key functions exported for browser and Node.js:
    - `signature` - Alice's Schnorr signature over the balance update
    - `params` - full channel parameters (can be sent on any request, cached by server)
    - `funding_proofs` - funding token proofs with DLEQ (can be sent on any request, cached by server)
-4. Server validates payment and returns 402 if invalid
+4. Server validates payment and returns 402 if invalid, or 200 with confirmation header
+
+### Client-Side Payment Tracking
+
+The player tracks actual bytes served to avoid overpayment:
+
+1. **Pessimistic pre-payment**: Before each request, adds `globalMaxBlobSize` to tracked bytes
+2. **Post-response correction**: After 200 response, subtracts overage using actual `size` from response header
+3. **Balance calculation**: `balance = f(count, bytes)` using same pricing formula as server
+
+**Channel Exhaustion:**
+- When next payment would exceed capacity, `createPayment()` throws
+- Video is paused automatically
+- Red toast notification shown: "Channel exhausted - video paused"
 
 ### Server-Side Payment Validation
 
@@ -196,6 +212,26 @@ Four separate stores for channel state:
    - `closedAmount` - the balance at which channel was closed
    - `valueAfterStage1` - total value of stage 1 proofs
 
+### Client-Side Data Stores
+
+**IndexedDB** (`cashu_channels`, version 6):
+
+| Store | Key | Schema |
+|-------|-----|--------|
+| `channels` | `channel_id` | `{ channel_id, sender_json, alice_secret, charlie_pubkey, server_url, mint }` |
+| `request_counts` | `channel_id` | `{ channel_id, count, bytes }` |
+| `video_positions` | `master_hash` | `{ master_hash, position, timestamp }` |
+
+**localStorage:**
+- `cashu_alice_secret` - Alice's private key (hex)
+- `cashutube_server_unit` - Last selected server + unit (JSON)
+
+**In-Memory:**
+- `channelRequestCounts` - Map<channel_id, {count, bytes}>
+- `serverInfo` - Cached server params (fetched once on page load)
+- `blobUrlCache` - Map<hash, objectURL>
+- `channelsSentParams` - Set<channel_id> (tracks which channels have sent full params)
+
 ### 402 Payment Required Response
 
 When payment validation fails, server returns:
@@ -216,6 +252,18 @@ Error types:
 - `insufficient balance` - balance < amount_due (includes `amount_due`)
 - `unsupported unit` - no pricing configured for channel's unit
 - `channel closed` - channel has already been closed, use a different channel
+
+### 200 OK Response Header
+
+On successful blob fetch, server returns confirmation header:
+- Header: `X-Cashu-Channel: {"channel_id": "...", "balance": N, "amount_due": N, "capacity": N, "size": N}`
+
+Fields:
+- `channel_id` - the channel used
+- `balance` - what client sent
+- `amount_due` - what server actually charged
+- `capacity` - channel capacity
+- `size` - actual blob size in bytes (for client-side byte correction)
 
 ### Channel Closing Flow
 
@@ -467,11 +515,15 @@ The test suite includes:
 - ✅ P2BK (Pay-to-Blinded-Key) privacy for funding tokens
 - ✅ Separate blinding tweak for refund path (unlinkable to 2-of-2 path)
 - ✅ Integration tests verifying blinded signatures accepted by mint
+- ✅ 200 response with payment confirmation header (channel_id, balance, amount_due, capacity, size)
+- ✅ Client-side byte tracking with post-response correction
+- ✅ Channel exhaustion handling (pauses video, shows toast)
+- ✅ YouTube-style side-by-side layout (video left, list right)
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
-- ❌ Client-side balance tracking and top-up prompts
+- ❌ Client-side top-up prompts (byte tracking works, needs UI)
 - ❌ Client-side close UI (button to close channel)
 
 **TODO - Player Improvements:**
