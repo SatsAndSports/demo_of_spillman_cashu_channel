@@ -261,9 +261,11 @@ fn unblind_and_verify_dleq_inner(
     // Get maximum_amount from params
     let maximum_amount = params.maximum_amount_for_one_output;
 
-    // Get Charlie's RAW pubkey for comparison
-    // (Stage 1 outputs use raw pubkeys; only the funding token uses blinded pubkeys)
-    let charlie_pubkey_hex = params.charlie_pubkey.to_hex();
+    // Get Charlie's BLINDED pubkey for stage2 (stage 1 outputs use stage2 blinded keys)
+    let charlie_blinded_pubkey = params
+        .get_receiver_blinded_pubkey_for_stage2()
+        .map_err(|e| format!("Failed to get receiver blinded pubkey for stage2: {}", e))?;
+    let charlie_pubkey_hex = charlie_blinded_pubkey.to_hex();
 
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -383,7 +385,7 @@ fn unblind_and_verify_dleq_inner(
             .and_then(|v| v.as_str());
         if data != Some(charlie_pubkey_hex.as_str()) {
             return Err(format!(
-                "Receiver proof {} locked to wrong pubkey: expected {} (charlie), got {:?}",
+                "Receiver proof {} locked to wrong pubkey: expected {} (charlie blinded stage2), got {:?}",
                 i, charlie_pubkey_hex, data
             ));
         }
@@ -627,6 +629,117 @@ fn verify_proof_dleq_inner(proof_json: &str, mint_pubkey_hex: &str) -> Result<bo
         .map_err(|e| format!("DLEQ verification failed: {}", e))?;
 
     Ok(true)
+}
+
+/// Get Alice's blinded secret key for stage 2 signing
+///
+/// Alice uses this to sign when spending her stage 1 proofs in stage 2.
+/// The stage 1 outputs are P2PK locked to her blinded pubkey (stage2 context),
+/// so she needs this blinded secret key to spend them.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `alice_secret_hex` - Alice's raw secret key in hex
+///
+/// # Returns
+/// Hex string of Alice's blinded secret key for stage 2
+#[wasm_bindgen]
+pub fn get_sender_blinded_secret_key_for_stage2(
+    params_json: &str,
+    keyset_info_json: &str,
+    alice_secret_hex: &str,
+) -> Result<String, JsValue> {
+    get_sender_blinded_secret_key_for_stage2_inner(params_json, keyset_info_json, alice_secret_hex)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+fn get_sender_blinded_secret_key_for_stage2_inner(
+    params_json: &str,
+    keyset_info_json: &str,
+    alice_secret_hex: &str,
+) -> Result<String, String> {
+    // Parse keyset info
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse Alice's secret key
+    let alice_secret =
+        SecretKey::from_hex(alice_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
+
+    // Create ChannelParameters
+    let params =
+        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Get blinded secret key for stage 2
+    let blinded_secret = params
+        .get_sender_blinded_secret_key_for_stage2(&alice_secret)
+        .map_err(|e| format!("Failed to get blinded secret key: {}", e))?;
+
+    Ok(blinded_secret.to_secret_hex())
+}
+
+/// Get Charlie's blinded secret key for stage 2 signing
+///
+/// Charlie uses this to sign when spending his stage 1 proofs in stage 2.
+/// The stage 1 outputs are P2PK locked to his blinded pubkey (stage2 context),
+/// so he needs this blinded secret key to spend them.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `charlie_secret_hex` - Charlie's raw secret key in hex
+/// * `shared_secret_hex` - Pre-computed shared secret (hex)
+///
+/// # Returns
+/// Hex string of Charlie's blinded secret key for stage 2
+#[wasm_bindgen]
+pub fn get_receiver_blinded_secret_key_for_stage2(
+    params_json: &str,
+    keyset_info_json: &str,
+    charlie_secret_hex: &str,
+    shared_secret_hex: &str,
+) -> Result<String, JsValue> {
+    get_receiver_blinded_secret_key_for_stage2_inner(
+        params_json,
+        keyset_info_json,
+        charlie_secret_hex,
+        shared_secret_hex,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+fn get_receiver_blinded_secret_key_for_stage2_inner(
+    params_json: &str,
+    keyset_info_json: &str,
+    charlie_secret_hex: &str,
+    shared_secret_hex: &str,
+) -> Result<String, String> {
+    // Parse keyset info
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse Charlie's secret key
+    let charlie_secret = SecretKey::from_hex(charlie_secret_hex)
+        .map_err(|e| format!("Invalid secret key: {}", e))?;
+
+    // Parse shared secret
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes")?;
+
+    // Create ChannelParameters with shared secret
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Get blinded secret key for stage 2
+    let blinded_secret = params
+        .get_receiver_blinded_secret_key_for_stage2(&charlie_secret)
+        .map_err(|e| format!("Failed to get blinded secret key: {}", e))?;
+
+    Ok(blinded_secret.to_secret_hex())
 }
 
 /// Verify that a channel is valid

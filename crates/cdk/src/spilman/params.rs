@@ -418,13 +418,16 @@ impl ChannelParameters {
         .to_string()
     }
 
-    /// Derive a blinding scalar for stage 1 P2BK
+    /// Derive a blinding scalar for P2BK
     ///
-    /// The `party` parameter should be "sender_stage1" or "receiver_stage1".
+    /// The `context` parameter specifies which blinded key to derive:
+    /// - "sender_stage1" / "receiver_stage1" - for funding token 2-of-2
+    /// - "sender_stage1_refund" - for funding token locktime refund
+    /// - "sender_stage2" / "receiver_stage2" - for stage 1 outputs (spent in stage 2)
     ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || party || retry_counter)
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || context || retry_counter)
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
-    fn derive_blinding_scalar_for_stage_1(&self, party: &str) -> anyhow::Result<Scalar> {
+    fn derive_blinding_scalar(&self, context: &str) -> anyhow::Result<Scalar> {
         let channel_id_bytes = self.get_channel_id_bytes();
 
         for retry_counter in 0u8..=255 {
@@ -432,7 +435,7 @@ impl ChannelParameters {
             input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
             input.extend_from_slice(&channel_id_bytes);
             input.extend_from_slice(&self.shared_secret);
-            input.extend_from_slice(party.as_bytes());
+            input.extend_from_slice(context.as_bytes());
             input.push(retry_counter);
 
             let hash = sha256::Hash::hash(&input);
@@ -459,7 +462,7 @@ impl ChannelParameters {
     /// - If even Y: P' = P + r*G (matches k = p + r)
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
     pub fn get_sender_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1")?;
+        let r = self.derive_blinding_scalar("sender_stage1")?;
         derive_blinded_pubkey(&self.alice_pubkey, &r)
     }
 
@@ -472,7 +475,7 @@ impl ChannelParameters {
     /// - If even Y: P' = P + r*G (matches k = p + r)
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
     pub fn get_receiver_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("receiver_stage1")?;
+        let r = self.derive_blinding_scalar("receiver_stage1")?;
         derive_blinded_pubkey(&self.charlie_pubkey, &r)
     }
 
@@ -485,7 +488,7 @@ impl ChannelParameters {
         &self,
         alice_secret: &SecretKey,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1")?;
+        let r = self.derive_blinding_scalar("sender_stage1")?;
         derive_blinded_secret_key(alice_secret, &r)
     }
 
@@ -496,7 +499,7 @@ impl ChannelParameters {
     pub fn get_sender_blinded_pubkey_for_stage1_refund(
         &self,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1_refund")?;
+        let r = self.derive_blinding_scalar("sender_stage1_refund")?;
         derive_blinded_pubkey(&self.alice_pubkey, &r)
     }
 
@@ -508,7 +511,7 @@ impl ChannelParameters {
         &self,
         alice_secret: &SecretKey,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("sender_stage1_refund")?;
+        let r = self.derive_blinding_scalar("sender_stage1_refund")?;
         derive_blinded_secret_key(alice_secret, &r)
     }
 
@@ -521,7 +524,47 @@ impl ChannelParameters {
         &self,
         charlie_secret: &SecretKey,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_blinding_scalar_for_stage_1("receiver_stage1")?;
+        let r = self.derive_blinding_scalar("receiver_stage1")?;
+        derive_blinded_secret_key(charlie_secret, &r)
+    }
+
+    /// Get the blinded sender (Alice) pubkey for stage 2
+    ///
+    /// Used for stage 1 outputs - Alice's proofs are locked to this pubkey,
+    /// and she'll need to sign with the corresponding secret key in stage 2.
+    pub fn get_sender_blinded_pubkey_for_stage2(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+        let r = self.derive_blinding_scalar("sender_stage2")?;
+        derive_blinded_pubkey(&self.alice_pubkey, &r)
+    }
+
+    /// Get the blinded receiver (Charlie) pubkey for stage 2
+    ///
+    /// Used for stage 1 outputs - Charlie's proofs are locked to this pubkey,
+    /// and he'll need to sign with the corresponding secret key in stage 2.
+    pub fn get_receiver_blinded_pubkey_for_stage2(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+        let r = self.derive_blinding_scalar("receiver_stage2")?;
+        derive_blinded_pubkey(&self.charlie_pubkey, &r)
+    }
+
+    /// Derive the blinded sender secret key for stage 2 signing
+    ///
+    /// Alice uses this to sign when spending her stage 1 proofs in stage 2.
+    pub fn get_sender_blinded_secret_key_for_stage2(
+        &self,
+        alice_secret: &SecretKey,
+    ) -> anyhow::Result<SecretKey> {
+        let r = self.derive_blinding_scalar("sender_stage2")?;
+        derive_blinded_secret_key(alice_secret, &r)
+    }
+
+    /// Derive the blinded receiver secret key for stage 2 signing
+    ///
+    /// Charlie uses this to sign when spending his stage 1 proofs in stage 2.
+    pub fn get_receiver_blinded_secret_key_for_stage2(
+        &self,
+        charlie_secret: &SecretKey,
+    ) -> anyhow::Result<SecretKey> {
+        let r = self.derive_blinding_scalar("receiver_stage2")?;
         derive_blinded_secret_key(charlie_secret, &r)
     }
 
@@ -536,21 +579,21 @@ impl ChannelParameters {
         }
     }
 
-    /// Get the RAW pubkey for a stage 1 output context ("sender" or "receiver")
+    /// Get the BLINDED pubkey for a stage 1 output context ("sender" or "receiver")
     ///
-    /// Returns the raw (non-blinded) pubkey for use in stage 1 commitment outputs:
-    /// - "receiver" → Charlie's raw pubkey
-    /// - "sender" → Alice's raw pubkey
-    /// - "funding" → error (funding uses 2-of-2 with blinded pubkeys)
+    /// Returns the blinded pubkey for use in stage 1 commitment outputs:
+    /// - "receiver" → Charlie's blinded pubkey (stage2 context)
+    /// - "sender" → Alice's blinded pubkey (stage2 context)
+    /// - "funding" → error (funding uses 2-of-2 with stage1 blinded pubkeys)
     ///
-    /// Note: Stage 1 outputs use RAW pubkeys. Blinding is only for the funding token.
-    pub fn get_pubkey_for_stage1_output(
+    /// Uses "stage2" blinding context because these are the keys needed to sign in stage 2.
+    pub fn get_blinded_pubkey_for_stage1_output(
         &self,
         context: &str,
     ) -> Result<crate::nuts::PublicKey, anyhow::Error> {
         match context {
-            "receiver" => Ok(self.charlie_pubkey),
-            "sender" => Ok(self.alice_pubkey),
+            "receiver" => self.get_receiver_blinded_pubkey_for_stage2(),
+            "sender" => self.get_sender_blinded_pubkey_for_stage2(),
             "funding" => anyhow::bail!(
                 "Funding context requires 2-of-2 blinded pubkeys, use new_funding() instead"
             ),
@@ -602,9 +645,9 @@ impl ChannelParameters {
         if context == "funding" {
             DeterministicSecretWithBlinding::new_funding(self, nonce, blinding_factor, amount)
         } else {
-            // For sender/receiver contexts, create simple P2PK outputs with RAW pubkeys
-            // (Stage 1 outputs use raw keys; blinding is only for the funding token)
-            let pubkey = self.get_pubkey_for_stage1_output(context)?;
+            // For sender/receiver contexts, create simple P2PK outputs with BLINDED pubkeys
+            // (Stage 1 outputs use stage2 blinded keys for spending in stage 2)
+            let pubkey = self.get_blinded_pubkey_for_stage1_output(context)?;
             DeterministicSecretWithBlinding::new_p2pk(&pubkey, nonce, blinding_factor, amount)
         }
     }
