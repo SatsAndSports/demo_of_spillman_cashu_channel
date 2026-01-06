@@ -424,12 +424,13 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
         .unwrap()
         .to_hex();
 
-    let alice_stage2 = params
-        .get_sender_blinded_pubkey_for_stage2()
+    // Test per-proof stage2 pubkeys with a specific (amount, index)
+    let alice_stage2_64_0 = params
+        .get_sender_blinded_pubkey_for_stage2_output(64, 0)
         .unwrap()
         .to_hex();
-    let charlie_stage2 = params
-        .get_receiver_blinded_pubkey_for_stage2()
+    let charlie_stage2_64_0 = params
+        .get_receiver_blinded_pubkey_for_stage2_output(64, 0)
         .unwrap()
         .to_hex();
 
@@ -438,42 +439,62 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
         .unwrap()
         .to_hex();
 
-    println!("Alice raw:     {}", alice_raw);
-    println!("Alice stage1:  {}", alice_stage1);
-    println!("Alice stage2:  {}", alice_stage2);
-    println!("Alice refund:  {}", alice_refund);
-    println!("Charlie raw:   {}", charlie_raw);
-    println!("Charlie stage1:{}", charlie_stage1);
-    println!("Charlie stage2:{}", charlie_stage2);
+    println!("Alice raw:         {}", alice_raw);
+    println!("Alice stage1:      {}", alice_stage1);
+    println!("Alice stage2(64,0):{}", alice_stage2_64_0);
+    println!("Alice refund:      {}", alice_refund);
+    println!("Charlie raw:       {}", charlie_raw);
+    println!("Charlie stage1:    {}", charlie_stage1);
+    println!("Charlie stage2(64,0):{}", charlie_stage2_64_0);
 
     // Verify stage2 keys differ from raw
-    assert_ne!(alice_stage2, alice_raw, "Alice stage2 should differ from raw");
+    assert_ne!(alice_stage2_64_0, alice_raw, "Alice stage2 should differ from raw");
     assert_ne!(
-        charlie_stage2, charlie_raw,
+        charlie_stage2_64_0, charlie_raw,
         "Charlie stage2 should differ from raw"
     );
 
     // Verify stage2 keys differ from stage1
     assert_ne!(
-        alice_stage2, alice_stage1,
+        alice_stage2_64_0, alice_stage1,
         "Alice stage2 should differ from stage1"
     );
     assert_ne!(
-        charlie_stage2, charlie_stage1,
+        charlie_stage2_64_0, charlie_stage1,
         "Charlie stage2 should differ from stage1"
     );
 
     // Verify sender and receiver stage2 keys differ from each other
     assert_ne!(
-        alice_stage2, charlie_stage2,
+        alice_stage2_64_0, charlie_stage2_64_0,
         "Alice and Charlie stage2 should differ"
     );
 
     // Verify stage2 keys differ from refund key
     assert_ne!(
-        alice_stage2, alice_refund,
+        alice_stage2_64_0, alice_refund,
         "Alice stage2 should differ from refund"
     );
+
+    // Verify per-proof uniqueness: different (amount, index) pairs produce different pubkeys
+    let alice_stage2_64_1 = params
+        .get_sender_blinded_pubkey_for_stage2_output(64, 1)
+        .unwrap()
+        .to_hex();
+    let alice_stage2_32_0 = params
+        .get_sender_blinded_pubkey_for_stage2_output(32, 0)
+        .unwrap()
+        .to_hex();
+
+    assert_ne!(
+        alice_stage2_64_0, alice_stage2_64_1,
+        "Different index should produce different pubkey"
+    );
+    assert_ne!(
+        alice_stage2_64_0, alice_stage2_32_0,
+        "Different amount should produce different pubkey"
+    );
+    println!("✓ Per-proof stage2 pubkeys are unique for different (amount, index)");
 
     println!("✓ All stage2 blinded pubkeys are unique");
 }
