@@ -368,3 +368,112 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     );
     println!("✓ Refund spending with Alice's blinded refund key succeeded");
 }
+
+/// Test: Stage2 blinded pubkeys differ from stage1 and raw pubkeys
+///
+/// Verifies that stage2 blinding context produces different keys from:
+/// - Raw pubkeys (no blinding)
+/// - Stage1 blinded pubkeys (different context)
+/// - Each other (sender vs receiver)
+#[test]
+fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey = alice_secret.public_key();
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    // Create minimal keyset info for the test
+    let mut keys = std::collections::BTreeMap::new();
+    keys.insert(
+        cdk_common::Amount::from(1u64),
+        cdk_common::nuts::PublicKey::from_hex(
+            "02194603ffa36356f4a56b7df9371fc3192472351453ec7398b8da8117e7c3e104",
+        )
+        .unwrap(),
+    );
+    let keyset_keys = cdk_common::nuts::Keys::new(keys);
+    let keyset_id = cdk_common::nuts::Id::v1_from_keys(&keyset_keys);
+    let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
+
+    // Create channel params
+    let params = ChannelParameters::new_with_secret_key(
+        alice_pubkey,
+        charlie_pubkey,
+        "http://localhost:3338".to_string(),
+        CurrencyUnit::Sat,
+        100,
+        crate::util::unix_time() + 3600,
+        crate::util::unix_time(),
+        "test-stage2-keys".to_string(),
+        keyset_info,
+        64,
+        &alice_secret,
+    )
+    .expect("Failed to create params");
+
+    // Get all the different pubkeys
+    let alice_raw = alice_pubkey.to_hex();
+    let charlie_raw = charlie_pubkey.to_hex();
+
+    let alice_stage1 = params
+        .get_sender_blinded_pubkey_for_stage1()
+        .unwrap()
+        .to_hex();
+    let charlie_stage1 = params
+        .get_receiver_blinded_pubkey_for_stage1()
+        .unwrap()
+        .to_hex();
+
+    let alice_stage2 = params
+        .get_sender_blinded_pubkey_for_stage2()
+        .unwrap()
+        .to_hex();
+    let charlie_stage2 = params
+        .get_receiver_blinded_pubkey_for_stage2()
+        .unwrap()
+        .to_hex();
+
+    let alice_refund = params
+        .get_sender_blinded_pubkey_for_stage1_refund()
+        .unwrap()
+        .to_hex();
+
+    println!("Alice raw:     {}", alice_raw);
+    println!("Alice stage1:  {}", alice_stage1);
+    println!("Alice stage2:  {}", alice_stage2);
+    println!("Alice refund:  {}", alice_refund);
+    println!("Charlie raw:   {}", charlie_raw);
+    println!("Charlie stage1:{}", charlie_stage1);
+    println!("Charlie stage2:{}", charlie_stage2);
+
+    // Verify stage2 keys differ from raw
+    assert_ne!(alice_stage2, alice_raw, "Alice stage2 should differ from raw");
+    assert_ne!(
+        charlie_stage2, charlie_raw,
+        "Charlie stage2 should differ from raw"
+    );
+
+    // Verify stage2 keys differ from stage1
+    assert_ne!(
+        alice_stage2, alice_stage1,
+        "Alice stage2 should differ from stage1"
+    );
+    assert_ne!(
+        charlie_stage2, charlie_stage1,
+        "Charlie stage2 should differ from stage1"
+    );
+
+    // Verify sender and receiver stage2 keys differ from each other
+    assert_ne!(
+        alice_stage2, charlie_stage2,
+        "Alice and Charlie stage2 should differ"
+    );
+
+    // Verify stage2 keys differ from refund key
+    assert_ne!(
+        alice_stage2, alice_refund,
+        "Alice stage2 should differ from refund"
+    );
+
+    println!("✓ All stage2 blinded pubkeys are unique");
+}
