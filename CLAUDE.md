@@ -245,6 +245,7 @@ Error types:
 - `invalid or missing channel_id/balance/signature` - required field issues
 - `server misconfigured` - no secret key configured
 - `channel_id mismatch` - computed ID doesn't match provided
+- `capacity too small` - channel capacity below server's minCapacity for that unit (includes `capacity` and `min_capacity`)
 - `keyset not from approved mint` - keyset not cached at startup
 - `channel validation failed` - DLEQ verification failed (includes `validation_errors`)
 - `unknown channel` - no cached funding and no params/funding_proofs provided
@@ -384,9 +385,13 @@ channel:
     sat:
       perRequestPpk: 500    # 0.5 sats per request
       perMegabytePpk: 1000  # 1 sat per MB
+      minCapacity: 100      # minimum channel capacity in sats
     usd:
       perRequestPpk: 100    # 0.1 cents per request
       perMegabytePpk: 200   # 0.2 cents per MB
+      minCapacity: 10       # minimum channel capacity in cents
+  # minimum locktime in seconds (1 hour = 3600)
+  minExpiryInSeconds: 3600
 ```
 
 ### Video Database Schema
@@ -415,7 +420,7 @@ CREATE TABLE videos (
 ### API Endpoints
 
 **Public:**
-- `GET /channel/params` - Returns receiver pubkey, pricing (ppk), approved mints/units/keysets
+- `GET /channel/params` - Returns receiver pubkey, pricing (ppk + minCapacity per unit), min_expiry_in_seconds, approved mints/units/keysets
 - `GET /channel/:channel_id/status` - Returns channel status (capacity, balance, usage, amount_due, closed, closed_amount)
 - `POST /channel/:channel_id/close` - Close channel and settle with mint
   - Body: `{ balance, signature, params?, funding_proofs? }`
@@ -480,7 +485,7 @@ The test suite includes:
 - **blobs.test.ts**: Upload, fetch (402), HEAD, 404 cases
 - **channel.test.ts**: `/channel/params` endpoint
 - **minting.test.ts**: Funding token creation, DLEQ verification, keyset tampering detection
-- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, channel closing, idempotent close, closed channel rejection
+- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, capacity validation, channel closing, idempotent close, closed channel rejection
 
 ## Current Status
 
@@ -519,8 +524,10 @@ The test suite includes:
 - ✅ Client-side byte tracking with post-response correction
 - ✅ Channel exhaustion handling (pauses video, shows toast)
 - ✅ YouTube-style side-by-side layout (video left, list right)
+- ✅ Per-unit minimum capacity enforcement (server rejects channels below minCapacity)
 
 **TODO - Payments:**
+- ❌ Enforce and test min_expiry_in_seconds (server advertises but doesn't reject short locktimes yet)
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
 - ❌ Client-side top-up prompts (byte tracking works, needs UI)
