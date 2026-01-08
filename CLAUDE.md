@@ -246,6 +246,7 @@ Error types:
 - `server misconfigured` - no secret key configured
 - `channel_id mismatch` - computed ID doesn't match provided
 - `capacity too small` - channel capacity below server's minCapacity for that unit (includes `capacity` and `min_capacity`)
+- `locktime too soon` - channel locktime doesn't leave enough time before expiry (includes `locktime`, `min_expiry_in_seconds`, `seconds_remaining`)
 - `keyset not from approved mint` - keyset not cached at startup
 - `channel validation failed` - DLEQ verification failed (includes `validation_errors`)
 - `unknown channel` - no cached funding and no params/funding_proofs provided
@@ -485,7 +486,7 @@ The test suite includes:
 - **blobs.test.ts**: Upload, fetch (402), HEAD, 404 cases
 - **channel.test.ts**: `/channel/params` endpoint
 - **minting.test.ts**: Funding token creation, DLEQ verification, keyset tampering detection
-- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, capacity validation, channel closing, idempotent close, closed channel rejection
+- **payment.test.ts**: Full payment flow, 402→200 transition, tampered DLEQ rejection, capacity validation, locktime validation, channel closing, idempotent close, closed channel rejection
 
 ## Current Status
 
@@ -525,9 +526,14 @@ The test suite includes:
 - ✅ Channel exhaustion handling (pauses video, shows toast)
 - ✅ YouTube-style side-by-side layout (video left, list right)
 - ✅ Per-unit minimum capacity enforcement (server rejects channels below minCapacity)
+- ✅ Minimum expiry enforcement (server rejects channels with locktime too soon)
+- ✅ Server logs every 402 response with full header JSON (`paymentError()` helper in `fetch.ts`)
+- ✅ `msat` unit test coverage (20-payment loop test with channel close)
+- ✅ Channel status moved to header bar (clickable, shows balance/capacity/unit)
+- ✅ Improved client-side payment logging: `[Payment] #N | X.X MB | bal: N/N unit | chan: abc123...`
+- ✅ Fixed sprite animation sizing on video card hover (uses `spriteMeta.thumb_width/height`)
 
 **TODO - Payments:**
-- ❌ Enforce and test min_expiry_in_seconds (server advertises but doesn't reject short locktimes yet)
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
 - ❌ Client-side top-up prompts (byte tracking works, needs UI)
@@ -565,6 +571,24 @@ The test suite includes:
 - ❌ Theater mode (wider video, darker background)
 - ❌ Loading spinner while buffering
 - ❌ Autoplay next video
+
+## Next Up
+
+**`maximum_amount` optimization:**
+
+Currently `maximum_amount` is hardcoded to 64 in channel params (`index.html:3064`). This limits the largest denomination used in funding tokens, causing large channels to have many proofs:
+- A 10,000 sat channel with max_amount=64 needs ~156+ proofs
+- This makes funding tokens huge and slow to transmit/verify
+
+Options to explore:
+1. Use the keyset's largest denomination (e.g., 2^20 for sat keysets)
+2. Make it configurable per-unit in server config
+3. Auto-calculate based on capacity (e.g., capacity/10 to get ~10-15 proofs)
+
+Files involved:
+- `web/blossom-server/public/index.html:3064` - hardcoded `maximum_amount: 64`
+- `crates/cdk/src/spilman/keysets_and_amounts.rs` - `OrderedListOfAmounts::from_target()` uses maximum_amount
+- `crates/cdk/src/spilman/params.rs` - `maximum_amount_for_one_output` field in ChannelParameters
 
 ## Notes
 
