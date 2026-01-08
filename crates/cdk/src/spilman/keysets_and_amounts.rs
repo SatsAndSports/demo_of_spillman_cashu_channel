@@ -15,7 +15,6 @@ pub struct InverseFeeResult {
      * outputs to Charlie, which become 101 sats after he swaps them into his
      * own wallet
      */
-
     /// The nominal value to allocate in deterministic outputs
     pub nominal_value: u64,
     /// The actual balance after fees (may be >= target due to discrete amounts)
@@ -40,6 +39,7 @@ impl OrderedListOfAmounts {
     ///
     /// Uses a largest-first greedy algorithm to minimize the number of outputs.
     /// Only considers amounts <= maximum_amount from the keyset.
+    /// If maximum_amount is 0, no limit is applied (uses all keyset denominations).
     pub fn from_target(
         target: u64,
         maximum_amount: u64,
@@ -62,7 +62,7 @@ impl OrderedListOfAmounts {
         // Greedy algorithm: use largest amounts first to minimize number of outputs
         // keyset_info.amounts_largest_first is already sorted descending
         for &amount in &keyset_info.amounts_largest_first {
-            if amount > maximum_amount {
+            if maximum_amount > 0 && amount > maximum_amount {
                 continue;
             }
             let mut count = 0;
@@ -76,11 +76,15 @@ impl OrderedListOfAmounts {
         }
 
         if remaining != 0 {
-            anyhow::bail!(
-                "Cannot represent {} using available amounts (max {})",
-                target,
-                maximum_amount
-            );
+            if maximum_amount == 0 {
+                anyhow::bail!("Cannot represent {} using available amounts", target);
+            } else {
+                anyhow::bail!(
+                    "Cannot represent {} using available amounts (max {})",
+                    target,
+                    maximum_amount
+                );
+            }
         }
 
         // Build amounts vector by iterating in reverse (largest-first)
@@ -91,7 +95,11 @@ impl OrderedListOfAmounts {
             }
         }
 
-        Ok(Self { amounts, count_by_amount, input_fee_ppk: keyset_info.input_fee_ppk })
+        Ok(Self {
+            amounts,
+            count_by_amount,
+            input_fee_ppk: keyset_info.input_fee_ppk,
+        })
     }
 
     /// Get the number of amounts in the list
@@ -150,10 +158,8 @@ impl KeysetInfo {
     /// Create new keyset info from active keys
     pub fn new(keyset_id: Id, active_keys: Keys, input_fee_ppk: u64) -> Self {
         // Extract and sort amounts from the keyset (largest first)
-        let mut amounts_largest_first: Vec<u64> = active_keys
-            .iter()
-            .map(|(amt, _)| u64::from(*amt))
-            .collect();
+        let mut amounts_largest_first: Vec<u64> =
+            active_keys.iter().map(|(amt, _)| u64::from(*amt)).collect();
         amounts_largest_first.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
 
         Self {
@@ -174,14 +180,16 @@ impl KeysetInfo {
         use std::collections::BTreeMap;
         use std::str::FromStr;
 
-        let keyset_id: Id = keyset_id_str.parse()
+        let keyset_id: Id = keyset_id_str
+            .parse()
             .map_err(|e| anyhow::anyhow!("Invalid keyset_id: {}", e))?;
 
         // Create dummy keys map with power-of-2 amounts
         let mut keys_map = BTreeMap::new();
         let dummy_pubkey = PublicKey::from_str(
-            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
-        ).map_err(|e| anyhow::anyhow!("Invalid dummy pubkey: {}", e))?;
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+        )
+        .map_err(|e| anyhow::anyhow!("Invalid dummy pubkey: {}", e))?;
 
         for i in 0..=20 {
             keys_map.insert(Amount::from(1u64 << i), dummy_pubkey);
@@ -280,8 +288,9 @@ mod tests {
         // Create dummy keys map
         let mut keys_map = BTreeMap::new();
         let dummy_pubkey = PublicKey::from_str(
-            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2"
-        ).unwrap();
+            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+        )
+        .unwrap();
         for &amt in &amounts {
             keys_map.insert(Amount::from(amt), dummy_pubkey);
         }
@@ -306,9 +315,17 @@ mod tests {
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
         for target in 1..=20 {
-            let result = OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset).unwrap();
-            assert_eq!(result.len(), target as usize,
-                "target={}: expected {} outputs, got {}", target, target, result.len());
+            let result =
+                OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset)
+                    .unwrap();
+            assert_eq!(
+                result.len(),
+                target as usize,
+                "target={}: expected {} outputs, got {}",
+                target,
+                target,
+                result.len()
+            );
             assert_eq!(result.nominal_total(), target);
         }
     }
@@ -321,11 +338,45 @@ mod tests {
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
         for target in (2..=20).step_by(2) {
-            let result = OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset).unwrap();
-            assert_eq!(result.len(), (target / 2) as usize,
-                "target={}: expected {} outputs, got {}", target, target / 2, result.len());
+            let result =
+                OrderedListOfAmounts::from_target(target, maximum_amount_for_one_output, &keyset)
+                    .unwrap();
+            assert_eq!(
+                result.len(),
+                (target / 2) as usize,
+                "target={}: expected {} outputs, got {}",
+                target,
+                target / 2,
+                result.len()
+            );
             assert_eq!(result.nominal_total(), target);
         }
+    }
+
+    #[test]
+    fn test_from_target_max_0_means_no_limit() {
+        // With maximum_amount=0, should use largest available denomination
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024], 0);
+
+        // 1000 with no limit should use 512 + 256 + 128 + 64 + 32 + 8 = 1000
+        // That's 6 outputs (using largest-first greedy)
+        let result = OrderedListOfAmounts::from_target(1000, 0, &keyset).unwrap();
+        assert_eq!(result.nominal_total(), 1000);
+        // With no limit, should be much fewer outputs than with max=64
+        assert!(
+            result.len() < 20,
+            "Expected fewer outputs with no limit, got {}",
+            result.len()
+        );
+
+        // Compare with max=64 limit
+        let result_limited = OrderedListOfAmounts::from_target(1000, 64, &keyset).unwrap();
+        assert!(
+            result.len() < result_limited.len(),
+            "No-limit ({} outputs) should be fewer than limited ({} outputs)",
+            result.len(),
+            result_limited.len()
+        );
     }
 
     #[test]
@@ -381,9 +432,15 @@ mod tests {
 
             if result.len() % 2 == 0 {
                 let expected_fee = result.len() as u64 / 2;
-                assert_eq!(result.value_after_fees(), target - expected_fee,
+                assert_eq!(
+                    result.value_after_fees(),
+                    target - expected_fee,
                     "target={}, num_outputs={}: expected fee={}, got fee={}",
-                    target, result.len(), expected_fee, target - result.value_after_fees());
+                    target,
+                    result.len(),
+                    expected_fee,
+                    target - result.value_after_fees()
+                );
             }
         }
     }
@@ -403,7 +460,9 @@ mod tests {
         let max_amount = 64;
 
         for target in 0..=100 {
-            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+            let inverse_result = keyset
+                .inverse_deterministic_value_after_fees(target, max_amount)
+                .unwrap();
 
             assert_eq!(inverse_result.nominal_value, target);
             assert_eq!(inverse_result.actual_balance, target);
@@ -419,7 +478,9 @@ mod tests {
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+            let inverse_result = keyset
+                .inverse_deterministic_value_after_fees(target, max_amount)
+                .unwrap();
 
             // The actual balance should be >= target
             assert!(
@@ -446,7 +507,9 @@ mod tests {
 
         // For any target balance, inverse should give us at least that balance
         for target in 0..=1000 {
-            let inverse_result = keyset.inverse_deterministic_value_after_fees(target, max_amount).unwrap();
+            let inverse_result = keyset
+                .inverse_deterministic_value_after_fees(target, max_amount)
+                .unwrap();
 
             // The actual balance should be >= target
             assert!(
