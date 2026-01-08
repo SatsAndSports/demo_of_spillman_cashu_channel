@@ -1,17 +1,16 @@
 //! WASM bindings for Cashu payment channels
 
-use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use wasm_bindgen::prelude::*;
 
 use bitcoin::secp256k1::schnorr::Signature;
 use cdk::dhke::construct_proofs as dhke_construct_proofs;
-use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Keys, Proof, PublicKey, SecretKey};
+use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Proof, PublicKey, SecretKey};
 use cdk::secret::Secret;
 use cdk::spilman::{
-    verify_valid_channel, BalanceUpdateMessage, ChannelParameters,
-    DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, SpilmanChannelSender,
+    parse_keyset_info_from_json, verify_valid_channel, BalanceUpdateMessage, ChannelParameters,
+    DeterministicOutputsForOneContext, EstablishedChannel, SpilmanChannelSender,
 };
 use cdk::Amount;
 
@@ -33,67 +32,22 @@ pub fn compute_shared_secret(
         .map_err(|e| JsValue::from_str(&e))
 }
 
-/// Get channel_id from params JSON and shared secret
+/// Get channel_id from params JSON, shared secret, and keyset info
 ///
 /// This is effectively a method on ChannelParameters for FFI.
-/// Takes the params JSON and the pre-computed shared secret (hex).
+/// Takes the params JSON, the pre-computed shared secret (hex), and keyset info JSON.
 #[wasm_bindgen]
 pub fn channel_parameters_get_channel_id(
     params_json: &str,
     shared_secret_hex: &str,
+    keyset_info_json: &str,
 ) -> Result<String, JsValue> {
-    cdk::spilman::channel_parameters_get_channel_id(params_json, shared_secret_hex)
-        .map_err(|e| JsValue::from_str(&e))
-}
-
-/// Parse KeysetInfo from JavaScript object
-///
-/// Expected format (from fetchKeysetInfo in player.html):
-/// {
-///   "keysetId": "00...",
-///   "unit": "sat",
-///   "keys": { "1": "02...", "2": "02...", ... },
-///   "inputFeePpk": 100,
-///   "amounts": [1048576, 524288, ...]
-/// }
-fn parse_keyset_info_from_json(json_str: &str) -> Result<KeysetInfo, String> {
-    let json: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| format!("Invalid keyset JSON: {}", e))?;
-
-    // Parse keyset_id
-    let keyset_id_str = json["keysetId"]
-        .as_str()
-        .ok_or("Missing or invalid 'keysetId' field")?;
-    let keyset_id: Id = keyset_id_str
-        .parse()
-        .map_err(|e| format!("Invalid keyset_id: {}", e))?;
-
-    // Parse input_fee_ppk
-    let input_fee_ppk = json["inputFeePpk"]
-        .as_u64()
-        .ok_or("Missing or invalid 'inputFeePpk' field")?;
-
-    // Parse keys map: { "1": "02...", "2": "02...", ... }
-    let keys_obj = json["keys"]
-        .as_object()
-        .ok_or("Missing or invalid 'keys' field")?;
-
-    let mut keys_map: BTreeMap<Amount, PublicKey> = BTreeMap::new();
-    for (amount_str, pubkey_val) in keys_obj {
-        let amount: u64 = amount_str
-            .parse()
-            .map_err(|e| format!("Invalid amount '{}': {}", amount_str, e))?;
-        let pubkey_hex = pubkey_val
-            .as_str()
-            .ok_or_else(|| format!("Invalid pubkey for amount {}", amount))?;
-        let pubkey = PublicKey::from_str(pubkey_hex)
-            .map_err(|e| format!("Invalid pubkey hex for amount {}: {}", amount, e))?;
-        keys_map.insert(Amount::from(amount), pubkey);
-    }
-
-    let active_keys = Keys::new(keys_map);
-
-    Ok(KeysetInfo::new(keyset_id, active_keys, input_fee_ppk))
+    cdk::spilman::channel_parameters_get_channel_id(
+        params_json,
+        shared_secret_hex,
+        keyset_info_json,
+    )
+    .map_err(|e| JsValue::from_str(&e))
 }
 
 /// Create funding outputs for a Spilman channel
@@ -536,9 +490,10 @@ fn spilman_channel_sender_create_signed_balance_update_inner(
 /// Verify a balance update signature from the sender (Alice)
 ///
 /// Takes:
-/// - `params_json`: Channel parameters JSON (must include keyset_id and input_fee_ppk)
+/// - `params_json`: Channel parameters JSON
 /// - `shared_secret_hex`: Pre-computed shared secret (hex)
 /// - `funding_proofs_json`: JSON array of funding proofs
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
 /// - `channel_id`: The channel ID from the balance update
 /// - `balance`: The balance amount from the balance update
 /// - `signature`: Alice's Schnorr signature (hex)
@@ -549,6 +504,7 @@ pub fn verify_balance_update_signature(
     params_json: &str,
     shared_secret_hex: &str,
     funding_proofs_json: &str,
+    keyset_info_json: &str,
     channel_id: &str,
     balance: u64,
     signature: &str,
@@ -557,6 +513,7 @@ pub fn verify_balance_update_signature(
         params_json,
         shared_secret_hex,
         funding_proofs_json,
+        keyset_info_json,
         channel_id,
         balance,
         signature,
@@ -568,6 +525,7 @@ fn verify_balance_update_signature_inner(
     params_json: &str,
     shared_secret_hex: &str,
     funding_proofs_json: &str,
+    keyset_info_json: &str,
     channel_id: &str,
     balance: u64,
     signature: &str,
@@ -579,21 +537,8 @@ fn verify_balance_update_signature_inner(
         .try_into()
         .map_err(|_| "Shared secret must be 32 bytes")?;
 
-    // Parse JSON to extract keyset_id and input_fee_ppk for mock keyset
-    let json: serde_json::Value =
-        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
-
-    let keyset_id_str = json["keyset_id"]
-        .as_str()
-        .ok_or_else(|| "Missing 'keyset_id' field in params".to_string())?;
-
-    let input_fee_ppk = json["input_fee_ppk"]
-        .as_u64()
-        .ok_or_else(|| "Missing 'input_fee_ppk' field in params".to_string())?;
-
-    // Create mock KeysetInfo (only need keyset_id and fee for verification)
-    let keyset_info = KeysetInfo::mock_with_id_and_fee(keyset_id_str, input_fee_ppk)
-        .map_err(|e| format!("Failed to create mock keyset: {}", e))?;
+    // Parse real KeysetInfo from JSON
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
     // Create ChannelParameters with shared secret
     let params =
