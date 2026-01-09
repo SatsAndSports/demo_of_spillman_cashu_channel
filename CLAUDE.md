@@ -218,7 +218,7 @@ Four separate stores for channel state:
 
 | Store | Key | Schema |
 |-------|-----|--------|
-| `channels` | `channel_id` | `{ channel_id, sender_json, alice_secret, charlie_pubkey, server_url, mint }` |
+| `channels` | `channel_id` | `{ channel_id, sender_json, alice_secret, charlie_pubkey, server_url, mint, status, closing_amount_due? }` |
 | `request_counts` | `channel_id` | `{ channel_id, count, bytes }` |
 | `video_positions` | `master_hash` | `{ master_hash, position, timestamp }` |
 
@@ -532,12 +532,20 @@ The test suite includes:
 - ✅ Channel status moved to header bar (clickable, shows balance/capacity/unit)
 - ✅ Improved client-side payment logging: `[Payment] #N | X.X MB | bal: N/N unit | chan: abc123...`
 - ✅ Fixed sprite animation sizing on video card hover (uses `spriteMeta.thumb_width/height`)
+- ✅ Channel list sorted by setup_timestamp (most recent first)
+- ✅ Close button on open/exhausted channels (with loading state)
+- ✅ Refresh button on open channels (sync request counts with server)
+- ✅ `closing_amount_due` saved to IndexedDB on channel close
+- ✅ Reset Identity button in channel modal (with confirmation)
+- ✅ First-time user onboarding tooltips
+- ✅ Thumbnail preloading when channel connects
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
 - ❌ Client-side top-up prompts (byte tracking works, needs UI)
-- ❌ Client-side close UI (button to close channel)
+- ✅ Proper modal to pay the minting invoice (QR code + copy button)
+- ❌ Update list of alternative channels after creating a new channel
 
 **TODO - Player Improvements:**
 
