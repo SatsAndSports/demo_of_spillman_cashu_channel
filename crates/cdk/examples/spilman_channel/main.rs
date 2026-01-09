@@ -43,11 +43,10 @@ async fn main() -> anyhow::Result<()> {
 
     let channel_unit = CurrencyUnit::Sat;
     let requested_input_fee_ppk = 400; // 40% input fee (only for local mints)
-    let base = 2; // Powers of 2 (only for local mints)
 
     // 3. CREATE OR CONNECT TO MINT
     let (mint_connection, alice_wallet, charlie_wallet, mint_url) =
-        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk, base).await?;
+        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk).await?;
 
     // Get active keyset information (will use actual fee from mint)
     let keyset_info = get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
@@ -183,10 +182,19 @@ async fn main() -> anyhow::Result<()> {
     println!("   ✓ Restored signatures match original signatures - NUT-09 working correctly!");
 
     // Unblind the signatures to get the commitment proofs
-    let (charlie_proofs, alice_proofs) = commitment_outputs.unblind_all(
+    let all_proofs = commitment_outputs.unblind_all(
         swap_response.signatures,
         &channel_fixtures.params.keyset_info.active_keys,
     )?;
+    // Split proofs by ownership (receiver = Charlie, sender = Alice)
+    let charlie_proofs: Vec<_> = all_proofs.iter()
+        .filter(|p| p.is_receiver)
+        .map(|p| p.proof.clone())
+        .collect();
+    let alice_proofs: Vec<_> = all_proofs.iter()
+        .filter(|p| !p.is_receiver)
+        .map(|p| p.proof.clone())
+        .collect();
     println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
 
     // Add proofs to the wallets (each party will sign and swap to remove P2PK conditions)
