@@ -4,7 +4,7 @@
 
 To see all Spilman channel changes, compare against these pre-channel commits:
 - **CDK repo:** `bcc68a79`
-- **Blossom-server repo:** `8cc518e`
+- **Blossom-server repo:** `5d84316`
 
 Example: `git diff bcc68a79 --stat` in cdk repo, `git diff 8cc518e --stat` in blossom-server.
 
