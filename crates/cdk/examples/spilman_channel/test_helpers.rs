@@ -13,9 +13,10 @@ use cdk_common::{ProofsMethods, QuoteId};
 use cdk::mint::{MintBuilder, MintMeltLimits};
 use cdk::nuts::{
     CheckStateRequest, CheckStateResponse, CurrencyUnit, Id, KeySet, KeysetResponse,
-    MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltRequest, MintInfo,
-    MintQuoteBolt11Request, MintQuoteBolt11Response, MintRequest, MintResponse, PaymentMethod,
-    RestoreRequest, RestoreResponse, SecretKey, SwapRequest, SwapResponse,
+    MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltQuoteCustomRequest, MeltRequest,
+    MintInfo, MintQuoteBolt11Request, MintQuoteBolt11Response, MintQuoteCustomRequest,
+    MintQuoteCustomResponse, MintRequest, MintResponse, PaymentMethod, RestoreRequest,
+    RestoreResponse, SecretKey, SwapRequest, SwapResponse,
 };
 use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
@@ -109,7 +110,7 @@ pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64) -> anyhow
     mint_builder
         .add_payment_processor(
             unit.clone(),
-            PaymentMethod::Bolt11,
+            PaymentMethod::BOLT11,
             MintMeltLimits::new(1, 2_000_000_000),  // 2B msat = 2M sat
             Arc::new(fake_ln),
         )
@@ -405,6 +406,21 @@ impl MintConnector for DirectMintConnection {
         &self,
         _callback_url: &str,
     ) -> Result<cdk::wallet::LnurlPayInvoiceResponse, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
+
+    async fn post_mint_custom_quote(
+        &self,
+        _method: &str,
+        _request: MintQuoteCustomRequest,
+    ) -> Result<MintQuoteCustomResponse<String>, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
+
+    async fn post_melt_custom_quote(
+        &self,
+        _request: MeltQuoteCustomRequest,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
         Err(Error::UnsupportedPaymentMethod)
     }
 }
@@ -704,7 +720,7 @@ pub async fn receive_proofs_into_wallet(
 
     // Calculate value after fees - if it's 0 or negative, return 0 without calling wallet
     let nominal_value = proofs.total_amount()?;
-    let fee = wallet.get_proofs_fee(&proofs).await?;
+    let fee = wallet.get_proofs_fee(&proofs).await?.total;
     if nominal_value <= fee {
         println!("   ⚠ Skipping receive: proofs worth 0 after fees (nominal: {}, fee: {})", nominal_value, fee);
         return Ok(0);
