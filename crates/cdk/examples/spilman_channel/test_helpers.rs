@@ -89,7 +89,7 @@ pub async fn create_wallet_http(mint_url: MintUrl, unit: CurrencyUnit) -> anyhow
 }
 
 /// Create a local mint with FakeWallet backend for testing
-pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64, base: u64) -> anyhow::Result<Mint> {
+pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64) -> anyhow::Result<Mint> {
     let mint_store = Arc::new(cdk_sqlite::mint::memory::empty().await?);
 
     let fee_reserve = FeeReserve {
@@ -117,9 +117,6 @@ pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64, base: u64
 
     // Set input fee (parts per thousand)
     mint_builder.set_unit_fee(&unit, input_fee_ppk)?;
-
-    // Set base for amount generation (e.g., 2 for powers of 2, 10 for powers of 10)
-    mint_builder.set_unit_base(&unit, base)?;
 
     let mnemonic = Mnemonic::generate(12)?;
     mint_builder = mint_builder
@@ -652,7 +649,6 @@ pub async fn setup_mint_and_wallets_for_demo(
     mint_url_opt: Option<String>, // None = create local in-process mint
     unit: CurrencyUnit,
     input_fee_ppk: u64, // Fee in parts per thousand (e.g., 400 = 40%)
-    base: u64, // Base for amount generation (e.g., 2 for powers of 2, 10 for powers of 10)
 ) -> anyhow::Result<(Box<dyn FullMintConnection>, Wallet, Wallet, String)> {
     let (mint_connection, alice, charlie, mint_url): (Box<dyn FullMintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
@@ -670,7 +666,7 @@ pub async fn setup_mint_and_wallets_for_demo(
         (Box::new(http_mint), alice, charlie, mint_url_str)
     } else {
         println!("🏦 Setting up local in-process mint...");
-        let mint = create_local_mint(unit.clone(), input_fee_ppk, base).await?;
+        let mint = create_local_mint(unit.clone(), input_fee_ppk).await?;
         println!("✅ Local mint running\n");
 
         println!("👩 Setting up Alice's wallet...");
@@ -769,10 +765,20 @@ pub fn unblind_commitment_proofs(
     let commitment_outputs = cdk::spilman::CommitmentOutputs::for_balance(balance, channel_params)?;
 
     // Unblind the signatures to get the commitment proofs
-    let (receiver_stage1_proofs, sender_stage1_proofs) = commitment_outputs.unblind_all(
+    let all_proofs = commitment_outputs.unblind_all(
         signatures,
         &channel_params.keyset_info.active_keys,
     )?;
+
+    // Split proofs by ownership (receiver vs sender)
+    let receiver_stage1_proofs: Vec<_> = all_proofs.iter()
+        .filter(|p| p.is_receiver)
+        .map(|p| p.proof.clone())
+        .collect();
+    let sender_stage1_proofs: Vec<_> = all_proofs.iter()
+        .filter(|p| !p.is_receiver)
+        .map(|p| p.proof.clone())
+        .collect();
 
     Ok((receiver_stage1_proofs, sender_stage1_proofs))
 }
