@@ -546,6 +546,11 @@ The test suite includes:
 - ❌ Client-side top-up prompts (byte tracking works, needs UI)
 - ✅ Proper modal to pay the minting invoice (QR code + copy button)
 - ❌ Update list of alternative channels after creating a new channel
+- ❌ **Keyset rotation issue**: When `initializeChannelKeysets()` refreshes, deactivated keysets are removed from cache. Existing channels using those keysets will fail validation even though the mint may still honor them. Possible solutions:
+  - Keep old keysets in cache indefinitely (memory concerns?)
+  - Only remove keysets that have no active channels using them
+  - Store keyset info per-channel in `channelFunding` rather than global cache
+  - Query mint on-demand for unknown keysets (adds latency)
 
 **TODO - Player Improvements:**
 
