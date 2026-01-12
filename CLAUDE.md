@@ -611,3 +611,7 @@ Files involved:
 - Player available at `http://localhost:3000/`
 - Makefile is at `web/Makefile` (in the 'web' subdirectory of main 'cdk' folder)
 - Tests run on port 3099 with a separate test config
+
+## Claude Code Instructions
+
+- In plan mode, don't make edits. If you are ready, suggest that the user switch to edit mode to execute the plan.
