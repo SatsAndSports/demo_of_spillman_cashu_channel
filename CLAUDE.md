@@ -18,9 +18,9 @@ This is a fork/extension of CDK that adds Spilman-style unidirectional payment c
 cdk/
 ├── crates/
 │   ├── cdk/                        # Main Cashu library
-│   │   └── src/spilman/            # Spilman channel implementation
-│   ├── cdk-wasm/                   # WASM bindings (browser + Node.js)
-│   └── cdk-py/                     # PyO3 bindings (Python, legacy)
+│   │   ├── src/spilman/            # Spilman channel implementation
+│   │   └── examples/spilman_channel/  # Example + test helpers
+│   └── cdk-wasm/                   # WASM bindings (browser + Node.js)
 └── web/
     ├── Makefile                    # WASM build targets
     ├── wasm-web/                   # Browser WASM output (--target web)
