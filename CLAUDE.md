@@ -51,6 +51,41 @@ cdk/
         └── config.example.yml      # Example config with channel settings
 ```
 
+## Quick Start (Rust)
+
+```bash
+# Clone the repo:
+git clone git@github.com:SatsAndSports/demo_of_spillman_cashu_channel.git
+cd demo_of_spillman_cashu_channel
+
+# Checkout the correct branch:
+git checkout spilman.channel
+
+# Run the example with verbose messages:
+cargo run --example spilman_channel
+
+# Run the Spilman-specific tests:
+cargo test --example spilman_channel
+```
+
+### Where to Start Reading
+
+The tests in `sender_and_receiver.rs`, starting with `test_full_flow`, are the best place to start to see the flow of a channel being opened, payments being made, and the channel being closed.
+
+A typical test does the following:
+
+1. Generate private and public keys for Alice (the sender) and Charlie (the receiver)
+2. Set up the test mint and wallets, with configurable fee rate, and collect the KeysetInfo for the relevant keyset
+3. Define all the channel parameters in `ChannelParameters`, including the ECDH _shared secret_. The `ChannelParameters` are identical for both parties
+4. Alice creates the funding token (via a 'mint' or 'swap' operation)
+5. The `SpilmanChannelSender` (for Alice) and `SpilmanChannelReceiver` (for Charlie) objects are set up, containing all the channel data and the relevant private key
+6. Alice calls `sender.create_signed_balance_update(charlie_balance)` to create the `BalanceUpdateMessage` containing channel_id, new balance, and signature
+7. Charlie calls `receiver.verify_sender_signature(&balance_update)` to reconstruct the commitment transaction and verify Alice's signature
+8. Charlie adds his signature with `receiver.add_second_signature(&balance_update, swap_request)`
+9. Charlie exits by swapping the funding token
+10. The results are _unblinded_ using the deterministic blinding factors
+11. The resulting 1-of-1 P2PK outputs are swapped for anyone-can-spend outputs and added to both wallets
+
 ## Spilman Channel Architecture
 
 A Spilman channel is a unidirectional payment channel between:
