@@ -432,6 +432,7 @@ CREATE TABLE videos (
 - `GET /videos` - List registered videos (includes preview_hash, sprite_meta_hash, width, height, blob stats)
 - `GET /<sha256>` - Fetch blob (requires X-Cashu-Channel header if channel.enabled)
 - `HEAD /<sha256>` - Check blob exists (no payment required)
+- `GET /channel/stats?window=N` - Returns count of active channels in last N seconds (default 300)
 
 **Admin (basic auth):**
 - `POST /api/videos` - Register video `{title, master_hash, duration, description?, source?, preview_hash?, sprite_meta_hash?, width?, height?, blob_count?, total_size?, max_blob_size?, quality_stats?}`
@@ -539,6 +540,11 @@ The test suite includes:
 - ✅ Reset Identity button in channel modal (with confirmation)
 - ✅ First-time user onboarding tooltips
 - ✅ Thumbnail preloading when channel connects
+- ✅ Video popout mini-player (pops to top-left corner when header scrolls out of view, max 30vh)
+- ✅ Active viewers count in header (polls /channel/stats every 5 seconds)
+- ✅ YouTube-style double-tap controls (double-tap sides = ±10s skip, single tap = pause/play)
+- ✅ Touch scroll detection (prevents accidental pause/skip when scrolling on mobile)
+- ✅ Simplified page scrolling (removed nested scroll containers)
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -575,7 +581,7 @@ The test suite includes:
 *Medium Priority:*
 - ❌ Remember preferences (volume, speed, quality) in localStorage
 - ❌ Loop toggle
-- ❌ Picture-in-picture button
+- ✅ Picture-in-picture (superseded by popout mini-player)
 - ❌ Video description panel (expandable)
 
 *Lower Priority:*
