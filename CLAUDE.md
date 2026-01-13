@@ -86,6 +86,33 @@ A typical test does the following:
 10. The results are _unblinded_ using the deterministic blinding factors
 11. The resulting 1-of-1 P2PK outputs are swapped for anyone-can-spend outputs and added to both wallets
 
+### Running with Nutshell
+
+The Spilman example can also run against a Nutshell mint, which is useful for verifying interoperability before running the blossom-server tests (which require a mint at localhost:3338).
+
+In a separate terminal, start a Nutshell mint:
+
+```bash
+git clone https://github.com/cashubtc/nutshell.git
+cd nutshell
+
+# Check out the tested version:
+git checkout 1568e51  # Nutshell version 0.18.2
+
+# Apply the SIG_ALL message update (https://github.com/cashubtc/nuts/pull/302):
+sed -ire 's/\[p.secret for p in proofs\] + \[o.B_ for o in outputs\]/[p.secret + p.C for p in proofs] + [str(o.amount) + o.B_ for o in outputs]/' cashu/mint/conditions.py
+
+# Build and run:
+docker compose build mint
+docker compose up mint
+```
+
+Then run the example pointing to that mint:
+
+```bash
+cargo run --example spilman_channel -- --mint http://localhost:3338
+```
+
 ## Spilman Channel Architecture
 
 A Spilman channel is a unidirectional payment channel between:
