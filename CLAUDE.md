@@ -85,7 +85,8 @@ A typical test does the following:
 
 ### Running with Nutshell
 
-The Spilman example can also run against a Nutshell mint, which is useful for verifying interoperability before running the blossom-server tests (which require a mint at localhost:3338).
+The Blossom server requires a mint to be running.
+Follow the exact instructions below to get a compatible mint; in particular with the right `SIG_ALL` support.
 
 In a separate terminal, start a Nutshell mint:
 
@@ -104,29 +105,26 @@ docker compose build mint
 docker compose up mint
 ```
 
-Then run the example pointing to that mint:
-
-```bash
-cargo run --example spilman_channel -- --mint http://localhost:3338
-```
-
 ### Setting Up Blossom Server
 
-First, build the WASM bindings (from the cdk repo root):
+First, clone and set up the blossom-server repo (from the cdk repo root):
 
 ```bash
 cd web/
-make wasm-to-blossom-server
-```
-
-Then clone and set up the blossom-server repo:
-
-```bash
 git clone git@github.com:SatsAndSports/blossom-server.git
 cd blossom-server  # Now in a different git repo
 git checkout spilman.channel
+```
 
-# Install dependencies and build:
+Build the WASM bindings and copy them to blossom-server:
+
+```bash
+(cd .. && make wasm-to-blossom-server)
+```
+
+Install dependencies and build:
+
+```bash
 npx pnpm install
 npx pnpm build
 ```
@@ -710,7 +708,3 @@ Files involved:
 - Player available at `http://localhost:3000/`
 - Makefile is at `web/Makefile` (in the 'web' subdirectory of main 'cdk' folder)
 - Tests run on port 3099 with a separate test config
-
-## Claude Code Instructions
-
-- In plan mode, don't make edits. If you are ready, suggest that the user switch to edit mode to execute the plan.
