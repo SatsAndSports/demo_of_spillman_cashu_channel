@@ -3,10 +3,10 @@
 ## Baseline Commits (for diffing)
 
 To see all Spilman channel changes, compare against these pre-channel commits:
-- **CDK repo:** `bcc68a79`
+- **CDK repo:** `4a505bae` (origin/main)
 - **Blossom-server repo:** `5d84316`
 
-Example: `git diff bcc68a79 --stat` in cdk repo, `git diff 8cc518e --stat` in blossom-server.
+Example: `git diff 4a505bae --stat` in cdk repo, `git diff 5d84316 --stat` in blossom-server.
 
 ## Project Overview
 
@@ -35,6 +35,9 @@ cdk/
         │   └── ...
         ├── public/
         │   ├── index.html          # Video player with payment headers
+        │   ├── manifest.json       # PWA manifest (standalone mode)
+        │   ├── icon.svg            # Vector logo (Cashu/Tu₿e)
+        │   ├── icon-*.png          # App icons (192, 512, apple-touch)
         │   └── wasm/               # Browser WASM (copied from wasm-web/)
         ├── tools/
         │   ├── hls-encode.sh       # Encode video to HLS with hash-based names
@@ -540,11 +543,13 @@ The test suite includes:
 - ✅ Reset Identity button in channel modal (with confirmation)
 - ✅ First-time user onboarding tooltips
 - ✅ Thumbnail preloading when channel connects
-- ✅ Video popout mini-player (pops to top-left corner when header scrolls out of view, max 30vh)
+- ✅ Video popout mini-player (triggers when logo scrolls out, 30vh/40vw desktop, 66vh/66vw ≤900px)
 - ✅ Active viewers count in header (polls /channel/stats every 5 seconds)
 - ✅ YouTube-style double-tap controls (double-tap sides = ±10s skip, single tap = pause/play)
 - ✅ Touch scroll detection (prevents accidental pause/skip when scrolling on mobile)
 - ✅ Simplified page scrolling (removed nested scroll containers)
+- ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons)
+- ✅ Collapsible Log section at page bottom (hidden by default, ▶/▼ toggle)
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
