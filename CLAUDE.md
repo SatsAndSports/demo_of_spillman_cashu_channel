@@ -61,11 +61,8 @@ cd demo_of_spillman_cashu_channel
 # Checkout the correct branch:
 git checkout spilman.channel
 
-# Run the example with verbose messages:
-cargo run --example spilman_channel
-
 # Run the Spilman-specific tests:
-cargo test --example spilman_channel
+cargo test -p cdk spilman
 ```
 
 ### Where to Start Reading
@@ -111,6 +108,35 @@ Then run the example pointing to that mint:
 
 ```bash
 cargo run --example spilman_channel -- --mint http://localhost:3338
+```
+
+### Setting Up Blossom Server
+
+First, build the WASM bindings (from the cdk repo root):
+
+```bash
+cd web/
+make wasm-to-blossom-server
+```
+
+Then clone and set up the blossom-server repo:
+
+```bash
+git clone git@github.com:SatsAndSports/blossom-server.git
+cd blossom-server  # Now in a different git repo
+git checkout spilman.channel
+
+# Install dependencies and build:
+npx pnpm install
+npx pnpm build
+```
+
+### Running Blossom Server Tests
+
+The blossom-server tests require a mint running at localhost:3338 (see "Running with Nutshell" above):
+
+```bash
+npm test
 ```
 
 ## Spilman Channel Architecture
