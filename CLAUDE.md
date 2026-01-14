@@ -648,6 +648,8 @@ The test suite includes:
   - Only remove keysets that have no active channels using them
   - Store keyset info per-channel in `channelFunding` rather than global cache
   - Query mint on-demand for unknown keysets (adds latency)
+- ❌ 'correct' the player's 200-payment by checking Content-Length, not our special header, as we want this to work in caching contexts too
+- ❌ player to send the funding params and token on every request, until we get some confirmation from the server that it understands the channel, via the server's X-Cashu-Channel response. player to start sending it again when there is a 402
 
 **TODO - Player Improvements:**
 
@@ -681,24 +683,6 @@ The test suite includes:
 - ❌ Theater mode (wider video, darker background)
 - ❌ Loading spinner while buffering
 - ❌ Autoplay next video
-
-## Next Up
-
-**`maximum_amount` optimization:**
-
-Currently `maximum_amount` is hardcoded to 64 in channel params (`index.html:3064`). This limits the largest denomination used in funding tokens, causing large channels to have many proofs:
-- A 10,000 sat channel with max_amount=64 needs ~156+ proofs
-- This makes funding tokens huge and slow to transmit/verify
-
-Options to explore:
-1. Use the keyset's largest denomination (e.g., 2^20 for sat keysets)
-2. Make it configurable per-unit in server config
-3. Auto-calculate based on capacity (e.g., capacity/10 to get ~10-15 proofs)
-
-Files involved:
-- `web/blossom-server/public/index.html:3064` - hardcoded `maximum_amount: 64`
-- `crates/cdk/src/spilman/keysets_and_amounts.rs` - `OrderedListOfAmounts::from_target()` uses maximum_amount
-- `crates/cdk/src/spilman/params.rs` - `maximum_amount_for_one_output` field in ChannelParameters
 
 ## Notes
 
