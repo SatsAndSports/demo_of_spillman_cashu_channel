@@ -628,21 +628,22 @@ The test suite includes:
 - ✅ `closing_amount_due` saved to IndexedDB on channel close
 - ✅ Reset Identity button in channel modal (with confirmation)
 - ✅ First-time user onboarding tooltips
-- ✅ Thumbnail preloading when channel connects
-- ✅ Video popout mini-player (triggers when logo scrolls out, 30vh/40vw desktop, 66vh/66vw ≤900px)
+- ✅ Thumbnail preloading when channel connects (in-view)
 - ✅ Active viewers count in header (polls /channel/stats every 5 seconds)
-- ✅ YouTube-style double-tap controls (double-tap sides = ±10s skip, single tap = pause/play)
+- ✅ YouTube-style tap controls (double-tap sides = ±10s skip, double-tap middle = pause/play, single tap only pauses when overlays already visible)
 - ✅ Touch scroll detection (prevents accidental pause/skip when scrolling on mobile)
+- ✅ Overlay-gated controls with tap-unlock delay (prevents hidden control taps on mobile)
 - ✅ Simplified page scrolling (removed nested scroll containers)
-- ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons)
-- ✅ Collapsible Log section at page bottom (hidden by default, ▶/▼ toggle)
+- ✅ Video list height tied to viewport and player gap
+- ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons, service worker with update prompt)
+- ✅ Collapsible Log section at page bottom (hidden by default, toggle in channel modal)
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
 - ❌ Server-side balance persistence (currently in-memory only)
 - ❌ Client-side top-up prompts (byte tracking works, needs UI)
 - ✅ Proper modal to pay the minting invoice (QR code + copy button)
-- ❌ Update list of alternative channels after creating a new channel
+- ✅ Update list of alternative channels after creating a new channel
 - ❌ **Keyset rotation issue**: When `initializeChannelKeysets()` refreshes, deactivated keysets are removed from cache. Existing channels using those keysets will fail validation even though the mint may still honor them. Possible solutions:
   - Keep old keysets in cache indefinitely (memory concerns?)
   - Only remove keysets that have no active channels using them
@@ -667,15 +668,24 @@ The test suite includes:
 - ✅ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
 - ✅ Display video title when playing
 - ✅ Remember playback position (resume where left off)
+- ✅ Auto-play hash video after channel modal close (when placeholder visible)
 
 *High Priority:*
 - ❌ Highlight currently playing video in list
+- ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
+- ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
+- ❌ 'share' button looks ugly
+- ❌ un-fullscreen icon is ugly
+- ❌ ?still getting the blank video while the sound is playing?
+- ✅ refresh remembers the currently selected server
+
 
 *Medium Priority:*
 - ❌ Remember preferences (volume, speed, quality) in localStorage
 - ❌ Loop toggle
 - ✅ Picture-in-picture (superseded by popout mini-player)
 - ❌ Video description panel (expandable)
+- ❌ Ctrl+Shift+M and mute?
 
 *Lower Priority:*
 - ❌ Search/filter video list
