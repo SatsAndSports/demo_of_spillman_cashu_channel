@@ -613,17 +613,15 @@ The test suite includes:
 - ✅ Integration tests verifying blinded signatures accepted by mint
 - ✅ 200 response with payment confirmation header (channel_id, balance, amount_due, capacity, size)
 - ✅ Client-side byte tracking with post-response correction
-- ✅ Channel exhaustion handling (pauses video, shows toast)
+- ✅ Channel exhaustion handling (pauses video, shows toast, opens channel manager)
 - ✅ YouTube-style side-by-side layout (video left, list right)
 - ✅ Per-unit minimum capacity enforcement (server rejects channels below minCapacity)
 - ✅ Minimum expiry enforcement (server rejects channels with locktime too soon)
 - ✅ Server logs every 402 response with full header JSON (`paymentError()` helper in `fetch.ts`)
 - ✅ `msat` unit test coverage (20-payment loop test with channel close)
-- ✅ Channel status moved to header bar (clickable, shows balance/capacity/unit)
 - ✅ Improved client-side payment logging: `[Payment] #N | X.X MB | bal: N/N unit | chan: abc123...`
 - ✅ Fixed sprite animation sizing on video card hover (uses `spriteMeta.thumb_width/height`)
 - ✅ Channel list sorted by setup_timestamp (most recent first)
-- ✅ Close button on open/exhausted channels (with loading state)
 - ✅ Refresh button on open channels (sync request counts with server)
 - ✅ `closing_amount_due` saved to IndexedDB on channel close
 - ✅ Reset Identity button in channel modal (with confirmation)
@@ -637,6 +635,16 @@ The test suite includes:
 - ✅ Video list height tied to viewport and player gap
 - ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons, service worker with update prompt)
 - ✅ Collapsible Log section at page bottom (hidden by default, toggle in channel modal)
+- ✅ Channel status moved to header bar (clickable to manage channels, shows server/id/balance)
+- ✅ Balance display in video player clickable to manage channels (exits fullscreen if active)
+- ✅ Consolidated management: "Manage Channels" button removed, integrated into status bar
+- ✅ Improved "Close" button feedback (dimmed card, immediate toast, blocked for active channel)
+- ✅ Auto-scroll video into view when starting playback (if not fully visible)
+- ✅ Version display toast on "active" viewers count label tap
+- ✅ Handle "unused" channel status ( server 404 -> blue theme)
+- ✅ Server pricing summary displayed in channel management modal
+- ✅ Conditional header balance display (appears only when <10% capacity and no alternatives remain)
+- ✅ Highlight low funds with red pill badge in header
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -669,15 +677,19 @@ The test suite includes:
 - ✅ Display video title when playing
 - ✅ Remember playback position (resume where left off)
 - ✅ Auto-play hash video after channel modal close (when placeholder visible)
+- ✅ Fixed race conditions in progress preview during video switches
+- ✅ Bandwidth memory across videos and sessions
+- ✅ Fast-start HLS settings (reduced buffer, player-size capping)
 
 *High Priority:*
 - ❌ Highlight currently playing video in list
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
 - ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
-- ❌ 'share' button looks ugly
-- ❌ un-fullscreen icon is ugly
+- ✅ 'share' button looks much better
+- ✅ un-fullscreen icon is ugly
 - ❌ ?still getting the blank video while the sound is playing?
 - ✅ refresh remembers the currently selected server
+- ✅ Loading spinner while buffering and during initial load (layout-stable 16/9 box)
 
 
 *Medium Priority:*
@@ -688,11 +700,8 @@ The test suite includes:
 - ❌ Ctrl+Shift+M and mute?
 
 *Lower Priority:*
-- ❌ Search/filter video list
-- ❌ Sort videos by date, title, duration
-- ❌ Theater mode (wider video, darker background)
-- ❌ Loading spinner while buffering
-- ❌ Autoplay next video
+- ✅ drop the volume controls on mobile (detected via coarse pointer)
+- ✅ Version display toast on "active" viewers count label tap
 
 ## Notes
 
