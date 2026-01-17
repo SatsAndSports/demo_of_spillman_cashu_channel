@@ -631,8 +631,9 @@ The test suite includes:
 - ✅ YouTube-style tap controls (double-tap sides = ±10s skip, double-tap middle = pause/play, single tap only pauses when overlays already visible)
 - ✅ Touch scroll detection (prevents accidental pause/skip when scrolling on mobile)
 - ✅ Overlay-gated controls with tap-unlock delay (prevents hidden control taps on mobile)
-- ✅ Simplified page scrolling (removed nested scroll containers)
-- ✅ Video list height tied to viewport and player gap
+- ✅ Simplified page scrolling (removed nested scroll containers and auto-scroll logic)
+- ✅ Fixed wide-screen layout grid bug
+- ✅ Video player sizing: max-height 500px (via CSS variable), responsive width, centered with pillarboxing
 - ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons, service worker with update prompt)
 - ✅ Collapsible Log section at page bottom (hidden by default, toggle in channel modal)
 - ✅ Channel status moved to header bar (clickable to manage channels, shows server/id/balance)
@@ -645,6 +646,9 @@ The test suite includes:
 - ✅ Server pricing summary displayed in channel management modal
 - ✅ Conditional header balance display (appears only when <10% capacity and no alternatives remain)
 - ✅ Highlight low funds with red pill badge in header
+- ✅ Detect autoplay failure and show persistent controls hint until interaction
+- ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
+- ✅ Removed redundant #play-overlay from video player DOM
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -680,6 +684,8 @@ The test suite includes:
 - ✅ Fixed race conditions in progress preview during video switches
 - ✅ Bandwidth memory across videos and sessions
 - ✅ Fast-start HLS settings (reduced buffer, player-size capping)
+- ✅ Autoplay failure detection with persistent overlay hint
+- ✅ Robust centering for action indicator (flash icon) across mobile/desktop
 
 *High Priority:*
 - ❌ Highlight currently playing video in list
