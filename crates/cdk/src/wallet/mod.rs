@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cdk_common::amount::FeeAndAmounts;
-use cdk_common::database::{self, WalletDatabase};
+use cdk_common::database::{self, DynWalletDatabaseTransaction, WalletDatabase};
 use cdk_common::parking_lot::RwLock;
 use cdk_common::subscription::WalletParams;
 use getrandom::getrandom;
@@ -72,6 +72,9 @@ pub use mint_connector::transport::Transport as HttpTransport;
 pub use mint_connector::AuthHttpClient;
 pub use mint_connector::{HttpClient, LnurlPayInvoiceResponse, LnurlPayResponse, MintConnector};
 pub use multi_mint_wallet::{MultiMintReceiveOptions, MultiMintSendOptions, MultiMintWallet};
+pub use payment_request::CreateRequestParams;
+#[cfg(feature = "nostr")]
+pub use payment_request::NostrWaitInfo;
 pub use receive::ReceiveOptions;
 pub use send::{PreparedSend, SendMemo, SendOptions};
 pub use types::{MeltQuote, MintQuote, SendKind};
@@ -90,7 +93,7 @@ pub struct Wallet {
     /// Unit
     pub unit: CurrencyUnit,
     /// Storage backend
-    pub localstore: Arc<dyn WalletDatabase<Err = database::Error> + Send + Sync>,
+    pub localstore: Arc<dyn WalletDatabase<database::Error> + Send + Sync>,
     /// Mint metadata cache for this mint (lock-free cached access to keys, keysets, and mint info)
     pub metadata_cache: Arc<MintMetadataCache>,
     /// The targeted amount of proofs to have at each size
@@ -190,7 +193,7 @@ impl Wallet {
     pub fn new(
         mint_url: &str,
         unit: CurrencyUnit,
-        localstore: Arc<dyn WalletDatabase<Err = database::Error> + Send + Sync>,
+        localstore: Arc<dyn WalletDatabase<database::Error> + Send + Sync>,
         seed: [u8; 64],
         target_proof_count: Option<usize>,
     ) -> Result<Self, Error> {
@@ -212,18 +215,21 @@ impl Wallet {
             .expect("FIXME")
     }
 
-    /// Fee required for proof set
+    /// Fee required to redeem proof set
     #[instrument(skip_all)]
-    pub async fn get_proofs_fee(&self, proofs: &Proofs) -> Result<Amount, Error> {
+    pub async fn get_proofs_fee(
+        &self,
+        proofs: &Proofs,
+    ) -> Result<crate::fees::ProofsFeeBreakdown, Error> {
         let proofs_per_keyset = proofs.count_by_keyset();
         self.get_proofs_fee_by_count(proofs_per_keyset).await
     }
 
-    /// Fee required for proof set by count
+    /// Fee required to redeem proof set by count
     pub async fn get_proofs_fee_by_count(
         &self,
         proofs_per_keyset: HashMap<Id, u64>,
-    ) -> Result<Amount, Error> {
+    ) -> Result<crate::fees::ProofsFeeBreakdown, Error> {
         let mut fee_per_keyset = HashMap::new();
         let metadata = self
             .metadata_cache
@@ -241,9 +247,9 @@ impl Wallet {
             fee_per_keyset.insert(*keyset_id, mint_keyset_info.input_fee_ppk);
         }
 
-        let fee = calculate_fee(&proofs_per_keyset, &fee_per_keyset)?;
+        let fee_breakdown = calculate_fee(&proofs_per_keyset, &fee_per_keyset)?;
 
-        Ok(fee)
+        Ok(fee_breakdown)
     }
 
     /// Get fee for count of proofs in a keyset
@@ -271,9 +277,10 @@ impl Wallet {
     #[instrument(skip(self))]
     pub async fn update_mint_url(&mut self, new_mint_url: MintUrl) -> Result<(), Error> {
         // Update the mint URL in the wallet DB
-        self.localstore
-            .update_mint_url(self.mint_url.clone(), new_mint_url.clone())
+        let mut tx = self.localstore.begin_db_transaction().await?;
+        tx.update_mint_url(self.mint_url.clone(), new_mint_url.clone())
             .await?;
+        tx.commit().await?;
 
         // Update the mint URL in the wallet struct field
         self.mint_url = new_mint_url;
@@ -367,12 +374,15 @@ impl Wallet {
     }
 
     /// Get amounts needed to refill proof state
-    #[instrument(skip(self))]
-    pub async fn amounts_needed_for_state_target(
+    #[instrument(skip(self, tx))]
+    pub(crate) async fn amounts_needed_for_state_target(
         &self,
+        tx: &mut DynWalletDatabaseTransaction,
         fee_and_amounts: &FeeAndAmounts,
     ) -> Result<Vec<Amount>, Error> {
-        let unspent_proofs = self.get_unspent_proofs().await?;
+        let unspent_proofs = self
+            .get_proofs_with(Some(tx), Some(vec![State::Unspent]), None)
+            .await?;
 
         let amounts_count: HashMap<u64, u64> =
             unspent_proofs
@@ -402,14 +412,15 @@ impl Wallet {
     }
 
     /// Determine [`SplitTarget`] for amount based on state
-    #[instrument(skip(self))]
+    #[instrument(skip(self, tx))]
     async fn determine_split_target_values(
         &self,
+        tx: &mut DynWalletDatabaseTransaction,
         change_amount: Amount,
         fee_and_amounts: &FeeAndAmounts,
     ) -> Result<SplitTarget, Error> {
         let mut amounts_needed_refill = self
-            .amounts_needed_for_state_target(fee_and_amounts)
+            .amounts_needed_for_state_target(tx, fee_and_amounts)
             .await?;
 
         amounts_needed_refill.sort();
@@ -447,6 +458,8 @@ impl Wallet {
             let keys = self.load_keyset_keys(keyset.id).await?;
             let mut empty_batch = 0;
             let mut start_counter = 0;
+            // Track the highest counter value that had a signature
+            let mut highest_counter: Option<u32> = None;
 
             while empty_batch.lt(&3) {
                 let premint_secrets = PreMintSecrets::restore_batch(
@@ -476,11 +489,22 @@ impl Wallet {
                     continue;
                 }
 
-                let premint_secrets: Vec<_> = premint_secrets
+                // Enumerate secrets to track their original index (which corresponds to counter value)
+                let matched_secrets: Vec<_> = premint_secrets
                     .secrets
                     .iter()
-                    .filter(|p| response.outputs.contains(&p.blinded_message))
+                    .enumerate()
+                    .filter(|(_, p)| response.outputs.contains(&p.blinded_message))
                     .collect();
+
+                // Update highest counter based on matched indices
+                if let Some(&(max_idx, _)) = matched_secrets.last() {
+                    let counter_value = start_counter + max_idx as u32;
+                    highest_counter =
+                        Some(highest_counter.map_or(counter_value, |c| c.max(counter_value)));
+                }
+
+                let premint_secrets: Vec<_> = matched_secrets.into_iter().map(|(_, p)| p).collect();
 
                 // the response outputs and premint secrets should be the same after filtering
                 // blinded messages the mint did not have signatures for
@@ -494,10 +518,6 @@ impl Wallet {
                 )?;
 
                 tracing::debug!("Restored {} proofs", proofs.len());
-
-                self.localstore
-                    .increment_keyset_counter(&keyset.id, proofs.len() as u32)
-                    .await?;
 
                 let states = self.check_proofs_spent(proofs.clone()).await?;
 
@@ -523,12 +543,25 @@ impl Wallet {
                     })
                     .collect::<Result<Vec<ProofInfo>, _>>()?;
 
-                self.localstore
-                    .update_proofs(unspent_proofs, vec![])
-                    .await?;
+                let mut tx = self.localstore.begin_db_transaction().await?;
+                tx.update_proofs(unspent_proofs, vec![]).await?;
+                tx.commit().await?;
 
                 empty_batch = 0;
                 start_counter += 100;
+            }
+
+            // Set counter to highest found + 1 to avoid reusing any counter values
+            // that already have signatures at the mint
+            if let Some(highest) = highest_counter {
+                let mut tx = self.localstore.begin_db_transaction().await?;
+                tx.increment_keyset_counter(&keyset.id, highest + 1).await?;
+                tx.commit().await?;
+                tracing::debug!(
+                    "Set keyset {} counter to {} after restore",
+                    keyset.id,
+                    highest + 1
+                );
             }
         }
         Ok(restored_value)

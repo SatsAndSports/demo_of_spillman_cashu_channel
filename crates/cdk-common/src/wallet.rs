@@ -43,7 +43,6 @@ pub struct MintQuote {
     /// Mint Url
     pub mint_url: MintUrl,
     /// Payment method
-    #[serde(default)]
     pub payment_method: PaymentMethod,
     /// Amount of quote
     pub amount: Option<Amount>,
@@ -85,7 +84,6 @@ pub struct MeltQuote {
     /// Payment preimage
     pub payment_preimage: Option<String>,
     /// Payment method
-    #[serde(default)]
     pub payment_method: PaymentMethod,
 }
 
@@ -208,6 +206,9 @@ pub struct Transaction {
     pub payment_request: Option<String>,
     /// Payment proof (e.g., preimage for Lightning melt transactions)
     pub payment_proof: Option<String>,
+    /// Payment method (e.g., Bolt11, Bolt12) for mint/melt transactions
+    #[serde(default)]
+    pub payment_method: Option<PaymentMethod>,
 }
 
 impl Transaction {

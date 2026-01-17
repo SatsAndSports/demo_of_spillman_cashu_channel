@@ -8,6 +8,7 @@ use cdk::wallet::{Wallet as CdkWallet, WalletBuilder as CdkWalletBuilder};
 
 use crate::error::FfiError;
 use crate::token::Token;
+use crate::types::payment_request::PaymentRequest;
 use crate::types::*;
 
 /// FFI-compatible Wallet
@@ -25,7 +26,7 @@ impl Wallet {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Wallet {
-    /// Create a new Wallet from mnemonic using WalletDatabase trait
+    /// Create a new Wallet from mnemonic using WalletDatabaseFfi trait
     #[uniffi::constructor]
     pub fn new(
         mint_url: String,
@@ -110,8 +111,8 @@ impl Wallet {
         Ok(balance.into())
     }
 
-    /// Get mint info
-    pub async fn get_mint_info(&self) -> Result<Option<MintInfo>, FfiError> {
+    /// Get mint info from mint
+    pub async fn fetch_mint_info(&self) -> Result<Option<MintInfo>, FfiError> {
         let info = self.inner.fetch_mint_info().await?;
         Ok(info.map(Into::into))
     }
@@ -225,6 +226,29 @@ impl Wallet {
         Ok(melted.into())
     }
 
+    /// Melt specific proofs
+    ///
+    /// This method allows melting proofs that may not be in the wallet's database,
+    /// similar to how `receive_proofs` handles external proofs. The proofs will be
+    /// added to the database and used for the melt operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `quote_id` - The melt quote ID (obtained from `melt_quote`)
+    /// * `proofs` - The proofs to melt (can be external proofs not in the wallet's database)
+    ///
+    /// # Returns
+    ///
+    /// A `Melted` result containing the payment details and any change proofs
+    pub async fn melt_proofs(&self, quote_id: String, proofs: Proofs) -> Result<Melted, FfiError> {
+        let cdk_proofs: Result<Vec<cdk::nuts::Proof>, _> =
+            proofs.into_iter().map(|p| p.try_into()).collect();
+        let cdk_proofs = cdk_proofs?;
+
+        let melted = self.inner.melt_proofs(&quote_id, cdk_proofs).await?;
+        Ok(melted.into())
+    }
+
     /// Get a quote for a bolt12 mint
     pub async fn mint_bolt12_quote(
         &self,
@@ -234,6 +258,30 @@ impl Wallet {
         let quote = self
             .inner
             .mint_bolt12_quote(amount.map(Into::into), description)
+            .await?;
+        Ok(quote.into())
+    }
+    /// Get a mint quote using a unified interface for any payment method
+    ///
+    /// This method supports bolt11, bolt12, and custom payment methods.
+    /// For custom methods, you can pass extra JSON data that will be forwarded
+    /// to the payment processor.
+    ///
+    /// # Arguments
+    /// * `amount` - Optional amount to mint (required for bolt11)
+    /// * `method` - Payment method to use (bolt11, bolt12, or custom)
+    /// * `description` - Optional description for the quote
+    /// * `extra` - Optional JSON string with extra payment-method-specific fields (for custom methods)
+    pub async fn mint_quote_unified(
+        &self,
+        amount: Option<Amount>,
+        method: PaymentMethod,
+        description: Option<String>,
+        extra: Option<String>,
+    ) -> Result<MintQuote, FfiError> {
+        let quote = self
+            .inner
+            .mint_quote_unified(amount.map(Into::into), method.into(), description, extra)
             .await?;
         Ok(quote.into())
     }
@@ -260,7 +308,27 @@ impl Wallet {
 
         Ok(proofs.into_iter().map(|p| p.into()).collect())
     }
+    pub async fn mint_unified(
+        &self,
+        quote_id: String,
+        amount: Option<Amount>,
+        amount_split_target: SplitTarget,
+        spending_conditions: Option<SpendingConditions>,
+    ) -> Result<Proofs, FfiError> {
+        let conditions = spending_conditions.map(|sc| sc.try_into()).transpose()?;
 
+        let proofs = self
+            .inner
+            .mint_unified(
+                &quote_id,
+                amount.map(Into::into),
+                amount_split_target.into(),
+                conditions,
+            )
+            .await?;
+
+        Ok(proofs.into_iter().map(|p| p.into()).collect())
+    }
     /// Get a quote for a bolt12 melt
     pub async fn melt_bolt12_quote(
         &self,
@@ -271,7 +339,39 @@ impl Wallet {
         let quote = self.inner.melt_bolt12_quote(request, cdk_options).await?;
         Ok(quote.into())
     }
+    /// Get a melt quote using a unified interface for any payment method
+    ///
+    /// This method supports bolt11, bolt12, and custom payment methods.
+    /// For custom methods, you can pass extra JSON data that will be forwarded
+    /// to the payment processor.
+    ///
+    /// # Arguments
+    /// * `method` - Payment method to use (bolt11, bolt12, or custom)
+    /// * `request` - Payment request string (invoice, offer, or custom format)
+    /// * `options` - Optional melt options (MPP, amountless, etc.)
+    /// * `extra` - Optional JSON string with extra payment-method-specific fields (for custom methods)
+    pub async fn melt_quote_unified(
+        &self,
+        method: PaymentMethod,
+        request: String,
+        options: Option<MeltOptions>,
+        extra: Option<String>,
+    ) -> Result<MeltQuote, FfiError> {
+        // Parse the extra JSON string into a serde_json::Value
+        let extra_value = extra
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| FfiError::Generic {
+                msg: format!("Invalid extra JSON: {}", e),
+            })?;
 
+        let cdk_options = options.map(Into::into);
+        let quote = self
+            .inner
+            .melt_quote_unified(method.into(), request, cdk_options, extra_value)
+            .await?;
+        Ok(quote.into())
+    }
     /// Swap proofs
     pub async fn swap(
         &self,
@@ -367,6 +467,19 @@ impl Wallet {
         Ok(transaction.map(Into::into))
     }
 
+    /// Get proofs for a transaction by transaction ID
+    ///
+    /// This retrieves all proofs associated with a transaction by looking up
+    /// the transaction's Y values and fetching the corresponding proofs.
+    pub async fn get_proofs_for_transaction(
+        &self,
+        id: TransactionId,
+    ) -> Result<Vec<Proof>, FfiError> {
+        let cdk_id = id.try_into()?;
+        let proofs = self.inner.get_proofs_for_transaction(cdk_id).await?;
+        Ok(proofs.into_iter().map(Into::into).collect())
+    }
+
     /// Revert a transaction
     pub async fn revert_transaction(&self, id: TransactionId) -> Result<(), FfiError> {
         let cdk_id = id.try_into()?;
@@ -438,6 +551,29 @@ impl Wallet {
             .get_keyset_count_fee(&id, proof_count as u64)
             .await?;
         Ok(fee.into())
+    }
+
+    /// Pay a NUT-18 payment request
+    ///
+    /// This method prepares and sends a payment for the given payment request.
+    /// It will use the Nostr or HTTP transport specified in the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `payment_request` - The NUT-18 payment request to pay
+    /// * `custom_amount` - Optional amount to pay (required if request has no amount)
+    pub async fn pay_request(
+        &self,
+        payment_request: std::sync::Arc<PaymentRequest>,
+        custom_amount: Option<Amount>,
+    ) -> Result<(), FfiError> {
+        self.inner
+            .pay_request(
+                payment_request.inner().clone(),
+                custom_amount.map(Into::into),
+            )
+            .await?;
+        Ok(())
     }
 }
 

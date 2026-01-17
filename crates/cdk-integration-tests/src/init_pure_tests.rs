@@ -8,8 +8,12 @@ use std::{env, fs};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use bip39::Mnemonic;
+use cashu::nut00::KnownMethod;
 use cashu::quote_id::QuoteId;
-use cashu::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
+use cashu::{
+    MeltQuoteBolt12Request, MeltQuoteCustomRequest, MintQuoteBolt12Request,
+    MintQuoteBolt12Response, MintQuoteCustomRequest, MintQuoteCustomResponse,
+};
 use cdk::amount::SplitTarget;
 use cdk::cdk_database::{self, WalletDatabase};
 use cdk::mint::{MintBuilder, MintMeltLimits};
@@ -219,6 +223,25 @@ impl MintConnector for DirectMintConnection {
         // Implementation to be added later
         Err(Error::UnsupportedPaymentMethod)
     }
+
+    /// Mint Quote for Custom Payment Method
+    async fn post_mint_custom_quote(
+        &self,
+        _method: &str,
+        _request: MintQuoteCustomRequest,
+    ) -> Result<MintQuoteCustomResponse<String>, Error> {
+        // Custom payment methods not implemented in test mock
+        Err(Error::UnsupportedPaymentMethod)
+    }
+
+    /// Melt Quote for Custom Payment Method
+    async fn post_melt_custom_quote(
+        &self,
+        _request: MeltQuoteCustomRequest,
+    ) -> Result<MeltQuoteBolt11Response<String>, Error> {
+        // Custom payment methods not implemented in test mock
+        Err(Error::UnsupportedPaymentMethod)
+    }
 }
 
 pub fn setup_tracing() {
@@ -258,7 +281,7 @@ pub async fn create_and_start_test_mint() -> Result<Mint> {
 
     let fee_reserve = FeeReserve {
         min_fee_reserve: 1.into(),
-        percent_fee_reserve: 1.0,
+        percent_fee_reserve: 0.02,
     };
 
     let ln_fake_backend = FakeWallet::new(
@@ -272,7 +295,7 @@ pub async fn create_and_start_test_mint() -> Result<Mint> {
     mint_builder
         .add_payment_processor(
             CurrencyUnit::Sat,
-            PaymentMethod::Bolt11,
+            PaymentMethod::Known(KnownMethod::Bolt11),
             MintMeltLimits::new(1, 10_000),
             Arc::new(ln_fake_backend),
         )
@@ -315,7 +338,7 @@ pub async fn create_test_wallet_for_mint(mint: Mint) -> Result<Wallet> {
     // Read environment variable to determine database type
     let db_type = env::var("CDK_TEST_DB_TYPE").expect("Database type set");
 
-    let localstore: Arc<dyn WalletDatabase<Err = cdk_database::Error> + Send + Sync> =
+    let localstore: Arc<dyn WalletDatabase<cdk_database::Error> + Send + Sync> =
         match db_type.to_lowercase().as_str() {
             "sqlite" => {
                 // Create a temporary directory for SQLite database

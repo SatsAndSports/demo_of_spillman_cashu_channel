@@ -10,8 +10,6 @@
 //! which is maintained for all invoice types.
 
 #![doc = include_str!("../README.md")]
-#![warn(missing_docs)]
-#![warn(rustdoc::bare_urls)]
 
 use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -28,9 +26,9 @@ use cdk_common::common::FeeReserve;
 use cdk_common::ensure_cdk;
 use cdk_common::nuts::{CurrencyUnit, MeltOptions, MeltQuoteState};
 use cdk_common::payment::{
-    self, Bolt11Settings, CreateIncomingPaymentResponse, Event, IncomingPaymentOptions,
-    MakePaymentResponse, MintPayment, OutgoingPaymentOptions, PaymentIdentifier,
-    PaymentQuoteResponse, WaitPaymentResponse,
+    self, CreateIncomingPaymentResponse, Event, IncomingPaymentOptions, MakePaymentResponse,
+    MintPayment, OutgoingPaymentOptions, PaymentIdentifier, PaymentQuoteResponse, SettingsResponse,
+    WaitPaymentResponse,
 };
 use error::Error;
 use futures::stream::StreamExt;
@@ -38,7 +36,6 @@ use futures::Stream;
 use lightning::offers::offer::OfferBuilder;
 use lightning_invoice::{Bolt11Invoice, Currency, InvoiceBuilder, PaymentSecret};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::ReceiverStream;
@@ -280,7 +277,7 @@ impl SecondaryRepaymentQueue {
                     rng.fill(&mut random_bytes);
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .expect("System time before UNIX_EPOCH")
                         .as_nanos() as u64;
 
                     // Create a unique hash combining the original payment identifier, timestamp, and random bytes
@@ -418,14 +415,17 @@ impl MintPayment for FakeWallet {
     type Err = payment::Error;
 
     #[instrument(skip_all)]
-    async fn get_settings(&self) -> Result<Value, Self::Err> {
-        Ok(serde_json::to_value(Bolt11Settings {
-            mpp: true,
-            unit: self.unit.clone(),
-            invoice_description: true,
-            amountless: false,
-            bolt12: true,
-        })?)
+    async fn get_settings(&self) -> Result<SettingsResponse, Self::Err> {
+        Ok(SettingsResponse {
+            unit: self.unit.to_string(),
+            bolt11: Some(payment::Bolt11Settings {
+                mpp: true,
+                amountless: false,
+                invoice_description: true,
+            }),
+            bolt12: Some(payment::Bolt12Settings { amountless: false }),
+            custom: std::collections::HashMap::new(),
+        })
     }
 
     #[instrument(skip_all)]
@@ -443,13 +443,7 @@ impl MintPayment for FakeWallet {
         &self,
     ) -> Result<Pin<Box<dyn Stream<Item = Event> + Send>>, Self::Err> {
         tracing::info!("Starting stream for fake invoices");
-        let receiver = self
-            .receiver
-            .lock()
-            .await
-            .take()
-            .ok_or(Error::NoReceiver)
-            .unwrap();
+        let receiver = self.receiver.lock().await.take().ok_or(Error::NoReceiver)?;
         let receiver_stream = ReceiverStream::new(receiver);
         Ok(Box::pin(receiver_stream.map(move |wait_response| {
             Event::PaymentReceived(wait_response)
@@ -509,6 +503,10 @@ impl MintPayment for FakeWallet {
                     }
                 };
                 (amount_msat, None)
+            }
+            OutgoingPaymentOptions::Custom(_) => {
+                // Custom payment methods are not supported by fake wallet
+                return Err(cdk_common::payment::Error::UnsupportedPaymentOption);
             }
         };
 
@@ -636,6 +634,10 @@ impl MintPayment for FakeWallet {
                     unit: unit.clone(),
                 })
             }
+            OutgoingPaymentOptions::Custom(_) => {
+                // Custom payment methods are not supported by fake wallet
+                Err(cdk_common::payment::Error::UnsupportedPaymentOption)
+            }
         }
     }
 
@@ -671,7 +673,7 @@ impl MintPayment for FakeWallet {
                     None => offer_builder,
                 };
 
-                let offer = offer_builder.build().unwrap();
+                let offer = offer_builder.build().expect("Failed to build BOLT12 offer");
 
                 (
                     PaymentIdentifier::OfferId(offer.id().to_string()),
@@ -703,6 +705,10 @@ impl MintPayment for FakeWallet {
                     amount,
                     expiry,
                 )
+            }
+            IncomingPaymentOptions::Custom(_) => {
+                // Custom payment methods are not supported by fake wallet
+                return Err(cdk_common::payment::Error::UnsupportedPaymentOption);
             }
         };
 
@@ -764,6 +770,7 @@ impl MintPayment for FakeWallet {
             request_lookup_id: payment_hash,
             request,
             expiry,
+            extra_json: None,
         })
     }
 
@@ -818,7 +825,7 @@ pub fn create_fake_invoice(amount_msat: u64, description: String) -> Bolt11Invoi
             0x3b, 0x2d, 0xb7, 0x34,
         ][..],
     )
-    .unwrap();
+    .expect("Valid 32-byte secret key");
 
     use bitcoin::secp256k1::rand::rngs::OsRng;
     use bitcoin::secp256k1::rand::Rng;
@@ -826,7 +833,7 @@ pub fn create_fake_invoice(amount_msat: u64, description: String) -> Bolt11Invoi
     let mut random_bytes = [0u8; 32];
     rng.fill(&mut random_bytes);
 
-    let payment_hash = sha256::Hash::from_slice(&random_bytes).unwrap();
+    let payment_hash = sha256::Hash::from_slice(&random_bytes).expect("Valid 32-byte hash input");
     let payment_secret = PaymentSecret([42u8; 32]);
 
     InvoiceBuilder::new(Currency::Bitcoin)
@@ -837,5 +844,5 @@ pub fn create_fake_invoice(amount_msat: u64, description: String) -> Bolt11Invoi
         .current_timestamp()
         .min_final_cltv_expiry_delta(144)
         .build_signed(|hash| Secp256k1::new().sign_ecdsa_recoverable(hash, &private_key))
-        .unwrap()
+        .expect("Failed to build fake invoice")
 }

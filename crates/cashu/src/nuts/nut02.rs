@@ -34,7 +34,7 @@ pub enum Error {
     #[error(transparent)]
     HexError(#[from] hex::Error),
     /// Keyset length error
-    #[error("NUT02: ID length invalid")]
+    #[error("NUT02: ID length invalid, expected 8 bytes (short/v1) or 33 bytes (v2)")]
     Length,
     /// Unknown version
     #[error("NUT02: Unknown Version")]
@@ -293,6 +293,16 @@ impl TryFrom<String> for Id {
     type Error = Error;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
+        // Check that string is ASCII (required for hex) to avoid panics on byte slicing
+        // with multi-byte UTF-8 characters
+        ensure_cdk!(
+            s.is_ascii(),
+            Error::HexError(hex::Error::InvalidHexCharacter {
+                c: s.chars().find(|c| !c.is_ascii()).unwrap_or('\0'),
+                index: s.chars().position(|c| !c.is_ascii()).unwrap_or(0),
+            })
+        );
+
         ensure_cdk!(
             s.len() == Self::STRLEN_V1 + 2 || s.len() == Self::STRLEN_V2 + 2,
             Error::Length
@@ -350,6 +360,10 @@ impl ShortKeysetId {
 
     /// [`ShortKeysetId`] from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.is_empty() {
+            return Err(Error::Length);
+        }
+
         let version = KeySetVersion::from_byte(&bytes[0])?;
         let prefix = bytes[1..].to_vec();
         Ok(Self { version, prefix })
@@ -392,6 +406,16 @@ impl TryFrom<String> for ShortKeysetId {
     type Error = Error;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
+        // Check that string is ASCII (required for hex) to avoid panics on byte slicing
+        // with multi-byte UTF-8 characters
+        ensure_cdk!(
+            s.is_ascii(),
+            Error::HexError(hex::Error::InvalidHexCharacter {
+                c: s.chars().find(|c| !c.is_ascii()).unwrap_or('\0'),
+                index: s.chars().position(|c| !c.is_ascii()).unwrap_or(0),
+            })
+        );
+
         ensure_cdk!(s.len() == 16, Error::Length);
 
         let version: KeySetVersion = KeySetVersion::from_byte(&hex::decode(&s[..2])?[0])?;
@@ -920,5 +944,19 @@ mod test {
 
         assert!(short_id_1.to_string() == "009a1f293253e41e");
         assert!(short_id_2.to_string() == "01adc013fa9d8517");
+    }
+
+    #[test]
+    fn test_id_with_non_ascii_chars() {
+        // Test that non-ASCII characters in ID strings don't cause panics
+        // but instead return proper errors. This was found by fuzzing.
+        // The character 'ǝ' is a 2-byte UTF-8 sequence that could cause
+        // panics when slicing by byte index.
+        let id_with_non_ascii = Id::from_str("0ǝfa73302d12ff{");
+        assert!(matches!(id_with_non_ascii, Err(Error::HexError(_))));
+
+        // Also test ShortKeysetId
+        let short_id_with_non_ascii = ShortKeysetId::from_str("0ǝfa73302d12ff");
+        assert!(matches!(short_id_with_non_ascii, Err(Error::HexError(_))));
     }
 }

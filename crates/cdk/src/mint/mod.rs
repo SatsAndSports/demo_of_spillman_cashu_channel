@@ -9,7 +9,7 @@ use cdk_common::amount::to_unit;
 use cdk_common::common::{PaymentProcessorKey, QuoteTTL};
 #[cfg(feature = "auth")]
 use cdk_common::database::DynMintAuthDatabase;
-use cdk_common::database::{self, DynMintDatabase};
+use cdk_common::database::{self, Acquired, DynMintDatabase};
 use cdk_common::nuts::{BlindSignature, BlindedMessage, CurrencyUnit, Id};
 use cdk_common::payment::{DynMintPayment, WaitPaymentResponse};
 pub use cdk_common::quote_id::QuoteId;
@@ -39,6 +39,7 @@ mod issue;
 mod keysets;
 mod ln;
 mod melt;
+mod proofs;
 mod start_up_check;
 mod subscription;
 mod swap;
@@ -46,6 +47,7 @@ mod verification;
 
 pub use builder::{MintBuilder, MintMeltLimits};
 pub use cdk_common::mint::{MeltQuote, MintKeySetInfo, MintQuote};
+pub use issue::{MintQuoteRequest, MintQuoteResponse};
 pub use verification::Verification;
 
 const CDK_MINT_PRIMARY_NAMESPACE: &str = "cdk_mint";
@@ -398,6 +400,37 @@ impl Mint {
         Ok(())
     }
 
+    /// Get all custom payment methods supported by registered payment processors
+    ///
+    /// This queries all payment processors for their supported custom methods
+    /// and returns a deduplicated list.
+    pub async fn get_custom_payment_methods(&self) -> Result<Vec<String>, Error> {
+        use std::collections::HashSet;
+        let mut custom_methods = HashSet::new();
+        let mut seen_processors = Vec::new();
+
+        for processor in self.payment_processors.values() {
+            // Skip if we've already queried this processor instance
+            if seen_processors.iter().any(|p| Arc::ptr_eq(p, processor)) {
+                continue;
+            }
+            seen_processors.push(Arc::clone(processor));
+
+            match processor.get_settings().await {
+                Ok(settings) => {
+                    for (method, _) in settings.custom {
+                        custom_methods.insert(method);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get settings from payment processor: {}", e);
+                }
+            }
+        }
+
+        Ok(custom_methods.into_iter().collect())
+    }
+
     /// Get the payment processor for the given unit and payment method
     pub fn get_payment_processor(
         &self,
@@ -684,13 +717,13 @@ impl Mint {
 
         let mut tx = localstore.begin_transaction().await?;
 
-        if let Ok(Some(mint_quote)) = tx
+        if let Ok(Some(mut mint_quote)) = tx
             .get_mint_quote_by_request_lookup_id(&wait_payment_response.payment_identifier)
             .await
         {
             Self::handle_mint_quote_payment(
                 &mut tx,
-                &mint_quote,
+                &mut mint_quote,
                 wait_payment_response,
                 pubsub_manager,
             )
@@ -709,8 +742,8 @@ impl Mint {
     /// Handle payment for a specific mint quote (extracted from pay_mint_quote)
     #[instrument(skip_all)]
     async fn handle_mint_quote_payment(
-        tx: &mut Box<dyn database::MintTransaction<'_, database::Error> + Send + Sync + '_>,
-        mint_quote: &MintQuote,
+        tx: &mut Box<dyn database::MintTransaction<database::Error> + Send + Sync>,
+        mint_quote: &mut Acquired<MintQuote>,
         wait_payment_response: WaitPaymentResponse,
         pubsub_manager: &Arc<PubSubManager>,
     ) -> Result<(), Error> {
@@ -727,7 +760,7 @@ impl Mint {
             .payment_ids()
             .contains(&&wait_payment_response.payment_id)
         {
-            if mint_quote.payment_method == PaymentMethod::Bolt11
+            if mint_quote.payment_method.is_bolt11()
                 && (quote_state == MintQuoteState::Issued || quote_state == MintQuoteState::Paid)
             {
                 tracing::info!("Received payment notification for already issued quote.");
@@ -749,25 +782,23 @@ impl Mint {
                     payment_amount_quote_unit
                 );
 
-                match tx
-                    .increment_mint_quote_amount_paid(
-                        &mint_quote.id,
-                        payment_amount_quote_unit,
-                        wait_payment_response.payment_id.clone(),
-                    )
-                    .await
-                {
-                    Ok(total_paid) => {
-                        pubsub_manager.mint_quote_payment(mint_quote, total_paid);
+                match mint_quote.add_payment(
+                    payment_amount_quote_unit,
+                    wait_payment_response.payment_id.clone(),
+                    None,
+                ) {
+                    Ok(()) => {
+                        tx.update_mint_quote(mint_quote).await?;
+                        pubsub_manager.mint_quote_payment(mint_quote, mint_quote.amount_paid());
                     }
-                    Err(database::Error::Duplicate) => {
+                    Err(Error::DuplicatePaymentId) => {
                         tracing::info!(
                             "Payment ID {} already processed (caught race condition)",
                             wait_payment_response.payment_id
                         );
                         // This is fine - another concurrent request already processed this payment
                     }
-                    Err(e) => return Err(e.into()),
+                    Err(e) => return Err(e),
                 }
             }
         } else {
@@ -779,7 +810,10 @@ impl Mint {
 
     /// Fee required for proof set
     #[instrument(skip_all)]
-    pub async fn get_proofs_fee(&self, proofs: &Proofs) -> Result<Amount, Error> {
+    pub async fn get_proofs_fee(
+        &self,
+        proofs: &Proofs,
+    ) -> Result<crate::fees::ProofsFeeBreakdown, Error> {
         let mut proofs_per_keyset = HashMap::new();
         let mut fee_per_keyset = HashMap::new();
 
@@ -799,9 +833,9 @@ impl Mint {
                 .or_insert(1);
         }
 
-        let fee = calculate_fee(&proofs_per_keyset, &fee_per_keyset)?;
+        let fee_breakdown = calculate_fee(&proofs_per_keyset, &fee_per_keyset)?;
 
-        Ok(fee)
+        Ok(fee_breakdown)
     }
 
     /// Get active keysets

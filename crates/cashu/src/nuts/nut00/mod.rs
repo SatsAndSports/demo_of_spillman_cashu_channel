@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use std::string::FromUtf8Error;
 
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 use super::nut02::ShortKeysetId;
@@ -135,7 +135,7 @@ fn total_amount<'a, I: Iterator<Item = &'a Proof>>(proofs: I) -> Result<Amount, 
 }
 
 fn ys<'a, I: Iterator<Item = &'a Proof>>(proofs: I) -> Result<Vec<PublicKey>, Error> {
-    proofs.map(|p| p.y()).collect::<Result<Vec<PublicKey>, _>>()
+    proofs.map(Proof::y).collect::<Result<Vec<PublicKey>, _>>()
 }
 
 /// NUT00 Error
@@ -303,12 +303,12 @@ impl From<HTLCWitness> for Witness {
 
 impl Witness {
     /// Add signatures to [`Witness`]
-    pub fn add_signatures(&mut self, signatues: Vec<String>) {
+    pub fn add_signatures(&mut self, signatures: Vec<String>) {
         match self {
-            Self::P2PKWitness(p2pk_witness) => p2pk_witness.signatures.extend(signatues),
+            Self::P2PKWitness(p2pk_witness) => p2pk_witness.signatures.extend(signatures),
             Self::HTLCWitness(htlc_witness) => match &mut htlc_witness.signatures {
-                Some(sigs) => sigs.extend(signatues),
-                None => htlc_witness.signatures = Some(signatues),
+                Some(sigs) => sigs.extend(signatures),
+                None => htlc_witness.signatures = Some(signatures),
             },
         }
     }
@@ -447,11 +447,11 @@ impl From<Proof> for ProofV4 {
     fn from(proof: Proof) -> ProofV4 {
         let Proof {
             amount,
-            keyset_id: _,
             secret,
             c,
             witness,
             dleq,
+            ..
         } = proof;
         ProofV4 {
             amount,
@@ -639,37 +639,157 @@ impl<'de> Deserialize<'de> for CurrencyUnit {
     }
 }
 
-/// Payment Method
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+/// Known payment methods
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
-pub enum PaymentMethod {
-    /// Bolt11 payment type
-    #[default]
+pub enum KnownMethod {
+    /// Lightning BOLT11
     Bolt11,
-    /// Bolt12
+    /// Lightning BOLT12
     Bolt12,
-    /// Custom
-    Custom(String),
 }
 
-impl FromStr for PaymentMethod {
+impl KnownMethod {
+    /// Get the method name as a string
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Bolt11 => "bolt11",
+            Self::Bolt12 => "bolt12",
+        }
+    }
+}
+
+impl fmt::Display for KnownMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for KnownMethod {
     type Err = Error;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_lowercase().as_str() {
             "bolt11" => Ok(Self::Bolt11),
             "bolt12" => Ok(Self::Bolt12),
-            c => Ok(Self::Custom(c.to_string())),
+            _ => Err(Error::UnsupportedPaymentMethod),
+        }
+    }
+}
+
+/// Payment Method
+///
+/// Represents either a known payment method (bolt11, bolt12) or a custom payment method.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "swagger", derive(utoipa::ToSchema))]
+pub enum PaymentMethod {
+    /// Known payment method (bolt11, bolt12)
+    Known(KnownMethod),
+    /// Custom payment method (e.g., "paypal", "stripe")
+    Custom(String),
+}
+
+impl PaymentMethod {
+    /// BOLT11 payment method
+    pub const BOLT11: Self = Self::Known(KnownMethod::Bolt11);
+    /// BOLT12 payment method
+    pub const BOLT12: Self = Self::Known(KnownMethod::Bolt12);
+
+    /// Create a new PaymentMethod from a string
+    pub fn new(method: String) -> Self {
+        Self::from_str(&method).unwrap_or_else(|_| Self::Custom(method.to_lowercase()))
+    }
+
+    /// Get the method name as a string
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Known(known) => known.as_str(),
+            Self::Custom(custom) => custom.as_str(),
+        }
+    }
+
+    /// Check if this is a known method
+    pub fn is_known(&self) -> bool {
+        matches!(self, Self::Known(_))
+    }
+
+    /// Check if this is a custom method
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+
+    /// Check if this is bolt11
+    pub fn is_bolt11(&self) -> bool {
+        matches!(self, Self::Known(KnownMethod::Bolt11))
+    }
+
+    /// Check if this is bolt12
+    pub fn is_bolt12(&self) -> bool {
+        matches!(self, Self::Known(KnownMethod::Bolt12))
+    }
+}
+
+impl FromStr for PaymentMethod {
+    type Err = Error;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match KnownMethod::from_str(value) {
+            Ok(known) => Ok(Self::Known(known)),
+            Err(_) => Ok(Self::Custom(value.to_lowercase())),
         }
     }
 }
 
 impl fmt::Display for PaymentMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PaymentMethod::Bolt11 => write!(f, "bolt11"),
-            PaymentMethod::Bolt12 => write!(f, "bolt12"),
-            PaymentMethod::Custom(p) => write!(f, "{p}"),
-        }
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<String> for PaymentMethod {
+    fn from(s: String) -> Self {
+        Self::from_str(&s).unwrap_or_else(|_| Self::Custom(s.to_lowercase()))
+    }
+}
+
+impl From<&str> for PaymentMethod {
+    fn from(s: &str) -> Self {
+        Self::from_str(s).unwrap_or_else(|_| Self::Custom(s.to_lowercase()))
+    }
+}
+
+impl From<KnownMethod> for PaymentMethod {
+    fn from(known: KnownMethod) -> Self {
+        Self::Known(known)
+    }
+}
+
+// Implement PartialEq with &str for ergonomic comparisons
+impl PartialEq<&str> for PaymentMethod {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<str> for PaymentMethod {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<PaymentMethod> for &str {
+    fn eq(&self, other: &PaymentMethod) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<KnownMethod> for PaymentMethod {
+    fn eq(&self, other: &KnownMethod) -> bool {
+        matches!(self, Self::Known(k) if k == other)
+    }
+}
+
+impl PartialEq<PaymentMethod> for KnownMethod {
+    fn eq(&self, other: &PaymentMethod) -> bool {
+        matches!(other, PaymentMethod::Known(k) if k == self)
     }
 }
 
@@ -678,7 +798,7 @@ impl Serialize for PaymentMethod {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -688,7 +808,7 @@ impl<'de> Deserialize<'de> for PaymentMethod {
         D: Deserializer<'de>,
     {
         let payment_method: String = String::deserialize(deserializer)?;
-        Self::from_str(&payment_method).map_err(|_| de::Error::custom("Unsupported payment method"))
+        Ok(Self::from_str(&payment_method).unwrap_or(Self::Custom(payment_method)))
     }
 }
 
@@ -992,47 +1112,57 @@ mod tests {
 
     #[test]
     fn test_payment_method_parsing() {
-        // Test standard variants
+        // Test known methods (case insensitive)
         assert_eq!(
             PaymentMethod::from_str("bolt11").unwrap(),
-            PaymentMethod::Bolt11
+            PaymentMethod::BOLT11
         );
         assert_eq!(
             PaymentMethod::from_str("BOLT11").unwrap(),
-            PaymentMethod::Bolt11
+            PaymentMethod::BOLT11
         );
         assert_eq!(
             PaymentMethod::from_str("Bolt11").unwrap(),
-            PaymentMethod::Bolt11
+            PaymentMethod::Known(KnownMethod::Bolt11)
         );
 
         assert_eq!(
             PaymentMethod::from_str("bolt12").unwrap(),
-            PaymentMethod::Bolt12
+            PaymentMethod::BOLT12
         );
         assert_eq!(
             PaymentMethod::from_str("BOLT12").unwrap(),
-            PaymentMethod::Bolt12
-        );
-        assert_eq!(
-            PaymentMethod::from_str("Bolt12").unwrap(),
-            PaymentMethod::Bolt12
+            PaymentMethod::Known(KnownMethod::Bolt12)
         );
 
-        // Test custom variants
+        // Test custom methods
         assert_eq!(
             PaymentMethod::from_str("custom").unwrap(),
             PaymentMethod::Custom("custom".to_string())
         );
         assert_eq!(
-            PaymentMethod::from_str("CUSTOM").unwrap(),
-            PaymentMethod::Custom("custom".to_string())
+            PaymentMethod::from_str("PAYPAL").unwrap(),
+            PaymentMethod::Custom("paypal".to_string())
         );
+
+        // Test string conversion
+        assert_eq!(PaymentMethod::BOLT11.as_str(), "bolt11");
+        assert_eq!(PaymentMethod::BOLT12.as_str(), "bolt12");
+        assert_eq!(PaymentMethod::from("paypal").as_str(), "paypal");
+
+        // Test ergonomic comparisons with strings
+        assert!(PaymentMethod::BOLT11 == "bolt11");
+        assert!(PaymentMethod::BOLT12 == "bolt12");
+        assert!(PaymentMethod::Custom("paypal".to_string()) == "paypal");
+
+        // Test comparison with KnownMethod
+        assert!(PaymentMethod::BOLT11 == KnownMethod::Bolt11);
+        assert!(PaymentMethod::BOLT12 == KnownMethod::Bolt12);
 
         // Test serialization/deserialization consistency
         let methods = vec![
-            PaymentMethod::Bolt11,
-            PaymentMethod::Bolt12,
+            PaymentMethod::BOLT11,
+            PaymentMethod::BOLT12,
             PaymentMethod::Custom("test".to_string()),
         ];
 
@@ -1065,5 +1195,95 @@ mod tests {
         let deserialized: Witness = serde_json::from_str(&serialized).unwrap();
 
         assert!(matches!(deserialized, Witness::P2PKWitness(_)));
+    }
+
+    #[test]
+    fn test_proofs_methods_count_by_keyset() {
+        let proofs: Proofs = serde_json::from_str(
+            r#"[
+                {"id":"009a1f293253e41e","amount":2,"secret":"secret1","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"},
+                {"id":"009a1f293253e41e","amount":8,"secret":"secret2","C":"029e8e5050b890a7d6c0968db16bc1d5d5fa040ea1de284f6ec69d61299f671059"},
+                {"id":"00ad268c4d1f5826","amount":4,"secret":"secret3","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"}
+            ]"#,
+        ).unwrap();
+
+        let counts = proofs.count_by_keyset();
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts[&Id::from_str("009a1f293253e41e").unwrap()], 2);
+        assert_eq!(counts[&Id::from_str("00ad268c4d1f5826").unwrap()], 1);
+    }
+
+    #[test]
+    fn test_proofs_methods_sum_by_keyset() {
+        let proofs: Proofs = serde_json::from_str(
+            r#"[
+                {"id":"009a1f293253e41e","amount":2,"secret":"secret1","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"},
+                {"id":"009a1f293253e41e","amount":8,"secret":"secret2","C":"029e8e5050b890a7d6c0968db16bc1d5d5fa040ea1de284f6ec69d61299f671059"},
+                {"id":"00ad268c4d1f5826","amount":4,"secret":"secret3","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"}
+            ]"#,
+        ).unwrap();
+
+        let sums = proofs.sum_by_keyset();
+        assert_eq!(sums.len(), 2);
+        assert_eq!(
+            sums[&Id::from_str("009a1f293253e41e").unwrap()],
+            Amount::from(10)
+        );
+        assert_eq!(
+            sums[&Id::from_str("00ad268c4d1f5826").unwrap()],
+            Amount::from(4)
+        );
+    }
+
+    #[test]
+    fn test_proofs_methods_total_amount() {
+        let proofs: Proofs = serde_json::from_str(
+            r#"[
+                {"id":"009a1f293253e41e","amount":2,"secret":"secret1","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"},
+                {"id":"009a1f293253e41e","amount":8,"secret":"secret2","C":"029e8e5050b890a7d6c0968db16bc1d5d5fa040ea1de284f6ec69d61299f671059"},
+                {"id":"00ad268c4d1f5826","amount":4,"secret":"secret3","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"}
+            ]"#,
+        ).unwrap();
+
+        let total = proofs.total_amount().unwrap();
+        assert_eq!(total, Amount::from(14));
+    }
+
+    #[test]
+    fn test_proofs_methods_ys() {
+        let proofs: Proofs = serde_json::from_str(
+            r#"[
+                {"id":"009a1f293253e41e","amount":2,"secret":"secret1","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"},
+                {"id":"009a1f293253e41e","amount":8,"secret":"secret2","C":"029e8e5050b890a7d6c0968db16bc1d5d5fa040ea1de284f6ec69d61299f671059"}
+            ]"#,
+        ).unwrap();
+
+        let ys = proofs.ys().unwrap();
+        assert_eq!(ys.len(), 2);
+        // Each Y is hash_to_curve of the secret, verify they're different
+        assert_ne!(ys[0], ys[1]);
+    }
+
+    #[test]
+    fn test_proofs_methods_hashset() {
+        let proofs: Proofs = serde_json::from_str(
+            r#"[
+                {"id":"009a1f293253e41e","amount":2,"secret":"secret1","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"},
+                {"id":"009a1f293253e41e","amount":8,"secret":"secret2","C":"029e8e5050b890a7d6c0968db16bc1d5d5fa040ea1de284f6ec69d61299f671059"},
+                {"id":"00ad268c4d1f5826","amount":4,"secret":"secret3","C":"02bc9097997d81afb2cc7346b5e4345a9346bd2a506eb7958598a72f0cf85163ea"}
+            ]"#,
+        ).unwrap();
+
+        let proof_set: HashSet<Proof> = proofs.into_iter().collect();
+
+        // Test HashSet implementation of ProofsMethods
+        let counts = proof_set.count_by_keyset();
+        assert_eq!(counts.len(), 2);
+
+        let sums = proof_set.sum_by_keyset();
+        assert_eq!(sums.len(), 2);
+        // Total should be 14 (2 + 8 + 4)
+        let total: u64 = sums.values().map(|a| u64::from(*a)).sum();
+        assert_eq!(total, 14);
     }
 }

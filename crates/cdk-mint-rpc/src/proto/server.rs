@@ -653,8 +653,8 @@ impl CdkMint for MintRPCServer {
             MintQuoteState::Paid => {
                 // Create a dummy payment response
                 let response = WaitPaymentResponse {
-                    payment_id: String::new(),
-                    payment_amount: mint_quote.amount_paid(),
+                    payment_id: mint_quote.request_lookup_id.to_string(),
+                    payment_amount: mint_quote.amount.unwrap_or(mint_quote.amount_paid()),
                     unit: mint_quote.unit.clone(),
                     payment_identifier: mint_quote.request_lookup_id.clone(),
                 };
@@ -665,8 +665,19 @@ impl CdkMint for MintRPCServer {
                     .await
                     .map_err(|_| Status::internal("Could not start db transaction".to_string()))?;
 
+                // Re-fetch the mint quote within the transaction to lock it
+                let mut mint_quote = tx
+                    .get_mint_quote(&quote_id)
+                    .await
+                    .map_err(|_| {
+                        Status::internal("Could not get quote in transaction".to_string())
+                    })?
+                    .ok_or(Status::invalid_argument(
+                        "Quote not found in transaction".to_string(),
+                    ))?;
+
                 self.mint
-                    .pay_mint_quote(&mut tx, &mint_quote, response)
+                    .pay_mint_quote(&mut tx, &mut mint_quote, response)
                     .await
                     .map_err(|_| Status::internal("Could not process payment".to_string()))?;
 
@@ -677,19 +688,20 @@ impl CdkMint for MintRPCServer {
             _ => {
                 // Create a new quote with the same values
                 let quote = MintQuote::new(
-                    Some(mint_quote.id.clone()),          // id
-                    mint_quote.request.clone(),           // request
-                    mint_quote.unit.clone(),              // unit
-                    mint_quote.amount,                    // amount
-                    mint_quote.expiry,                    // expiry
-                    mint_quote.request_lookup_id.clone(), // request_lookup_id
-                    mint_quote.pubkey,                    // pubkey
-                    mint_quote.amount_issued(),           // amount_issued
-                    mint_quote.amount_paid(),             // amount_paid
-                    mint_quote.payment_method.clone(),    // method
-                    0,                                    // created_at
-                    vec![],                               // blinded_messages
-                    vec![],                               // payment_ids
+                    Some(mint_quote.id.clone()),
+                    mint_quote.request.clone(),
+                    mint_quote.unit.clone(),
+                    mint_quote.amount,
+                    mint_quote.expiry,
+                    mint_quote.request_lookup_id.clone(),
+                    mint_quote.pubkey,
+                    mint_quote.amount_issued(),
+                    mint_quote.amount_paid(),
+                    mint_quote.payment_method.clone(),
+                    0,
+                    vec![],
+                    vec![],
+                    None,
                 );
 
                 let mint_store = self.mint.localstore();
