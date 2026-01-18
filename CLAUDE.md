@@ -633,7 +633,9 @@ The test suite includes:
 - ✅ Overlay-gated controls with tap-unlock delay (prevents hidden control taps on mobile)
 - ✅ Simplified page scrolling (removed nested scroll containers and auto-scroll logic)
 - ✅ Fixed wide-screen layout grid bug
-- ✅ Video player sizing: max-height 562.5px (via CSS variable), flexible aspect ratio
+- ✅ Added visual divider and padding above video list in narrow mode
+- ✅ Display video title in bold above list in narrow mode
+- ✅ Video player sizing: max-height 562.5px (via CSS variable), flexible aspect ratio, centered with pillarboxing
 - ✅ Dynamic sticky player positioning (Broad: fit bottom edge, Narrow: max 50% screen height)
 - ✅ Centered video content with pillarboxing for non-16:9 videos
 - ✅ PWA support (manifest.json, add-to-home-screen, Cashu/Tu₿e logo icons, service worker with update prompt)
@@ -674,11 +676,12 @@ The test suite includes:
 - ✅ Play/pause action indicator (brief YouTube-style feedback)
 - ✅ Tap sides to skip ±10 seconds (mobile/desktop)
 - ✅ Keyboard shortcuts (Space, arrows, M=mute, F=fullscreen)
+- ✅ Manual orientation rotation button for mobile (Landscape/Portrait toggle, visible in fullscreen, manual only)
 - ✅ Video thumbnails in list (preview.jpg)
 - ✅ Sprite animation on video card hover (cycles through sprite frames)
 - ✅ Sprite thumbnails on progress bar hover (desktop) / drag (mobile)
 - ✅ Balance indicator overlay (shows balance / capacity)
-- ✅ Responsive controls (volume hidden on narrow screens)
+- ✅ Responsive controls (volume slider hidden on narrow screens, Share button de-prioritized)
 - ✅ Playback speed control (0.5x, 1x, 1.25x, 1.5x, 2x)
 - ✅ Display video title when playing
 - ✅ Remember playback position (resume where left off)
@@ -709,7 +712,7 @@ The test suite includes:
 - ❌ Ctrl+Shift+M and mute?
 
 *Lower Priority:*
-- ✅ drop the volume controls on mobile (detected via coarse pointer)
+- ✅ drop the volume slider on mobile (detected via coarse pointer, mute remains)
 - ✅ Version display toast on "active" viewers count label tap
 
 ## Notes
