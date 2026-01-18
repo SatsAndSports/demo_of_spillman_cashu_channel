@@ -213,6 +213,21 @@ Key functions exported for browser and Node.js:
 - `get_sender_blinded_secret_key_for_stage2(params_json, keyset_info_json, alice_secret_hex)` - Get Alice's blinded secret key for signing stage 2 swaps
 - `get_receiver_blinded_secret_key_for_stage2(params_json, keyset_info_json, charlie_secret_hex, shared_secret_hex)` - Get Charlie's blinded secret key for signing stage 2 swaps
 
+## Universal Bridge Architecture (Future)
+
+To make Spilman channels easily adoptable by diverse service providers (Nostr relays, blob servers, etc.) regardless of their tech stack, we are moving toward a **"Pure Brain + Language Bridges"** model.
+
+### 1. The Core (Rust)
+The Spilman logic will be refined into a **stateless "Protocol Calculator."**
+- **Input:** Current Channel State + Incoming Event (e.g., Payment Request).
+- **Output:** New Channel State + Response/Effect (e.g., 200 OK or 402 Error).
+- **Portability:** Compiles to WASM (for JS/TS) and FFI-compatible binaries (for Python, Go, Swift, etc.).
+
+### 2. Multi-Language Bridges
+Thin wrapper libraries will be provided for each major language to handle the **"Fetch -> Call -> Save"** lifecycle.
+- **Developer Experience:** Third-party developers simply implement a standard `Storage` interface (e.g., `get_state(id)`, `save_state(id, state)`) for their specific database.
+- **Consistency:** The security-critical protocol logic remains "locked" inside the Rust core, preventing re-implementation bugs in host languages.
+
 ## CashuTube Video Streaming
 
 ### Architecture
@@ -654,6 +669,10 @@ The test suite includes:
 - ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
 - ✅ Global OGP/Twitter meta tags for improved link previews in chat apps
 - ✅ Suppress "Select a video" placeholder content in portrait mode
+- ✅ Dynamic sticky player positioning (Broad: fit bottom edge, Narrow: max 50% screen height)
+- ✅ Video player sizing: max-height 562.5px (via CSS variable), flexible aspect ratio, centered with pillarboxing
+- ✅ Detect autoplay failure and show persistent controls hint until interaction
+- ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -692,6 +711,8 @@ The test suite includes:
 - ✅ Fast-start HLS settings (reduced buffer, player-size capping)
 - ✅ Autoplay failure detection with persistent overlay hint
 - ✅ Robust centering for action indicator (flash icon) across mobile/desktop
+- ✅ Manual orientation rotation button for mobile (Landscape/Portrait toggle, visible in fullscreen, manual only)
+- ✅ Video quality preference persistence in localStorage
 
 *High Priority:*
 - ❌ Highlight currently playing video in list
