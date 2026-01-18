@@ -652,7 +652,8 @@ The test suite includes:
 - ✅ Highlight low funds with red pill badge in header
 - ✅ Detect autoplay failure and show persistent controls hint until interaction
 - ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
-- ✅ Removed redundant #play-overlay from video player DOM
+- ✅ Global OGP/Twitter meta tags for improved link previews in chat apps
+- ✅ Suppress "Select a video" placeholder content in portrait mode
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
