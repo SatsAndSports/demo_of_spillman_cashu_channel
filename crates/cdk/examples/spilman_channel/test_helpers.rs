@@ -8,21 +8,21 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bip39::Mnemonic;
 use bitcoin::secp256k1::schnorr::Signature;
-use cdk::nuts::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
-use cdk_common::{ProofsMethods, QuoteId};
 use cdk::mint::{MintBuilder, MintMeltLimits};
 use cdk::nuts::{
     CheckStateRequest, CheckStateResponse, CurrencyUnit, Id, KeySet, KeysetResponse,
-    MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltQuoteCustomRequest, MeltRequest,
-    MintInfo, MintQuoteBolt11Request, MintQuoteBolt11Response, MintQuoteCustomRequest,
+    MeltQuoteBolt11Request, MeltQuoteBolt11Response, MeltQuoteCustomRequest, MeltRequest, MintInfo,
+    MintQuoteBolt11Request, MintQuoteBolt11Response, MintQuoteCustomRequest,
     MintQuoteCustomResponse, MintRequest, MintResponse, PaymentMethod, RestoreRequest,
     RestoreResponse, SecretKey, SwapRequest, SwapResponse,
 };
+use cdk::nuts::{MeltQuoteBolt12Request, MintQuoteBolt12Request, MintQuoteBolt12Response};
 use cdk::types::{FeeReserve, QuoteTTL};
 use cdk::util::unix_time;
 use cdk::wallet::{AuthWallet, HttpClient, MintConnector, Wallet, WalletBuilder};
 use cdk::{Error, Mint};
 use cdk_common::mint_url::MintUrl;
+use cdk_common::{ProofsMethods, QuoteId};
 use cdk_fake_wallet::FakeWallet;
 use tokio::sync::RwLock;
 
@@ -34,14 +34,20 @@ use cdk::spilman::{
 
 /// Extract signatures from the first proof's witness in a swap request
 /// For SigAll, all signatures are stored in the witness of the FIRST proof only
-pub fn get_signatures_from_swap_request(swap_request: &SwapRequest) -> Result<Vec<Signature>, anyhow::Error> {
-    let first_proof = swap_request.inputs().first()
+pub fn get_signatures_from_swap_request(
+    swap_request: &SwapRequest,
+) -> Result<Vec<Signature>, anyhow::Error> {
+    let first_proof = swap_request
+        .inputs()
+        .first()
         .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
 
     let signatures = if let Some(ref witness) = first_proof.witness {
         if let cdk::nuts::Witness::P2PKWitness(p2pk_witness) = witness {
             // Parse all signature strings into Signature objects
-            p2pk_witness.signatures.iter()
+            p2pk_witness
+                .signatures
+                .iter()
                 .filter_map(|sig_str| sig_str.parse::<Signature>().ok())
                 .collect()
         } else {
@@ -111,7 +117,7 @@ pub async fn create_local_mint(unit: CurrencyUnit, input_fee_ppk: u64) -> anyhow
         .add_payment_processor(
             unit.clone(),
             PaymentMethod::BOLT11,
-            MintMeltLimits::new(1, 2_000_000_000),  // 2B msat = 2M sat
+            MintMeltLimits::new(1, 2_000_000_000), // 2B msat = 2M sat
             Arc::new(fake_ln),
         )
         .await?;
@@ -148,13 +154,21 @@ pub trait MintConnection: Send + Sync {
     async fn check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error>;
     async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, Error>;
     async fn post_mint(&self, request: MintRequest<String>) -> Result<MintResponse, Error>;
-    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error>;
-    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error>;
+    async fn post_mint_quote(
+        &self,
+        request: MintQuoteBolt11Request,
+    ) -> Result<MintQuoteBolt11Response<String>, Error>;
+    async fn get_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MintQuoteBolt11Response<String>, Error>;
 
     /// Immediately pay a mint quote (only for local/direct connections)
     /// Returns an error for HTTP connections
     async fn pay_mint_quote_directly(&self, _quote_id: &str) -> Result<(), Error> {
-        Err(Error::Custom("pay_mint_quote_directly is only supported for DirectMintConnection".to_string()))
+        Err(Error::Custom(
+            "pay_mint_quote_directly is only supported for DirectMintConnection".to_string(),
+        ))
     }
 }
 
@@ -200,11 +214,17 @@ impl MintConnection for HttpMintConnection {
         self.http_client.post_mint(request).await
     }
 
-    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error> {
+    async fn post_mint_quote(
+        &self,
+        request: MintQuoteBolt11Request,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
         self.http_client.post_mint_quote(request).await
     }
 
-    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error> {
+    async fn get_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
         self.http_client.get_mint_quote_status(quote_id).await
     }
 }
@@ -220,7 +240,10 @@ impl SpilmanMintConnection for HttpMintConnection {
         Ok(self.http_client.post_restore(request).await?)
     }
 
-    async fn check_state(&self, ys: Vec<cdk::nuts::PublicKey>) -> anyhow::Result<CheckStateResponse> {
+    async fn check_state(
+        &self,
+        ys: Vec<cdk::nuts::PublicKey>,
+    ) -> anyhow::Result<CheckStateResponse> {
         let request = CheckStateRequest { ys };
         Ok(self.http_client.post_check_state(request).await?)
     }
@@ -457,14 +480,20 @@ impl MintConnection for DirectMintConnection {
         self.mint.process_mint_request(request_id).await
     }
 
-    async fn post_mint_quote(&self, request: MintQuoteBolt11Request) -> Result<MintQuoteBolt11Response<String>, Error> {
+    async fn post_mint_quote(
+        &self,
+        request: MintQuoteBolt11Request,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
         self.mint
             .get_mint_quote(request.into())
             .await
             .map(Into::into)
     }
 
-    async fn get_mint_quote_status(&self, quote_id: &str) -> Result<MintQuoteBolt11Response<String>, Error> {
+    async fn get_mint_quote_status(
+        &self,
+        quote_id: &str,
+    ) -> Result<MintQuoteBolt11Response<String>, Error> {
         self.mint
             .check_mint_quote(&QuoteId::from_str(quote_id)?)
             .await
@@ -476,9 +505,12 @@ impl MintConnection for DirectMintConnection {
         use cdk::mint::QuoteId;
 
         // Get the mint quote to extract its request_lookup_id
-        let quote_id_obj: QuoteId = quote_id.parse()
+        let quote_id_obj: QuoteId = quote_id
+            .parse()
             .map_err(|e| Error::Custom(format!("Invalid quote ID: {}", e)))?;
-        let mint_quote = self.mint.localstore()
+        let mint_quote = self
+            .mint
+            .localstore()
             .get_mint_quote(&quote_id_obj)
             .await?
             .ok_or_else(|| Error::Custom(format!("Quote {} not found", quote_id)))?;
@@ -506,7 +538,10 @@ impl SpilmanMintConnection for DirectMintConnection {
         Ok(self.mint.restore(request).await?)
     }
 
-    async fn check_state(&self, ys: Vec<cdk::nuts::PublicKey>) -> anyhow::Result<CheckStateResponse> {
+    async fn check_state(
+        &self,
+        ys: Vec<cdk::nuts::PublicKey>,
+    ) -> anyhow::Result<CheckStateResponse> {
         let request = CheckStateRequest { ys };
         Ok(self.mint.check_state(&request).await?)
     }
@@ -541,7 +576,11 @@ pub async fn mint_deterministic_outputs(
     // Calculate total amount
     let total_amount: u64 = blinded_messages.iter().map(|bm| u64::from(bm.amount)).sum();
 
-    println!("   Creating quote for {} sats ({} outputs)...", total_amount, blinded_messages.len());
+    println!(
+        "   Creating quote for {} sats ({} outputs)...",
+        total_amount,
+        blinded_messages.len()
+    );
 
     // Generate NUT-20 keypair for the quote
     let secret_key = SecretKey::generate();
@@ -568,7 +607,10 @@ pub async fn mint_deterministic_outputs(
             println!("   ✓ Quote paid!");
             break;
         }
-        println!("   Polling... quote not yet paid (state: {:?})", quote_status.state);
+        println!(
+            "   Polling... quote not yet paid (state: {:?})",
+            quote_status.state
+        );
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
 
@@ -586,18 +628,31 @@ pub async fn mint_deterministic_outputs(
     println!("   Submitting MintRequest to mint...");
     let mint_response = mint_connection.post_mint(mint_request).await?;
 
-    println!("   ✓ Received {} blind signature(s)", mint_response.signatures.len());
+    println!(
+        "   ✓ Received {} blind signature(s)",
+        mint_response.signatures.len()
+    );
 
     // Unblind to get the proofs
     let proofs = cdk::dhke::construct_proofs(
         mint_response.signatures,
-        secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect(),
-        secrets_with_blinding.iter().map(|s| s.secret.clone()).collect(),
+        secrets_with_blinding
+            .iter()
+            .map(|s| s.blinding_factor.clone())
+            .collect(),
+        secrets_with_blinding
+            .iter()
+            .map(|s| s.secret.clone())
+            .collect(),
         keyset_keys,
     )?;
 
     let total: u64 = proofs.iter().map(|p| u64::from(p.amount)).sum();
-    println!("   ✓ Unblinded {} proofs totaling {} sats", proofs.len(), total);
+    println!(
+        "   ✓ Unblinded {} proofs totaling {} sats",
+        proofs.len(),
+        total
+    );
 
     Ok(proofs)
 }
@@ -608,13 +663,36 @@ pub async fn mint_deterministic_outputs(
 ///           NUT-11 (P2PK), NUT-12 (DLEQ)
 /// Optional: NUT-17 (WebSocket subscriptions)
 pub fn verify_mint_capabilities(mint_info: &MintInfo) -> anyhow::Result<()> {
-    let nut07 = if mint_info.nuts.nut07.supported { "✓" } else { "✗" };
-    let nut09 = if mint_info.nuts.nut09.supported { "✓" } else { "✗" };
-    let nut11 = if mint_info.nuts.nut11.supported { "✓" } else { "✗" };
-    let nut12 = if mint_info.nuts.nut12.supported { "✓" } else { "✗" };
-    let nut17 = if !mint_info.nuts.nut17.supported.is_empty() { "✓" } else { "⚠" };
+    let nut07 = if mint_info.nuts.nut07.supported {
+        "✓"
+    } else {
+        "✗"
+    };
+    let nut09 = if mint_info.nuts.nut09.supported {
+        "✓"
+    } else {
+        "✗"
+    };
+    let nut11 = if mint_info.nuts.nut11.supported {
+        "✓"
+    } else {
+        "✗"
+    };
+    let nut12 = if mint_info.nuts.nut12.supported {
+        "✓"
+    } else {
+        "✗"
+    };
+    let nut17 = if !mint_info.nuts.nut17.supported.is_empty() {
+        "✓"
+    } else {
+        "⚠"
+    };
 
-    println!("🔍 Mint capabilities: NUT-07:{} NUT-09:{} NUT-11:{} NUT-12:{} NUT-17:{}", nut07, nut09, nut11, nut12, nut17);
+    println!(
+        "🔍 Mint capabilities: NUT-07:{} NUT-09:{} NUT-11:{} NUT-12:{} NUT-17:{}",
+        nut07, nut09, nut11, nut12, nut17
+    );
 
     let all_required_supported = mint_info.nuts.nut07.supported
         && mint_info.nuts.nut09.supported
@@ -640,7 +718,9 @@ pub async fn get_active_keyset_info(
     let keysets_info = mint_connection.get_keysets().await?;
 
     // Find the active keyset for our unit
-    let active_keyset_info = keysets_info.keysets.iter()
+    let active_keyset_info = keysets_info
+        .keysets
+        .iter()
         .find(|k| k.active && k.unit == *unit)
         .ok_or_else(|| anyhow::anyhow!("No active keyset for unit {:?}", unit))?;
 
@@ -648,11 +728,16 @@ pub async fn get_active_keyset_info(
     let input_fee_ppk = active_keyset_info.input_fee_ppk;
 
     // Get the actual keys for this keyset
-    let set_of_active_keys = all_keysets.iter()
+    let set_of_active_keys = all_keysets
+        .iter()
         .find(|k| k.id == active_keyset_id)
         .ok_or_else(|| anyhow::anyhow!("Active keyset keys not found"))?;
 
-    Ok(cdk::spilman::KeysetInfo::new(active_keyset_id, set_of_active_keys.keys.clone(), input_fee_ppk))
+    Ok(cdk::spilman::KeysetInfo::new(
+        active_keyset_id,
+        set_of_active_keys.keys.clone(),
+        input_fee_ppk,
+    ))
 }
 
 /// Setup mint and wallets for demo/testing
@@ -666,7 +751,12 @@ pub async fn setup_mint_and_wallets_for_demo(
     unit: CurrencyUnit,
     input_fee_ppk: u64, // Fee in parts per thousand (e.g., 400 = 40%)
 ) -> anyhow::Result<(Box<dyn FullMintConnection>, Wallet, Wallet, String)> {
-    let (mint_connection, alice, charlie, mint_url): (Box<dyn FullMintConnection>, Wallet, Wallet, String) = if let Some(mint_url_str) = mint_url_opt {
+    let (mint_connection, alice, charlie, mint_url): (
+        Box<dyn FullMintConnection>,
+        Wallet,
+        Wallet,
+        String,
+    ) = if let Some(mint_url_str) = mint_url_opt {
         println!("🏦 Connecting to external mint at {}...", mint_url_str);
         let mint_url: MintUrl = mint_url_str.parse()?;
 
@@ -722,7 +812,10 @@ pub async fn receive_proofs_into_wallet(
     let nominal_value = proofs.total_amount()?;
     let fee = wallet.get_proofs_fee(&proofs).await?.total;
     if nominal_value <= fee {
-        println!("   ⚠ Skipping receive: proofs worth 0 after fees (nominal: {}, fee: {})", nominal_value, fee);
+        println!(
+            "   ⚠ Skipping receive: proofs worth 0 after fees (nominal: {}, fee: {})",
+            nominal_value, fee
+        );
         return Ok(0);
     }
 
@@ -761,7 +854,8 @@ pub async fn create_funding_proofs(
         funding_blinded_messages,
         funding_secrets_with_blinding,
         &channel_params.keyset_info.active_keys,
-    ).await?;
+    )
+    .await?;
 
     Ok(funding_proofs)
 }
@@ -781,17 +875,17 @@ pub fn unblind_commitment_proofs(
     let commitment_outputs = cdk::spilman::CommitmentOutputs::for_balance(balance, channel_params)?;
 
     // Unblind the signatures to get the commitment proofs
-    let all_proofs = commitment_outputs.unblind_all(
-        signatures,
-        &channel_params.keyset_info.active_keys,
-    )?;
+    let all_proofs =
+        commitment_outputs.unblind_all(signatures, &channel_params.keyset_info.active_keys)?;
 
     // Split proofs by ownership (receiver vs sender)
-    let receiver_stage1_proofs: Vec<_> = all_proofs.iter()
+    let receiver_stage1_proofs: Vec<_> = all_proofs
+        .iter()
         .filter(|p| p.is_receiver)
         .map(|p| p.proof.clone())
         .collect();
-    let sender_stage1_proofs: Vec<_> = all_proofs.iter()
+    let sender_stage1_proofs: Vec<_> = all_proofs
+        .iter()
         .filter(|p| !p.is_receiver)
         .map(|p| p.proof.clone())
         .collect();
@@ -813,7 +907,9 @@ pub async fn receive_proofs_into_both_wallets(
     sender_proofs: Vec<cdk::nuts::Proof>,
     sender_secret: cdk::nuts::SecretKey,
 ) -> anyhow::Result<(u64, u64)> {
-    let receiver_amount = receive_proofs_into_wallet(receiver_wallet, receiver_proofs, receiver_secret).await?;
-    let sender_amount = receive_proofs_into_wallet(sender_wallet, sender_proofs, sender_secret).await?;
+    let receiver_amount =
+        receive_proofs_into_wallet(receiver_wallet, receiver_proofs, receiver_secret).await?;
+    let sender_amount =
+        receive_proofs_into_wallet(sender_wallet, sender_proofs, sender_secret).await?;
     Ok((receiver_amount, sender_amount))
 }

@@ -8,9 +8,9 @@ use serde::Serialize;
 use crate::nuts::{Proof, PublicKey, RestoreRequest, SecretKey, SwapRequest};
 use crate::Amount;
 
-use super::established_channel::EstablishedChannel;
 use super::balance_update::BalanceUpdateMessage;
 use super::deterministic::{CommitmentOutputs, MintConnection};
+use super::established_channel::EstablishedChannel;
 use super::params::ChannelParameters;
 
 // ============================================================================
@@ -24,7 +24,11 @@ pub enum ChannelVerificationError {
     /// DLEQ proof is missing for a proof
     MissingDleq { proof_index: usize, amount: u64 },
     /// DLEQ proof is invalid (cryptographic verification failed)
-    InvalidDleq { proof_index: usize, amount: u64, reason: String },
+    InvalidDleq {
+        proof_index: usize,
+        amount: u64,
+        reason: String,
+    },
     /// No mint public key found for this amount in the keyset
     MissingMintKey { proof_index: usize, amount: u64 },
     /// Keyset ID doesn't match the keys (keys may have been tampered with)
@@ -112,10 +116,8 @@ pub fn verify_valid_channel(
         }
 
         // Get the mint's public key for this amount
-        let mint_pubkey: Option<PublicKey> = params
-            .keyset_info
-            .active_keys
-            .amount_key(proof.amount);
+        let mint_pubkey: Option<PublicKey> =
+            params.keyset_info.active_keys.amount_key(proof.amount);
 
         let mint_pubkey = match mint_pubkey {
             Some(key) => key,
@@ -177,19 +179,19 @@ impl SpilmanChannelSender {
         charlie_balance: u64,
     ) -> anyhow::Result<(BalanceUpdateMessage, SwapRequest)> {
         // Create commitment outputs for this balance
-        let commitment_outputs = CommitmentOutputs::for_balance(
-            charlie_balance,
-            &self.channel.params,
-        )?;
+        let commitment_outputs =
+            CommitmentOutputs::for_balance(charlie_balance, &self.channel.params)?;
 
         // Create unsigned swap request
-        let mut swap_request = commitment_outputs.create_swap_request(
-            self.channel.funding_proofs.clone(),
-        )?;
+        let mut swap_request =
+            commitment_outputs.create_swap_request(self.channel.funding_proofs.clone())?;
 
         // Alice signs the swap request with her BLINDED secret key
         // (The funding token P2PK uses blinded pubkeys for privacy)
-        let blinded_secret = self.channel.params.get_sender_blinded_secret_key_for_stage1(&self.alice_secret)?;
+        let blinded_secret = self
+            .channel
+            .params
+            .get_sender_blinded_secret_key_for_stage1(&self.alice_secret)?;
         swap_request.sign_sig_all(blinded_secret)?;
 
         // Create the balance update message
@@ -245,7 +247,9 @@ impl SpilmanChannelSender {
         let max_amount = params.maximum_amount_for_one_output;
 
         // Get amounts in ascending order (smallest first)
-        let mut amounts: Vec<u64> = params.keyset_info.amounts_largest_first
+        let mut amounts: Vec<u64> = params
+            .keyset_info
+            .amounts_largest_first
             .iter()
             .copied()
             .filter(|&amt| amt <= max_amount)
@@ -259,17 +263,12 @@ impl SpilmanChannelSender {
 
             loop {
                 // Create deterministic output for this (amount, index)
-                let det_output = params.create_deterministic_output_with_blinding(
-                    "sender",
-                    amount,
-                    index,
-                )?;
+                let det_output =
+                    params.create_deterministic_output_with_blinding("sender", amount, index)?;
 
                 // Create blinded message for restore request
-                let blinded_message = det_output.to_blinded_message(
-                    Amount::from(amount),
-                    keyset_id,
-                )?;
+                let blinded_message =
+                    det_output.to_blinded_message(Amount::from(amount), keyset_id)?;
 
                 // Try to restore this single output
                 let restore_request = RestoreRequest {
@@ -288,7 +287,10 @@ impl SpilmanChannelSender {
                             vec![det_output.blinding_factor.clone()],
                             vec![det_output.secret.clone()],
                             &params.keyset_info.active_keys,
-                        )?.into_iter().next().unwrap();
+                        )?
+                        .into_iter()
+                        .next()
+                        .unwrap();
 
                         recovered_proofs.push(proof);
                         index += 1;
@@ -326,7 +328,10 @@ impl SpilmanChannelReceiver {
     }
 
     /// Verify a balance update signature from the sender
-    pub fn verify_sender_signature(&self, balance_update: &BalanceUpdateMessage) -> anyhow::Result<()> {
+    pub fn verify_sender_signature(
+        &self,
+        balance_update: &BalanceUpdateMessage,
+    ) -> anyhow::Result<()> {
         balance_update.verify_sender_signature(&self.channel)
     }
 
@@ -346,7 +351,10 @@ impl SpilmanChannelReceiver {
 
         // Add Charlie's signature with his BLINDED secret key to complete the 2-of-2 multisig
         // (The funding token P2PK uses blinded pubkeys for privacy)
-        let blinded_secret = self.channel.params.get_receiver_blinded_secret_key_for_stage1(&self.charlie_secret)?;
+        let blinded_secret = self
+            .channel
+            .params
+            .get_receiver_blinded_secret_key_for_stage1(&self.charlie_secret)?;
         swap_request.sign_sig_all(blinded_secret)?;
 
         Ok(swap_request)
