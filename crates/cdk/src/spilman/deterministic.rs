@@ -9,8 +9,8 @@
 use async_trait::async_trait;
 
 use crate::dhke::blind_message;
-use crate::nuts::{BlindedMessage, BlindSignature, Id, RestoreRequest, SecretKey};
 use crate::nuts::nut11::{Conditions, SigFlag};
+use crate::nuts::{BlindSignature, BlindedMessage, Id, RestoreRequest, SecretKey};
 use crate::secret::Secret;
 use crate::Amount;
 
@@ -21,11 +21,20 @@ use super::params::ChannelParameters;
 #[async_trait]
 pub trait MintConnection: Send + Sync {
     /// Process a swap request
-    async fn process_swap(&self, request: crate::nuts::SwapRequest) -> anyhow::Result<crate::nuts::SwapResponse>;
+    async fn process_swap(
+        &self,
+        request: crate::nuts::SwapRequest,
+    ) -> anyhow::Result<crate::nuts::SwapResponse>;
     /// Post a restore request
-    async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<crate::nuts::RestoreResponse>;
+    async fn post_restore(
+        &self,
+        request: RestoreRequest,
+    ) -> anyhow::Result<crate::nuts::RestoreResponse>;
     /// Check proof state
-    async fn check_state(&self, ys: Vec<crate::nuts::PublicKey>) -> anyhow::Result<crate::nuts::CheckStateResponse>;
+    async fn check_state(
+        &self,
+        ys: Vec<crate::nuts::PublicKey>,
+    ) -> anyhow::Result<crate::nuts::CheckStateResponse>;
 }
 
 /// Deterministic secret with blinding factor
@@ -102,12 +111,12 @@ impl DeterministicSecretWithBlinding {
         // After locktime, Alice can refund with just her signature
         // All pubkeys are BLINDED for privacy, with refund using a separate tweak
         let conditions = Conditions::new(
-            Some(params.locktime),                      // Locktime for Alice's refund
-            Some(vec![blinded_charlie_pubkey]),         // Charlie's blinded key for 2-of-2
-            Some(vec![blinded_alice_pubkey_refund]),    // Alice's REFUND blinded key (different tweak)
-            Some(2),                                    // Require 2 signatures before locktime
-            Some(SigFlag::SigAll),                      // SigAll: signatures commit to outputs
-            Some(1),                                    // Only 1 signature needed for refund (Alice)
+            Some(params.locktime),                   // Locktime for Alice's refund
+            Some(vec![blinded_charlie_pubkey]),      // Charlie's blinded key for 2-of-2
+            Some(vec![blinded_alice_pubkey_refund]), // Alice's REFUND blinded key (different tweak)
+            Some(2),                                 // Require 2 signatures before locktime
+            Some(SigFlag::SigAll),                   // SigAll: signatures commit to outputs
+            Some(1),                                 // Only 1 signature needed for refund (Alice)
         )?;
 
         // Convert conditions to proper NUT-10/11 tag array format
@@ -145,7 +154,8 @@ impl DeterministicSecretWithBlinding {
         keyset_id: Id,
     ) -> Result<BlindedMessage, anyhow::Error> {
         // Blind the secret using the deterministic blinding factor
-        let (blinded_point, _) = blind_message(&self.secret.to_bytes(), Some(self.blinding_factor.clone()))?;
+        let (blinded_point, _) =
+            blind_message(&self.secret.to_bytes(), Some(self.blinding_factor.clone()))?;
 
         Ok(BlindedMessage::new(amount, keyset_id, blinded_point))
     }
@@ -168,11 +178,7 @@ pub struct DeterministicOutputsForOneContext {
 
 impl DeterministicOutputsForOneContext {
     /// Create a new set of deterministic outputs
-    pub fn new(
-        context: String,
-        amount: u64,
-        params: ChannelParameters,
-    ) -> anyhow::Result<Self> {
+    pub fn new(context: String, amount: u64, params: ChannelParameters) -> anyhow::Result<Self> {
         // Get the ordered list of amounts for this target
         let ordered_amounts = OrderedListOfAmounts::from_target(
             amount,
@@ -197,7 +203,9 @@ impl DeterministicOutputsForOneContext {
     /// Works for all contexts: "sender", "receiver", and "funding"
     /// Returns full DeterministicSecretWithBlinding objects (secret + blinding factor)
     /// Outputs are ordered smallest-first per Cashu protocol recommendation
-    pub fn get_secrets_with_blinding(&self) -> Result<Vec<DeterministicSecretWithBlinding>, anyhow::Error> {
+    pub fn get_secrets_with_blinding(
+        &self,
+    ) -> Result<Vec<DeterministicSecretWithBlinding>, anyhow::Error> {
         if self.amount == 0 {
             return Ok(vec![]);
         }
@@ -207,7 +215,11 @@ impl DeterministicOutputsForOneContext {
         // Use iter_smallest_first to track index per amount (Cashu protocol recommendation)
         for (&single_amount, &count) in self.ordered_amounts.iter_smallest_first() {
             for index in 0..count {
-                let det_output = self.params.create_deterministic_output_with_blinding(&self.context, single_amount, index)?;
+                let det_output = self.params.create_deterministic_output_with_blinding(
+                    &self.context,
+                    single_amount,
+                    index,
+                )?;
                 outputs.push(det_output);
             }
         }
@@ -223,13 +235,19 @@ impl DeterministicOutputsForOneContext {
         let secrets = self.get_secrets_with_blinding()?;
 
         // Build parallel vector of amounts in the same order as the secrets (smallest-first)
-        let amounts: Vec<u64> = self.ordered_amounts.iter_smallest_first()
+        let amounts: Vec<u64> = self
+            .ordered_amounts
+            .iter_smallest_first()
             .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
             .collect();
 
         // Convert each secret to a blinded message
-        secrets.iter().zip(amounts.iter())
-            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), self.params.keyset_info.keyset_id))
+        secrets
+            .iter()
+            .zip(amounts.iter())
+            .map(|(secret, &amount)| {
+                secret.to_blinded_message(Amount::from(amount), self.params.keyset_info.keyset_id)
+            })
             .collect()
     }
 }
@@ -289,10 +307,7 @@ impl CommitmentOutputs {
     /// - params: Channel parameters
     ///
     /// Returns CommitmentOutputs containing both receiver and sender outputs
-    pub fn for_balance(
-        receiver_balance: u64,
-        params: &ChannelParameters,
-    ) -> anyhow::Result<Self> {
+    pub fn for_balance(receiver_balance: u64, params: &ChannelParameters) -> anyhow::Result<Self> {
         // Validate that receiver balance doesn't exceed channel capacity
         if receiver_balance > params.capacity {
             anyhow::bail!(
@@ -308,10 +323,9 @@ impl CommitmentOutputs {
         let amount_after_stage1 = params.get_value_after_stage1()?;
 
         // Find the nominal value needed for Charlie's deterministic outputs
-        let inverse_result = params.keyset_info.inverse_deterministic_value_after_fees(
-            receiver_balance,
-            max_amount,
-        )?;
+        let inverse_result = params
+            .keyset_info
+            .inverse_deterministic_value_after_fees(receiver_balance, max_amount)?;
         let charlie_nominal = inverse_result.nominal_value;
 
         // Check if there's enough left for Alice (alice_nominal would be negative otherwise)
@@ -383,7 +397,8 @@ impl CommitmentOutputs {
         active_keys: &crate::nuts::Keys,
     ) -> Result<Vec<ProofWithMetadata>, anyhow::Error> {
         // Assert the number of signatures matches the expected number of outputs
-        let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
+        let expected_count =
+            self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
         if blind_signatures.len() != expected_count {
             anyhow::bail!(
                 "Expected {} blind signatures but received {}",
@@ -414,7 +429,10 @@ impl CommitmentOutputs {
 
         // Extract secrets and blinding factors in sorted order
         let sorted_secrets: Vec<_> = all_outputs.iter().map(|(o, _)| o.secret.clone()).collect();
-        let sorted_blinding: Vec<_> = all_outputs.iter().map(|(o, _)| o.blinding_factor.clone()).collect();
+        let sorted_blinding: Vec<_> = all_outputs
+            .iter()
+            .map(|(o, _)| o.blinding_factor.clone())
+            .collect();
 
         // Assert sorted vectors have the correct length
         assert_eq!(sorted_secrets.len(), blind_signatures.len());
@@ -472,17 +490,22 @@ impl CommitmentOutputs {
         all_outputs.sort_by_key(|bm| u64::from(bm.amount));
 
         // Create restore request
-        let restore_request = RestoreRequest { outputs: all_outputs };
+        let restore_request = RestoreRequest {
+            outputs: all_outputs,
+        };
 
         // Call mint restore endpoint
-        let restore_response = mint_connection.post_restore(restore_request).await
+        let restore_response = mint_connection
+            .post_restore(restore_request)
+            .await
             .map_err(|e| anyhow::anyhow!("Restore failed: {}", e))?;
 
         // Extract blind signatures from the response
         let blind_signatures: Vec<BlindSignature> = restore_response.signatures;
 
         // Verify we got the expected number of signatures
-        let expected_count = self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
+        let expected_count =
+            self.receiver_outputs.ordered_amounts.len() + self.sender_outputs.ordered_amounts.len();
         if blind_signatures.len() != expected_count {
             anyhow::bail!(
                 "Restore returned {} blind signatures but expected {}",
@@ -497,9 +520,9 @@ impl CommitmentOutputs {
 
 #[cfg(test)]
 mod tests {
+    use super::super::keysets_and_amounts::KeysetInfo;
     use super::*;
     use crate::nuts::{CurrencyUnit, Id, Keys};
-    use super::super::keysets_and_amounts::KeysetInfo;
 
     fn create_test_params(input_fee_ppk: u64, power: u64) -> ChannelParameters {
         // Create a simple keyset with powers of the given base for testing
@@ -532,9 +555,9 @@ mod tests {
             charlie_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
-            1000,  // capacity
-            0,     // locktime
-            0,     // setup_timestamp
+            1000, // capacity
+            0,    // locktime
+            0,    // setup_timestamp
             "test".to_string(),
             keyset_info,
             100_000, // maximum_amount_for_one_output
@@ -588,7 +611,11 @@ mod tests {
     }
 
     /// Create test params with a specific locktime (for funding token tests)
-    fn create_test_params_with_locktime(input_fee_ppk: u64, power: u64, locktime: u64) -> ChannelParameters {
+    fn create_test_params_with_locktime(
+        input_fee_ppk: u64,
+        power: u64,
+        locktime: u64,
+    ) -> ChannelParameters {
         use std::collections::BTreeMap;
 
         let alice_secret = SecretKey::generate();
@@ -653,9 +680,18 @@ mod tests {
             .get_sender_blinded_pubkey_for_stage1_refund()
             .expect("Failed to get refund blinded pubkey");
 
-        println!("Expected Alice blinded (data):   {}", expected_alice_blinded.to_hex());
-        println!("Expected Charlie blinded (2of2): {}", expected_charlie_blinded.to_hex());
-        println!("Expected Alice refund:           {}", expected_alice_refund.to_hex());
+        println!(
+            "Expected Alice blinded (data):   {}",
+            expected_alice_blinded.to_hex()
+        );
+        println!(
+            "Expected Charlie blinded (2of2): {}",
+            expected_charlie_blinded.to_hex()
+        );
+        println!(
+            "Expected Alice refund:           {}",
+            expected_alice_refund.to_hex()
+        );
 
         // Verify all three are distinct
         assert_ne!(
@@ -705,9 +741,7 @@ mod tests {
         println!("✓ data field contains Alice's blinded pubkey");
 
         // Parse tags to find pubkeys and refund keys
-        let tags = inner["tags"]
-            .as_array()
-            .expect("tags should be an array");
+        let tags = inner["tags"].as_array().expect("tags should be an array");
 
         // Find the "pubkeys" tag (Charlie's key for 2-of-2)
         let pubkeys_tag = tags

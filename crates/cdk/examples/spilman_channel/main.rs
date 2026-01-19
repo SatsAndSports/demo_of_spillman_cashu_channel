@@ -6,14 +6,19 @@
 mod test_helpers;
 
 use cdk::nuts::{CurrencyUnit, SecretKey};
-use cdk::util::unix_time;
 use cdk::secret::Secret;
+use cdk::util::unix_time;
 use clap::Parser;
 
 // Import Spilman types from the library
-use cdk::spilman::{ChannelParameters, CommitmentOutputs, EstablishedChannel, BalanceUpdateMessage};
+use cdk::spilman::{
+    BalanceUpdateMessage, ChannelParameters, CommitmentOutputs, EstablishedChannel,
+};
 
-use test_helpers::{setup_mint_and_wallets_for_demo, get_active_keyset_info, receive_proofs_into_wallet, create_funding_proofs};
+use test_helpers::{
+    create_funding_proofs, get_active_keyset_info, receive_proofs_into_wallet,
+    setup_mint_and_wallets_for_demo,
+};
 
 /// Spilman Payment Channel Demo
 #[derive(Parser, Debug)]
@@ -46,12 +51,13 @@ async fn main() -> anyhow::Result<()> {
 
     // 3. CREATE OR CONNECT TO MINT
     let (mint_connection, alice_wallet, charlie_wallet, mint_url) =
-        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk).await?;
+        setup_mint_and_wallets_for_demo(args.mint, channel_unit.clone(), requested_input_fee_ppk)
+            .await?;
 
     // Get active keyset information (will use actual fee from mint)
     let keyset_info = get_active_keyset_info(mint_connection.as_ref(), &channel_unit).await?;
 
-    let capacity = 1_000_000;  // Desired channel capacity (maximum Charlie can receive after all fees)
+    let capacity = 1_000_000; // Desired channel capacity (maximum Charlie can receive after all fees)
     let setup_timestamp = unix_time();
     let locktime = setup_timestamp + args.delay_until_refund;
 
@@ -76,8 +82,15 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
-    println!("   Locktime: {} ({} seconds from now)\n", locktime, locktime - unix_time());
-    println!("   Input fee: {} ppk", channel_params.keyset_info.input_fee_ppk);
+    println!(
+        "   Locktime: {} ({} seconds from now)\n",
+        locktime,
+        locktime - unix_time()
+    );
+    println!(
+        "   Input fee: {} ppk",
+        channel_params.keyset_info.input_fee_ppk
+    );
     println!("   Mint: {}", mint_url);
     println!("   Unit: {}", channel_params.unit_name());
     println!("   Channel ID: {}", channel_params.get_channel_id());
@@ -87,51 +100,51 @@ async fn main() -> anyhow::Result<()> {
 
     let funding_token_nominal = channel_params.get_total_funding_token_amount()?;
 
-    println!("   Capacity: {} sats   Funding token nominal: {} sats", capacity, funding_token_nominal);
+    println!(
+        "   Capacity: {} sats   Funding token nominal: {} sats",
+        capacity, funding_token_nominal
+    );
 
     // 7. CREATE AND MINT FUNDING TOKEN
     println!("\n🪙 Minting funding token...");
-    let funding_proofs = create_funding_proofs(
-        &*mint_connection,
-        &channel_params,
-        funding_token_nominal,
-    ).await?;
+    let funding_proofs =
+        create_funding_proofs(&*mint_connection, &channel_params, funding_token_nominal).await?;
     println!("   ✓ Created {} funding proofs", funding_proofs.len());
 
     // 9. CREATE CHANNEL FIXTURES
 
-    let channel_fixtures = EstablishedChannel::new(
-        channel_params,
-        funding_proofs,
-    )?;
+    let channel_fixtures = EstablishedChannel::new(channel_params, funding_proofs)?;
 
     // 10. CREATE COMMITMENT TRANSACTION AND SWAP
     let charlie_intended_balance = 100_000u64;
-    let charlie_balance = channel_fixtures.params.get_de_facto_balance(charlie_intended_balance)?;
+    let charlie_balance = channel_fixtures
+        .params
+        .get_de_facto_balance(charlie_intended_balance)?;
     println!("\n💱 Creating commitment transaction for balance: {} sats intended → {} sats de facto for Charlie...",
              charlie_intended_balance, charlie_balance);
 
     // Create commitment outputs for this balance
-    let commitment_outputs = CommitmentOutputs::for_balance(
-        charlie_balance,
-        &channel_fixtures.params,
-    )?;
+    let commitment_outputs =
+        CommitmentOutputs::for_balance(charlie_balance, &channel_fixtures.params)?;
     println!("   ✓ Created deterministic outputs for both parties");
     let charlie_final = commitment_outputs.receiver_outputs.value_after_fees();
     let alice_final = commitment_outputs.sender_outputs.value_after_fees();
-    println!("      Charlie: {} sats nominal → {} proofs → {} sats final",
+    println!(
+        "      Charlie: {} sats nominal → {} proofs → {} sats final",
         commitment_outputs.receiver_outputs.amount,
         commitment_outputs.receiver_outputs.ordered_amounts.len(),
-        charlie_final);
-    println!("      Alice: {} sats nominal → {} proofs → {} sats final",
+        charlie_final
+    );
+    println!(
+        "      Alice: {} sats nominal → {} proofs → {} sats final",
         commitment_outputs.sender_outputs.amount,
         commitment_outputs.sender_outputs.ordered_amounts.len(),
-        alice_final);
+        alice_final
+    );
 
     // Create unsigned swap request
-    let mut swap_request = commitment_outputs.create_swap_request(
-        channel_fixtures.funding_proofs.clone(),
-    )?;
+    let mut swap_request =
+        commitment_outputs.create_swap_request(channel_fixtures.funding_proofs.clone())?;
     println!("   ✓ Created unsigned swap request");
 
     // Alice signs first (as the sender/funder)
@@ -155,24 +168,30 @@ async fn main() -> anyhow::Result<()> {
 
     // Submit the signed swap request to the mint
     println!("\n🔄 Submitting swap to mint...");
-    let swap_response = test_helpers::MintConnection::process_swap(&*mint_connection, swap_request).await?;
+    let swap_response =
+        test_helpers::MintConnection::process_swap(&*mint_connection, swap_request).await?;
     println!("   ✓ Mint processed swap successfully!");
 
     // Check funding token state after swap (should be SPENT)
     println!("\n🔍 Checking funding token state after swap (NUT-07)...");
-    let state_after = channel_fixtures.check_funding_token_state(&*mint_connection).await?;
+    let state_after = channel_fixtures
+        .check_funding_token_state(&*mint_connection)
+        .await?;
     println!("   Funding token state: {:?}", state_after.state);
     if state_after.state != cdk::nuts::State::Spent {
-        println!("   ⚠ WARNING: Expected SPENT but got {:?}", state_after.state);
+        println!(
+            "   ⚠ WARNING: Expected SPENT but got {:?}",
+            state_after.state
+        );
     } else {
         println!("   ✓ Funding token has been spent (commitment transaction executed)");
     }
 
     // Restore blind signatures using NUT-09 (demonstrates that deterministic outputs can be recovered)
     println!("\n🔄 Restoring blind signatures from mint (NUT-09)...");
-    let restored_signatures = commitment_outputs.restore_all_blind_signatures(
-        &*mint_connection,
-    ).await?;
+    let restored_signatures = commitment_outputs
+        .restore_all_blind_signatures(&*mint_connection)
+        .await?;
 
     // Verify that restored signatures match the original signatures from the swap
     assert_eq!(
@@ -187,25 +206,36 @@ async fn main() -> anyhow::Result<()> {
         &channel_fixtures.params.keyset_info.active_keys,
     )?;
     // Split proofs by ownership (receiver = Charlie, sender = Alice)
-    let charlie_proofs: Vec<_> = all_proofs.iter()
+    let charlie_proofs: Vec<_> = all_proofs
+        .iter()
         .filter(|p| p.is_receiver)
         .map(|p| p.proof.clone())
         .collect();
-    let alice_proofs: Vec<_> = all_proofs.iter()
+    let alice_proofs: Vec<_> = all_proofs
+        .iter()
         .filter(|p| !p.is_receiver)
         .map(|p| p.proof.clone())
         .collect();
-    println!("   ✓ Unblinded proofs: {} for Charlie, {} for Alice", charlie_proofs.len(), alice_proofs.len());
+    println!(
+        "   ✓ Unblinded proofs: {} for Charlie, {} for Alice",
+        charlie_proofs.len(),
+        alice_proofs.len()
+    );
 
     // Add proofs to the wallets (each party will sign and swap to remove P2PK conditions)
     println!("\n💰 Receiving proofs into wallets...");
 
     // Charlie receives his proofs (wallet will sign and swap to remove P2PK)
-    let charlie_received_amount = receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
+    let charlie_received_amount =
+        receive_proofs_into_wallet(&charlie_wallet, charlie_proofs, charlie_secret.clone()).await?;
 
     // Alice receives her proofs (wallet will sign and swap to remove P2PK)
-    let alice_received_amount = receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
-    println!("   Charlie received: {} sats   Alice received: {} sats", charlie_received_amount, alice_received_amount);
+    let alice_received_amount =
+        receive_proofs_into_wallet(&alice_wallet, alice_proofs, alice_secret.clone()).await?;
+    println!(
+        "   Charlie received: {} sats   Alice received: {} sats",
+        charlie_received_amount, alice_received_amount
+    );
 
     // Assert that Charlie's received amount matches the de facto balance
     assert_eq!(

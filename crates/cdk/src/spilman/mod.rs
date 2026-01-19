@@ -12,6 +12,7 @@
 
 mod balance_update;
 mod bindings;
+mod bridge;
 mod deterministic;
 mod established_channel;
 mod keysets_and_amounts;
@@ -19,7 +20,10 @@ mod params;
 mod sender_and_receiver;
 
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
-pub use bindings::{channel_parameters_get_channel_id, compute_shared_secret_from_hex, parse_keyset_info_from_json};
+pub use bindings::{
+    channel_parameters_get_channel_id, compute_shared_secret_from_hex, parse_keyset_info_from_json,
+};
+pub use bridge::{SpilmanBridge, SpilmanHost};
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,
     MintConnection,
@@ -28,8 +32,8 @@ pub use established_channel::EstablishedChannel;
 pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
 pub use params::{compute_shared_secret, ChannelParameters};
 pub use sender_and_receiver::{
-    ChannelVerificationError, ChannelVerificationResult, SpilmanChannelReceiver,
-    SpilmanChannelSender, verify_valid_channel,
+    verify_valid_channel, ChannelVerificationError, ChannelVerificationResult,
+    SpilmanChannelReceiver, SpilmanChannelSender,
 };
 
 #[cfg(test)]

@@ -55,16 +55,12 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
     let input_fee_ppk = keyset_info_response.input_fee_ppk;
 
     let keyset_info = KeysetInfo::new(keyset_id, keys.clone(), input_fee_ppk);
-    println!(
-        "Keyset: {} (fee: {} ppk)",
-        keyset_id,
-        input_fee_ppk
-    );
+    println!("Keyset: {} (fee: {} ppk)", keyset_id, input_fee_ppk);
 
     // Step 2: Create channel parameters
     let capacity = 10u64;
     let future_locktime = unix_time() + 3600; // 1 hour in future
-    
+
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
@@ -109,15 +105,21 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
         .expect("Failed to get funding amount");
     println!("Funding token amount: {} sats", funding_amount);
 
-    let funding_outputs =
-        DeterministicOutputsForOneContext::new("funding".to_string(), funding_amount, params.clone())
-            .expect("Failed to create funding outputs");
+    let funding_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        funding_amount,
+        params.clone(),
+    )
+    .expect("Failed to create funding outputs");
 
     // Get blinded messages for mint
     let blinded_messages = funding_outputs
         .get_blinded_messages()
         .expect("Failed to get blinded messages");
-    println!("Created {} blinded messages for funding", blinded_messages.len());
+    println!(
+        "Created {} blinded messages for funding",
+        blinded_messages.len()
+    );
 
     // Step 4: Mint regular proofs first, then swap for our P2PK proofs
     let input_proofs = test_mint
@@ -289,12 +291,12 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     let spending_conditions = SpendingConditions::new_p2pk(
         blinded_alice, // data field: Alice's blinded pubkey for 2-of-2
         Some(Conditions {
-            locktime: Some(past_locktime),                    // Expired!
-            pubkeys: Some(vec![blinded_charlie]),             // Charlie for 2-of-2
-            refund_keys: Some(vec![blinded_alice_refund]),    // Alice's REFUND blinded key
-            num_sigs: Some(2),                                // 2-of-2 before locktime
-            sig_flag: SigFlag::SigAll,                        // SIG_ALL
-            num_sigs_refund: Some(1),                         // 1-of-1 for refund
+            locktime: Some(past_locktime),                 // Expired!
+            pubkeys: Some(vec![blinded_charlie]),          // Charlie for 2-of-2
+            refund_keys: Some(vec![blinded_alice_refund]), // Alice's REFUND blinded key
+            num_sigs: Some(2),                             // 2-of-2 before locktime
+            sig_flag: SigFlag::SigAll,                     // SIG_ALL
+            num_sigs_refund: Some(1),                      // 1-of-1 for refund
         }),
     );
     println!("Created P2PK conditions with expired locktime and blinded refund key");
@@ -448,7 +450,10 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
     println!("Charlie stage2(64,0):{}", charlie_stage2_64_0);
 
     // Verify stage2 keys differ from raw
-    assert_ne!(alice_stage2_64_0, alice_raw, "Alice stage2 should differ from raw");
+    assert_ne!(
+        alice_stage2_64_0, alice_raw,
+        "Alice stage2 should differ from raw"
+    );
     assert_ne!(
         charlie_stage2_64_0, charlie_raw,
         "Charlie stage2 should differ from raw"

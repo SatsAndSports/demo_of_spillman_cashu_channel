@@ -10,14 +10,174 @@ use cdk::nuts::{BlindSignature, BlindSignatureDleq, Id, Proof, PublicKey, Secret
 use cdk::secret::Secret;
 use cdk::spilman::{
     parse_keyset_info_from_json, verify_valid_channel, BalanceUpdateMessage, ChannelParameters,
-    DeterministicOutputsForOneContext, EstablishedChannel, SpilmanChannelSender,
+    DeterministicOutputsForOneContext, EstablishedChannel, SpilmanBridge, SpilmanChannelSender,
+    SpilmanHost,
 };
+use cdk::util::hex;
 use cdk::Amount;
 
 /// Initialize panic hook for better error messages in browser console
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
+extern "C" {
+    pub type JsSpilmanHost;
+
+    #[wasm_bindgen(method, js_name = getFunding)]
+    fn get_funding(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = receiverKeyIsAcceptable)]
+    fn receiver_key_is_acceptable(this: &JsSpilmanHost, receiver_pubkey_hex: &str) -> bool;
+
+    #[wasm_bindgen(method, js_name = mintAndKeysetIsAcceptable)]
+    fn mint_and_keyset_is_acceptable(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> bool;
+
+    #[wasm_bindgen(method, js_name = saveFunding)]
+    fn save_funding(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        params_json: &str,
+        funding_proofs_json: &str,
+        shared_secret_hex: &str,
+        keyset_info_json: &str,
+    );
+
+    #[wasm_bindgen(method, js_name = getAmountDue)]
+    fn get_amount_due(this: &JsSpilmanHost, channel_id: &str, context_json: &str) -> u64;
+
+    #[wasm_bindgen(method, js_name = recordPayment)]
+    fn record_payment(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        amount_due: u64,
+    );
+
+    #[wasm_bindgen(method, js_name = isClosed)]
+    fn is_closed(this: &JsSpilmanHost, channel_id: &str) -> bool;
+
+    #[wasm_bindgen(method, js_name = getServerConfig)]
+    fn get_server_config(this: &JsSpilmanHost) -> String;
+
+    #[wasm_bindgen(method, js_name = nowSeconds)]
+    fn now_seconds(this: &JsSpilmanHost) -> u64;
+}
+
+struct WasmSpilmanHostProxy {
+    js_host: JsSpilmanHost,
+}
+
+impl SpilmanHost for WasmSpilmanHostProxy {
+    fn get_funding(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+        let val = self.js_host.get_funding(channel_id);
+        if val.is_null() || val.is_undefined() {
+            return None;
+        }
+
+        // Expecting an array [params, funding_proofs, shared_secret, keyset_info]
+        let arr = js_sys::Array::from(&val);
+        if arr.length() != 4 {
+            return None;
+        }
+
+        Some((
+            arr.get(0).as_string()?,
+            arr.get(1).as_string()?,
+            arr.get(2).as_string()?,
+            arr.get(3).as_string()?,
+        ))
+    }
+
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool {
+        self.js_host
+            .receiver_key_is_acceptable(&receiver_pubkey.to_hex())
+    }
+
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool {
+        self.js_host
+            .mint_and_keyset_is_acceptable(mint, &keyset_id.to_string())
+    }
+
+    fn save_funding(
+        &self,
+        channel_id: &str,
+        params_json: &str,
+        funding_proofs_json: &str,
+        shared_secret_hex: &str,
+        keyset_info_json: &str,
+    ) {
+        self.js_host.save_funding(
+            channel_id,
+            params_json,
+            funding_proofs_json,
+            shared_secret_hex,
+            keyset_info_json,
+        );
+    }
+
+    fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64 {
+        self.js_host.get_amount_due(channel_id, context_json)
+    }
+
+    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, amount_due: u64) {
+        self.js_host
+            .record_payment(channel_id, balance, signature, amount_due);
+    }
+
+    fn is_closed(&self, channel_id: &str) -> bool {
+        self.js_host.is_closed(channel_id)
+    }
+
+    fn get_server_config(&self) -> String {
+        self.js_host.get_server_config()
+    }
+
+    fn now_seconds(&self) -> u64 {
+        self.js_host.now_seconds()
+    }
+}
+
+#[wasm_bindgen]
+pub struct WasmSpilmanBridge {
+    bridge: SpilmanBridge<WasmSpilmanHostProxy>,
+}
+
+#[wasm_bindgen]
+impl WasmSpilmanBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        js_host: JsSpilmanHost,
+        server_secret_key_hex: Option<String>,
+    ) -> Result<WasmSpilmanBridge, JsValue> {
+        let secret_key = match server_secret_key_hex {
+            Some(hex) => {
+                Some(SecretKey::from_hex(&hex).map_err(|e| JsValue::from_str(&e.to_string()))?)
+            }
+            None => None,
+        };
+
+        Ok(WasmSpilmanBridge {
+            bridge: SpilmanBridge::new(WasmSpilmanHostProxy { js_host }, secret_key),
+        })
+    }
+
+    #[wasm_bindgen(js_name = processPayment)]
+    pub fn process_payment(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+        keyset_info_json: Option<String>,
+    ) -> Result<String, JsValue> {
+        let response =
+            self.bridge
+                .process_payment(payment_json, context_json, keyset_info_json.as_deref());
+
+        serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
 
 /// Compute ECDH shared secret from a secret key and counterparty's public key
