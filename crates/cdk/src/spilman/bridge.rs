@@ -7,8 +7,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use super::{verify_valid_channel, BalanceUpdateMessage, ChannelParameters, EstablishedChannel};
-use crate::nuts::{Proof, PublicKey, SecretKey};
+use super::{
+    verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
+    DeterministicSecretWithBlinding, EstablishedChannel, SpilmanChannelReceiver,
+};
+use crate::nuts::{Proof, PublicKey, SecretKey, SwapRequest};
 use crate::util::hex;
 use std::str::FromStr;
 
@@ -85,6 +88,21 @@ pub struct PaymentResponse {
     pub status: BridgeStatus,
     pub header: Option<serde_json::Value>,
     pub body: Option<serde_json::Value>,
+}
+
+/// Data needed to close a channel
+///
+/// Contains the fully-signed swap request ready to submit to the mint,
+/// plus the secrets and blinding factors needed to unblind the response.
+#[derive(Debug)]
+pub struct CloseData {
+    /// The fully-signed swap request (2-of-2 multisig complete)
+    pub swap_request: SwapRequest,
+    /// Expected total output value after stage 1 fees
+    pub expected_total: u64,
+    /// Secrets with blinding factors for unblinding, tagged with is_receiver
+    /// Sorted by amount (stable) to match swap_request output order
+    pub secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -590,6 +608,182 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             header: Some(serde_json::json!(header)),
             body: Some(serde_json::json!(body)),
         }
+    }
+
+    /// Create the data needed to close a channel
+    ///
+    /// This validates the payment (signature, balance, etc.) and if valid,
+    /// constructs the fully-signed swap request ready to submit to the mint.
+    ///
+    /// The host should:
+    /// 1. Call this method to get the CloseData
+    /// 2. Submit swap_request to the mint's /v1/swap endpoint
+    /// 3. Use secrets_with_blinding to unblind the response
+    ///
+    /// Returns Err if validation fails (same errors as process_payment).
+    pub fn create_close_data(
+        &self,
+        payment_json: &str,
+        keyset_info_json: Option<&str>,
+    ) -> Result<CloseData, BridgeError> {
+        // 1. Parse payment request
+        let payment: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+
+        if payment.channel_id.is_empty() {
+            return Err(BridgeError::InvalidRequest("missing channel_id".into()));
+        }
+
+        if payment.signature.is_empty() {
+            return Err(BridgeError::InvalidRequest("missing signature".into()));
+        }
+
+        let channel_id = &payment.channel_id;
+
+        // 2. Check if channel is closed
+        if self.host.is_closed(channel_id) {
+            return Err(BridgeError::ChannelClosed);
+        }
+
+        // 3. Get or validate funding
+        let funding_and_params = match self.host.get_funding_and_params(channel_id) {
+            Some(f) => f,
+            None => {
+                // Unknown channel - must provide params and funding_proofs
+                let params_val = payment.params.as_ref().ok_or(BridgeError::UnknownChannel)?;
+                let funding_proofs = payment
+                    .funding_proofs
+                    .as_ref()
+                    .ok_or(BridgeError::UnknownChannel)?;
+                let keyset_info_json =
+                    keyset_info_json.ok_or(BridgeError::MintOrKeysetNotAcceptable)?;
+
+                self.validate_and_save_new_channel(
+                    channel_id,
+                    params_val,
+                    funding_proofs,
+                    keyset_info_json,
+                )?
+            }
+        };
+
+        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
+            funding_and_params;
+
+        // 4. Parse everything we need
+        let shared_secret_bytes =
+            hex::decode(&shared_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let shared_secret: [u8; 32] = shared_secret_bytes
+            .try_into()
+            .map_err(|_| BridgeError::Internal("invalid shared secret length".into()))?;
+
+        let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let params = ChannelParameters::from_json_with_shared_secret(
+            &params_json,
+            keyset_info,
+            shared_secret,
+        )
+        .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let funding_proofs: Vec<Proof> = serde_json::from_str(&funding_proofs_json)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 5. Check balance doesn't exceed capacity
+        if payment.balance > params.capacity {
+            return Err(BridgeError::BalanceExceedsCapacity {
+                balance: payment.balance,
+                capacity: params.capacity,
+            });
+        }
+
+        // 6. Parse signature
+        let sig: bitcoin::secp256k1::schnorr::Signature = payment.signature.parse().map_err(
+            |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
+                BridgeError::InvalidSignature(e.to_string())
+            },
+        )?;
+
+        // 7. Create commitment outputs and swap request
+        let commitment_outputs = CommitmentOutputs::for_balance(payment.balance, &params)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let mut swap_request = commitment_outputs
+            .create_swap_request(funding_proofs.clone())
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 8. Create balance update message
+        let balance_update = BalanceUpdateMessage {
+            channel_id: channel_id.to_string(),
+            amount: payment.balance,
+            signature: sig.clone(),
+        };
+
+        // 9. Add Alice's signature to the swap request witness
+        {
+            use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
+            let first_input = swap_request
+                .inputs_mut()
+                .first_mut()
+                .ok_or_else(|| BridgeError::Internal("swap request has no inputs".into()))?;
+
+            match first_input.witness.as_mut() {
+                Some(witness) => {
+                    witness.add_signatures(vec![sig.to_string()]);
+                }
+                None => {
+                    let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
+                    p2pk_witness.add_signatures(vec![sig.to_string()]);
+                    first_input.witness = Some(p2pk_witness);
+                }
+            }
+        }
+
+        // 10. Create channel and receiver, verify + add Charlie's signature
+        let channel = EstablishedChannel::new(params.clone(), funding_proofs)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let server_secret_key = self
+            .server_secret_key
+            .as_ref()
+            .ok_or(BridgeError::ServerMisconfigured("no secret key".into()))?;
+
+        let receiver = SpilmanChannelReceiver::new(server_secret_key.clone(), channel);
+
+        let signed_swap_request = receiver
+            .add_second_signature(&balance_update, swap_request)
+            .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
+
+        // 11. Get expected total (value after stage 1 fees)
+        let expected_total = params
+            .get_value_after_stage1()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 12. Collect secrets with blinding factors for unblinding
+        let receiver_secrets = commitment_outputs
+            .receiver_outputs
+            .get_secrets_with_blinding()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let sender_secrets = commitment_outputs
+            .sender_outputs
+            .get_secrets_with_blinding()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // Combine and tag with is_receiver, then sort by amount to match output order
+        let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> =
+            receiver_secrets
+                .into_iter()
+                .map(|s| (s, true))
+                .chain(sender_secrets.into_iter().map(|s| (s, false)))
+                .collect();
+        secrets_with_blinding.sort_by_key(|(s, _)| s.amount);
+
+        Ok(CloseData {
+            swap_request: signed_swap_request,
+            expected_total,
+            secrets_with_blinding,
+        })
     }
 }
 
