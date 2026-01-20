@@ -70,11 +70,19 @@ pub struct PaymentRequest {
     pub funding_proofs: Option<Vec<Proof>>,
 }
 
+#[derive(Debug, Serialize, Copy, Clone)]
+pub enum BridgeStatus {
+    OK,
+    PaymentRequired,
+    BadRequest,
+    ServerError,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PaymentResponse {
     pub success: bool,
     pub error: Option<String>,
-    pub code: u16,
+    pub status: BridgeStatus,
     pub header: Option<serde_json::Value>,
     pub body: Option<serde_json::Value>,
 }
@@ -198,6 +206,13 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             Err(e) => {
                 let mut extra = BTreeMap::new();
                 let msg = e.to_string();
+                let status = match e {
+                    BridgeError::InvalidRequest(_) => BridgeStatus::BadRequest,
+                    BridgeError::ServerMisconfigured(_) => BridgeStatus::ServerError,
+                    BridgeError::Internal(_) => BridgeStatus::ServerError,
+                    _ => BridgeStatus::PaymentRequired,
+                };
+
                 match e {
                     BridgeError::CapacityTooSmall {
                         capacity,
@@ -246,7 +261,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                     }
                     _ => {}
                 }
-                self.error_with_extra(&msg, 402, None, extra)
+                self.error_with_extra(&msg, status, None, extra)
             }
         }
     }
@@ -277,7 +292,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
 
         // 3. Resolve or verify funding
-        let funding = match self.host.get_funding_and_params(channel_id) {
+        let funding_and_params = match self.host.get_funding_and_params(channel_id) {
             Some(f) => f,
             None => {
                 // Unknown channel - must provide params and funding_proofs
@@ -299,7 +314,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         };
 
-        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) = funding;
+        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
+            funding_and_params;
 
         // 4. Parse params for capacity and unit checks
         let params: serde_json::Value = serde_json::from_str(&params_json)
@@ -355,7 +371,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         Ok(PaymentResponse {
             success: true,
             error: None,
-            code: 200,
+            status: BridgeStatus::OK,
             header: Some(header),
             body: None,
         })
@@ -550,7 +566,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     fn error_with_extra(
         &self,
         msg: &str,
-        code: u16,
+        status: BridgeStatus,
         reason: Option<String>,
         extra: BTreeMap<String, serde_json::Value>,
     ) -> PaymentResponse {
@@ -570,7 +586,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         PaymentResponse {
             success: false,
             error: Some(msg.to_string()),
-            code,
+            status,
             header: Some(serde_json::json!(header)),
             body: Some(serde_json::json!(body)),
         }
