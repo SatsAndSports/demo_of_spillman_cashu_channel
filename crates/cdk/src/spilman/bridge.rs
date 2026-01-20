@@ -207,7 +207,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 let mut extra = BTreeMap::new();
                 let msg = e.to_string();
                 let status = match e {
-                    BridgeError::InvalidRequest(_) => BridgeStatus::BadRequest,
+                    BridgeError::InvalidRequest(_) => BridgeStatus::PaymentRequired,
                     BridgeError::ServerMisconfigured(_) => BridgeStatus::ServerError,
                     BridgeError::Internal(_) => BridgeStatus::ServerError,
                     _ => BridgeStatus::PaymentRequired,
