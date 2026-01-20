@@ -26,8 +26,8 @@ pub fn init() {
 extern "C" {
     pub type JsSpilmanHost;
 
-    #[wasm_bindgen(method, js_name = getFunding)]
-    fn get_funding(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
+    #[wasm_bindgen(method, js_name = getFundingAndParams)]
+    fn get_funding_and_params(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
 
     #[wasm_bindgen(method, js_name = receiverKeyIsAcceptable)]
     fn receiver_key_is_acceptable(this: &JsSpilmanHost, receiver_pubkey_hex: &str) -> bool;
@@ -54,7 +54,7 @@ extern "C" {
         channel_id: &str,
         balance: u64,
         signature: &str,
-        amount_due: u64,
+        context_json: &str,
     );
 
     #[wasm_bindgen(method, js_name = isClosed)]
@@ -72,8 +72,8 @@ struct WasmSpilmanHostProxy {
 }
 
 impl SpilmanHost for WasmSpilmanHostProxy {
-    fn get_funding(&self, channel_id: &str) -> Option<(String, String, String, String)> {
-        let val = self.js_host.get_funding(channel_id);
+    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+        let val = self.js_host.get_funding_and_params(channel_id);
         if val.is_null() || val.is_undefined() {
             return None;
         }
@@ -123,9 +123,9 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         self.js_host.get_amount_due(channel_id, context_json)
     }
 
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, amount_due: u64) {
+    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
         self.js_host
-            .record_payment(channel_id, balance, signature, amount_due);
+            .record_payment(channel_id, balance, signature, context_json);
     }
 
     fn is_closed(&self, channel_id: &str) -> bool {

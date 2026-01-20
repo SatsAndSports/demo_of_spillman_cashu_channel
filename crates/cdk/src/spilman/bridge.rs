@@ -24,7 +24,7 @@ pub trait SpilmanHost {
 
     /// Get cached funding data for a channel
     /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
-    fn get_funding(&self, channel_id: &str) -> Option<(String, String, String, String)>;
+    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
 
     /// Save funding data for a channel
     fn save_funding(
@@ -42,8 +42,8 @@ pub trait SpilmanHost {
     /// plus the current request described in `context_json`.
     fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64;
 
-    /// Record a successful payment
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, amount_due: u64);
+    /// Record a successful payment and update usage
+    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
 
     /// Check if a channel has been closed
     fn is_closed(&self, channel_id: &str) -> bool;
@@ -277,7 +277,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
 
         // 3. Resolve or verify funding
-        let funding = match self.host.get_funding(channel_id) {
+        let funding = match self.host.get_funding_and_params(channel_id) {
             Some(f) => f,
             None => {
                 // Unknown channel - must provide params and funding_proofs
@@ -337,8 +337,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         .map_err(BridgeError::InvalidSignature)?;
 
         // 8. Record successful payment
-        self.host
-            .record_payment(channel_id, payment.balance, &payment.signature, amount_due);
+        self.host.record_payment(
+            channel_id,
+            payment.balance,
+            &payment.signature,
+            context_json,
+        );
 
         // 9. Return success with confirmation header
         let header = serde_json::json!({
@@ -592,7 +596,10 @@ mod tests {
             self.mint_acceptable
         }
 
-        fn get_funding(&self, _channel_id: &str) -> Option<(String, String, String, String)> {
+        fn get_funding_and_params(
+            &self,
+            _channel_id: &str,
+        ) -> Option<(String, String, String, String)> {
             None
         }
 
@@ -615,7 +622,7 @@ mod tests {
             _channel_id: &str,
             _balance: u64,
             _signature: &str,
-            _amount_due: u64,
+            _context_json: &str,
         ) {
         }
 
