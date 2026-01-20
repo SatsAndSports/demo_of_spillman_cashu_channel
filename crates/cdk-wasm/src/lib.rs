@@ -178,6 +178,77 @@ impl WasmSpilmanBridge {
 
         serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
     }
+
+    /// Create data needed to close a channel
+    ///
+    /// Validates the payment signature and creates the fully-signed swap request
+    /// ready to submit to the mint, plus secrets for unblinding the response.
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
+    ///   and optionally params + funding_proofs for unknown channels
+    /// * `keyset_info_json` - Optional keyset info JSON (required for unknown channels)
+    ///
+    /// # Returns
+    /// JSON with:
+    /// - `swap_request`: The fully-signed swap request ready for mint
+    /// - `expected_total`: Expected total output value after stage 1 fees
+    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
+    ///
+    /// # Errors
+    /// Returns error JSON with same structure as processPayment 402 responses
+    #[wasm_bindgen(js_name = createCloseData)]
+    pub fn create_close_data(
+        &self,
+        payment_json: &str,
+        keyset_info_json: Option<String>,
+    ) -> Result<String, JsValue> {
+        match self
+            .bridge
+            .create_close_data(payment_json, keyset_info_json.as_deref())
+        {
+            Ok(close_data) => {
+                // Serialize swap_request
+                let swap_request_json =
+                    serde_json::to_value(&close_data.swap_request).map_err(|e| {
+                        JsValue::from_str(&format!("Failed to serialize swap request: {}", e))
+                    })?;
+
+                // Serialize secrets_with_blinding
+                let secrets_with_blinding: Vec<serde_json::Value> = close_data
+                    .secrets_with_blinding
+                    .into_iter()
+                    .map(|(s, is_receiver)| {
+                        serde_json::json!({
+                            "secret": s.secret.to_string(),
+                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                            "amount": s.amount,
+                            "index": s.index,
+                            "is_receiver": is_receiver
+                        })
+                    })
+                    .collect();
+
+                let result = serde_json::json!({
+                    "success": true,
+                    "swap_request": swap_request_json,
+                    "expected_total": close_data.expected_total,
+                    "secrets_with_blinding": secrets_with_blinding
+                });
+
+                Ok(result.to_string())
+            }
+            Err(e) => {
+                // Return error in same format as processPayment for consistency
+                let error_msg = e.to_string();
+                let result = serde_json::json!({
+                    "success": false,
+                    "error": error_msg
+                });
+                Ok(result.to_string())
+            }
+        }
+    }
 }
 
 /// Compute ECDH shared secret from a secret key and counterparty's public key
@@ -307,12 +378,12 @@ fn create_funding_outputs_inner(
 /// Unblind blind signatures and verify DLEQ proofs
 ///
 /// Takes blind signatures from a mint swap response, unblinds them using the
-/// secrets and blinding factors from create_close_swap_request, verifies DLEQ
+/// secrets and blinding factors from bridge.createCloseData(), verifies DLEQ
 /// proofs, and returns the separated receiver/sender proofs.
 ///
 /// # Arguments
 /// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
-/// * `secrets_with_blinding_json` - JSON array from create_close_swap_request's secrets_with_blinding
+/// * `secrets_with_blinding_json` - JSON array from createCloseData's secrets_with_blinding
 /// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
 /// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
 /// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
@@ -1073,194 +1144,4 @@ fn construct_proofs_inner(
         serde_json::to_string(&proofs).map_err(|e| format!("Failed to serialize proofs: {}", e))?;
 
     Ok(proofs_json)
-}
-
-/// Create a fully-signed swap request for channel closing (Charlie's side)
-///
-/// Charlie (the receiver/server) uses this to:
-/// 1. Verify Alice's signature on the balance update
-/// 2. Add his own signature to complete the 2-of-2 multisig
-/// 3. Get the swap request ready to submit to the mint
-///
-/// Takes:
-/// - `params_json`: Channel parameters JSON
-/// - `keyset_info_json`: KeysetInfo JSON (with full keys for output computation)
-/// - `charlie_secret_hex`: Charlie's secret key (hex)
-/// - `funding_proofs_json`: JSON array of funding proofs
-/// - `channel_id`: The channel ID
-/// - `balance`: Charlie's balance (the amount_due)
-/// - `alice_signature`: Alice's Schnorr signature (hex) from the close request
-///
-/// Returns JSON with:
-/// - `swap_request`: The fully-signed swap request ready for mint
-/// - `expected_total`: Expected total output amount (value after stage 1 fees)
-#[wasm_bindgen]
-pub fn create_close_swap_request(
-    params_json: &str,
-    keyset_info_json: &str,
-    charlie_secret_hex: &str,
-    funding_proofs_json: &str,
-    channel_id: &str,
-    balance: u64,
-    alice_signature: &str,
-) -> Result<String, JsValue> {
-    create_close_swap_request_inner(
-        params_json,
-        keyset_info_json,
-        charlie_secret_hex,
-        funding_proofs_json,
-        channel_id,
-        balance,
-        alice_signature,
-    )
-    .map_err(|e| JsValue::from_str(&e))
-}
-
-fn create_close_swap_request_inner(
-    params_json: &str,
-    keyset_info_json: &str,
-    charlie_secret_hex: &str,
-    funding_proofs_json: &str,
-    channel_id: &str,
-    balance: u64,
-    alice_signature: &str,
-) -> Result<String, String> {
-    use cdk::spilman::{CommitmentOutputs, SpilmanChannelReceiver};
-
-    // Parse keyset info (need full keys for output computation)
-    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
-
-    // Parse Charlie's secret key
-    let charlie_secret = SecretKey::from_hex(charlie_secret_hex)
-        .map_err(|e| format!("Invalid Charlie secret key: {}", e))?;
-
-    // Compute shared secret from Charlie's perspective
-    // We need Alice's pubkey from the params to do this
-    let json: serde_json::Value =
-        serde_json::from_str(params_json).map_err(|e| format!("Invalid params JSON: {}", e))?;
-    let alice_pubkey_hex = json["alice_pubkey"]
-        .as_str()
-        .ok_or_else(|| "Missing 'alice_pubkey' field in params".to_string())?;
-
-    let shared_secret_hex =
-        cdk::spilman::compute_shared_secret_from_hex(charlie_secret_hex, alice_pubkey_hex)?;
-    let shared_secret_bytes =
-        hex::decode(&shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
-        .try_into()
-        .map_err(|_| "Shared secret must be 32 bytes")?;
-
-    // Create ChannelParameters with shared secret
-    let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
-            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
-
-    // Parse funding proofs
-    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
-        .map_err(|e| format!("Failed to parse funding proofs: {}", e))?;
-
-    // Create EstablishedChannel
-    let channel = EstablishedChannel::new(params.clone(), funding_proofs.clone())
-        .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
-
-    // Create SpilmanChannelReceiver (Charlie's view)
-    let receiver = SpilmanChannelReceiver::new(charlie_secret, channel);
-
-    // Create CommitmentOutputs for this balance
-    let commitment_outputs = CommitmentOutputs::for_balance(balance, &params)
-        .map_err(|e| format!("Failed to create commitment outputs: {}", e))?;
-
-    // Create unsigned swap request
-    let mut swap_request = commitment_outputs
-        .create_swap_request(funding_proofs)
-        .map_err(|e| format!("Failed to create swap request: {}", e))?;
-
-    // Parse Alice's signature
-    let alice_sig = Signature::from_str(alice_signature)
-        .map_err(|e| format!("Invalid Alice signature: {}", e))?;
-
-    // Create BalanceUpdateMessage from the close request
-    let balance_update = BalanceUpdateMessage {
-        channel_id: channel_id.to_string(),
-        amount: balance,
-        signature: alice_sig.clone(),
-    };
-
-    // Add Alice's signature to the swap request witness
-    // (This is what Alice would have done before sending the balance update)
-    {
-        use cdk::nuts::{nut00::Witness, nut11::P2PKWitness};
-        let first_input = swap_request
-            .inputs_mut()
-            .first_mut()
-            .ok_or_else(|| "Swap request has no inputs".to_string())?;
-
-        match first_input.witness.as_mut() {
-            Some(witness) => {
-                witness.add_signatures(vec![alice_sig.to_string()]);
-            }
-            None => {
-                let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-                p2pk_witness.add_signatures(vec![alice_sig.to_string()]);
-                first_input.witness = Some(p2pk_witness);
-            }
-        }
-    }
-
-    // Verify Alice's signature and add Charlie's signature
-    let signed_swap_request = receiver
-        .add_second_signature(&balance_update, swap_request)
-        .map_err(|e| format!("Failed to add second signature: {}", e))?;
-
-    // Get expected total (value after stage 1 fees)
-    let expected_total = params
-        .get_value_after_stage1()
-        .map_err(|e| format!("Failed to get value after stage 1: {}", e))?;
-
-    // Get secrets with blinding factors for unblinding later
-    // Must be in same order as swap_request.outputs (sorted by amount, stable)
-    let receiver_secrets = commitment_outputs
-        .receiver_outputs
-        .get_secrets_with_blinding()
-        .map_err(|e| format!("Failed to get receiver secrets: {}", e))?;
-    let sender_secrets = commitment_outputs
-        .sender_outputs
-        .get_secrets_with_blinding()
-        .map_err(|e| format!("Failed to get sender secrets: {}", e))?;
-
-    // Combine and tag with is_receiver, then sort by amount (stable) to match output order
-    let mut secrets_with_tags: Vec<(cdk::spilman::DeterministicSecretWithBlinding, bool)> =
-        receiver_secrets
-            .into_iter()
-            .map(|s| (s, true))
-            .chain(sender_secrets.into_iter().map(|s| (s, false)))
-            .collect();
-    secrets_with_tags.sort_by_key(|(s, _)| s.amount);
-
-    // Serialize secrets for JSON output (includes index for per-proof blinding)
-    let secrets_with_blinding: Vec<serde_json::Value> = secrets_with_tags
-        .into_iter()
-        .map(|(s, is_receiver)| {
-            serde_json::json!({
-                "secret": s.secret.to_string(),
-                "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
-                "amount": s.amount,
-                "index": s.index,
-                "is_receiver": is_receiver
-            })
-        })
-        .collect();
-
-    // Serialize the swap request
-    let swap_request_json = serde_json::to_value(&signed_swap_request)
-        .map_err(|e| format!("Failed to serialize swap request: {}", e))?;
-
-    // Build result
-    let result = serde_json::json!({
-        "swap_request": swap_request_json,
-        "expected_total": expected_total,
-        "secrets_with_blinding": secrets_with_blinding
-    });
-
-    Ok(result.to_string())
 }
