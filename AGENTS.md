@@ -212,21 +212,27 @@ Key functions exported for browser and Node.js:
 - `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's **blinded** pubkey (stage2 context). Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
 - `get_sender_blinded_secret_key_for_stage2(params_json, keyset_info_json, alice_secret_hex)` - Get Alice's blinded secret key for signing stage 2 swaps
 - `get_receiver_blinded_secret_key_for_stage2(params_json, keyset_info_json, charlie_secret_hex, shared_secret_hex)` - Get Charlie's blinded secret key for signing stage 2 swaps
+- `WasmSpilmanBridge(host_object, server_secret_key_hex)` - High-level bridge for processing payments with host callbacks (`getFunding`, `saveFunding`, `receiverKeyIsAcceptable`, `mintAndKeysetIsAcceptable`, `getAmountDue`, `recordPayment`, `isClosed`, `getServerConfig`, `nowSeconds`)
 
-## Universal Bridge Architecture (Future)
+## Universal Bridge Architecture
 
-To make Spilman channels easily adoptable by diverse service providers (Nostr relays, blob servers, etc.) regardless of their tech stack, we are moving toward a **"Pure Brain + Language Bridges"** model.
+To make Spilman channels easily adoptable by diverse service providers (Nostr relays, blob servers, etc.) regardless of their tech stack, we use a **"Pure Brain + Language Bridges"** model.
 
 ### 1. The Core (Rust)
-The Spilman logic will be refined into a **stateless "Protocol Calculator."**
-- **Input:** Current Channel State + Incoming Event (e.g., Payment Request).
-- **Output:** New Channel State + Response/Effect (e.g., 200 OK or 402 Error).
-- **Portability:** Compiles to WASM (for JS/TS) and FFI-compatible binaries (for Python, Go, Swift, etc.).
+The Spilman logic is implemented as a **structured "Protocol Bridge"** (`SpilmanBridge`).
+- **Input:** Payment Request JSON + Context JSON.
+- **Output:** `PaymentResponse` (200 OK or 402 Error with detailed metadata).
+- **Validation Hooks:** Delegates specific policy decisions to the host via the `SpilmanHost` trait:
+  - `receiver_key_is_acceptable(pubkey)`: Verify the server is the intended recipient.
+  - `mint_and_keyset_is_acceptable(mint, keyset)`: Enforce mint/unit whitelist.
+  - `get_amount_due(channel_id, context)`: Dynamic pricing based on request metadata.
+  - `record_payment(channel_id, balance, signature, context)`: Atomic "commit" phase to update usage and payment proofs.
+- **Portability:** Compiles to WASM (for JS/TS) and FFI-compatible binaries.
 
 ### 2. Multi-Language Bridges
-Thin wrapper libraries will be provided for each major language to handle the **"Fetch -> Call -> Save"** lifecycle.
-- **Developer Experience:** Third-party developers simply implement a standard `Storage` interface (e.g., `get_state(id)`, `save_state(id, state)`) for their specific database.
-- **Consistency:** The security-critical protocol logic remains "locked" inside the Rust core, preventing re-implementation bugs in host languages.
+Thin wrapper libraries (or direct WASM usage) handle the **"Fetch -> Call -> Save"** lifecycle.
+- **Developer Experience:** Host languages implement the `SpilmanHost` trait (or JS equivalent) to provide storage and pricing.
+- **Consistency:** The security-critical protocol logic (DLEQ, signatures, channel ID derivation) remains "locked" inside the Rust core.
 
 ## CashuTube Video Streaming
 
@@ -667,6 +673,12 @@ The test suite includes:
 - ✅ Highlight low funds with red pill badge in header
 - ✅ Detect autoplay failure and show persistent controls hint until interaction
 - ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
+- ✅ Structured `BridgeError` system returning detailed metadata in 402 headers
+- ✅ `SpilmanHost` hooks for early rejection of invalid receiver keys or unsupported mints
+- ✅ Validation of empty signatures early in payment processing
+- ✅ Comprehensive unit tests for `SpilmanBridge` acceptability hooks
+- ✅ Atomic usage and payment proof updates via `recordPayment(context)`
+- ✅ Resolved circular dependencies in Blossom server via `stores.ts` reorganization
 - ✅ Global OGP/Twitter meta tags for improved link previews in chat apps
 - ✅ Suppress "Select a video" placeholder content in portrait mode
 - ✅ Dynamic sticky player positioning (Broad: fit bottom edge, Narrow: max 50% screen height)
