@@ -845,7 +845,7 @@ pub async fn create_funding_proofs(
         channel_params.clone(),
     )?;
 
-    let funding_blinded_messages = funding_outputs.get_blinded_messages()?;
+    let funding_blinded_messages = funding_outputs.get_blinded_messages(None)?;
     let funding_secrets_with_blinding = funding_outputs.get_secrets_with_blinding()?;
 
     let funding_proofs = mint_deterministic_outputs(

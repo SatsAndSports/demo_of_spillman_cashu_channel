@@ -4,12 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{CurrencyUnit, SecretKey};
+use crate::nuts::{CurrencyUnit, Id, Keys, PublicKey, SecretKey};
 use crate::util::hex;
+use crate::Amount;
 use crate::SECP256K1;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{Parity, Scalar};
+use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
@@ -353,6 +356,7 @@ impl ChannelParameters {
 
         let maximum_amount_for_one_output = json["maximum_amount"]
             .as_u64()
+            .or_else(|| json["maximum_amount_for_one_output"].as_u64())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'maximum_amount' field"))?;
 
         let setup_timestamp = json["setup_timestamp"]
@@ -429,7 +433,7 @@ impl ChannelParameters {
     }
 
     /// Get a JSON string representation of the data that contributes to the channel ID
-    /// This excludes the shared secret and other derived data
+    /// This includes all parameters that define the channel unique identity.
     pub fn get_channel_id_params_json(&self) -> String {
         serde_json::json!({
             "mint": self.mint,
@@ -727,8 +731,8 @@ impl ChannelParameters {
         nonce_input.extend_from_slice(b"nonce");
         nonce_input.extend_from_slice(&index_bytes);
 
-        let nonce_hash = sha256::Hash::hash(&nonce_input);
-        let nonce = hex::encode(nonce_hash.as_byte_array());
+        let hash = sha256::Hash::hash(&nonce_input);
+        let nonce = hex::encode(hash.to_byte_array());
 
         // Derive deterministic blinding factor: SHA256(shared_secret || channel_id || context || amount || "blinding" || index)
         let mut blinding_input = Vec::new();
@@ -739,8 +743,8 @@ impl ChannelParameters {
         blinding_input.extend_from_slice(b"blinding");
         blinding_input.extend_from_slice(&index_bytes);
 
-        let blinding_hash = sha256::Hash::hash(&blinding_input);
-        let blinding_factor = SecretKey::from_slice(blinding_hash.as_byte_array())?;
+        let hash = sha256::Hash::hash(&blinding_input);
+        let blinding_factor = SecretKey::from_slice(hash.as_byte_array())?;
 
         // Handle funding context separately (requires 2-of-2 blinded pubkeys + locktime)
         if context == "funding" {
@@ -858,10 +862,6 @@ impl ChannelParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nuts::{Id, Keys, PublicKey};
-    use crate::Amount;
-    use std::collections::BTreeMap;
-    use std::str::FromStr;
 
     #[test]
     fn test_json_roundtrip_preserves_channel_id() {
@@ -1212,5 +1212,32 @@ mod tests {
             "Signature should NOT verify against sender pubkey (wrong tweak)"
         );
         println!("✓ Signature correctly fails against sender pubkey (different tweak)");
+    }
+
+    #[test]
+    fn test_channel_id_derivation() {
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
+
+        let params = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "test-nonce".to_string(),
+            keyset_info: keyset,
+            shared_secret,
+        };
+
+        let channel_id = params.get_channel_id();
+        assert_eq!(channel_id.len(), 64);
+        assert_eq!(channel_id, params.get_channel_id()); // Idempotent
     }
 }

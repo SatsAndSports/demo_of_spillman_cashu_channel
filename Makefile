@@ -38,7 +38,26 @@ python-demo-server: python-dev
 python-demo-client:
 	$(PYTHON) examples/python-ascii-art/client.py
 
+# --- Go Demo ---
+
+GO_CRATE_DIR := crates/cdk-spilman-go
+GO_DEMO_DIR := examples/go-ascii-art
+
+# Build the Rust library for Go
+go-build-rust:
+	cargo build -p cdk-spilman-go
+
+# Run the Go demo server
+go-demo-server: go-build-rust
+	fuser -k 5001/tcp || true
+	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run main.go
+
+# Run the Python demo client against the Go server (Port 5001)
+go-demo-client:
+	SERVER_URL=http://localhost:5001 $(PYTHON) examples/python-ascii-art/client.py Hello World Cashu
+
 clean:
 	cargo clean
 	rm -rf $(PYTHON_CRATE_DIR)/target
+	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(VENV)

@@ -144,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create unsigned swap request
     let mut swap_request =
-        commitment_outputs.create_swap_request(channel_fixtures.funding_proofs.clone())?;
+        commitment_outputs.create_swap_request(channel_fixtures.funding_proofs.clone(), None)?;
     println!("   ✓ Created unsigned swap request");
 
     // Alice signs first (as the sender/funder)
