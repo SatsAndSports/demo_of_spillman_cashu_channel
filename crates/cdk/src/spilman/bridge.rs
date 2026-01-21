@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 
 use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
-    DeterministicSecretWithBlinding, EstablishedChannel, SpilmanChannelReceiver,
+    DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo, SpilmanChannelReceiver,
 };
-use crate::nuts::{Proof, PublicKey, SecretKey, SwapRequest};
+use crate::nuts::{BlindSignature, Proof, PublicKey, SecretKey, SwapRequest};
 use crate::util::hex;
 use std::str::FromStr;
 
@@ -112,6 +112,19 @@ pub struct CloseData {
     pub secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)>,
 }
 
+/// Result of unblinding and verifying stage 1 swap response
+#[derive(Debug)]
+pub struct UnblindResult {
+    /// Receiver's proofs (P2PK locked to Charlie's blinded pubkey)
+    pub receiver_proofs: Vec<Proof>,
+    /// Sender's proofs (P2PK locked to Alice's blinded pubkey)
+    pub sender_proofs: Vec<Proof>,
+    /// Sum of receiver proof amounts
+    pub receiver_sum: u64,
+    /// Sum of sender proof amounts
+    pub sender_sum: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BridgeServerConfig {
     pub min_expiry_in_seconds: u64,
@@ -209,6 +222,184 @@ impl std::fmt::Display for BridgeError {
             Self::MintOrKeysetNotAcceptable => write!(f, "mint or keyset not acceptable"),
         }
     }
+}
+
+/// Unblind and verify stage 1 swap response from the mint
+///
+/// This function processes the mint's response to a channel close swap request:
+/// 1. Unblinds the signatures to construct proofs
+/// 2. Verifies DLEQ proofs on all outputs
+/// 3. Separates receiver and sender proofs
+/// 4. Verifies receiver proofs are P2PK locked to Charlie's blinded pubkey (stage2 context)
+/// 5. Verifies receiver sum matches expected nominal value for the balance
+///
+/// # Arguments
+/// * `blind_signatures` - The mint's blind signatures from the swap response
+/// * `secrets_with_blinding` - Secrets and blinding factors tagged with is_receiver, from CloseData
+/// * `params` - Channel parameters (with shared secret already set)
+/// * `keyset_info` - Keyset info for the channel's keyset
+/// * `balance` - The balance at which the channel was closed
+///
+/// # Returns
+/// * `UnblindResult` with separated proofs and sums
+pub fn unblind_and_verify_stage1_response(
+    blind_signatures: Vec<BlindSignature>,
+    secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)>,
+    params: &ChannelParameters,
+    keyset_info: &KeysetInfo,
+    balance: u64,
+) -> Result<UnblindResult, BridgeError> {
+    // Validate lengths match
+    if blind_signatures.len() != secrets_with_blinding.len() {
+        return Err(BridgeError::Internal(format!(
+            "Length mismatch: {} blind signatures but {} secrets",
+            blind_signatures.len(),
+            secrets_with_blinding.len()
+        )));
+    }
+
+    // Extract secrets, blinding factors for construct_proofs
+    let mut secrets = Vec::with_capacity(secrets_with_blinding.len());
+    let mut blinding_factors = Vec::with_capacity(secrets_with_blinding.len());
+    let mut is_receiver_flags = Vec::with_capacity(secrets_with_blinding.len());
+    let mut amount_index_pairs = Vec::with_capacity(secrets_with_blinding.len());
+
+    for (swb, is_receiver) in secrets_with_blinding {
+        secrets.push(swb.secret);
+        blinding_factors.push(swb.blinding_factor);
+        is_receiver_flags.push(is_receiver);
+        amount_index_pairs.push((swb.amount, swb.index));
+    }
+
+    // Unblind the signatures to get proofs
+    let proofs = crate::dhke::construct_proofs(
+        blind_signatures,
+        blinding_factors,
+        secrets,
+        &keyset_info.active_keys,
+    )
+    .map_err(|e| BridgeError::Internal(format!("Failed to construct proofs: {}", e)))?;
+
+    // Verify DLEQ for each proof
+    let mut dleq_failures = 0;
+    for (i, proof) in proofs.iter().enumerate() {
+        let mint_pubkey = keyset_info
+            .active_keys
+            .amount_key(proof.amount)
+            .ok_or_else(|| {
+                BridgeError::Internal(format!(
+                    "No mint key for amount {} at index {}",
+                    proof.amount, i
+                ))
+            })?;
+
+        if let Err(e) = proof.verify_dleq(mint_pubkey) {
+            dleq_failures += 1;
+            eprintln!("DLEQ verification failed for proof {}: {}", i, e);
+        }
+    }
+
+    if dleq_failures > 0 {
+        return Err(BridgeError::ValidationFailed(format!(
+            "DLEQ verification failed: {} of {} proofs failed",
+            dleq_failures,
+            proofs.len()
+        )));
+    }
+
+    // Separate proofs by is_receiver flag and compute sums
+    let mut receiver_proofs = Vec::new();
+    let mut receiver_metas = Vec::new(); // (amount, index) for each receiver proof
+    let mut sender_proofs = Vec::new();
+    let mut receiver_sum: u64 = 0;
+    let mut sender_sum: u64 = 0;
+
+    for ((proof, &is_receiver), (amount, index)) in proofs
+        .into_iter()
+        .zip(is_receiver_flags.iter())
+        .zip(amount_index_pairs.iter())
+    {
+        let proof_amount = u64::from(proof.amount);
+        if is_receiver {
+            receiver_sum += proof_amount;
+            receiver_metas.push((*amount, *index));
+            receiver_proofs.push(proof);
+        } else {
+            sender_sum += proof_amount;
+            sender_proofs.push(proof);
+        }
+    }
+
+    // Verify each receiver proof is P2PK locked to Charlie's per-proof blinded pubkey
+    for (i, (proof, (amount, index))) in receiver_proofs
+        .iter()
+        .zip(receiver_metas.iter())
+        .enumerate()
+    {
+        let expected_pubkey = params
+            .get_receiver_blinded_pubkey_for_stage2_output(*amount, *index)
+            .map_err(|e| {
+                BridgeError::Internal(format!(
+                    "Failed to get receiver blinded pubkey for ({}, {}): {}",
+                    amount, index, e
+                ))
+            })?;
+        let expected_pubkey_hex = expected_pubkey.to_hex();
+
+        let secret_str = proof.secret.to_string();
+        let secret_json: serde_json::Value = serde_json::from_str(&secret_str).map_err(|e| {
+            BridgeError::Internal(format!(
+                "Failed to parse receiver proof {} secret: {}",
+                i, e
+            ))
+        })?;
+
+        // Check it's P2PK
+        let kind = secret_json.get(0).and_then(|v| v.as_str());
+        if kind != Some("P2PK") {
+            return Err(BridgeError::ValidationFailed(format!(
+                "Receiver proof {} is not P2PK (kind={:?})",
+                i, kind
+            )));
+        }
+
+        // Check pubkey matches Charlie's per-proof blinded pubkey
+        let data = secret_json
+            .get(1)
+            .and_then(|v| v.get("data"))
+            .and_then(|v| v.as_str());
+        if data != Some(expected_pubkey_hex.as_str()) {
+            return Err(BridgeError::ValidationFailed(format!(
+                "Receiver proof {} locked to wrong pubkey: expected {} (charlie blinded stage2 for amount={} index={}), got {:?}",
+                i, expected_pubkey_hex, amount, index, data
+            )));
+        }
+    }
+
+    // Verify receiver sum matches expected nominal for this balance
+    let maximum_amount = params.maximum_amount_for_one_output;
+    let inverse_result = keyset_info
+        .inverse_deterministic_value_after_fees(balance, maximum_amount)
+        .map_err(|e| {
+            BridgeError::Internal(format!(
+                "Failed to compute inverse for balance {}: {}",
+                balance, e
+            ))
+        })?;
+
+    if receiver_sum != inverse_result.nominal_value {
+        return Err(BridgeError::ValidationFailed(format!(
+            "Receiver nominal mismatch: expected {} for balance {}, got {}",
+            inverse_result.nominal_value, balance, receiver_sum
+        )));
+    }
+
+    Ok(UnblindResult {
+        receiver_proofs,
+        sender_proofs,
+        receiver_sum,
+        sender_sum,
+    })
 }
 
 impl<H: SpilmanHost> SpilmanBridge<H> {
