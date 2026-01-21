@@ -215,7 +215,7 @@ For detailed Docker documentation, see [README-ldk-node.md](../../README-ldk-nod
 
 2. **Get mint keys**:
    ```bash
-   curl http://127.0.0.1:8085/v1/keys
+   curl http://127.0.0.1:8085/v1/keysets
    ```
 
 3. **Test with CDK CLI wallet**:

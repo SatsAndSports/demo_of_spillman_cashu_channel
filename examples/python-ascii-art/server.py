@@ -132,7 +132,7 @@ def initialize_keysets():
         keysets = resp.json()["keysets"]
         
         for k in keysets:
-            if k["active"] and k["unit"] == "sat":
+            if k["unit"] == "sat":
                 fetch_keyset_info(
                     MINT_URL, 
                     k["id"], 
