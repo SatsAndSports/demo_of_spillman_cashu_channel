@@ -749,6 +749,40 @@ The test suite includes:
 - ✅ drop the volume slider on mobile (detected via coarse pointer, mute remains)
 - ✅ Version display toast on "active" viewers count label tap
 
+## Future Work: Bridge Architecture Improvements
+
+### Two-Stage Channel Closing in SpilmanBridge
+
+Currently, the channel closing logic in Blossom server is spread across server code and multiple WASM functions. A cleaner approach would be to consolidate this into two Bridge methods:
+
+**Datastores involved:**
+- `channelFunding` (Read/Write): params, proofs, shared_secret, keyset_info
+- `channelUsage` (Read): blobsServed, bytesServed (for amount_due calculation)
+- `channelClosed` (Read/Write): locktime, closedAmount, valueAfterStage1, receiverProofsJson, senderProofsJson
+
+**Stage 1: `close_stage1()` - Validation & Swap Preparation**
+- Input: `payment_json` (balance, signature, optional params/proofs)
+- Bridge actions:
+  - Check `is_closed()` via Host
+  - Resolve funding (either from Host or provided params)
+  - Verify Alice's signature
+  - Verify `balance === get_amount_due()` via Host
+- Output: Prepared `swap_request` JSON and `expected_total`
+
+**Stage 2: `close_stage2()` - Settle & Finalize**
+- Input: `mint_swap_response_json` (blind signatures from mint)
+- Bridge actions:
+  - Unblind signatures
+  - Verify DLEQ proofs
+  - Verify receiver proofs are locked to Charlie's blinded pubkey
+  - Call new Host hook `mark_closed()` to persist proofs and final state
+- Output: `sender_proofs` (Alice's change) to return to client
+
+**Open questions:**
+1. Should `mark_closed()` be added to `SpilmanHost` trait for persistence?
+2. Should Stage 1 return a "context" object to pass into Stage 2 for consistency?
+3. How should mint swap failures (502) be signaled through the Bridge?
+
 ## Notes
 
 - Line endings: Use LF (Unix style), not CRLF
