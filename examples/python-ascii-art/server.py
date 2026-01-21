@@ -22,6 +22,7 @@ import pyfiglet
 import json
 import time
 import os
+import signal
 import requests as http_requests
 
 app = Flask(__name__)
@@ -38,10 +39,56 @@ PRICE_PER_CHAR = 1  # 1 sat per character
 # In-memory stores
 channel_funding = {}   # channel_id -> {params, proofs, shared_secret, keyset_info}
 channel_usage = {}     # channel_id -> {chars_served: int}
-channel_closed = set()
+channel_balances = {}  # channel_id -> highest balance seen
+channel_closed = {}    # channel_id -> closing_balance (empty for now, future use)
 
 # Keyset cache: (mint, keyset_id) -> keyset_info_json
 keyset_cache = {}
+
+
+def print_stats_table(sig=None, frame=None):
+    """Print ASCII table of all channel stats. Can be called via Ctrl+\\ (SIGQUIT)."""
+    print()
+    print("=" * 70)
+    print("  Channel Statistics (Press Ctrl+\\ to refresh)")
+    print("=" * 70)
+    
+    if not channel_funding:
+        print("  No channels registered yet.")
+        print("=" * 70)
+        print()
+        return
+    
+    # Table header
+    print(f"  {'ID':<10} {'Status':<8} {'Capacity':>10} {'Balance':>10} {'Usage':>10}")
+    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
+    
+    total_balance = 0
+    total_usage = 0
+    
+    for cid, funding in channel_funding.items():
+        try:
+            params = json.loads(funding["params"])
+            capacity = params.get("capacity", 0)
+            unit = params.get("unit", "sat")
+        except:
+            capacity = 0
+            unit = "?"
+        
+        usage = channel_usage.get(cid, {}).get("chars_served", 0)
+        balance = channel_balances.get(cid, 0)
+        status = "CLOSED" if cid in channel_closed else "OPEN"
+        
+        short_id = cid[:8]
+        print(f"  {short_id:<10} {status:<8} {capacity:>7} {unit:<3} {balance:>7} {unit:<3} {usage:>7} ch")
+        
+        total_balance += balance
+        total_usage += usage
+    
+    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'TOTAL':<10} {'':<8} {'':<10} {total_balance:>7} sat {total_usage:>7} ch")
+    print("=" * 70)
+    print()
 
 
 def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0) -> str:
@@ -183,12 +230,14 @@ class AsciiArtHost:
             channel_usage[channel_id] = {"chars_served": 0}
         
         channel_usage[channel_id]["chars_served"] += new_chars
+        channel_balances[channel_id] = balance  # Track highest balance
+        
         print(f"  [Bridge] Payment recorded: channel={channel_id[:16]}... "
               f"balance={balance} chars_served={channel_usage[channel_id]['chars_served']}")
     
     def is_closed(self, channel_id: str) -> bool:
         """Check if a channel has been closed."""
-        return channel_id in channel_closed
+        return channel_id in channel_closed  # Works with dict too
     
     def get_server_config(self) -> str:
         """Return server configuration for validation."""
@@ -308,7 +357,12 @@ if __name__ == "__main__":
     print(f"  GET  http://localhost:{PORT}/channel/params")
     print(f"  POST http://localhost:{PORT}/ascii")
     print()
+    print("Press Ctrl+\\ to show channel statistics")
+    print()
     print("=" * 60)
     print()
+    
+    # Register SIGQUIT handler (Ctrl+\) to print stats table
+    signal.signal(signal.SIGQUIT, print_stats_table)
     
     app.run(host="0.0.0.0", port=PORT, debug=False)
