@@ -106,9 +106,9 @@ def mint_funding_token(mint_url: str, amount: int, blinded_messages: list) -> li
             print("  Scan this QR code with your Lightning wallet:")
             print()
             qr = qrcode.QRCode(
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,  # Medium error correction for better scanning
                 box_size=1,
-                border=2,
+                border=4,  # Larger quiet zone for reliable scanning
             )
             qr.add_data(invoice.upper())  # BOLT11 invoices are case-insensitive, uppercase is more compact
             qr.make(fit=True)
