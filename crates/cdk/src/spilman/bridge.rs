@@ -1376,4 +1376,178 @@ mod tests {
             .unwrap()
             .contains("mint or keyset not acceptable"));
     }
+
+    struct FlexibleMockHost {
+        pub active_keyset_ids: Vec<Id>,
+        pub keyset_infos: std::collections::HashMap<Id, String>,
+        pub funding_data: std::collections::HashMap<String, (String, String, String, String)>,
+    }
+
+    impl SpilmanHost for FlexibleMockHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding_and_params(
+            &self,
+            channel_id: &str,
+        ) -> Option<(String, String, String, String)> {
+            self.funding_data.get(channel_id).cloned()
+        }
+        fn save_funding(
+            &self,
+            _channel_id: &str,
+            _params_json: &str,
+            _funding_proofs_json: &str,
+            _shared_secret_hex: &str,
+            _keyset_info_json: &str,
+        ) {
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: &str) -> u64 {
+            0
+        }
+        fn record_payment(
+            &self,
+            _channel_id: &str,
+            _balance: u64,
+            _signature: &str,
+            _context_json: &str,
+        ) {
+        }
+        fn is_closed(&self, _channel_id: &str) -> bool {
+            false
+        }
+        fn get_server_config(&self) -> String {
+            serde_json::json!({
+                "min_expiry_in_seconds": 3600,
+                "pricing": {
+                    "sat": {
+                        "minCapacity": 100
+                    }
+                }
+            })
+            .to_string()
+        }
+        fn now_seconds(&self) -> u64 {
+            1700000000
+        }
+        fn get_largest_balance_with_signature(&self, _channel_id: &str) -> Option<(u64, String)> {
+            None
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+            self.active_keyset_ids.clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+    }
+
+    #[test]
+    fn test_create_close_data_with_keyset_rotation() {
+        use crate::nuts::Proof;
+        use crate::secret::Secret;
+        use crate::spilman::params::mock_keyset_info;
+        use crate::spilman::{
+            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+        };
+
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        // Create Keyset A (the one the channel is funded with)
+        let keyset_a = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let keyset_a_id = keyset_a.keyset_id;
+
+        // Create Keyset B (the new active one with different fees)
+        let mut keyset_b = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 500); // 0.5 sat per output fee
+        let keyset_b_id = Id::from_str("000000000000000b").unwrap();
+        keyset_b.keyset_id = keyset_b_id;
+
+        // Setup channel params with Keyset A
+        let params_struct = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "nonce".to_string(),
+            keyset_info: keyset_a.clone(),
+            shared_secret,
+        };
+        let channel_id = params_struct.get_channel_id();
+
+        // Dummy funding proofs (all for Keyset A)
+        let proofs = vec![Proof {
+            amount: 1000.into(),
+            secret: Secret::new("funding".to_string()),
+            c: PublicKey::from_str(
+                "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+            )
+            .unwrap(),
+            keyset_id: keyset_a_id,
+            dleq: None,
+            witness: None,
+        }];
+
+        let host = FlexibleMockHost {
+            active_keyset_ids: vec![keyset_b_id], // ONLY Keyset B is active
+            keyset_infos: vec![
+                (keyset_a_id, serde_json::to_string(&keyset_a).unwrap()),
+                (keyset_b_id, serde_json::to_string(&keyset_b).unwrap()),
+            ]
+            .into_iter()
+            .collect(),
+            funding_data: vec![(
+                channel_id.clone(),
+                (
+                    params_struct.get_channel_id_params_json(),
+                    serde_json::to_string(&proofs).unwrap(),
+                    hex::encode(shared_secret),
+                    serde_json::to_string(&keyset_a).unwrap(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+
+        // Create a signature for balance update (100 sats to Charlie)
+        let balance = 100;
+        let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
+        let sender = SpilmanChannelSender::new(alice_sk, channel);
+        let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
+
+        let payment_json = serde_json::json!({
+            "channel_id": channel_id,
+            "balance": balance,
+            "signature": balance_update.signature.to_string(),
+        })
+        .to_string();
+
+        // EXECUTE: Create close data
+        // Bridge should see Keyset A is inactive and switch to Keyset B
+        let close_data = bridge.create_close_data(&payment_json, None).unwrap();
+
+        // VERIFY: Output keyset is Keyset B
+        assert_eq!(close_data.output_keyset_info.keyset_id, keyset_b_id);
+
+        // VERIFY: Swap request outputs use Keyset B ID
+        for output in close_data.swap_request.outputs() {
+            assert_eq!(output.keyset_id, keyset_b_id);
+        }
+
+        // VERIFY: Expected total uses Keyset B fees
+        let expected_total_b = params_struct
+            .get_value_after_stage1_with_keyset(&keyset_b)
+            .unwrap();
+        assert_eq!(close_data.expected_total, expected_total_b);
+        assert!(close_data.expected_total < 1000);
+    }
 }

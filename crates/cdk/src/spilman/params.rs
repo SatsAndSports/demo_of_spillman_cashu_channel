@@ -2,18 +2,23 @@
 //!
 //! Contains the protocol parameters for a Spilman payment channel
 
-use crate::nuts::{CurrencyUnit, SecretKey};
+use serde::{Deserialize, Serialize};
+
+use crate::nuts::{CurrencyUnit, Id, Keys, PublicKey, SecretKey};
 use crate::util::hex;
+use crate::Amount;
 use crate::SECP256K1;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{Parity, Scalar};
+use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
 
 /// Parameters for a Spilman payment channel
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
     /// Alice's public key (sender)
     pub alice_pubkey: crate::nuts::PublicKey,
@@ -47,6 +52,31 @@ pub fn compute_shared_secret(
     their_pubkey: &crate::nuts::PublicKey,
 ) -> [u8; 32] {
     SharedSecret::new(their_pubkey, my_secret).secret_bytes()
+}
+
+/// Helper to create a simple KeysetInfo for testing
+#[cfg(test)]
+pub(crate) fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
+    let mut keys_map = BTreeMap::new();
+    let dummy_pubkey =
+        PublicKey::from_str("02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2")
+            .unwrap();
+    for &amt in &amounts {
+        keys_map.insert(Amount::from(amt), dummy_pubkey);
+    }
+
+    let mut amounts_largest_first = amounts;
+    amounts_largest_first.sort_by(|a, b| b.cmp(a));
+
+    let active_keys = Keys::new(keys_map);
+    let keyset_id = Id::v1_from_keys(&active_keys);
+
+    KeysetInfo {
+        keyset_id,
+        active_keys,
+        amounts_largest_first,
+        input_fee_ppk,
+    }
 }
 
 /// Derive a blinded secret key for P2BK signing
@@ -276,6 +306,7 @@ impl ChannelParameters {
         // Parse keyset_id and input_fee_ppk first to validate against keyset_info
         let keyset_id_str = json["keyset_id"]
             .as_str()
+            .or_else(|| json["keysetId"].as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'keyset_id' field"))?;
         let json_keyset_id: crate::nuts::Id = keyset_id_str
             .parse()
@@ -283,6 +314,7 @@ impl ChannelParameters {
 
         let json_input_fee_ppk = json["input_fee_ppk"]
             .as_u64()
+            .or_else(|| json["inputFeePpk"].as_u64())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'input_fee_ppk' field"))?;
 
         // Validate keyset_info matches JSON
@@ -833,28 +865,6 @@ mod tests {
     use crate::Amount;
     use std::collections::BTreeMap;
     use std::str::FromStr;
-
-    // Helper to create a simple KeysetInfo for testing
-    fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
-        let mut keys_map = BTreeMap::new();
-        let dummy_pubkey = PublicKey::from_str(
-            "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
-        )
-        .unwrap();
-        for &amt in &amounts {
-            keys_map.insert(Amount::from(amt), dummy_pubkey);
-        }
-
-        let mut amounts_largest_first = amounts;
-        amounts_largest_first.sort_by(|a, b| b.cmp(a));
-
-        KeysetInfo {
-            keyset_id: Id::from_str("00deadbeef123456").unwrap(),
-            active_keys: Keys::new(keys_map),
-            amounts_largest_first,
-            input_fee_ppk,
-        }
-    }
 
     #[test]
     fn test_json_roundtrip_preserves_channel_id() {
