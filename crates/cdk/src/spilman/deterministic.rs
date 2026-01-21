@@ -230,7 +230,10 @@ impl DeterministicOutputsForOneContext {
     /// Get the blinded messages for these outputs
     /// Works for all contexts: "sender", "receiver", and "funding"
     /// Outputs are ordered smallest-first per Cashu protocol recommendation
-    pub fn get_blinded_messages(&self) -> Result<Vec<BlindedMessage>, anyhow::Error> {
+    pub fn get_blinded_messages(
+        &self,
+        override_keyset_id: Option<Id>,
+    ) -> Result<Vec<BlindedMessage>, anyhow::Error> {
         // Get the secrets with blinding factors (already in smallest-first order)
         let secrets = self.get_secrets_with_blinding()?;
 
@@ -241,13 +244,14 @@ impl DeterministicOutputsForOneContext {
             .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
             .collect();
 
+        // Use override keyset if provided, otherwise use the one from params
+        let keyset_id = override_keyset_id.unwrap_or(self.params.keyset_info.keyset_id);
+
         // Convert each secret to a blinded message
         secrets
             .iter()
             .zip(amounts.iter())
-            .map(|(secret, &amount)| {
-                secret.to_blinded_message(Amount::from(amount), self.params.keyset_info.keyset_id)
-            })
+            .map(|(secret, &amount)| secret.to_blinded_message(Amount::from(amount), keyset_id))
             .collect()
     }
 }
@@ -367,12 +371,13 @@ impl CommitmentOutputs {
     pub fn create_swap_request(
         &self,
         funding_proofs: Vec<crate::nuts::Proof>,
+        override_keyset_id: Option<Id>,
     ) -> Result<crate::nuts::SwapRequest, anyhow::Error> {
         // Get blinded messages for receiver (Charlie)
-        let mut outputs = self.receiver_outputs.get_blinded_messages()?;
+        let mut outputs = self.receiver_outputs.get_blinded_messages(override_keyset_id)?;
 
         // Get blinded messages for sender (Alice)
-        let sender_outputs = self.sender_outputs.get_blinded_messages()?;
+        let sender_outputs = self.sender_outputs.get_blinded_messages(override_keyset_id)?;
 
         // Concatenate (receiver first, then sender)
         outputs.extend(sender_outputs);
@@ -482,8 +487,8 @@ impl CommitmentOutputs {
     {
         // Get all blinded messages in the same order as create_swap_request
         // (receiver first, then sender)
-        let mut all_outputs = self.receiver_outputs.get_blinded_messages()?;
-        let sender_outputs = self.sender_outputs.get_blinded_messages()?;
+        let mut all_outputs = self.receiver_outputs.get_blinded_messages(None)?;
+        let sender_outputs = self.sender_outputs.get_blinded_messages(None)?;
         all_outputs.extend(sender_outputs);
 
         // Sort by amount (stable) for privacy - matches create_swap_request ordering

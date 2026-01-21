@@ -42,7 +42,7 @@ channel_usage = {}     # channel_id -> {chars_served: int}
 channel_largest_payment = {}  # channel_id -> {balance: int, signature: str}
 channel_closed = {}    # channel_id -> {balance, receiver_proofs, sender_proofs}
 
-# Keyset cache: (mint, keyset_id) -> keyset_info_json
+# Keyset cache: (mint, keyset_id) -> {info_json: str, active: bool}
 keyset_cache = {}
 
 
@@ -92,11 +92,14 @@ def print_stats_table(sig=None, frame=None):
     print()
 
 
-def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0) -> str:
+def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0, active: bool = False) -> str:
     """Fetch keyset info from mint and cache it."""
     cache_key = (mint_url, keyset_id)
     if cache_key in keyset_cache:
-        return keyset_cache[cache_key]
+        # Update active status if provided
+        if active:
+            keyset_cache[cache_key]["active"] = True
+        return keyset_cache[cache_key]["info_json"]
     
     print(f"  [Keyset] Fetching keyset {keyset_id} from {mint_url}...")
     
@@ -115,8 +118,12 @@ def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: i
         }
         
         keyset_info_json = json.dumps(keyset_info)
-        keyset_cache[cache_key] = keyset_info_json
-        print(f"  [Keyset] Cached keyset {keyset_id}")
+        keyset_cache[cache_key] = {
+            "info_json": keyset_info_json,
+            "active": active,
+            "unit": unit
+        }
+        print(f"  [Keyset] Cached keyset {keyset_id} (active={active})")
         return keyset_info_json
     except Exception as e:
         print(f"  [Keyset] Failed to fetch keyset: {e}")
@@ -137,7 +144,8 @@ def initialize_keysets():
                     MINT_URL, 
                     k["id"], 
                     k["unit"], 
-                    k.get("input_fee_ppk", 0)
+                    k.get("input_fee_ppk", 0),
+                    active=k.get("active", False)
                 )
         
         print(f"Cached {len(keyset_cache)} keysets")
@@ -267,6 +275,15 @@ class AsciiArtHost:
             return None
         return (payment["balance"], payment["signature"])
 
+    def get_active_keyset_ids(self, mint: str, unit: str):
+        """Get currently active keyset IDs for a mint and unit."""
+        return [kid for (m, kid), data in keyset_cache.items() if m == mint and data.get("unit") == unit and data.get("active")]
+
+    def get_keyset_info(self, mint: str, keyset_id: str):
+        """Get full KeysetInfo JSON for a specific keyset."""
+        data = keyset_cache.get((mint, keyset_id))
+        return data["info_json"] if data else None
+
 
 # Initialize host and bridge
 host = AsciiArtHost(SECRET_KEY, MINT_URL)
@@ -376,6 +393,7 @@ def close_channel(channel_id: str) -> dict:
     swap_request = close_result["swap_request"]
     expected_total = close_result["expected_total"]
     secrets_with_blinding = close_result["secrets_with_blinding"]
+    output_keyset_info = json.dumps(close_result["output_keyset_info"])
     balance = channel_largest_payment[channel_id]["balance"]
     
     print(f"  [Close] Swap request created, expected_total={expected_total}")
@@ -415,7 +433,8 @@ def close_channel(channel_id: str) -> dict:
             funding["params"],
             funding["keyset_info"],
             funding["shared_secret"],
-            balance
+            balance,
+            output_keyset_info
         )
         unblind_result = json.loads(unblind_result_json)
         print(f"  [Close] Unblinded: receiver={len(unblind_result['receiver_proofs'])} proofs "

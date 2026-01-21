@@ -90,7 +90,7 @@ impl BalanceUpdateMessage {
 
         // Reconstruct the unsigned swap request
         let swap_request =
-            commitment_outputs.create_swap_request(channel.funding_proofs.clone())?;
+            commitment_outputs.create_swap_request(channel.funding_proofs.clone(), None)?;
 
         // Extract the SIG_ALL message from the swap request
         let msg_to_sign = swap_request.sig_all_msg_to_sign();

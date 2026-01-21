@@ -26,11 +26,65 @@ use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 /// - get_server_config() -> str
 /// - now_seconds() -> int
 /// - get_largest_balance_with_signature(channel_id: str) -> Optional[Tuple[int, str]]
+/// - get_active_keyset_ids(mint: str, unit: str) -> List[str]
+/// - get_keyset_info(mint: str, keyset_id: str) -> Optional[str]
 struct PySpilmanHost {
     py_host: PyObject,
 }
 
 impl SpilmanHost for PySpilmanHost {
+    fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
+        let unit_str = match unit {
+            cdk::nuts::CurrencyUnit::Sat => "sat",
+            cdk::nuts::CurrencyUnit::Msat => "msat",
+            cdk::nuts::CurrencyUnit::Usd => "usd",
+            cdk::nuts::CurrencyUnit::Eur => "eur",
+            _ => "units",
+        };
+
+        Python::with_gil(|py| {
+            match self
+                .py_host
+                .call_method1(py, "get_active_keyset_ids", (mint, unit_str))
+            {
+                Ok(result) => {
+                    if let Ok(list) = result.extract::<Vec<String>>(py) {
+                        list.into_iter()
+                            .filter_map(|s| Id::from_str(&s).ok())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[PySpilmanHost] get_active_keyset_ids call error: {}", e);
+                    Vec::new()
+                }
+            }
+        })
+    }
+
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
+        Python::with_gil(|py| {
+            match self
+                .py_host
+                .call_method1(py, "get_keyset_info", (mint, keyset_id.to_string()))
+            {
+                Ok(result) => {
+                    if result.is_none(py) {
+                        None
+                    } else {
+                        result.extract::<String>(py).ok()
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[PySpilmanHost] get_keyset_info call error: {}", e);
+                    None
+                }
+            }
+        })
+    }
+
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
@@ -302,7 +356,8 @@ impl SpilmanBridge {
                     "success": true,
                     "swap_request": swap_request_json,
                     "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding
+                    "secrets_with_blinding": secrets_with_blinding,
+                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
                 });
 
                 Ok(result.to_string())
@@ -351,7 +406,8 @@ impl SpilmanBridge {
                     "success": true,
                     "swap_request": swap_request_json,
                     "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding
+                    "secrets_with_blinding": secrets_with_blinding,
+                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
                 });
 
                 Ok(result.to_string())
@@ -481,7 +537,7 @@ fn create_funding_outputs_inner(
 
     // Get blinded messages
     let blinded_messages = funding_outputs
-        .get_blinded_messages()
+        .get_blinded_messages(None)
         .map_err(|e| format!("Failed to get blinded messages: {}", e))?;
 
     // Serialize for JSON output
@@ -721,13 +777,15 @@ fn create_signed_balance_update_inner(
 ///     blind_signatures_json: JSON array of blind signatures from mint
 ///     secrets_with_blinding_json: JSON array from create_close_data
 ///     params_json: Channel parameters JSON
-///     keyset_info_json: Keyset info JSON
+///     keyset_info_json: Keyset info JSON (funding keyset)
 ///     shared_secret_hex: Shared secret (hex)
 ///     balance: The balance used to close the channel
+///     output_keyset_info_json: Optional Keyset info JSON for outputs
 ///
 /// Returns:
 ///     JSON with receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1
 #[pyfunction]
+#[pyo3(signature = (blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance, output_keyset_info_json=None))]
 fn unblind_and_verify_dleq(
     blind_signatures_json: &str,
     secrets_with_blinding_json: &str,
@@ -735,6 +793,7 @@ fn unblind_and_verify_dleq(
     keyset_info_json: &str,
     shared_secret_hex: &str,
     balance: u64,
+    output_keyset_info_json: Option<String>,
 ) -> PyResult<String> {
     unblind_and_verify_dleq_inner(
         blind_signatures_json,
@@ -743,6 +802,7 @@ fn unblind_and_verify_dleq(
         keyset_info_json,
         shared_secret_hex,
         balance,
+        output_keyset_info_json,
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
 }
@@ -754,6 +814,7 @@ fn unblind_and_verify_dleq_inner(
     keyset_info_json: &str,
     shared_secret_hex: &str,
     balance: u64,
+    output_keyset_info_json: Option<String>,
 ) -> Result<String, String> {
     use cdk::nuts::BlindSignature;
     use cdk::secret::Secret;
@@ -764,6 +825,12 @@ fn unblind_and_verify_dleq_inner(
     // Parse keyset info
     let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
 
+    // Parse output keyset info if provided, otherwise use funding keyset
+    let output_keyset_info = match output_keyset_info_json {
+        Some(json) => spilman::parse_keyset_info_from_json(&json)?,
+        None => keyset_info.clone(),
+    };
+
     // Parse shared secret
     let shared_secret_bytes =
         hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
@@ -772,12 +839,9 @@ fn unblind_and_verify_dleq_inner(
         .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
 
     // Create ChannelParameters to compute blinded pubkey
-    let params = ChannelParameters::from_json_with_shared_secret(
-        params_json,
-        keyset_info.clone(),
-        shared_secret,
-    )
-    .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -828,7 +892,7 @@ fn unblind_and_verify_dleq_inner(
         blind_signatures,
         secrets_with_blinding,
         &params,
-        &keyset_info,
+        &output_keyset_info,
         balance,
     )
     .map_err(|e| e.to_string())?;

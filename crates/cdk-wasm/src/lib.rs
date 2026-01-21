@@ -68,6 +68,12 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = getLargestBalanceWithSignature)]
     fn get_largest_balance_with_signature(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = getActiveKeysetIds)]
+    fn get_active_keyset_ids(this: &JsSpilmanHost, mint: &str, unit: &str) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = getKeysetInfo)]
+    fn get_keyset_info(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> JsValue;
 }
 
 struct WasmSpilmanHostProxy {
@@ -158,6 +164,35 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         let balance = arr.get(0).as_f64()? as u64;
         let signature = arr.get(1).as_string()?;
         Some((balance, signature))
+    }
+
+    fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
+        let unit_str = match unit {
+            cdk::nuts::CurrencyUnit::Sat => "sat",
+            cdk::nuts::CurrencyUnit::Msat => "msat",
+            cdk::nuts::CurrencyUnit::Usd => "usd",
+            cdk::nuts::CurrencyUnit::Eur => "eur",
+            _ => "units",
+        };
+
+        let val = self.js_host.get_active_keyset_ids(mint, unit_str);
+        if val.is_null() || val.is_undefined() {
+            return Vec::new();
+        }
+
+        let arr = js_sys::Array::from(&val);
+        arr.iter()
+            .filter_map(|v| v.as_string())
+            .filter_map(|s| Id::from_str(&s).ok())
+            .collect()
+    }
+
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
+        let val = self.js_host.get_keyset_info(mint, &keyset_id.to_string());
+        if val.is_null() || val.is_undefined() {
+            return None;
+        }
+        val.as_string()
     }
 }
 
@@ -253,7 +288,8 @@ impl WasmSpilmanBridge {
                     "success": true,
                     "swap_request": swap_request_json,
                     "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding
+                    "secrets_with_blinding": secrets_with_blinding,
+                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
                 });
 
                 Ok(result.to_string())
@@ -315,7 +351,8 @@ impl WasmSpilmanBridge {
                     "success": true,
                     "swap_request": swap_request_json,
                     "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding
+                    "secrets_with_blinding": secrets_with_blinding,
+                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
                 });
 
                 Ok(result.to_string())
@@ -414,7 +451,7 @@ fn create_funding_outputs_inner(
 
     // Get blinded messages
     let blinded_messages = funding_outputs
-        .get_blinded_messages()
+        .get_blinded_messages(None)
         .map_err(|e| format!("Failed to get blinded messages: {}", e))?;
 
     // Get secrets with blinding factors
@@ -469,6 +506,7 @@ fn create_funding_outputs_inner(
 /// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
 /// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
 /// * `balance` - The receiver's (Charlie's) intended balance (for verification)
+/// * `output_keyset_info_json` - Optional KeysetInfo JSON for outputs (if switched during close)
 ///
 /// # Returns
 /// JSON object with:
@@ -484,6 +522,7 @@ pub fn unblind_and_verify_dleq(
     keyset_info_json: &str,
     shared_secret_hex: &str,
     balance: u64,
+    output_keyset_info_json: Option<String>,
 ) -> Result<String, JsValue> {
     unblind_and_verify_dleq_inner(
         blind_signatures_json,
@@ -492,6 +531,7 @@ pub fn unblind_and_verify_dleq(
         keyset_info_json,
         shared_secret_hex,
         balance,
+        output_keyset_info_json,
     )
     .map_err(|e| JsValue::from_str(&e))
 }
@@ -503,11 +543,18 @@ fn unblind_and_verify_dleq_inner(
     keyset_info_json: &str,
     shared_secret_hex: &str,
     balance: u64,
+    output_keyset_info_json: Option<String>,
 ) -> Result<String, String> {
     use cdk::spilman::{unblind_and_verify_stage1_response, DeterministicSecretWithBlinding};
 
-    // Parse keyset info
+    // Parse keyset info (original funding keyset)
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse output keyset info if provided, otherwise use funding keyset
+    let output_keyset_info = match output_keyset_info_json {
+        Some(json) => parse_keyset_info_from_json(&json)?,
+        None => keyset_info.clone(),
+    };
 
     // Parse shared secret
     let shared_secret_bytes =
@@ -517,12 +564,9 @@ fn unblind_and_verify_dleq_inner(
         .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
 
     // Create ChannelParameters to compute blinded pubkey
-    let params = ChannelParameters::from_json_with_shared_secret(
-        params_json,
-        keyset_info.clone(),
-        shared_secret,
-    )
-    .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -573,7 +617,7 @@ fn unblind_and_verify_dleq_inner(
         blind_signatures,
         secrets_with_blinding,
         &params,
-        &keyset_info,
+        &output_keyset_info,
         balance,
     )
     .map_err(|e| e.to_string())?;

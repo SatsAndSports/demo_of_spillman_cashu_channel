@@ -736,6 +736,26 @@ impl ChannelParameters {
         }
     }
 
+    /// Get the total funding token amount using double inverse with a specific keyset
+    pub fn get_total_funding_token_amount_with_keyset(
+        &self,
+        keyset_info: &KeysetInfo,
+    ) -> anyhow::Result<u64> {
+        let max_amt = self.maximum_amount_for_one_output;
+
+        // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
+        let first_inverse =
+            keyset_info.inverse_deterministic_value_after_fees(self.capacity, max_amt)?;
+        let post_stage1_nominal = first_inverse.nominal_value;
+
+        // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+        let second_inverse =
+            keyset_info.inverse_deterministic_value_after_fees(post_stage1_nominal, max_amt)?;
+        let funding_token_nominal = second_inverse.nominal_value;
+
+        Ok(funding_token_nominal)
+    }
+
     /// Get the total funding token amount using double inverse
     ///
     /// Applies the inverse fee calculation twice to the capacity:
@@ -744,21 +764,25 @@ impl ChannelParameters {
     ///
     /// Returns the nominal value needed for the funding token
     pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
-        let max_amt = self.maximum_amount_for_one_output;
+        self.get_total_funding_token_amount_with_keyset(&self.keyset_info)
+    }
 
-        // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
-        let first_inverse = self
-            .keyset_info
-            .inverse_deterministic_value_after_fees(self.capacity, max_amt)?;
-        let post_stage1_nominal = first_inverse.nominal_value;
+    /// Get the value available after stage 1 fees with a specific keyset
+    pub fn get_value_after_stage1_with_keyset(
+        &self,
+        keyset_info: &KeysetInfo,
+    ) -> anyhow::Result<u64> {
+        // Get the funding token nominal (must be same as original funding!)
+        let funding_token_nominal = self.get_total_funding_token_amount()?;
 
-        // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-        let second_inverse = self
-            .keyset_info
-            .inverse_deterministic_value_after_fees(post_stage1_nominal, max_amt)?;
-        let funding_token_nominal = second_inverse.nominal_value;
+        // Apply forward to get actual value after stage 1 fees (spending the funding token)
+        // using the NEW keyset for the outputs
+        let value_after_stage1 = keyset_info.deterministic_value_after_fees(
+            funding_token_nominal,
+            self.maximum_amount_for_one_output,
+        )?;
 
-        Ok(funding_token_nominal)
+        Ok(value_after_stage1)
     }
 
     /// Get the value available after stage 1 fees
@@ -771,16 +795,7 @@ impl ChannelParameters {
     ///
     /// Returns the actual value after stage 1 fees
     pub fn get_value_after_stage1(&self) -> anyhow::Result<u64> {
-        // Get the funding token nominal
-        let funding_token_nominal = self.get_total_funding_token_amount()?;
-
-        // Apply forward to get actual value after stage 1 fees (spending the funding token)
-        let value_after_stage1 = self.keyset_info.deterministic_value_after_fees(
-            funding_token_nominal,
-            self.maximum_amount_for_one_output,
-        )?;
-
-        Ok(value_after_stage1)
+        self.get_value_after_stage1_with_keyset(&self.keyset_info)
     }
 
     /// Compute the actual de facto balance from an intended balance

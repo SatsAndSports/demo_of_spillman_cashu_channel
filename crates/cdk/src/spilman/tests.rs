@@ -114,7 +114,7 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
 
     // Get blinded messages for mint
     let blinded_messages = funding_outputs
-        .get_blinded_messages()
+        .get_blinded_messages(None)
         .expect("Failed to get blinded messages");
     println!(
         "Created {} blinded messages for funding",
