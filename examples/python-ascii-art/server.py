@@ -17,12 +17,14 @@ Environment variables:
 """
 
 from flask import Flask, request, jsonify
-from cdk_spilman import SpilmanBridge, secret_key_to_pubkey
+from cdk_spilman import SpilmanBridge, secret_key_to_pubkey, unblind_and_verify_dleq
 import pyfiglet
 import json
 import time
 import os
 import signal
+import threading
+import sys
 import requests as http_requests
 
 app = Flask(__name__)
@@ -39,8 +41,8 @@ PRICE_PER_CHAR = 1  # 1 sat per character
 # In-memory stores
 channel_funding = {}   # channel_id -> {params, proofs, shared_secret, keyset_info}
 channel_usage = {}     # channel_id -> {chars_served: int}
-channel_balances = {}  # channel_id -> highest balance seen
-channel_closed = {}    # channel_id -> closing_balance (empty for now, future use)
+channel_largest_payment = {}  # channel_id -> {balance: int, signature: str}
+channel_closed = {}    # channel_id -> {balance, receiver_proofs, sender_proofs}
 
 # Keyset cache: (mint, keyset_id) -> keyset_info_json
 keyset_cache = {}
@@ -76,7 +78,8 @@ def print_stats_table(sig=None, frame=None):
             unit = "?"
         
         usage = channel_usage.get(cid, {}).get("chars_served", 0)
-        balance = channel_balances.get(cid, 0)
+        payment = channel_largest_payment.get(cid, {})
+        balance = payment.get("balance", 0)
         status = "CLOSED" if cid in channel_closed else "OPEN"
         
         short_id = cid[:8]
@@ -230,7 +233,14 @@ class AsciiArtHost:
             channel_usage[channel_id] = {"chars_served": 0}
         
         channel_usage[channel_id]["chars_served"] += new_chars
-        channel_balances[channel_id] = balance  # Track highest balance
+        
+        # Only update if this is a larger balance (prevents replay attacks)
+        current = channel_largest_payment.get(channel_id, {})
+        if balance > current.get("balance", 0):
+            channel_largest_payment[channel_id] = {
+                "balance": balance,
+                "signature": signature
+            }
         
         print(f"  [Bridge] Payment recorded: channel={channel_id[:16]}... "
               f"balance={balance} chars_served={channel_usage[channel_id]['chars_served']}")
@@ -251,6 +261,13 @@ class AsciiArtHost:
     def now_seconds(self) -> int:
         """Return current Unix timestamp."""
         return int(time.time())
+    
+    def get_largest_balance_with_signature(self, channel_id: str):
+        """Get the largest balance and its signature for unilateral closing."""
+        payment = channel_largest_payment.get(channel_id)
+        if not payment:
+            return None
+        return (payment["balance"], payment["signature"])
 
 
 # Initialize host and bridge
@@ -338,6 +355,158 @@ def ascii_art():
     })
 
 
+def close_channel(channel_id: str) -> dict:
+    """Close a single channel unilaterally using the largest stored payment."""
+    print(f"\n[Close] Attempting to close channel {channel_id[:16]}...")
+    
+    # Check if already closed
+    if channel_id in channel_closed:
+        return {"success": False, "error": "channel already closed"}
+    
+    # Check if we have a payment for this channel
+    if channel_id not in channel_largest_payment:
+        return {"success": False, "error": "no payment recorded for channel"}
+    
+    # Get the close data from the bridge
+    close_result_json = bridge.create_unilateral_close_data(channel_id)
+    close_result = json.loads(close_result_json)
+    
+    if not close_result["success"]:
+        print(f"  [Close] Bridge error: {close_result.get('error')}")
+        return close_result
+    
+    swap_request = close_result["swap_request"]
+    expected_total = close_result["expected_total"]
+    secrets_with_blinding = close_result["secrets_with_blinding"]
+    balance = channel_largest_payment[channel_id]["balance"]
+    
+    print(f"  [Close] Swap request created, expected_total={expected_total}")
+    
+    # Get channel params for mint URL
+    funding = channel_funding.get(channel_id)
+    if not funding:
+        return {"success": False, "error": "no funding data for channel"}
+    
+    params = json.loads(funding["params"])
+    mint_url = params["mint"]
+    
+    # Submit swap to mint
+    print(f"  [Close] Submitting swap to mint: {mint_url}")
+    try:
+        response = http_requests.post(
+            f"{mint_url}/v1/swap",
+            json=swap_request,
+            headers={"Content-Type": "application/json"}
+        )
+        if not response.ok:
+            error_text = response.text
+            print(f"  [Close] Mint rejected swap: {error_text}")
+            return {"success": False, "error": f"mint rejected swap: {error_text}"}
+        
+        swap_response = response.json()
+        print(f"  [Close] Got {len(swap_response.get('signatures', []))} blind signatures")
+    except Exception as e:
+        print(f"  [Close] Failed to contact mint: {e}")
+        return {"success": False, "error": f"failed to contact mint: {e}"}
+    
+    # Unblind and verify DLEQ
+    try:
+        unblind_result_json = unblind_and_verify_dleq(
+            json.dumps(swap_response.get("signatures", [])),
+            json.dumps(secrets_with_blinding),
+            funding["params"],
+            funding["keyset_info"],
+            funding["shared_secret"],
+            balance
+        )
+        unblind_result = json.loads(unblind_result_json)
+        print(f"  [Close] Unblinded: receiver={len(unblind_result['receiver_proofs'])} proofs "
+              f"({unblind_result['receiver_sum_after_stage1']} sat), "
+              f"sender={len(unblind_result['sender_proofs'])} proofs "
+              f"({unblind_result['sender_sum_after_stage1']} sat)")
+    except Exception as e:
+        print(f"  [Close] Unblind/DLEQ verification failed: {e}")
+        return {"success": False, "error": f"unblind verification failed: {e}"}
+    
+    # Mark channel as closed
+    channel_closed[channel_id] = {
+        "balance": balance,
+        "receiver_proofs": unblind_result["receiver_proofs"],
+        "sender_proofs": unblind_result["sender_proofs"],
+        "receiver_sum": unblind_result["receiver_sum_after_stage1"],
+        "sender_sum": unblind_result["sender_sum_after_stage1"]
+    }
+    
+    print(f"  [Close] SUCCESS! Channel {channel_id[:16]} closed. "
+          f"Earned {unblind_result['receiver_sum_after_stage1']} sat")
+    
+    return {
+        "success": True,
+        "channel_id": channel_id,
+        "balance": balance,
+        "receiver_sum": unblind_result["receiver_sum_after_stage1"],
+        "sender_sum": unblind_result["sender_sum_after_stage1"]
+    }
+
+
+def close_all_channels():
+    """Close all open channels that have payments."""
+    print("\n" + "=" * 70)
+    print("  Closing all channels...")
+    print("=" * 70)
+    
+    open_channels = [cid for cid in channel_funding if cid not in channel_closed]
+    
+    if not open_channels:
+        print("  No open channels to close.")
+        print("=" * 70)
+        return
+    
+    total_earned = 0
+    closed_count = 0
+    
+    for cid in open_channels:
+        if cid in channel_largest_payment:
+            result = close_channel(cid)
+            if result["success"]:
+                total_earned += result["receiver_sum"]
+                closed_count += 1
+        else:
+            print(f"  [Close] Skipping {cid[:16]}: no payment recorded")
+    
+    print()
+    print(f"  Closed {closed_count}/{len(open_channels)} channels")
+    print(f"  Total earned: {total_earned} sat")
+    print("=" * 70)
+    print()
+
+
+def cli_listener():
+    """Background thread that listens for CLI commands."""
+    print("CLI ready. Commands: 's' = stats, 'c' = close all, 'q' = quit")
+    
+    while True:
+        try:
+            cmd = input().strip().lower()
+            
+            if cmd == 's':
+                print_stats_table()
+            elif cmd == 'c':
+                close_all_channels()
+            elif cmd == 'q':
+                print("\n[Shutdown] Closing all channels before exit...")
+                close_all_channels()
+                print("[Shutdown] Exiting...")
+                os._exit(0)
+            elif cmd:
+                print(f"  Unknown command: '{cmd}'. Use 's' (stats), 'c' (close), 'q' (quit)")
+        except EOFError:
+            # stdin closed, exit gracefully
+            break
+        except Exception as e:
+            print(f"  CLI error: {e}")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ASCII Art Server - Spilman Payment Channel Demo")
@@ -357,12 +526,21 @@ if __name__ == "__main__":
     print(f"  GET  http://localhost:{PORT}/channel/params")
     print(f"  POST http://localhost:{PORT}/ascii")
     print()
-    print("Press Ctrl+\\ to show channel statistics")
+    print("Commands (type and press Enter):")
+    print("  s = show channel statistics")
+    print("  c = close all channels (settle with mint)")
+    print("  q = close all and quit")
+    print()
+    print("Press Ctrl+\\ for quick stats (no Enter needed)")
     print()
     print("=" * 60)
     print()
     
     # Register SIGQUIT handler (Ctrl+\) to print stats table
     signal.signal(signal.SIGQUIT, print_stats_table)
+    
+    # Start CLI listener thread
+    cli_thread = threading.Thread(target=cli_listener, daemon=True)
+    cli_thread.start()
     
     app.run(host="0.0.0.0", port=PORT, debug=False)
