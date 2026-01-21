@@ -40,7 +40,7 @@ MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
 
 
-def fetch_keyset_info(mint_url: str) -> dict:
+def fetch_active_keyset_info(mint_url: str) -> dict:
     """Fetch active keyset info from mint."""
     print(f"  Fetching keysets from {mint_url}...")
     
@@ -191,7 +191,7 @@ def main():
     # 3. Fetch keyset info
     print("[3/8] Fetching keyset info from mint...")
     try:
-        keyset_info = fetch_keyset_info(MINT_URL)
+        keyset_info = fetch_active_keyset_info(MINT_URL)
     except requests.exceptions.ConnectionError:
         print(f"\nERROR: Cannot connect to mint at {MINT_URL}")
         print("Make sure Nutshell mint is running at localhost:3338")
