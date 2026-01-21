@@ -25,6 +25,7 @@ use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 /// - is_closed(channel_id: str) -> bool
 /// - get_server_config() -> str
 /// - now_seconds() -> int
+/// - get_largest_balance_with_signature(channel_id: str) -> Optional[Tuple[int, str]]
 struct PySpilmanHost {
     py_host: PyObject,
 }
@@ -179,6 +180,29 @@ impl SpilmanHost for PySpilmanHost {
                 .unwrap_or(0)
         })
     }
+
+    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)> {
+        Python::with_gil(|py| {
+            let result = self
+                .py_host
+                .call_method1(py, "get_largest_balance_with_signature", (channel_id,))
+                .ok()?;
+
+            if result.is_none(py) {
+                return None;
+            }
+
+            let tuple = result.downcast_bound::<PyTuple>(py).ok()?;
+            if tuple.len() != 2 {
+                return None;
+            }
+
+            Some((
+                tuple.get_item(0).ok()?.extract::<u64>().ok()?,
+                tuple.get_item(1).ok()?.extract::<String>().ok()?,
+            ))
+        })
+    }
 }
 
 /// Spilman payment channel bridge for servers (receivers).
@@ -256,6 +280,55 @@ impl SpilmanBridge {
             .inner
             .create_close_data(payment_json, keyset_info_json.as_deref())
         {
+            Ok(close_data) => {
+                let swap_request_json = serde_json::to_value(&close_data.swap_request)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+                let secrets_with_blinding: Vec<serde_json::Value> = close_data
+                    .secrets_with_blinding
+                    .into_iter()
+                    .map(|(s, is_receiver)| {
+                        serde_json::json!({
+                            "secret": s.secret.to_string(),
+                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                            "amount": s.amount,
+                            "index": s.index,
+                            "is_receiver": is_receiver
+                        })
+                    })
+                    .collect();
+
+                let result = serde_json::json!({
+                    "success": true,
+                    "swap_request": swap_request_json,
+                    "expected_total": close_data.expected_total,
+                    "secrets_with_blinding": secrets_with_blinding
+                });
+
+                Ok(result.to_string())
+            }
+            Err(e) => {
+                let result = serde_json::json!({
+                    "success": false,
+                    "error": e.to_string()
+                });
+                Ok(result.to_string())
+            }
+        }
+    }
+
+    /// Create data for a unilateral (server-initiated) channel close.
+    ///
+    /// This retrieves the largest balance and signature from the host
+    /// and constructs a fully-signed swap request ready for the mint.
+    ///
+    /// Args:
+    ///     channel_id: The channel ID to close
+    ///
+    /// Returns:
+    ///     JSON string with swap_request, expected_total, and secrets_with_blinding
+    fn create_unilateral_close_data(&self, channel_id: &str) -> PyResult<String> {
+        match self.inner.create_unilateral_close_data(channel_id) {
             Ok(close_data) => {
                 let swap_request_json = serde_json::to_value(&close_data.swap_request)
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
@@ -639,6 +712,260 @@ fn create_signed_balance_update_inner(
     Ok(result.to_string())
 }
 
+/// Unblind mint signatures and verify DLEQ proofs.
+///
+/// This processes the mint's response to a swap request, unblinding the signatures
+/// and verifying that they are valid. It also separates receiver and sender proofs.
+///
+/// Args:
+///     blind_signatures_json: JSON array of blind signatures from mint
+///     secrets_with_blinding_json: JSON array from create_close_data
+///     params_json: Channel parameters JSON
+///     keyset_info_json: Keyset info JSON
+///     shared_secret_hex: Shared secret (hex)
+///     balance: The balance used to close the channel
+///
+/// Returns:
+///     JSON with receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1
+#[pyfunction]
+fn unblind_and_verify_dleq(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    params_json: &str,
+    keyset_info_json: &str,
+    shared_secret_hex: &str,
+    balance: u64,
+) -> PyResult<String> {
+    unblind_and_verify_dleq_inner(
+        blind_signatures_json,
+        secrets_with_blinding_json,
+        params_json,
+        keyset_info_json,
+        shared_secret_hex,
+        balance,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+}
+
+fn unblind_and_verify_dleq_inner(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    params_json: &str,
+    keyset_info_json: &str,
+    shared_secret_hex: &str,
+    balance: u64,
+) -> Result<String, String> {
+    use cdk::nuts::BlindSignature;
+    use cdk::secret::Secret;
+    use cdk::spilman::ChannelParameters;
+
+    // Parse keyset info
+    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
+
+    // Parse shared secret
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
+
+    // Create ChannelParameters to compute blinded pubkey
+    let params = ChannelParameters::from_json_with_shared_secret(
+        params_json,
+        keyset_info.clone(),
+        shared_secret,
+    )
+    .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    // Get maximum_amount from params
+    let maximum_amount = params.maximum_amount_for_one_output;
+
+    // Parse blind signatures
+    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
+        .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
+
+    // Parse secrets with blinding
+    let secrets_with_blinding: Vec<serde_json::Value> =
+        serde_json::from_str(secrets_with_blinding_json)
+            .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
+
+    // Validate lengths match
+    if blind_signatures.len() != secrets_with_blinding.len() {
+        return Err(format!(
+            "Length mismatch: {} blind signatures but {} secrets",
+            blind_signatures.len(),
+            secrets_with_blinding.len()
+        ));
+    }
+
+    // Metadata for each proof
+    struct ProofMeta {
+        is_receiver: bool,
+        amount: u64,
+        index: usize,
+    }
+
+    // Extract secrets, blinding factors, and metadata
+    let mut secrets = Vec::new();
+    let mut blinding_factors = Vec::new();
+    let mut proof_metas = Vec::new();
+
+    for (i, swb) in secrets_with_blinding.iter().enumerate() {
+        let secret_str = swb["secret"]
+            .as_str()
+            .ok_or_else(|| format!("Missing 'secret' at index {}", i))?;
+        let blinding_hex = swb["blinding_factor"]
+            .as_str()
+            .ok_or_else(|| format!("Missing 'blinding_factor' at index {}", i))?;
+        let is_receiver = swb["is_receiver"]
+            .as_bool()
+            .ok_or_else(|| format!("Missing 'is_receiver' at index {}", i))?;
+        let amount = swb["amount"]
+            .as_u64()
+            .ok_or_else(|| format!("Missing 'amount' at index {}", i))?;
+        let index = swb["index"]
+            .as_u64()
+            .ok_or_else(|| format!("Missing 'index' at index {}", i))? as usize;
+
+        let secret = Secret::new(secret_str.to_string());
+        let blinding_bytes = hex::decode(blinding_hex)
+            .map_err(|e| format!("Invalid blinding_factor hex at index {}: {}", i, e))?;
+        let blinding_factor = SecretKey::from_slice(&blinding_bytes)
+            .map_err(|e| format!("Invalid blinding_factor at index {}: {}", i, e))?;
+
+        secrets.push(secret);
+        blinding_factors.push(blinding_factor);
+        proof_metas.push(ProofMeta {
+            is_receiver,
+            amount,
+            index,
+        });
+    }
+
+    // Unblind the signatures to get proofs
+    let proofs = cdk::dhke::construct_proofs(
+        blind_signatures,
+        blinding_factors,
+        secrets,
+        &keyset_info.active_keys,
+    )
+    .map_err(|e| format!("Failed to construct proofs: {}", e))?;
+
+    // Verify DLEQ for each proof
+    let mut dleq_failures = 0;
+    for (i, proof) in proofs.iter().enumerate() {
+        let mint_pubkey = keyset_info
+            .active_keys
+            .amount_key(proof.amount)
+            .ok_or_else(|| format!("No mint key for amount {} at index {}", proof.amount, i))?;
+
+        if let Err(e) = proof.verify_dleq(mint_pubkey) {
+            dleq_failures += 1;
+            eprintln!("DLEQ verification failed for proof {}: {}", i, e);
+        }
+    }
+
+    if dleq_failures > 0 {
+        return Err(format!(
+            "DLEQ verification failed: {} of {} proofs failed",
+            dleq_failures,
+            proofs.len()
+        ));
+    }
+
+    // Separate proofs by is_receiver flag and compute sums
+    let mut receiver_proofs = Vec::new();
+    let mut receiver_metas = Vec::new();
+    let mut sender_proofs = Vec::new();
+    let mut receiver_sum: u64 = 0;
+    let mut sender_sum: u64 = 0;
+
+    for (proof, meta) in proofs.into_iter().zip(proof_metas.iter()) {
+        let amount = u64::from(proof.amount);
+        if meta.is_receiver {
+            receiver_sum += amount;
+            receiver_metas.push((meta.amount, meta.index));
+            receiver_proofs.push(proof);
+        } else {
+            sender_sum += amount;
+            sender_proofs.push(proof);
+        }
+    }
+
+    // Verify each receiver proof is P2PK locked to Charlie's blinded pubkey
+    for (i, (proof, (amount, index))) in receiver_proofs
+        .iter()
+        .zip(receiver_metas.iter())
+        .enumerate()
+    {
+        let expected_pubkey = params
+            .get_receiver_blinded_pubkey_for_stage2_output(*amount, *index)
+            .map_err(|e| {
+                format!(
+                    "Failed to get receiver blinded pubkey for ({}, {}): {}",
+                    amount, index, e
+                )
+            })?;
+        let expected_pubkey_hex = expected_pubkey.to_hex();
+
+        let secret_str = proof.secret.to_string();
+        let secret_json: serde_json::Value = serde_json::from_str(&secret_str)
+            .map_err(|e| format!("Failed to parse receiver proof {} secret: {}", i, e))?;
+
+        // Check it's P2PK
+        let kind = secret_json.get(0).and_then(|v| v.as_str());
+        if kind != Some("P2PK") {
+            return Err(format!(
+                "Receiver proof {} is not P2PK (kind={:?})",
+                i, kind
+            ));
+        }
+
+        // Check pubkey matches
+        let data = secret_json
+            .get(1)
+            .and_then(|v| v.get("data"))
+            .and_then(|v| v.as_str());
+        if data != Some(expected_pubkey_hex.as_str()) {
+            return Err(format!(
+                "Receiver proof {} locked to wrong pubkey: expected {}, got {:?}",
+                i, expected_pubkey_hex, data
+            ));
+        }
+    }
+
+    // Verify receiver sum matches expected nominal for this balance
+    let inverse_result = keyset_info
+        .inverse_deterministic_value_after_fees(balance, maximum_amount)
+        .map_err(|e| format!("Failed to compute inverse for balance {}: {}", balance, e))?;
+
+    if receiver_sum != inverse_result.nominal_value {
+        return Err(format!(
+            "Receiver nominal mismatch: expected {} for balance {}, got {}",
+            inverse_result.nominal_value, balance, receiver_sum
+        ));
+    }
+
+    // Serialize proofs
+    let receiver_proofs_json: Vec<serde_json::Value> = receiver_proofs
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap())
+        .collect();
+    let sender_proofs_json: Vec<serde_json::Value> = sender_proofs
+        .iter()
+        .map(|p| serde_json::to_value(p).unwrap())
+        .collect();
+
+    let result = serde_json::json!({
+        "receiver_proofs": receiver_proofs_json,
+        "sender_proofs": sender_proofs_json,
+        "receiver_sum_after_stage1": receiver_sum,
+        "sender_sum_after_stage1": sender_sum
+    });
+
+    Ok(result.to_string())
+}
+
 // ============================================================================
 // Module registration
 // ============================================================================
@@ -657,6 +984,9 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_funding_outputs, m)?)?;
     m.add_function(wrap_pyfunction!(construct_proofs, m)?)?;
     m.add_function(wrap_pyfunction!(create_signed_balance_update, m)?)?;
+
+    // Server-side functions (for closing)
+    m.add_function(wrap_pyfunction!(unblind_and_verify_dleq, m)?)?;
 
     Ok(())
 }

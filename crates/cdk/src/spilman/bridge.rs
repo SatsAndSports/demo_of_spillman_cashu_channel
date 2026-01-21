@@ -56,6 +56,13 @@ pub trait SpilmanHost {
 
     /// Get the current time in seconds
     fn now_seconds(&self) -> u64;
+
+    /// Get the largest balance and its signature for a channel
+    ///
+    /// This is used for unilateral closing - the server retrieves the best
+    /// payment proof it has stored to close the channel.
+    /// Returns (balance, signature_hex) if available.
+    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)>;
 }
 
 /// Bridge for processing Spilman payments
@@ -785,6 +792,154 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             secrets_with_blinding,
         })
     }
+
+    /// Create close data for a unilateral (server-initiated) channel close
+    ///
+    /// This retrieves the largest balance and signature from the host and
+    /// constructs a fully-signed swap request. Use this when the server
+    /// wants to close a channel without waiting for the client.
+    ///
+    /// The host must have stored at least one valid payment (via record_payment)
+    /// for this to succeed.
+    ///
+    /// Returns:
+    /// - CloseData with fully-signed swap request ready for the mint
+    /// - Err if no payment proof is stored, channel is closed, or validation fails
+    pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<CloseData, BridgeError> {
+        // 1. Check if channel is closed
+        if self.host.is_closed(channel_id) {
+            return Err(BridgeError::ChannelClosed);
+        }
+
+        // 2. Get the largest balance and signature from host
+        let (balance, signature) = self
+            .host
+            .get_largest_balance_with_signature(channel_id)
+            .ok_or_else(|| {
+                BridgeError::InvalidRequest("no payment proof stored for channel".into())
+            })?;
+
+        // 3. Get funding data
+        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) = self
+            .host
+            .get_funding_and_params(channel_id)
+            .ok_or(BridgeError::UnknownChannel)?;
+
+        // 4. Parse everything we need
+        let shared_secret_bytes =
+            hex::decode(&shared_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let shared_secret: [u8; 32] = shared_secret_bytes
+            .try_into()
+            .map_err(|_| BridgeError::Internal("invalid shared secret length".into()))?;
+
+        let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let params = ChannelParameters::from_json_with_shared_secret(
+            &params_json,
+            keyset_info,
+            shared_secret,
+        )
+        .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let funding_proofs: Vec<Proof> = serde_json::from_str(&funding_proofs_json)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 5. Check balance doesn't exceed capacity
+        if balance > params.capacity {
+            return Err(BridgeError::BalanceExceedsCapacity {
+                balance,
+                capacity: params.capacity,
+            });
+        }
+
+        // 6. Parse signature
+        let sig: bitcoin::secp256k1::schnorr::Signature = signature.parse().map_err(
+            |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
+                BridgeError::InvalidSignature(e.to_string())
+            },
+        )?;
+
+        // 7. Create commitment outputs and swap request
+        let commitment_outputs = CommitmentOutputs::for_balance(balance, &params)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let mut swap_request = commitment_outputs
+            .create_swap_request(funding_proofs.clone())
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 8. Create balance update message
+        let balance_update = BalanceUpdateMessage {
+            channel_id: channel_id.to_string(),
+            amount: balance,
+            signature: sig.clone(),
+        };
+
+        // 9. Add Alice's signature to the swap request witness
+        {
+            use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
+            let first_input = swap_request
+                .inputs_mut()
+                .first_mut()
+                .ok_or_else(|| BridgeError::Internal("swap request has no inputs".into()))?;
+
+            match first_input.witness.as_mut() {
+                Some(witness) => {
+                    witness.add_signatures(vec![sig.to_string()]);
+                }
+                None => {
+                    let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
+                    p2pk_witness.add_signatures(vec![sig.to_string()]);
+                    first_input.witness = Some(p2pk_witness);
+                }
+            }
+        }
+
+        // 10. Create channel and receiver, verify + add Charlie's signature
+        let channel = EstablishedChannel::new(params.clone(), funding_proofs)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        let server_secret_key = self
+            .server_secret_key
+            .as_ref()
+            .ok_or(BridgeError::ServerMisconfigured("no secret key".into()))?;
+
+        let receiver = SpilmanChannelReceiver::new(server_secret_key.clone(), channel);
+
+        let signed_swap_request = receiver
+            .add_second_signature(&balance_update, swap_request)
+            .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
+
+        // 11. Get expected total (value after stage 1 fees)
+        let expected_total = params
+            .get_value_after_stage1()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // 12. Collect secrets with blinding factors for unblinding
+        let receiver_secrets = commitment_outputs
+            .receiver_outputs
+            .get_secrets_with_blinding()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let sender_secrets = commitment_outputs
+            .sender_outputs
+            .get_secrets_with_blinding()
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
+
+        // Combine and tag with is_receiver, then sort by amount to match output order
+        let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> =
+            receiver_secrets
+                .into_iter()
+                .map(|s| (s, true))
+                .chain(sender_secrets.into_iter().map(|s| (s, false)))
+                .collect();
+        secrets_with_blinding.sort_by_key(|(s, _)| s.amount);
+
+        Ok(CloseData {
+            swap_request: signed_swap_request,
+            expected_total,
+            secrets_with_blinding,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -854,6 +1009,10 @@ mod tests {
 
         fn now_seconds(&self) -> u64 {
             1700000000
+        }
+
+        fn get_largest_balance_with_signature(&self, _channel_id: &str) -> Option<(u64, String)> {
+            None
         }
     }
 
