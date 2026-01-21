@@ -1637,6 +1637,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdk-spilman-go"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitcoin 0.32.8",
+ "cdk",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cdk-spilman-python"
 version = "0.1.0"
 dependencies = [
