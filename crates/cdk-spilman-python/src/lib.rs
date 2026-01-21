@@ -5,6 +5,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
+use std::str::FromStr;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
