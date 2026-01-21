@@ -11,7 +11,7 @@ Usage:
     python server.py
 
 Environment variables:
-    SERVER_SECRET_KEY - Server's secret key (64 hex chars, default: test key)
+    SERVER_SECRET_KEY - Server's secret key (64 hex chars, default: random)
     MINT_URL - Mint URL (default: http://localhost:3338)
     PORT - Server port (default: 5000)
 """
@@ -26,14 +26,12 @@ import signal
 import threading
 import sys
 import requests as http_requests
+import secrets
 
 app = Flask(__name__)
 
 # Configuration
-SECRET_KEY = os.environ.get(
-    "SERVER_SECRET_KEY",
-    "0000000000000000000000000000000000000000000000000000000000000001"
-)
+SECRET_KEY = os.environ.get("SERVER_SECRET_KEY") or secrets.token_hex(32)
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 PORT = int(os.environ.get("PORT", "5000"))
 PRICE_PER_CHAR = 1  # 1 sat per character
