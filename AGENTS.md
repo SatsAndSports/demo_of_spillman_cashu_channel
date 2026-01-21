@@ -702,6 +702,7 @@ The test suite includes:
 - ✅ CLI commands in Python server: `s` (stats), `c` (close all), `q` (quit), `Ctrl+\` (quick stats)
 - ✅ Unilateral channel closing: `get_largest_balance_with_signature` host hook + `create_unilateral_close_data` bridge method
 - ✅ Full settlement flow in Python: create swap request → POST to mint → unblind + verify DLEQ → store proofs
+- ✅ **Consolidated `unblind_and_verify_dleq`**: Core logic in `bridge.rs` (`unblind_and_verify_stage1_response()`), thin wrappers in WASM and Python bindings
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)

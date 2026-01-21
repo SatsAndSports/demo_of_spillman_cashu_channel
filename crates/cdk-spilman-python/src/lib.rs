@@ -757,7 +757,9 @@ fn unblind_and_verify_dleq_inner(
 ) -> Result<String, String> {
     use cdk::nuts::BlindSignature;
     use cdk::secret::Secret;
-    use cdk::spilman::ChannelParameters;
+    use cdk::spilman::{
+        unblind_and_verify_stage1_response, ChannelParameters, DeterministicSecretWithBlinding,
+    };
 
     // Parse keyset info
     let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
@@ -777,40 +779,17 @@ fn unblind_and_verify_dleq_inner(
     )
     .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
-    // Get maximum_amount from params
-    let maximum_amount = params.maximum_amount_for_one_output;
-
     // Parse blind signatures
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
         .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
 
-    // Parse secrets with blinding
-    let secrets_with_blinding: Vec<serde_json::Value> =
+    // Parse secrets with blinding from JSON into typed data
+    let secrets_with_blinding_json: Vec<serde_json::Value> =
         serde_json::from_str(secrets_with_blinding_json)
             .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
 
-    // Validate lengths match
-    if blind_signatures.len() != secrets_with_blinding.len() {
-        return Err(format!(
-            "Length mismatch: {} blind signatures but {} secrets",
-            blind_signatures.len(),
-            secrets_with_blinding.len()
-        ));
-    }
-
-    // Metadata for each proof
-    struct ProofMeta {
-        is_receiver: bool,
-        amount: u64,
-        index: usize,
-    }
-
-    // Extract secrets, blinding factors, and metadata
-    let mut secrets = Vec::new();
-    let mut blinding_factors = Vec::new();
-    let mut proof_metas = Vec::new();
-
-    for (i, swb) in secrets_with_blinding.iter().enumerate() {
+    let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> = Vec::new();
+    for (i, swb) in secrets_with_blinding_json.iter().enumerate() {
         let secret_str = swb["secret"]
             .as_str()
             .ok_or_else(|| format!("Missing 'secret' at index {}", i))?;
@@ -833,137 +812,48 @@ fn unblind_and_verify_dleq_inner(
         let blinding_factor = SecretKey::from_slice(&blinding_bytes)
             .map_err(|e| format!("Invalid blinding_factor at index {}: {}", i, e))?;
 
-        secrets.push(secret);
-        blinding_factors.push(blinding_factor);
-        proof_metas.push(ProofMeta {
+        secrets_with_blinding.push((
+            DeterministicSecretWithBlinding {
+                secret,
+                blinding_factor,
+                amount,
+                index,
+            },
             is_receiver,
-            amount,
-            index,
-        });
+        ));
     }
 
-    // Unblind the signatures to get proofs
-    let proofs = cdk::dhke::construct_proofs(
+    // Call the core function
+    let result = unblind_and_verify_stage1_response(
         blind_signatures,
-        blinding_factors,
-        secrets,
-        &keyset_info.active_keys,
+        secrets_with_blinding,
+        &params,
+        &keyset_info,
+        balance,
     )
-    .map_err(|e| format!("Failed to construct proofs: {}", e))?;
+    .map_err(|e| e.to_string())?;
 
-    // Verify DLEQ for each proof
-    let mut dleq_failures = 0;
-    for (i, proof) in proofs.iter().enumerate() {
-        let mint_pubkey = keyset_info
-            .active_keys
-            .amount_key(proof.amount)
-            .ok_or_else(|| format!("No mint key for amount {} at index {}", proof.amount, i))?;
-
-        if let Err(e) = proof.verify_dleq(mint_pubkey) {
-            dleq_failures += 1;
-            eprintln!("DLEQ verification failed for proof {}: {}", i, e);
-        }
-    }
-
-    if dleq_failures > 0 {
-        return Err(format!(
-            "DLEQ verification failed: {} of {} proofs failed",
-            dleq_failures,
-            proofs.len()
-        ));
-    }
-
-    // Separate proofs by is_receiver flag and compute sums
-    let mut receiver_proofs = Vec::new();
-    let mut receiver_metas = Vec::new();
-    let mut sender_proofs = Vec::new();
-    let mut receiver_sum: u64 = 0;
-    let mut sender_sum: u64 = 0;
-
-    for (proof, meta) in proofs.into_iter().zip(proof_metas.iter()) {
-        let amount = u64::from(proof.amount);
-        if meta.is_receiver {
-            receiver_sum += amount;
-            receiver_metas.push((meta.amount, meta.index));
-            receiver_proofs.push(proof);
-        } else {
-            sender_sum += amount;
-            sender_proofs.push(proof);
-        }
-    }
-
-    // Verify each receiver proof is P2PK locked to Charlie's blinded pubkey
-    for (i, (proof, (amount, index))) in receiver_proofs
-        .iter()
-        .zip(receiver_metas.iter())
-        .enumerate()
-    {
-        let expected_pubkey = params
-            .get_receiver_blinded_pubkey_for_stage2_output(*amount, *index)
-            .map_err(|e| {
-                format!(
-                    "Failed to get receiver blinded pubkey for ({}, {}): {}",
-                    amount, index, e
-                )
-            })?;
-        let expected_pubkey_hex = expected_pubkey.to_hex();
-
-        let secret_str = proof.secret.to_string();
-        let secret_json: serde_json::Value = serde_json::from_str(&secret_str)
-            .map_err(|e| format!("Failed to parse receiver proof {} secret: {}", i, e))?;
-
-        // Check it's P2PK
-        let kind = secret_json.get(0).and_then(|v| v.as_str());
-        if kind != Some("P2PK") {
-            return Err(format!(
-                "Receiver proof {} is not P2PK (kind={:?})",
-                i, kind
-            ));
-        }
-
-        // Check pubkey matches
-        let data = secret_json
-            .get(1)
-            .and_then(|v| v.get("data"))
-            .and_then(|v| v.as_str());
-        if data != Some(expected_pubkey_hex.as_str()) {
-            return Err(format!(
-                "Receiver proof {} locked to wrong pubkey: expected {}, got {:?}",
-                i, expected_pubkey_hex, data
-            ));
-        }
-    }
-
-    // Verify receiver sum matches expected nominal for this balance
-    let inverse_result = keyset_info
-        .inverse_deterministic_value_after_fees(balance, maximum_amount)
-        .map_err(|e| format!("Failed to compute inverse for balance {}: {}", balance, e))?;
-
-    if receiver_sum != inverse_result.nominal_value {
-        return Err(format!(
-            "Receiver nominal mismatch: expected {} for balance {}, got {}",
-            inverse_result.nominal_value, balance, receiver_sum
-        ));
-    }
-
-    // Serialize proofs
-    let receiver_proofs_json: Vec<serde_json::Value> = receiver_proofs
+    // Serialize proofs for JSON output
+    let receiver_proofs_json: Vec<serde_json::Value> = result
+        .receiver_proofs
         .iter()
         .map(|p| serde_json::to_value(p).unwrap())
         .collect();
-    let sender_proofs_json: Vec<serde_json::Value> = sender_proofs
+    let sender_proofs_json: Vec<serde_json::Value> = result
+        .sender_proofs
         .iter()
         .map(|p| serde_json::to_value(p).unwrap())
         .collect();
 
-    let result = serde_json::json!({
+    // Build result
+    let json_result = serde_json::json!({
         "receiver_proofs": receiver_proofs_json,
         "sender_proofs": sender_proofs_json,
-        "receiver_sum_after_stage1": receiver_sum,
-        "sender_sum_after_stage1": sender_sum
+        "receiver_sum_after_stage1": result.receiver_sum,
+        "sender_sum_after_stage1": result.sender_sum
     });
 
-    Ok(result.to_string())
+    Ok(json_result.to_string())
 }
 
 // ============================================================================
