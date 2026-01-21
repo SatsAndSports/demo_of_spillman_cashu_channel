@@ -19,6 +19,14 @@ import sys
 import json
 import time
 import requests
+import os
+
+# Optional QR code support
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
+
 from cdk_spilman import (
     generate_keypair,
     compute_shared_secret,
@@ -27,7 +35,6 @@ from cdk_spilman import (
     construct_proofs,
     create_signed_balance_update,
 )
-import os
 
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
@@ -69,7 +76,7 @@ def fetch_keyset_info(mint_url: str) -> dict:
 
 
 def mint_funding_token(mint_url: str, amount: int, blinded_messages: list) -> list:
-    """Mint tokens using test mint (auto-pays invoice)."""
+    """Mint tokens by requesting a Lightning invoice and waiting for payment."""
     print(f"  Requesting mint quote for {amount} sat...")
     
     # 1. Request quote
@@ -80,26 +87,61 @@ def mint_funding_token(mint_url: str, amount: int, blinded_messages: list) -> li
     quote_resp.raise_for_status()
     quote = quote_resp.json()
     quote_id = quote["quote"]
+    invoice = quote.get("request", "").strip()
     
     print(f"  Quote ID: {quote_id[:24]}...")
     
-    # 2. Wait for quote to be paid (test mint auto-pays)
-    print("  Waiting for quote to be paid...")
-    for attempt in range(30):
+    # 2. Display invoice and QR code
+    if invoice:
+        print()
+        print("  " + "=" * 56)
+        print("  PAY THIS INVOICE TO FUND THE CHANNEL")
+        print("  " + "=" * 56)
+        print()
+        print(f"  {invoice}")
+        print()
+        
+        # Display QR code if qrcode library is available
+        if qrcode:
+            print("  Scan this QR code with your Lightning wallet:")
+            print()
+            qr = qrcode.QRCode(
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=1,
+                border=2,
+            )
+            qr.add_data(invoice.upper())  # BOLT11 invoices are case-insensitive, uppercase is more compact
+            qr.make(fit=True)
+            qr.print_ascii(invert=True)
+            print()
+        else:
+            print("  (Install 'qrcode' package to see QR code: pip install qrcode)")
+            print()
+        
+        print("  " + "=" * 56)
+        print()
+    
+    # 3. Wait for quote to be paid (60 seconds timeout for manual payment)
+    print("  Waiting for payment (Nutshell test mint may auto-pay)...")
+    for attempt in range(120):  # 60 seconds total
         check_resp = requests.get(f"{mint_url}/v1/mint/quote/bolt11/{quote_id}")
         check_resp.raise_for_status()
         status = check_resp.json()
         
         state = status.get("state", status.get("paid"))
         if state == "PAID" or state is True:
-            print("  Quote paid!")
+            print("  Payment received!")
             break
+        
+        # Show progress every 5 seconds
+        if attempt > 0 and attempt % 10 == 0:
+            print(f"  Still waiting... ({attempt // 2}s)")
         
         time.sleep(0.5)
     else:
-        raise Exception("Quote was not paid in time")
+        raise Exception("Quote was not paid in time (60s timeout)")
     
-    # 3. Mint tokens
+    # 4. Mint tokens
     print("  Minting tokens...")
     mint_resp = requests.post(
         f"{mint_url}/v1/mint/bolt11",
