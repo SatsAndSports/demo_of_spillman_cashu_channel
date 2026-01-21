@@ -2,6 +2,8 @@
 //!
 //! Contains keyset-related types and fee calculation functions.
 
+use serde::{Deserialize, Serialize};
+
 use crate::nuts::{Id, Keys};
 
 /// Result of inverse_deterministic_value_after_fees
@@ -142,13 +144,16 @@ impl OrderedListOfAmounts {
 ///
 /// Represents a real keyset from a mint. The keys and amounts are not filtered;
 /// methods that need to respect a maximum amount take it as a parameter.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KeysetInfo {
     /// Keyset ID
     pub keyset_id: Id,
     /// Set of active keys from the mint (map from amount to pubkey)
+    #[serde(rename = "keys")]
     pub active_keys: Keys,
     /// Available amounts in the keyset, sorted largest first
+    #[serde(rename = "amounts")]
     pub amounts_largest_first: Vec<u64>,
     /// Input fee in parts per thousand
     pub input_fee_ppk: u64,

@@ -184,7 +184,7 @@ impl SpilmanChannelSender {
 
         // Create unsigned swap request
         let mut swap_request =
-            commitment_outputs.create_swap_request(self.channel.funding_proofs.clone())?;
+            commitment_outputs.create_swap_request(self.channel.funding_proofs.clone(), None)?;
 
         // Alice signs the swap request with her BLINDED secret key
         // (The funding token P2PK uses blinded pubkeys for privacy)

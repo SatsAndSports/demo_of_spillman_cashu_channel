@@ -11,7 +11,7 @@ use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
     DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo, SpilmanChannelReceiver,
 };
-use crate::nuts::{BlindSignature, Proof, PublicKey, SecretKey, SwapRequest};
+use crate::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SecretKey, SwapRequest};
 use crate::util::hex;
 use std::str::FromStr;
 
@@ -63,6 +63,12 @@ pub trait SpilmanHost {
     /// payment proof it has stored to close the channel.
     /// Returns (balance, signature_hex) if available.
     fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)>;
+
+    /// Get currently active keyset IDs for a mint and unit
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
+
+    /// Get full KeysetInfo JSON for a specific keyset
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
 }
 
 /// Bridge for processing Spilman payments
@@ -110,6 +116,8 @@ pub struct CloseData {
     /// Secrets with blinding factors for unblinding, tagged with is_receiver
     /// Sorted by amount (stable) to match swap_request output order
     pub secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)>,
+    /// The keyset info for the outputs of the swap (may differ from funding keyset)
+    pub output_keyset_info: KeysetInfo,
 }
 
 /// Result of unblinding and verifying stage 1 swap response
@@ -246,7 +254,7 @@ pub fn unblind_and_verify_stage1_response(
     blind_signatures: Vec<BlindSignature>,
     secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)>,
     params: &ChannelParameters,
-    keyset_info: &KeysetInfo,
+    output_keyset_info: &KeysetInfo,
     balance: u64,
 ) -> Result<UnblindResult, BridgeError> {
     // Validate lengths match
@@ -276,14 +284,14 @@ pub fn unblind_and_verify_stage1_response(
         blind_signatures,
         blinding_factors,
         secrets,
-        &keyset_info.active_keys,
+        &output_keyset_info.active_keys,
     )
     .map_err(|e| BridgeError::Internal(format!("Failed to construct proofs: {}", e)))?;
 
     // Verify DLEQ for each proof
     let mut dleq_failures = 0;
     for (i, proof) in proofs.iter().enumerate() {
-        let mint_pubkey = keyset_info
+        let mint_pubkey = output_keyset_info
             .active_keys
             .amount_key(proof.amount)
             .ok_or_else(|| {
@@ -378,7 +386,7 @@ pub fn unblind_and_verify_stage1_response(
 
     // Verify receiver sum matches expected nominal for this balance
     let maximum_amount = params.maximum_amount_for_one_output;
-    let inverse_result = keyset_info
+    let inverse_result = output_keyset_info
         .inverse_deterministic_value_after_fees(balance, maximum_amount)
         .map_err(|e| {
             BridgeError::Internal(format!(
@@ -888,7 +896,36 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let funding_proofs: Vec<Proof> = serde_json::from_str(&funding_proofs_json)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 5. Check balance doesn't exceed capacity
+        // 5. Check if the keyset is still active, if not switch to a new one
+        let active_keyset_ids = self.host.get_active_keyset_ids(&params.mint, &params.unit);
+        let output_keyset_info = if active_keyset_ids.contains(&params.keyset_info.keyset_id) {
+            params.keyset_info.clone()
+        } else {
+            // Pick the first active keyset ID
+            let new_keyset_id = active_keyset_ids.first().ok_or_else(|| {
+                BridgeError::Internal(format!(
+                    "No active keysets found for mint {} and unit {:?}",
+                    params.mint, params.unit
+                ))
+            })?;
+
+            let keyset_info_json = self
+                .host
+                .get_keyset_info(&params.mint, new_keyset_id)
+                .ok_or_else(|| {
+                    BridgeError::Internal(format!(
+                        "Failed to get keyset info for {}",
+                        new_keyset_id
+                    ))
+                })?;
+
+            super::parse_keyset_info_from_json(&keyset_info_json)
+                .map_err(|e| BridgeError::Internal(e.to_string()))?
+        };
+
+        let output_keyset_id = output_keyset_info.keyset_id;
+
+        // 6. Check balance doesn't exceed capacity
         if payment.balance > params.capacity {
             return Err(BridgeError::BalanceExceedsCapacity {
                 balance: payment.balance,
@@ -896,29 +933,29 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             });
         }
 
-        // 6. Parse signature
+        // 7. Parse signature
         let sig: bitcoin::secp256k1::schnorr::Signature = payment.signature.parse().map_err(
             |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
                 BridgeError::InvalidSignature(e.to_string())
             },
         )?;
 
-        // 7. Create commitment outputs and swap request
+        // 8. Create commitment outputs and swap request
         let commitment_outputs = CommitmentOutputs::for_balance(payment.balance, &params)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
         let mut swap_request = commitment_outputs
-            .create_swap_request(funding_proofs.clone())
+            .create_swap_request(funding_proofs.clone(), Some(output_keyset_id))
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 8. Create balance update message
+        // 9. Create balance update message
         let balance_update = BalanceUpdateMessage {
             channel_id: channel_id.to_string(),
             amount: payment.balance,
             signature: sig.clone(),
         };
 
-        // 9. Add Alice's signature to the swap request witness
+        // 10. Add Alice's signature to the swap request witness
         {
             use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
             let first_input = swap_request
@@ -938,7 +975,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         }
 
-        // 10. Create channel and receiver, verify + add Charlie's signature
+        // 11. Create channel and receiver, verify + add Charlie's signature
         let channel = EstablishedChannel::new(params.clone(), funding_proofs)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -953,12 +990,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .add_second_signature(&balance_update, swap_request)
             .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
 
-        // 11. Get expected total (value after stage 1 fees)
+        // 12. Get expected total (value after stage 1 fees) using the OUTPUT keyset
         let expected_total = params
-            .get_value_after_stage1()
+            .get_value_after_stage1_with_keyset(&output_keyset_info)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 12. Collect secrets with blinding factors for unblinding
+        // 13. Collect secrets with blinding factors for unblinding
         let receiver_secrets = commitment_outputs
             .receiver_outputs
             .get_secrets_with_blinding()
@@ -981,6 +1018,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             swap_request: signed_swap_request,
             expected_total,
             secrets_with_blinding,
+            output_keyset_info,
         })
     }
 
@@ -1036,7 +1074,36 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let funding_proofs: Vec<Proof> = serde_json::from_str(&funding_proofs_json)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 5. Check balance doesn't exceed capacity
+        // 5. Check if the keyset is still active, if not switch to a new one
+        let active_keyset_ids = self.host.get_active_keyset_ids(&params.mint, &params.unit);
+        let output_keyset_info = if active_keyset_ids.contains(&params.keyset_info.keyset_id) {
+            params.keyset_info.clone()
+        } else {
+            // Pick the first active keyset ID
+            let new_keyset_id = active_keyset_ids.first().ok_or_else(|| {
+                BridgeError::Internal(format!(
+                    "No active keysets found for mint {} and unit {:?}",
+                    params.mint, params.unit
+                ))
+            })?;
+
+            let keyset_info_json = self
+                .host
+                .get_keyset_info(&params.mint, new_keyset_id)
+                .ok_or_else(|| {
+                    BridgeError::Internal(format!(
+                        "Failed to get keyset info for {}",
+                        new_keyset_id
+                    ))
+                })?;
+
+            super::parse_keyset_info_from_json(&keyset_info_json)
+                .map_err(|e| BridgeError::Internal(e.to_string()))?
+        };
+
+        let output_keyset_id = output_keyset_info.keyset_id;
+
+        // 6. Check balance doesn't exceed capacity
         if balance > params.capacity {
             return Err(BridgeError::BalanceExceedsCapacity {
                 balance,
@@ -1044,29 +1111,29 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             });
         }
 
-        // 6. Parse signature
+        // 7. Parse signature
         let sig: bitcoin::secp256k1::schnorr::Signature = signature.parse().map_err(
             |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
                 BridgeError::InvalidSignature(e.to_string())
             },
         )?;
 
-        // 7. Create commitment outputs and swap request
+        // 8. Create commitment outputs and swap request
         let commitment_outputs = CommitmentOutputs::for_balance(balance, &params)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
         let mut swap_request = commitment_outputs
-            .create_swap_request(funding_proofs.clone())
+            .create_swap_request(funding_proofs.clone(), Some(output_keyset_id))
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 8. Create balance update message
+        // 9. Create balance update message
         let balance_update = BalanceUpdateMessage {
             channel_id: channel_id.to_string(),
             amount: balance,
             signature: sig.clone(),
         };
 
-        // 9. Add Alice's signature to the swap request witness
+        // 10. Add Alice's signature to the swap request witness
         {
             use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
             let first_input = swap_request
@@ -1086,7 +1153,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         }
 
-        // 10. Create channel and receiver, verify + add Charlie's signature
+        // 11. Create channel and receiver, verify + add Charlie's signature
         let channel = EstablishedChannel::new(params.clone(), funding_proofs)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1101,12 +1168,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .add_second_signature(&balance_update, swap_request)
             .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
 
-        // 11. Get expected total (value after stage 1 fees)
+        // 12. Get expected total (value after stage 1 fees) using the OUTPUT keyset
         let expected_total = params
-            .get_value_after_stage1()
+            .get_value_after_stage1_with_keyset(&output_keyset_info)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 12. Collect secrets with blinding factors for unblinding
+        // 13. Collect secrets with blinding factors for unblinding
         let receiver_secrets = commitment_outputs
             .receiver_outputs
             .get_secrets_with_blinding()
@@ -1129,6 +1196,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             swap_request: signed_swap_request,
             expected_total,
             secrets_with_blinding,
+            output_keyset_info,
         })
     }
 }
@@ -1203,6 +1271,14 @@ mod tests {
         }
 
         fn get_largest_balance_with_signature(&self, _channel_id: &str) -> Option<(u64, String)> {
+            None
+        }
+
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+            Vec::new()
+        }
+
+        fn get_keyset_info(&self, _mint: &str, _keyset_id: &Id) -> Option<String> {
             None
         }
     }
