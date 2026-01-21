@@ -20,7 +20,17 @@ cdk/
 │   ├── cdk/                        # Main Cashu library
 │   │   ├── src/spilman/            # Spilman channel implementation
 │   │   └── examples/spilman_channel/  # Example + test helpers
-│   └── cdk-wasm/                   # WASM bindings (browser + Node.js)
+│   ├── cdk-wasm/                   # WASM bindings (browser + Node.js)
+│   └── cdk-spilman-python/         # PyO3 bindings for Python
+│       ├── Cargo.toml
+│       ├── pyproject.toml
+│       └── src/lib.rs              # SpilmanBridge + client functions
+├── examples/
+│   └── python-ascii-art/           # Python demo: pay-per-character ASCII art
+│       ├── server.py               # Flask server with SpilmanHost implementation
+│       ├── client.py               # Client that creates channel and makes payments
+│       ├── requirements.txt        # flask, requests, pyfiglet
+│       └── README.md
 └── web/
     ├── Makefile                    # WASM build targets
     ├── wasm-web/                   # Browser WASM output (--target web)
@@ -685,6 +695,13 @@ The test suite includes:
 - ✅ Video player sizing: max-height 562.5px (via CSS variable), flexible aspect ratio, centered with pillarboxing
 - ✅ Detect autoplay failure and show persistent controls hint until interaction
 - ✅ Improved action indicator centering (flash triangle) using robust Inset + Auto-Margin CSS
+- ✅ **Python demo** (`examples/python-ascii-art/`): Pay-per-character ASCII art generator
+- ✅ **PyO3 bindings** (`crates/cdk-spilman-python/`): SpilmanBridge + client functions for Python
+- ✅ Python SpilmanHost implementation with all required callbacks
+- ✅ Python server with keyset caching from mint at startup
+- ✅ CLI commands in Python server: `s` (stats), `c` (close all), `q` (quit), `Ctrl+\` (quick stats)
+- ✅ Unilateral channel closing: `get_largest_balance_with_signature` host hook + `create_unilateral_close_data` bridge method
+- ✅ Full settlement flow in Python: create swap request → POST to mint → unblind + verify DLEQ → store proofs
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
