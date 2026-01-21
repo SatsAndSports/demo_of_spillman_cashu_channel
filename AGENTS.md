@@ -93,10 +93,43 @@ A typical test does the following:
 10. The results are _unblinded_ using the deterministic blinding factors
 11. The resulting 1-of-1 P2PK outputs are swapped for anyone-can-spend outputs and added to both wallets
 
-### Running with Nutshell
+### Running with CDK Mint (Recommended)
 
-The Blossom server requires a mint to be running.
-Follow the exact instructions below to get a compatible mint; in particular with the right `SIG_ALL` support.
+The Blossom server and tests require a mint running at `localhost:3338`. The easiest way is to use the CDK mint with the development configuration:
+
+```bash
+# Build the mint with fakewallet support (auto-pays invoices for testing)
+cargo build -p cdk-mintd --features fakewallet
+
+# Start the mint with dev config
+./target/debug/cdk-mintd --config dev-mint/config.toml
+
+# Or using cargo run:
+cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.toml
+```
+
+The dev config uses a fixed mnemonic for reproducible keyset IDs across restarts:
+- **sat keyset:** `001b6c716bf42c7e`
+- **msat keyset:** `00ffedc2dbb87212`
+- **usd keyset:** `00818d176a78e7f0`
+
+**Database Location:** The mint stores its state in `~/.cdk-mintd/cdk-mintd.sqlite`. If you need to reset the mint (e.g., after code changes to keyset derivation), delete this file and restart the mint.
+
+**Stopping/Restarting:**
+```bash
+# Find the PID
+ps aux | grep cdk-mintd
+
+# Stop it
+kill <PID>
+
+# Restart
+./target/debug/cdk-mintd --config dev-mint/config.toml
+```
+
+### Running with Nutshell (Alternative)
+
+Alternatively, you can use a Nutshell mint. Follow the exact instructions below to get a compatible mint with the right `SIG_ALL` support.
 
 In a separate terminal, start a Nutshell mint:
 
@@ -704,6 +737,7 @@ The test suite includes:
 - ✅ Full settlement flow in Python: create swap request → POST to mint → unblind + verify DLEQ → store proofs
 - ✅ **Consolidated `unblind_and_verify_dleq`**: Core logic in `bridge.rs` (`unblind_and_verify_stage1_response()`), thin wrappers in WASM and Python bindings
 - ✅ **Python client displays BOLT11 invoice + QR code** during funding (uses `qrcode` library with graceful fallback)
+- ✅ **Keyset ID validation** (`InvalidKeysetId` check): Verifies that the keyset ID matches the public keys using NUT-02 V1 derivation (`sha256(sorted_compressed_pubkeys)[:7]`). This prevents attackers from providing fake keys while claiming a legitimate keyset ID.
 
 **TODO - Payments:**
 - ❌ Server-side token storage after close (Charlie should keep the proofs)
@@ -717,7 +751,7 @@ The test suite includes:
   - Store keyset info per-channel in `channelFunding` rather than global cache
   - Query mint on-demand for unknown keysets (adds latency)
 - ❌ 'correct' the player's 200-payment by checking Content-Length, not our special header, as we want this to work in caching contexts too
-- ❌ player to send the funding params and token on every request, until we get some confirmation from the server that it understands the channel, via the server's X-Cashu-Channel response. player to start sending it again when there is a 402
+- ✅ player to send the funding params and token on every request, until we get some confirmation from the server that it understands the channel, via the server's X-Cashu-Channel response. player to start sending it again when there is a 402 or network error (e.g. server restart)
 
 **TODO - Player Improvements:**
 
