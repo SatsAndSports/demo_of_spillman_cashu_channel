@@ -17,6 +17,7 @@ Environment variables:
 """
 
 from flask import Flask, request, jsonify
+from typing import Optional
 from cdk_spilman import SpilmanBridge, secret_key_to_pubkey, unblind_and_verify_dleq
 import pyfiglet
 import json
@@ -92,13 +93,16 @@ def print_stats_table(sig=None, frame=None):
     print()
 
 
-def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0, active: bool = False) -> str:
-    """Fetch keyset info from mint and cache it."""
+def fetch_details_for_one_keyset(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0, set_the_active_flag: Optional[bool] = None) -> str:
+    """Fetch keyset info from mint and cache it.
+
+    Optionally, set the value of the 'active' flag
+    """
     cache_key = (mint_url, keyset_id)
     if cache_key in keyset_cache:
         # Update active status if provided
-        if active:
-            keyset_cache[cache_key]["active"] = True
+        if set_the_active_flag is not None:
+            keyset_cache[cache_key]["active"] = set_the_active_flag
         return keyset_cache[cache_key]["info_json"]
     
     print(f"  [Keyset] Fetching keyset {keyset_id} from {mint_url}...")
@@ -118,12 +122,16 @@ def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: i
         }
         
         keyset_info_json = json.dumps(keyset_info)
+        
+        # If set_the_active_flag is None, we default to False for new discoveries
+        active_status = set_the_active_flag if set_the_active_flag is not None else False
+        
         keyset_cache[cache_key] = {
             "info_json": keyset_info_json,
-            "active": active,
+            "active": active_status,
             "unit": unit
         }
-        print(f"  [Keyset] Cached keyset {keyset_id} (active={active})")
+        print(f"  [Keyset] Cached keyset {keyset_id} (active={active_status})")
         return keyset_info_json
     except Exception as e:
         print(f"  [Keyset] Failed to fetch keyset: {e}")
@@ -131,7 +139,7 @@ def fetch_keyset_info(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: i
 
 
 def initialize_keysets():
-    """Fetch and cache keysets from approved mints at startup."""
+    """Fetch and cache keysets (active and inactive) from approved mints at startup."""
     print(f"Fetching keysets from {MINT_URL}...")
     try:
         resp = http_requests.get(f"{MINT_URL}/v1/keysets")
@@ -140,12 +148,12 @@ def initialize_keysets():
         
         for k in keysets:
             if k["unit"] == "sat":
-                fetch_keyset_info(
+                fetch_details_for_one_keyset(
                     MINT_URL, 
                     k["id"], 
                     k["unit"], 
                     k.get("input_fee_ppk", 0),
-                    active=k.get("active", False)
+                    set_the_active_flag=k.get("active", False)
                 )
         
         print(f"Cached {len(keyset_cache)} keysets")
@@ -155,13 +163,12 @@ def initialize_keysets():
 
 
 class AsciiArtHost:
-    """SpilmanHost implementation for ASCII art service.
+    """
+    SpilmanHost implementation for the ASCII Art service.
     
-    This class provides the callbacks that the SpilmanBridge uses to:
-    - Validate channel parameters
-    - Store and retrieve channel funding data
-    - Calculate pricing based on usage
-    - Record successful payments
+    This class provides the necessary callbacks for the SpilmanBridge to 
+    manage channel lifecycle, validate parameters, calculate pricing, 
+    and persist payment state.
     """
     
     def __init__(self, secret_key_hex: str, mint_url: str):
@@ -170,7 +177,15 @@ class AsciiArtHost:
         self.pubkey = secret_key_to_pubkey(secret_key_hex)
     
     def receiver_key_is_acceptable(self, pubkey: str) -> bool:
-        """Check if the receiver pubkey matches our server."""
+        """
+        Validates if the provided receiver public key is acceptable to this server.
+
+        Args:
+            pubkey: The receiver's public key as a hex string.
+
+        Returns:
+            True if the key matches this server's public key, False otherwise.
+        """
         result = pubkey == self.pubkey
         print(f"  [Bridge] receiver_key_is_acceptable:")
         print(f"           received: '{pubkey[:32]}...'")
@@ -179,17 +194,42 @@ class AsciiArtHost:
         return result
     
     def mint_and_keyset_is_acceptable(self, mint: str, keyset_id: str) -> bool:
-        """Check if the mint is our approved mint."""
-        result = mint == self.mint_url
+        """
+        Validates if the provided mint URL and keyset ID are acceptable.
+
+        Args:
+            mint: The mint's URL.
+            keyset_id: The ID of the keyset being used.
+
+        Returns:
+            True if the mint matches the configured URL and the keyset is cached.
+        """
+        # 1. Verify the mint matches our configured one
+        if mint != self.mint_url:
+            print(f"  [Bridge] mint REJECTED: expected '{self.mint_url}', got '{mint}'")
+            return False
+            
+        # 2. Verify we have the keyset in our cache (active or inactive)
+        is_cached = (mint, keyset_id) in keyset_cache
+        
         print(f"  [Bridge] mint_and_keyset_is_acceptable:")
-        print(f"           mint received: '{mint}'")
-        print(f"           mint expected: '{self.mint_url}'")
+        print(f"           mint: '{mint}'")
         print(f"           keyset_id: '{keyset_id}'")
-        print(f"           result: {result}")
-        return result
+        print(f"           is_cached: {is_cached}")
+        
+        return is_cached
     
     def get_funding_and_params(self, channel_id: str):
-        """Get cached funding data for a channel."""
+        """
+        Retrieves cached funding proofs and parameters for a specific channel.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+
+        Returns:
+            A tuple of (params_json, funding_proofs_json, shared_secret_hex, 
+            keyset_info_json) if found, otherwise None.
+        """
         data = channel_funding.get(channel_id)
         if not data:
             return None
@@ -208,7 +248,16 @@ class AsciiArtHost:
         shared_secret: str,
         keyset_info: str
     ):
-        """Save funding data for a new channel."""
+        """
+        Persists funding data for a newly discovered channel.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+            params: The full channel parameters as a JSON string.
+            proofs: The funding proofs as a JSON string.
+            shared_secret: The ECDH shared secret as a hex string.
+            keyset_info: The keyset information as a JSON string.
+        """
         channel_funding[channel_id] = {
             "params": params,
             "proofs": proofs,
@@ -218,7 +267,17 @@ class AsciiArtHost:
         print(f"  [Bridge] Saved funding for channel {channel_id[:16]}...")
     
     def get_amount_due(self, channel_id: str, context_json: str) -> int:
-        """Calculate total amount due based on usage + current request."""
+        """
+        Calculates the cumulative amount due for a channel based on total usage.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+            context_json: Request-specific data used for pricing.
+
+        Returns:
+            The total nominal value (in sats) that Charlie should have received 
+            to cover all service rendered to this channel so far.
+        """
         ctx = json.loads(context_json)
         usage = channel_usage.get(channel_id, {"chars_served": 0})
         new_chars = ctx.get("message_length", 0)
@@ -231,7 +290,24 @@ class AsciiArtHost:
         signature: str,
         context_json: str
     ):
-        """Record a successful payment and update usage."""
+        """
+        Atomically records a verified payment and updates the channel's cumulative usage.
+
+        This method performs two critical state updates:
+        1. Increments service-specific usage metrics (e.g., characters served) 
+           based on metadata provided in the request context.
+        2. Persists the highest balance and its corresponding signature. This 
+           record serves as the server's proof-of-claim when settling the 
+           channel with the mint.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+            balance: The new total balance authorized by the client.
+            signature: Alice's Schnorr signature proving her authorization 
+                      of the new balance.
+            context_json: A JSON string containing request-specific data used 
+                         to track usage.
+        """
         ctx = json.loads(context_json)
         new_chars = ctx.get("message_length", 0)
         
@@ -252,11 +328,24 @@ class AsciiArtHost:
               f"balance={balance} chars_served={channel_usage[channel_id]['chars_served']}")
     
     def is_closed(self, channel_id: str) -> bool:
-        """Check if a channel has been closed."""
+        """
+        Checks if a channel has already been closed and settled.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+
+        Returns:
+            True if the channel is closed, False otherwise.
+        """
         return channel_id in channel_closed  # Works with dict too
     
     def get_server_config(self) -> str:
-        """Return server configuration for validation."""
+        """
+        Returns the server's validation policy configuration.
+
+        Returns:
+            A JSON string defining minimum expiry and per-unit pricing minimums.
+        """
         return json.dumps({
             "min_expiry_in_seconds": 3600,
             "pricing": {
@@ -265,22 +354,56 @@ class AsciiArtHost:
         })
     
     def now_seconds(self) -> int:
-        """Return current Unix timestamp."""
+        """
+        Returns the current system time in seconds.
+
+        Returns:
+            Unix timestamp.
+        """
         return int(time.time())
     
     def get_largest_balance_with_signature(self, channel_id: str):
-        """Get the largest balance and its signature for unilateral closing."""
+        """
+        Retrieves the highest recorded balance and signature for a channel.
+
+        Used during unilateral channel closure to recover the latest off-chain 
+        payment state.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+
+        Returns:
+            A tuple of (balance, signature) if a payment exists, otherwise None.
+        """
         payment = channel_largest_payment.get(channel_id)
         if not payment:
             return None
         return (payment["balance"], payment["signature"])
 
     def get_active_keyset_ids(self, mint: str, unit: str):
-        """Get currently active keyset IDs for a mint and unit."""
+        """
+        Lists the keyset IDs currently considered active for new channels.
+
+        Args:
+            mint: The mint URL.
+            unit: The currency unit (e.g., 'sat').
+
+        Returns:
+            A list of active keyset ID strings.
+        """
         return [kid for (m, kid), data in keyset_cache.items() if m == mint and data.get("unit") == unit and data.get("active")]
 
     def get_keyset_info(self, mint: str, keyset_id: str):
-        """Get full KeysetInfo JSON for a specific keyset."""
+        """
+        Retrieves the full KeysetInfo JSON for a specific keyset.
+
+        Args:
+            mint: The mint URL.
+            keyset_id: The unique ID of the keyset.
+
+        Returns:
+            The KeysetInfo JSON string if found, otherwise None.
+        """
         data = keyset_cache.get((mint, keyset_id))
         return data["info_json"] if data else None
 
@@ -335,11 +458,12 @@ def ascii_art():
         payment = json.loads(payment_header)
         if "params" in payment:
             params = payment["params"]
-            keyset_info_json = fetch_keyset_info(
+            keyset_info_json = fetch_details_for_one_keyset(
                 params["mint"],
                 params["keyset_id"],
                 params["unit"],
-                params.get("input_fee_ppk", 0)
+                params.get("input_fee_ppk", 0),
+                set_the_active_flag=None
             )
     except Exception as e:
         print(f"  [Warning] Failed to parse payment header: {e}")
