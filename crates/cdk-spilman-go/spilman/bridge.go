@@ -60,7 +60,7 @@ type SpilmanHost interface {
 	MintAndKeysetIsAcceptable(mint string, keysetId string) bool
 	GetFundingAndParams(channelId string) (paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, ok bool)
 	SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string)
-	GetAmountDue(channelId, contextJson string) uint64
+	GetAmountDue(channelId string, contextJson *string) uint64
 	RecordPayment(channelId string, balance uint64, signature, contextJson string)
 	IsClosed(channelId string) bool
 	GetServerConfig() string
@@ -343,7 +343,12 @@ func go_save_funding(userData unsafe.Pointer, channelId *C.char, paramsJson *C.c
 func go_get_amount_due(userData unsafe.Pointer, channelId *C.char, contextJson *C.char) C.uint64_t {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	return C.uint64_t(host.GetAmountDue(C.GoString(channelId), C.GoString(contextJson)))
+	var ctx *string
+	if contextJson != nil {
+		s := C.GoString(contextJson)
+		ctx = &s
+	}
+	return C.uint64_t(host.GetAmountDue(C.GoString(channelId), ctx))
 }
 
 //export go_record_payment

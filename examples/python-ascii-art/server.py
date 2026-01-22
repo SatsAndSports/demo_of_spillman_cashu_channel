@@ -266,22 +266,31 @@ class AsciiArtHost:
         }
         print(f"  [Bridge] Saved funding for channel {channel_id[:16]}...")
     
-    def get_amount_due(self, channel_id: str, context_json: str) -> int:
+    def get_amount_due(self, channel_id: str, context_json: Optional[str]) -> int:
         """
         Calculates the cumulative amount due for a channel based on total usage.
 
         Args:
             channel_id: The unique ID of the payment channel.
-            context_json: Request-specific data used for pricing.
+            context_json: Request-specific data used for pricing. 
+                         If None, calculates based on existing usage only.
 
         Returns:
             The total nominal value (in sats) that Charlie should have received 
             to cover all service rendered to this channel so far.
         """
-        ctx = json.loads(context_json)
         usage = channel_usage.get(channel_id, {"chars_served": 0})
-        new_chars = ctx.get("message_length", 0)
-        return (usage["chars_served"] + new_chars) * PRICE_PER_CHAR
+        total_chars = usage["chars_served"]
+
+        if context_json:
+            try:
+                ctx = json.loads(context_json)
+                new_chars = ctx.get("message_length", 0)
+                total_chars += new_chars
+            except Exception as e:
+                print(f"  [Bridge] Error parsing context: {e}")
+
+        return total_chars * PRICE_PER_CHAR
     
     def record_payment(
         self,
