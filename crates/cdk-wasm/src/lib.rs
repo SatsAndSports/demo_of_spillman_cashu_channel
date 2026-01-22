@@ -5,7 +5,7 @@ use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
-use cdk::spilman::{self, ChannelParameters, SpilmanBridge, SpilmanHost};
+use cdk::spilman::{ChannelParameters, SpilmanBridge, SpilmanHost};
 use cdk::util::hex;
 
 /// Initialize panic hook for better error messages in browser console
@@ -224,6 +224,21 @@ impl WasmSpilmanBridge {
     ///
     /// Validates the payment signature and creates the fully-signed swap request
     /// ready to submit to the mint, plus secrets for unblinding the response.
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
+    ///   and optionally params + funding_proofs for unknown channels
+    /// * `keyset_info_json` - Optional keyset info JSON (required for unknown channels)
+    ///
+    /// # Returns
+    /// JSON with:
+    /// - `swap_request`: The fully-signed swap request ready for mint
+    /// - `expected_total`: Expected total output value after stage 1 fees
+    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
+    /// - `output_keyset_info`: Keyset info for the output keyset
+    ///
+    /// # Errors
+    /// Returns error JSON with same structure as processPayment 402 responses
     #[wasm_bindgen(js_name = createCloseData)]
     pub fn create_close_data(
         &self,
@@ -279,6 +294,22 @@ impl WasmSpilmanBridge {
     }
 
     /// Create data for a unilateral (server-initiated) channel close
+    ///
+    /// This retrieves the largest balance and signature from the host
+    /// and constructs a fully-signed swap request ready for the mint.
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID to close
+    ///
+    /// # Returns
+    /// JSON with same structure as createCloseData:
+    /// - `swap_request`: The fully-signed swap request ready for mint
+    /// - `expected_total`: Expected total output value after stage 1 fees
+    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
+    /// - `output_keyset_info`: Keyset info for the output keyset
+    ///
+    /// # Errors
+    /// Returns error JSON if no payment proof stored, channel closed, or validation fails
     #[wasm_bindgen(js_name = createUnilateralCloseData)]
     pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<String, JsValue> {
         match self.bridge.create_unilateral_close_data(channel_id) {
@@ -327,6 +358,8 @@ impl WasmSpilmanBridge {
 }
 
 /// Compute ECDH shared secret from a secret key and counterparty's public key
+///
+/// Returns the x-coordinate of the shared point as a hex string (32 bytes).
 #[wasm_bindgen]
 pub fn compute_shared_secret(
     my_secret_hex: &str,
@@ -337,6 +370,9 @@ pub fn compute_shared_secret(
 }
 
 /// Get channel_id from params JSON, shared secret, and keyset info
+///
+/// This is effectively a method on ChannelParameters for FFI.
+/// Takes the params JSON, the pre-computed shared secret (hex), and keyset info JSON.
 #[wasm_bindgen]
 pub fn channel_parameters_get_channel_id(
     params_json: &str,
@@ -352,6 +388,16 @@ pub fn channel_parameters_get_channel_id(
 }
 
 /// Create funding outputs for a Spilman channel
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON (from get_channel_id_params_json or stored in DB)
+/// - `my_secret_hex`: Alice's secret key (hex)
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+///
+/// Returns JSON with:
+/// - `funding_token_nominal`: The nominal amount to request when minting the funding token
+/// - `blinded_messages`: Array of blinded messages (ready for mint request)
+/// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount} for unblinding later
 #[wasm_bindgen]
 pub fn create_funding_outputs(
     params_json: &str,
@@ -363,6 +409,26 @@ pub fn create_funding_outputs(
 }
 
 /// Unblind blind signatures and verify DLEQ proofs
+///
+/// Takes blind signatures from a mint swap response, unblinds them using the
+/// secrets and blinding factors from bridge.createCloseData(), verifies DLEQ
+/// proofs, and returns the separated receiver/sender proofs.
+///
+/// # Arguments
+/// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
+/// * `secrets_with_blinding_json` - JSON array from createCloseData's secrets_with_blinding
+/// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
+/// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
+/// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
+/// * `balance` - The receiver's (Charlie's) intended balance (for verification)
+/// * `output_keyset_info_json` - Optional KeysetInfo JSON for outputs (if switched during close)
+///
+/// # Returns
+/// JSON object with:
+/// - `receiver_proofs`: Array of Charlie's P2PK proofs (DLEQ verified)
+/// - `sender_proofs`: Array of Alice's P2PK proofs (DLEQ verified)
+/// - `receiver_sum_after_stage1`: Sum of receiver proof amounts
+/// - `sender_sum_after_stage1`: Sum of sender proof amounts
 #[wasm_bindgen]
 pub fn unblind_and_verify_dleq(
     blind_signatures_json: &str,
@@ -386,6 +452,22 @@ pub fn unblind_and_verify_dleq(
 }
 
 /// Create a signed balance update from Alice (sender) to Charlie (receiver)
+///
+/// This function creates a balance update message signed by Alice, which authorizes
+/// Charlie to claim the specified balance when closing the channel.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `alice_secret_hex` - Alice's secret key in hex
+/// * `funding_proofs_json` - JSON array of funding proofs
+/// * `charlie_balance` - The balance to authorize for Charlie
+///
+/// # Returns
+/// JSON object with:
+/// - `channel_id`: The channel ID
+/// - `amount`: The authorized balance
+/// - `signature`: Alice's signature over the balance update
 #[wasm_bindgen]
 pub fn spilman_channel_sender_create_signed_balance_update(
     params_json: &str,
@@ -405,6 +487,17 @@ pub fn spilman_channel_sender_create_signed_balance_update(
 }
 
 /// Verify a balance update signature from the sender (Alice)
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON
+/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+/// - `channel_id`: The channel ID from the balance update
+/// - `balance`: The balance amount from the balance update
+/// - `signature`: Alice's Schnorr signature (hex)
+///
+/// Returns `true` if the signature is valid, or an error if invalid
 #[wasm_bindgen]
 pub fn verify_balance_update_signature(
     params_json: &str,
@@ -415,9 +508,6 @@ pub fn verify_balance_update_signature(
     balance: u64,
     signature: &str,
 ) -> Result<bool, JsValue> {
-    // This one doesn't have a direct string binding yet, let's see if we should add it or just leave this as is.
-    // Given the goal is thin wrappers, maybe we should add it to bindings.rs too.
-    // For now, I'll keep the logic here but call the core structures.
     use bitcoin::secp256k1::schnorr::Signature;
     use cdk::nuts::Proof;
     use cdk::spilman::{parse_keyset_info_from_json, BalanceUpdateMessage, EstablishedChannel};
@@ -460,6 +550,17 @@ pub fn verify_balance_update_signature(
 }
 
 /// Verify DLEQ proof on a Proof (offline signature verification)
+///
+/// This allows anyone to verify that the mint really signed this token,
+/// without needing to contact the mint. The proof must include the DLEQ
+/// data (e, s, r) from construct_proofs.
+///
+/// Takes:
+/// - `proof_json`: A single proof with DLEQ data
+///   Format: {"amount": 1, "id": "00...", "secret": "...", "C": "02...", "dleq": {"e": "...", "s": "...", "r": "..."}}
+/// - `mint_pubkey_hex`: The mint's public key for this amount (from keyset keys)
+///
+/// Returns `true` if the DLEQ is valid, throws error otherwise
 #[wasm_bindgen]
 pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool, JsValue> {
     use cdk::nuts::Proof;
@@ -477,6 +578,19 @@ pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool
 }
 
 /// Verify that a channel is valid
+///
+/// This verifies everything about a channel that the receiver (Charlie)
+/// needs to check before accepting it:
+///
+/// 1. DLEQ proofs - the mint actually signed each funding proof
+///
+/// Takes:
+/// - `params_json`: Channel parameters JSON
+/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `funding_proofs_json`: JSON array of funding proofs
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+///
+/// Returns JSON: {"valid": true, "errors": []} or {"valid": false, "errors": [...]}
 #[wasm_bindgen]
 pub fn verify_channel(
     params_json: &str,
@@ -512,6 +626,18 @@ pub fn verify_channel(
 }
 
 /// Construct proofs from blind signatures
+///
+/// Takes the blind signatures from the mint and unblinds them using the
+/// secrets and blinding factors from `create_funding_outputs`.
+///
+/// Takes:
+/// - `blind_signatures_json`: JSON array of blind signatures from mint response
+///   Format: [{"amount": 1, "id": "00...", "C_": "02..."}, ...]
+/// - `secrets_with_blinding_json`: JSON array from `create_funding_outputs`
+///   Format: [{"secret": "...", "blinding_factor": "...", "amount": 1}, ...]
+/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
+///
+/// Returns JSON array of proofs ready for use
 #[wasm_bindgen]
 pub fn construct_proofs(
     blind_signatures_json: &str,
@@ -527,6 +653,20 @@ pub fn construct_proofs(
 }
 
 /// Get Alice's blinded secret key for a specific stage 2 output
+///
+/// Alice uses this to sign when spending a specific stage 1 proof in stage 2.
+/// Each stage 1 output is P2PK locked to a UNIQUE blinded pubkey derived from (amount, index),
+/// so she needs the corresponding blinded secret key to spend each one.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `alice_secret_hex` - Alice's raw secret key in hex
+/// * `amount` - The proof amount
+/// * `index` - The proof index within proofs of the same amount
+///
+/// # Returns
+/// Hex string of Alice's blinded secret key for this specific output
 #[wasm_bindgen]
 pub fn get_sender_blinded_secret_key_for_stage2_output(
     params_json: &str,
@@ -555,6 +695,21 @@ pub fn get_sender_blinded_secret_key_for_stage2_output(
 }
 
 /// Get Charlie's blinded secret key for a specific stage 2 output
+///
+/// Charlie uses this to sign when spending a specific stage 1 proof in stage 2.
+/// Each stage 1 output is P2PK locked to a UNIQUE blinded pubkey derived from (amount, index),
+/// so he needs the corresponding blinded secret key to spend each one.
+///
+/// # Arguments
+/// * `params_json` - Channel parameters JSON
+/// * `keyset_info_json` - Keyset info JSON with keys and fee info
+/// * `charlie_secret_hex` - Charlie's raw secret key in hex
+/// * `shared_secret_hex` - Pre-computed shared secret (hex)
+/// * `amount` - The proof amount
+/// * `index` - The proof index within proofs of the same amount
+///
+/// # Returns
+/// Hex string of Charlie's blinded secret key for this specific output
 #[wasm_bindgen]
 pub fn get_receiver_blinded_secret_key_for_stage2_output(
     params_json: &str,
