@@ -156,6 +156,7 @@ def mint_funding_token(mint_url: str, amount: int, blinded_messages: list) -> li
 
 
 def main():
+    global MINT_URL
     # Get messages from command line or use defaults
     messages = sys.argv[1:] if len(sys.argv) > 1 else ["Hello", "Cashu", "World"]
     
@@ -177,6 +178,11 @@ def main():
         print(f"\nERROR: Cannot connect to server at {SERVER_URL}")
         print("Make sure the server is running: python server.py")
         sys.exit(1)
+    
+    # Use mint from server if provided
+    if "mint" in server_params:
+        MINT_URL = server_params["mint"]
+        print(f"  Using mint from server: {MINT_URL}")
     
     charlie_pubkey = server_params["receiver_pubkey"]
     print(f"  Server pubkey: {charlie_pubkey[:24]}...")

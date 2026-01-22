@@ -52,9 +52,9 @@ go-demo-server: go-build-rust
 	fuser -k 5001/tcp || true
 	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
 
-# Run the Go demo client
-go-demo-client:
-	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client Hello Go Demo
+# Run parallel python demo test
+test-python-parallel: python-dev
+	@bash scripts/python-parallel-demo.sh
 
 clean:
 	cargo clean
