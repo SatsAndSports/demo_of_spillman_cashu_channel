@@ -7,7 +7,8 @@ MATURIN := $(VENV)/bin/maturin
 
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
-.PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client
+.PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
+	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -51,6 +52,10 @@ go-build-rust:
 go-demo-server: go-build-rust
 	fuser -k 5001/tcp || true
 	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
+
+# Run the Go demo client
+go-demo-client:
+	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
 
 # Run parallel python demo test
 test-python-parallel: python-dev
