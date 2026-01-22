@@ -47,52 +47,6 @@ channel_closed = {}    # channel_id -> {balance, receiver_proofs, sender_proofs}
 keyset_cache = {}
 
 
-def print_stats_table(sig=None, frame=None):
-    """Print ASCII table of all channel stats. Can be called via Ctrl+\\ (SIGQUIT)."""
-    print()
-    print("=" * 70)
-    print("  Channel Statistics (Press Ctrl+\\ to refresh)")
-    print("=" * 70)
-    
-    if not channel_funding:
-        print("  No channels registered yet.")
-        print("=" * 70)
-        print()
-        return
-    
-    # Table header
-    print(f"  {'ID':<10} {'Status':<8} {'Capacity':>10} {'Balance':>10} {'Usage':>10}")
-    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
-    
-    total_balance = 0
-    total_usage = 0
-    
-    for cid, funding in channel_funding.items():
-        try:
-            params = json.loads(funding["params"])
-            capacity = params.get("capacity", 0)
-            unit = params.get("unit", "sat")
-        except:
-            capacity = 0
-            unit = "?"
-        
-        usage = channel_usage.get(cid, {}).get("chars_served", 0)
-        payment = channel_largest_payment.get(cid, {})
-        balance = payment.get("balance", 0)
-        status = "CLOSED" if cid in channel_closed else "OPEN"
-        
-        short_id = cid[:8]
-        print(f"  {short_id:<10} {status:<8} {capacity:>7} {unit:<3} {balance:>7} {unit:<3} {usage:>7} ch")
-        
-        total_balance += balance
-        total_usage += usage
-    
-    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
-    print(f"  {'TOTAL':<10} {'':<8} {'':<10} {total_balance:>7} sat {total_usage:>7} ch")
-    print("=" * 70)
-    print()
-
-
 def fetch_details_for_one_keyset(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0, set_the_active_flag: Optional[bool] = None) -> str:
     """Fetch keyset info from mint and cache it.
 
@@ -485,6 +439,52 @@ def ascii_art():
         "cost": cost,
         "payment": payment_info
     })
+
+
+def print_stats_table(sig=None, frame=None):
+    """Print ASCII table of all channel stats. Can be called via Ctrl+\\ (SIGQUIT)."""
+    print()
+    print("=" * 70)
+    print("  Channel Statistics (Press Ctrl+\\ to refresh)")
+    print("=" * 70)
+    
+    if not channel_funding:
+        print("  No channels registered yet.")
+        print("=" * 70)
+        print()
+        return
+    
+    # Table header
+    print(f"  {'ID':<10} {'Status':<8} {'Capacity':>10} {'Balance':>10} {'Usage':>10}")
+    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
+    
+    total_balance = 0
+    total_usage = 0
+    
+    for cid, funding in channel_funding.items():
+        try:
+            params = json.loads(funding["params"])
+            capacity = params.get("capacity", 0)
+            unit = params.get("unit", "sat")
+        except:
+            capacity = 0
+            unit = "?"
+        
+        usage = channel_usage.get(cid, {}).get("chars_served", 0)
+        payment = channel_largest_payment.get(cid, {})
+        balance = payment.get("balance", 0)
+        status = "CLOSED" if cid in channel_closed else "OPEN"
+        
+        short_id = cid[:8]
+        print(f"  {short_id:<10} {status:<8} {capacity:>7} {unit:<3} {balance:>7} {unit:<3} {usage:>7} ch")
+        
+        total_balance += balance
+        total_usage += usage
+    
+    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'TOTAL':<10} {'':<8} {'':<10} {total_balance:>7} sat {total_usage:>7} ch")
+    print("=" * 70)
+    print()
 
 
 def close_channel(channel_id: str) -> dict:
