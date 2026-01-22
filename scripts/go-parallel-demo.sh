@@ -46,8 +46,7 @@ if [ ! -f "$MINT_BIN" ]; then
     exit 1
 fi
 
-echo "--- Building Go demo and Rust bridge ---"
-make go-build-rust
+echo "--- Building Go demo ---"
 (cd "$GO_DEMO_DIR" && go build -o main .)
 
 # 4. Find two distinct free ports
