@@ -3,6 +3,7 @@
 //! This module provides PyO3 bindings for both server-side (SpilmanBridge)
 //! and client-side (standalone functions) Spilman channel operations.
 
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use std::str::FromStr;
@@ -307,42 +308,19 @@ impl SpilmanBridge {
     ///
     /// Returns:
     ///     JSON string with success/error and header/body
-    #[pyo3(signature = (payment_json, context_json, keyset_info_json=None))]
-    fn process_payment(
-        &self,
-        payment_json: &str,
-        context_json: &str,
-        keyset_info_json: Option<String>,
-    ) -> PyResult<String> {
-        let response =
-            self.inner
-                .process_payment(payment_json, context_json, keyset_info_json.as_deref());
-
+    #[pyo3(signature = (payment_json, context_json))]
+    fn process_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
+        let response = self.inner.process_payment(payment_json, context_json);
         serde_json::to_string(&response)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize response: {}", e)))
     }
 
-    /// Create data needed to close a channel.
-    ///
-    /// Args:
-    ///     payment_json: JSON string with channel_id, balance, signature
-    ///     keyset_info_json: Optional keyset info JSON
-    ///
-    /// Returns:
-    ///     JSON string with swap_request, expected_total, and secrets_with_blinding
-    #[pyo3(signature = (payment_json, keyset_info_json=None))]
-    fn create_close_data(
-        &self,
-        payment_json: &str,
-        keyset_info_json: Option<String>,
-    ) -> PyResult<String> {
-        match self
-            .inner
-            .create_close_data(payment_json, keyset_info_json.as_deref())
-        {
+    #[pyo3(signature = (payment_json))]
+    fn create_close_data(&self, payment_json: &str) -> PyResult<String> {
+        match self.inner.create_close_data(payment_json) {
             Ok(close_data) => {
                 let swap_request_json = serde_json::to_value(&close_data.swap_request)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
                 let secrets_with_blinding: Vec<serde_json::Value> = close_data
                     .secrets_with_blinding

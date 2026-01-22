@@ -508,13 +508,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     }
 
     /// Process an incoming payment
-    pub fn process_payment(
-        &self,
-        payment_json: &str,
-        context_json: &str,
-        keyset_info_json: Option<&str>,
-    ) -> PaymentResponse {
-        match self.process_payment_inner(payment_json, context_json, keyset_info_json) {
+    pub fn process_payment(&self, payment_json: &str, context_json: &str) -> PaymentResponse {
+        match self.process_payment_inner(payment_json, context_json) {
             Ok(resp) => resp,
             Err(e) => {
                 let mut extra = BTreeMap::new();
@@ -587,7 +582,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         &self,
         payment_json: &str,
         context_json: &str,
-        keyset_info_json: Option<&str>,
     ) -> Result<PaymentResponse, BridgeError> {
         // 1. Parse payment request
         let payment: PaymentRequest = serde_json::from_str::<PaymentRequest>(payment_json)
@@ -618,16 +612,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                     .funding_proofs
                     .as_ref()
                     .ok_or(BridgeError::UnknownChannel)?;
-                let keyset_info_json =
-                    keyset_info_json.ok_or(BridgeError::MintOrKeysetNotAcceptable)?;
 
                 // Perform full validation
-                self.validate_and_save_new_channel(
-                    channel_id,
-                    params_val,
-                    funding_proofs,
-                    keyset_info_json,
-                )?
+                self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?
             }
         };
 
@@ -699,7 +686,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         channel_id: &str,
         params_val: &serde_json::Value,
         funding_proofs: &[Proof],
-        keyset_info_json: &str,
     ) -> Result<(String, String, String, String), BridgeError> {
         let server_secret_key = self
             .server_secret_key
@@ -743,6 +729,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         if !self.host.mint_and_keyset_is_acceptable(mint, &keyset_id) {
             return Err(BridgeError::MintOrKeysetNotAcceptable);
         }
+
+        // Get keyset info from host
+        let keyset_info_json = self
+            .host
+            .get_keyset_info(mint, &keyset_id)
+            .ok_or(BridgeError::MintOrKeysetNotAcceptable)?;
 
         // Parse channel policy for validations
         let config_json = self.host.get_channel_policy();
@@ -792,7 +784,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let shared_secret_hex = hex::encode(shared_secret);
 
         // Parse keyset info
-        let keyset_info = super::parse_keyset_info_from_json(keyset_info_json)
+        let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(BridgeError::InvalidRequest)?;
 
         // Verify channel_id matches
@@ -822,14 +814,14 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             &params_json,
             &funding_proofs_json,
             &shared_secret_hex,
-            keyset_info_json,
+            &keyset_info_json,
         );
 
         Ok((
             params_json,
             funding_proofs_json,
             shared_secret_hex,
-            keyset_info_json.to_string(),
+            keyset_info_json,
         ))
     }
 
@@ -920,11 +912,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// 3. Use secrets_with_blinding to unblind the response
     ///
     /// Returns Err if validation fails (same errors as process_payment).
-    pub fn create_close_data(
-        &self,
-        payment_json: &str,
-        keyset_info_json: Option<&str>,
-    ) -> Result<CloseData, BridgeError> {
+    pub fn create_close_data(&self, payment_json: &str) -> Result<CloseData, BridgeError> {
         // 1. Parse payment request
         let payment: PaymentRequest = serde_json::from_str(payment_json)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
@@ -954,15 +942,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                     .funding_proofs
                     .as_ref()
                     .ok_or(BridgeError::UnknownChannel)?;
-                let keyset_info_json =
-                    keyset_info_json.ok_or(BridgeError::MintOrKeysetNotAcceptable)?;
 
-                self.validate_and_save_new_channel(
-                    channel_id,
-                    params_val,
-                    funding_proofs,
-                    keyset_info_json,
-                )?
+                // Perform full validation
+                self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?
             }
         };
 
@@ -1418,15 +1400,14 @@ mod tests {
             "funding_proofs": []
         });
 
-        let keyset_info = serde_json::json!({
+        let _keyset_info = serde_json::json!({
             "keysetId": "00aabbccddeeff00",
             "unit": "sat",
             "inputFeePpk": 0,
             "keys": {}
         });
 
-        let response =
-            bridge.process_payment(&payment.to_string(), "{}", Some(&keyset_info.to_string()));
+        let response = bridge.process_payment(&payment.to_string(), "{}");
 
         assert!(!response.success);
         assert!(response
@@ -1465,15 +1446,14 @@ mod tests {
             "funding_proofs": []
         });
 
-        let keyset_info = serde_json::json!({
+        let _keyset_info = serde_json::json!({
             "keysetId": "00aabbccddeeff00",
             "unit": "sat",
             "inputFeePpk": 0,
             "keys": {}
         });
 
-        let response =
-            bridge.process_payment(&payment.to_string(), "{}", Some(&keyset_info.to_string()));
+        let response = bridge.process_payment(&payment.to_string(), "{}");
 
         assert!(!response.success);
         assert!(response
@@ -1643,7 +1623,7 @@ mod tests {
 
         // EXECUTE: Create close data
         // Bridge should see Keyset A is inactive and switch to Keyset B
-        let close_data = bridge.create_close_data(&payment_json, None).unwrap();
+        let close_data = bridge.create_close_data(&payment_json).unwrap();
 
         // VERIFY: Output keyset is Keyset B
         assert_eq!(close_data.output_keyset_info.keyset_id, keyset_b_id);

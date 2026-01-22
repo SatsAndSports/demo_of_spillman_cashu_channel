@@ -451,29 +451,8 @@ func runServer() {
 		json.NewDecoder(r.Body).Decode(&req)
 
 		ctxJson, _ := json.Marshal(map[string]interface{}{"message_length": len(req.Message)})
-		var keysetInfoJson *string
-		var pd struct {
-			Params struct {
-				Mint        string `json:"mint"`
-				KeysetId    string `json:"keyset_id"`
-				Unit        string `json:"unit"`
-				InputFeePpk uint64 `json:"input_fee_ppk"`
-			} `json:"params"`
-		}
-		if err := json.Unmarshal([]byte(paymentHeader), &pd); err == nil && pd.Params.KeysetId != "" {
-			log.Printf("  [Server] Found keyset_id %s in header, fetching info...\n", pd.Params.KeysetId)
-			info := fetchKeysetInfo(pd.Params.Mint, pd.Params.KeysetId, pd.Params.Unit, pd.Params.InputFeePpk, false)
-			if info != "" {
-				log.Printf("  [Server] Successfully fetched keyset info (%d bytes)\n", len(info))
-				keysetInfoJson = &info
-			} else {
-				log.Printf("  [Server] Failed to fetch keyset info for %s\n", pd.Params.KeysetId)
-			}
-		} else if err != nil {
-			log.Printf("  [Server] Failed to unmarshal payment header: %v\n", err)
-		}
 
-		respJson, err := bridge.ProcessPayment(paymentHeader, string(ctxJson), keysetInfoJson)
+		respJson, err := bridge.ProcessPayment(paymentHeader, string(ctxJson))
 		if err != nil {
 			log.Printf("  [Error] ProcessPayment bridge error: %v", err)
 		}

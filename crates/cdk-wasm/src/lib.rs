@@ -223,11 +223,8 @@ impl WasmSpilmanBridge {
         &self,
         payment_json: &str,
         context_json: &str,
-        keyset_info_json: Option<String>,
     ) -> Result<String, JsValue> {
-        let response =
-            self.bridge
-                .process_payment(payment_json, context_json, keyset_info_json.as_deref());
+        let response = self.bridge.process_payment(payment_json, context_json);
 
         serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -252,15 +249,8 @@ impl WasmSpilmanBridge {
     /// # Errors
     /// Returns error JSON with same structure as processPayment 402 responses
     #[wasm_bindgen(js_name = createCloseData)]
-    pub fn create_close_data(
-        &self,
-        payment_json: &str,
-        keyset_info_json: Option<String>,
-    ) -> Result<String, JsValue> {
-        match self
-            .bridge
-            .create_close_data(payment_json, keyset_info_json.as_deref())
-        {
+    pub fn create_close_data(&self, payment_json: &str) -> Result<String, JsValue> {
+        match self.bridge.create_close_data(payment_json) {
             Ok(close_data) => {
                 // Serialize swap_request
                 let swap_request_json =

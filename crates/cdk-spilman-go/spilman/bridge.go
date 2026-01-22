@@ -30,8 +30,8 @@ typedef struct {
 SpilmanHostCallbacks fill_callbacks(void* user_data);
 void* spilman_bridge_new(SpilmanHostCallbacks callbacks, const char* server_secret_key_hex);
 void spilman_bridge_free(void* ptr);
-CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json, const char* keyset_info_json);
-CResult spilman_bridge_create_close_data(void* ptr, const char* payment_json, const char* keyset_info_json);
+CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json);
+CResult spilman_bridge_create_close_data(void* ptr, const char* payment_json);
 CResult spilman_bridge_create_unilateral_close_data(void* ptr, const char* channel_id);
 void spilman_free_string(char* ptr);
 void spilman_free_cresult(CResult res);
@@ -97,19 +97,13 @@ func (b *Bridge) Free() {
 	b.handle.Delete()
 }
 
-func (b *Bridge) ProcessPayment(paymentJson, contextJson string, keysetInfoJson *string) (string, error) {
+func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (string, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 	cContext := C.CString(contextJson)
 	defer C.free(unsafe.Pointer(cContext))
 
-	var cKeysetInfo *C.char
-	if keysetInfoJson != nil {
-		cKeysetInfo = C.CString(*keysetInfoJson)
-		defer C.free(unsafe.Pointer(cKeysetInfo))
-	}
-
-	res := C.spilman_bridge_process_payment(b.ptr, cPayment, cContext, cKeysetInfo)
+	res := C.spilman_bridge_process_payment(b.ptr, cPayment, cContext)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
@@ -118,17 +112,11 @@ func (b *Bridge) ProcessPayment(paymentJson, contextJson string, keysetInfoJson 
 	return C.GoString(res.data), nil
 }
 
-func (b *Bridge) CreateCloseData(paymentJson string, keysetInfoJson *string) (string, error) {
+func (b *Bridge) CreateCloseData(paymentJson string) (string, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 
-	var cKeysetInfo *C.char
-	if keysetInfoJson != nil {
-		cKeysetInfo = C.CString(*keysetInfoJson)
-		defer C.free(unsafe.Pointer(cKeysetInfo))
-	}
-
-	res := C.spilman_bridge_create_close_data(b.ptr, cPayment, cKeysetInfo)
+	res := C.spilman_bridge_create_close_data(b.ptr, cPayment)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
