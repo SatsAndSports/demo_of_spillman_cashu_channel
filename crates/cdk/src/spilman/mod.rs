@@ -21,10 +21,12 @@ mod sender_and_receiver;
 
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
 pub use bindings::{
-    channel_parameters_get_channel_id, compute_shared_secret_from_hex, parse_keyset_info_from_json,
+    channel_parameters_get_channel_id, compute_shared_secret_from_hex, construct_proofs,
+    create_funding_outputs, create_signed_balance_update, parse_keyset_info_from_json,
 };
 pub use bridge::{
-    unblind_and_verify_stage1_response, CloseData, SpilmanBridge, SpilmanHost, UnblindResult,
+    unblind_and_verify_dleq, unblind_and_verify_stage1_response, CloseData, SpilmanBridge,
+    SpilmanHost, UnblindResult,
 };
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,

@@ -1,6 +1,6 @@
-use cdk::nuts::{Id, PublicKey, SecretKey};
+use cdk::nuts::SecretKey;
 use cdk::spilman::{self, SpilmanBridge, SpilmanHost};
-pub use libc::{c_char, c_int, c_uchar, c_uint};
+pub use libc::{c_char, c_int};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -98,12 +98,12 @@ unsafe impl Send for CGoSpilmanHost {}
 unsafe impl Sync for CGoSpilmanHost {}
 
 impl SpilmanHost for CGoSpilmanHost {
-    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool {
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &cdk::nuts::PublicKey) -> bool {
         let hex = CString::new(receiver_pubkey.to_hex()).unwrap();
         (self.callbacks.receiver_key_is_acceptable)(self.callbacks.user_data, hex.as_ptr()) != 0
     }
 
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool {
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &cdk::nuts::Id) -> bool {
         let mint_c = CString::new(mint).unwrap();
         let kid_c = CString::new(keyset_id.to_string()).unwrap();
         (self.callbacks.mint_and_keyset_is_acceptable)(
@@ -224,7 +224,11 @@ impl SpilmanHost for CGoSpilmanHost {
         }
     }
 
-    fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
+    fn get_active_keyset_ids(
+        &self,
+        mint: &str,
+        unit: &cdk::nuts::CurrencyUnit,
+    ) -> Vec<cdk::nuts::Id> {
         let mint_c = CString::new(mint).unwrap();
         let unit_str = unit.to_string();
         let unit_c = CString::new(unit_str).unwrap();
@@ -244,7 +248,7 @@ impl SpilmanHost for CGoSpilmanHost {
         }
     }
 
-    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
+    fn get_keyset_info(&self, mint: &str, keyset_id: &cdk::nuts::Id) -> Option<String> {
         let mint_c = CString::new(mint).unwrap();
         let kid_c = CString::new(keyset_id.to_string()).unwrap();
 
@@ -401,26 +405,26 @@ pub unsafe extern "C" fn spilman_bridge_create_unilateral_close_data(
 
 #[no_mangle]
 pub unsafe extern "C" fn spilman_unblind_and_verify_dleq(
-    blind_signatures_json: *const c_char,
-    secrets_with_blinding_json: *const c_char,
+    sigs_json: *const c_char,
+    secrets_json: *const c_char,
     params_json: *const c_char,
-    keyset_info_json: *const c_char,
+    keyset_json: *const c_char,
     shared_secret_hex: *const c_char,
     balance: u64,
-    output_keyset_info_json: *const c_char,
+    output_keyset_json: *const c_char,
 ) -> CResult {
-    let sigs = CStr::from_ptr(blind_signatures_json).to_str().unwrap();
-    let secrets = CStr::from_ptr(secrets_with_blinding_json).to_str().unwrap();
+    let sigs = CStr::from_ptr(sigs_json).to_str().unwrap();
+    let secrets = CStr::from_ptr(secrets_json).to_str().unwrap();
     let params = CStr::from_ptr(params_json).to_str().unwrap();
-    let keyset = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+    let keyset = CStr::from_ptr(keyset_json).to_str().unwrap();
     let secret = CStr::from_ptr(shared_secret_hex).to_str().unwrap();
-    let output_keyset = if !output_keyset_info_json.is_null() {
-        Some(CStr::from_ptr(output_keyset_info_json).to_str().unwrap())
+    let output_keyset = if !output_keyset_json.is_null() {
+        Some(CStr::from_ptr(output_keyset_json).to_str().unwrap())
     } else {
         None
     };
 
-    match spilman_unblind_and_verify_dleq_inner(
+    match spilman::unblind_and_verify_dleq(
         sigs,
         secrets,
         params,
@@ -434,135 +438,23 @@ pub unsafe extern "C" fn spilman_unblind_and_verify_dleq(
     }
 }
 
-fn spilman_unblind_and_verify_dleq_inner(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    params_json: &str,
-    keyset_info_json: &str,
-    shared_secret_hex: &str,
-    balance: u64,
-    output_keyset_info_json: Option<&str>,
-) -> Result<String, String> {
-    use cdk::nuts::{BlindSignature, SecretKey};
-    use cdk::secret::Secret;
-    use cdk::spilman::{
-        unblind_and_verify_stage1_response, ChannelParameters, DeterministicSecretWithBlinding,
-    };
-
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-    let output_keyset_info = match output_keyset_info_json {
-        Some(json) => spilman::parse_keyset_info_from_json(json)?,
-        None => keyset_info.clone(),
-    };
-
-    let shared_secret_bytes = cdk::util::hex::decode(shared_secret_hex)
-        .map_err(|e| format!("Invalid shared secret hex: {}", e))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
-        .try_into()
-        .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
-
-    let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
-            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
-
-    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
-        .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
-
-    let swb_raw: Vec<serde_json::Value> = serde_json::from_str(secrets_with_blinding_json)
-        .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
-
-    let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> = Vec::new();
-    for (_i, swb) in swb_raw.iter().enumerate() {
-        let secret_str = swb["secret"].as_str().ok_or("Missing secret")?;
-        let blinding_hex = swb["blinding_factor"].as_str().ok_or("Missing blinding")?;
-        let is_receiver = swb["is_receiver"].as_bool().ok_or("Missing is_receiver")?;
-        let amount = swb["amount"].as_u64().ok_or("Missing amount")?;
-        let index = swb["index"].as_u64().ok_or("Missing index")? as usize;
-
-        let secret = Secret::new(secret_str.to_string());
-        let blinding_bytes = cdk::util::hex::decode(blinding_hex).map_err(|e| e.to_string())?;
-        let blinding_factor = SecretKey::from_slice(&blinding_bytes).map_err(|e| e.to_string())?;
-
-        secrets_with_blinding.push((
-            DeterministicSecretWithBlinding {
-                secret,
-                blinding_factor,
-                amount,
-                index,
-            },
-            is_receiver,
-        ));
-    }
-
-    let result = unblind_and_verify_stage1_response(
-        blind_signatures,
-        secrets_with_blinding,
-        &params,
-        &output_keyset_info,
-        balance,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let json = serde_json::json!({
-        "receiver_proofs": result.receiver_proofs,
-        "sender_proofs": result.sender_proofs,
-        "receiver_sum_after_stage1": result.receiver_sum,
-        "sender_sum_after_stage1": result.sender_sum
-    });
-
-    Ok(json.to_string())
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn spilman_create_signed_balance_update(
     params_json: *const c_char,
-    keyset_info_json: *const c_char,
+    keyset_json: *const c_char,
     secret_hex: *const c_char,
     proofs_json: *const c_char,
     balance: u64,
 ) -> CResult {
     let p = CStr::from_ptr(params_json).to_str().unwrap();
-    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+    let k = CStr::from_ptr(keyset_json).to_str().unwrap();
     let s = CStr::from_ptr(secret_hex).to_str().unwrap();
     let pr = CStr::from_ptr(proofs_json).to_str().unwrap();
 
-    match spilman_create_signed_balance_update_inner(p, k, s, pr, balance) {
+    match spilman::create_signed_balance_update(p, k, s, pr, balance) {
         Ok(res) => CResult::success(res),
         Err(e) => CResult::error(e),
     }
-}
-
-fn spilman_create_signed_balance_update_inner(
-    params_json: &str,
-    keyset_info_json: &str,
-    secret_hex: &str,
-    proofs_json: &str,
-    balance: u64,
-) -> Result<String, String> {
-    use cdk::nuts::Proof;
-    use cdk::spilman::{ChannelParameters, EstablishedChannel, SpilmanChannelSender};
-
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-    let alice_secret = SecretKey::from_hex(secret_hex).map_err(|e| e.to_string())?;
-    let params =
-        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
-            .map_err(|e| e.to_string())?;
-    let funding_proofs: Vec<Proof> =
-        serde_json::from_str(proofs_json).map_err(|e| e.to_string())?;
-    let channel = EstablishedChannel::new(params, funding_proofs).map_err(|e| e.to_string())?;
-    let sender = SpilmanChannelSender::new(alice_secret, channel);
-
-    let (balance_update, _) = sender
-        .create_signed_balance_update(balance)
-        .map_err(|e| e.to_string())?;
-
-    let result = serde_json::json!({
-        "channel_id": balance_update.channel_id,
-        "amount": balance_update.amount,
-        "signature": balance_update.signature.to_string()
-    });
-
-    Ok(result.to_string())
 }
 
 #[no_mangle]
@@ -610,5 +502,53 @@ pub unsafe extern "C" fn spilman_compute_shared_secret(
     match spilman::compute_shared_secret_from_hex(my_sk, their_pk) {
         Ok(s) => CResult::success(s),
         Err(e) => CResult::error(e.to_string()),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_channel_parameters_get_channel_id(
+    params_json: *const c_char,
+    shared_secret_hex: *const c_char,
+    keyset_info_json: *const c_char,
+) -> CResult {
+    let p = CStr::from_ptr(params_json).to_str().unwrap();
+    let s = CStr::from_ptr(shared_secret_hex).to_str().unwrap();
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match spilman::channel_parameters_get_channel_id(p, s, k) {
+        Ok(id) => CResult::success(id),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_create_funding_outputs(
+    params_json: *const c_char,
+    alice_secret_hex: *const c_char,
+    keyset_info_json: *const c_char,
+) -> CResult {
+    let p = CStr::from_ptr(params_json).to_str().unwrap();
+    let s = CStr::from_ptr(alice_secret_hex).to_str().unwrap();
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match spilman::create_funding_outputs(p, s, k) {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_construct_proofs(
+    blind_signatures_json: *const c_char,
+    secrets_with_blinding_json: *const c_char,
+    keyset_info_json: *const c_char,
+) -> CResult {
+    let sigs = CStr::from_ptr(blind_signatures_json).to_str().unwrap();
+    let secrets = CStr::from_ptr(secrets_with_blinding_json).to_str().unwrap();
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match spilman::construct_proofs(sigs, secrets, k) {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
     }
 }

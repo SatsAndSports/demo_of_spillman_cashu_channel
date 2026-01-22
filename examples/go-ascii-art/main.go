@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,18 +15,22 @@ import (
 
 	"github.com/SatsAndSports/cdk/spilman"
 	"github.com/common-nighthawk/go-figure"
+	"github.com/skip2/go-qrcode"
 )
 
 // ============================================================================
-// Configuration
+// Configuration & Common
 // ============================================================================
 
 const (
-	MINT_URL = "http://localhost:3338"
-	PORT     = 5001 // Use a different port than Python (5000)
+	MINT_URL_DEFAULT   = "http://localhost:3338"
+	SERVER_URL_DEFAULT = "http://localhost:5001"
+	PORT               = 5001
 )
 
 var (
+	MINT_URL          = getEnv("MINT_URL", MINT_URL_DEFAULT)
+	SERVER_URL        = getEnv("SERVER_URL", SERVER_URL_DEFAULT)
 	SERVER_SECRET_KEY = getEnv("SERVER_SECRET_KEY", "0000000000000000000000000000000000000000000000000000000000000001")
 )
 
@@ -35,8 +41,12 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+func normalizeUrl(url string) string {
+	return strings.TrimSuffix(url, "/")
+}
+
 // ============================================================================
-// State & Storage
+// Server State & Storage
 // ============================================================================
 
 type KeysetCacheEntry struct {
@@ -63,16 +73,18 @@ var (
 type AsciiArtHost struct{}
 
 func (h *AsciiArtHost) ReceiverKeyIsAcceptable(pubkeyHex string) bool {
-	// In this demo, we accept any key intended for us
 	return true
 }
 
 func (h *AsciiArtHost) MintAndKeysetIsAcceptable(mint string, keysetId string) bool {
-	// We only accept our local dev mint
-	return mint == MINT_URL
+	normMint := normalizeUrl(mint)
+	normConfig := normalizeUrl(MINT_URL)
+	log.Printf("  [Host] MintAndKeysetIsAcceptable: mint=%s (norm=%s), configured=%s (norm=%s)\n", mint, normMint, MINT_URL, normConfig)
+	return normMint == normConfig
 }
 
 func (h *AsciiArtHost) GetFundingAndParams(channelId string) (string, string, string, string, bool) {
+	log.Printf("  [Host] GetFundingAndParams for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
 	data, ok := channelFunding[channelId]
@@ -83,6 +95,7 @@ func (h *AsciiArtHost) GetFundingAndParams(channelId string) (string, string, st
 }
 
 func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string) {
+	log.Printf("  [Host] SaveFunding for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
 	channelFunding[channelId] = map[string]string{
@@ -91,10 +104,11 @@ func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecr
 		"secret": sharedSecretHex,
 		"keyset": keysetInfoJson,
 	}
-	fmt.Printf("  [Host] Saved funding for channel %s\n", channelId[:8])
+	log.Printf("  [Host] Saved funding for channel %s\n", channelId[:8])
 }
 
 func (h *AsciiArtHost) GetAmountDue(channelId, contextJson string) uint64 {
+	log.Printf("  [Host] GetAmountDue for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -108,8 +122,6 @@ func (h *AsciiArtHost) GetAmountDue(channelId, contextJson string) uint64 {
 		usage = make(map[string]uint64)
 	}
 
-	// Pricing formula: 0.5 sats per request + 0.1 sats per character
-	// cost = ceil((requests * 500 + chars * 100) / 1000)
 	totalRequests := usage["requests"] + 1
 	totalChars := usage["chars"] + uint64(context.MessageLength)
 
@@ -118,6 +130,7 @@ func (h *AsciiArtHost) GetAmountDue(channelId, contextJson string) uint64 {
 }
 
 func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature, contextJson string) {
+	log.Printf("  [Host] RecordPayment for %s, balance=%d\n", channelId[:8], balance)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -126,13 +139,11 @@ func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature
 	}
 	json.Unmarshal([]byte(contextJson), &context)
 
-	// Update balance
 	channelBalance[channelId] = map[string]interface{}{
 		"balance":   balance,
 		"signature": signature,
 	}
 
-	// Update usage
 	usage := channelUsage[channelId]
 	if usage == nil {
 		usage = make(map[string]uint64)
@@ -141,7 +152,7 @@ func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature
 	usage["requests"]++
 	usage["chars"] += uint64(context.MessageLength)
 
-	fmt.Printf("  [Host] Recorded payment: %d sats for %s\n", balance, channelId[:8])
+	log.Printf("  [Host] Recorded payment: %d sats for %s\n", balance, channelId[:8])
 }
 
 func (h *AsciiArtHost) IsClosed(channelId string) bool {
@@ -201,7 +212,7 @@ func (h *AsciiArtHost) GetKeysetInfo(mint, keysetId string) (string, bool) {
 }
 
 // ============================================================================
-// Initialization
+// Initialization & Server Helpers
 // ============================================================================
 
 func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active bool) string {
@@ -216,7 +227,7 @@ func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active 
 		return entry.InfoJson
 	}
 
-	fmt.Printf("  [Keyset] Fetching keyset %s from %s...\n", keysetId, mintUrl)
+	log.Printf("  [Keyset] Fetching keyset %s from %s...\n", keysetId, mintUrl)
 	resp, err := http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, keysetId))
 	if err != nil {
 		log.Printf("  [Error] Failed to fetch keys: %v", err)
@@ -261,7 +272,7 @@ func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active 
 }
 
 func initializeKeysets() {
-	fmt.Printf("Fetching keysets from %s...\n", MINT_URL)
+	log.Printf("Fetching keysets from %s...\n", MINT_URL)
 	resp, err := http.Get(MINT_URL + "/v1/keysets")
 	if err != nil {
 		log.Printf("WARNING: Failed to fetch keysets: %v", err)
@@ -284,59 +295,159 @@ func initializeKeysets() {
 			fetchKeysetInfo(MINT_URL, k.Id, k.Unit, k.InputFeePpk, k.Active)
 		}
 	}
-	fmt.Printf("Cached %d keysets\n", len(keysetCache))
+	log.Printf("Cached %d keysets\n", len(keysetCache))
 }
 
 // ============================================================================
-// Main & HTTP Handlers
+// Client Helpers
 // ============================================================================
 
-func main() {
-	initializeKeysets()
+func clientFetchActiveKeysetInfo(mintUrl string) (map[string]interface{}, error) {
+	log.Printf("  Fetching keysets from %s...\n", mintUrl)
+	resp, err := http.Get(fmt.Sprintf("%s/v1/keysets", mintUrl))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
+	var keysetsData struct {
+		Keysets []struct {
+			Id          string `json:"id"`
+			Unit        string `json:"unit"`
+			Active      bool   `json:"active"`
+			InputFeePpk uint64 `json:"input_fee_ppk"`
+		} `json:"keysets"`
+	}
+	json.NewDecoder(resp.Body).Decode(&keysetsData)
+
+	var activeId string
+	var inputFeePpk uint64
+	for _, k := range keysetsData.Keysets {
+		if k.Unit == "sat" && k.Active {
+			activeId = k.Id
+			inputFeePpk = k.InputFeePpk
+			break
+		}
+	}
+	if activeId == "" {
+		return nil, fmt.Errorf("no active sat keyset found")
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, activeId))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var keysData struct {
+		Keysets []struct {
+			Keys map[string]string `json:"keys"`
+		} `json:"keysets"`
+	}
+	json.NewDecoder(resp.Body).Decode(&keysData)
+
+	return map[string]interface{}{
+		"keysetId":    activeId,
+		"unit":        "sat",
+		"inputFeePpk": inputFeePpk,
+		"keys":        keysData.Keysets[0].Keys,
+	}, nil
+}
+
+func mintFundingToken(mintUrl string, amount uint64, blindedMessages []interface{}) ([]interface{}, error) {
+	log.Printf("  Requesting mint quote for %d sat...\n", amount)
+	quoteReq, _ := json.Marshal(map[string]interface{}{"amount": amount, "unit": "sat"})
+	resp, err := http.Post(fmt.Sprintf("%s/v1/mint/quote/bolt11", mintUrl), "application/json", bytes.NewBuffer(quoteReq))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var quote struct {
+		Quote   string `json:"quote"`
+		Request string `json:"request"`
+	}
+	json.NewDecoder(resp.Body).Decode(&quote)
+
+	if quote.Request != "" {
+		fmt.Println("\n  " + strings.Repeat("=", 56))
+		fmt.Println("  PAY THIS INVOICE TO FUND THE CHANNEL")
+		fmt.Println("  " + strings.Repeat("=", 56))
+		fmt.Printf("\n  %s\n\n", quote.Request)
+
+		qr, err := qrcode.New(strings.ToUpper(quote.Request), qrcode.Medium)
+		if err == nil {
+			fmt.Println("  Scan this QR code with your Lightning wallet:")
+			fmt.Print(qr.ToSmallString(false))
+		}
+		fmt.Println("\n  " + strings.Repeat("=", 56) + "\n")
+	}
+
+	log.Println("  Waiting for payment (Nutshell test mint may auto-pay)...")
+	for i := 0; i < 120; i++ {
+		r, _ := http.Get(fmt.Sprintf("%s/v1/mint/quote/bolt11/%s", mintUrl, quote.Quote))
+		var status struct {
+			State string `json:"state"`
+			Paid  bool   `json:"paid"`
+		}
+		json.NewDecoder(r.Body).Decode(&status)
+		r.Body.Close()
+
+		if status.State == "PAID" || status.Paid {
+			log.Println("  Payment received!")
+			break
+		}
+		if i%10 == 0 && i > 0 {
+			log.Printf("  Still waiting... (%ds)\n", i/2)
+		}
+		time.Sleep(500 * time.Millisecond)
+		if i == 119 {
+			return nil, fmt.Errorf("timeout waiting for payment")
+		}
+	}
+
+	mintReq, _ := json.Marshal(map[string]interface{}{"quote": quote.Quote, "outputs": blindedMessages})
+	resp, err = http.Post(fmt.Sprintf("%s/v1/mint/bolt11", mintUrl), "application/json", bytes.NewBuffer(mintReq))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var mintResp struct {
+		Signatures []interface{} `json:"signatures"`
+	}
+	json.NewDecoder(resp.Body).Decode(&mintResp)
+	return mintResp.Signatures, nil
+}
+
+// ============================================================================
+// Runners
+// ============================================================================
+
+func runServer() {
+	initializeKeysets()
+	log.Printf("Starting server with MINT_URL: %s\n", MINT_URL)
 	host := &AsciiArtHost{}
 	bridge := spilman.NewBridge(host, SERVER_SECRET_KEY)
 	defer bridge.Free()
 
-	// 1. GET /channel/params - Get server's public key and supported mints
 	http.HandleFunc("/channel/params", func(w http.ResponseWriter, r *http.Request) {
 		pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
-
-		config := map[string]interface{}{
-			"receiver_pubkey": pubkey,
-			"mint":            MINT_URL,
-		}
-		json.NewEncoder(w).Encode(config)
+		json.NewEncoder(w).Encode(map[string]interface{}{"receiver_pubkey": pubkey, "mint": MINT_URL})
 	})
 
-	// 2. POST /ascii - Process payment and return ASCII art
 	http.HandleFunc("/ascii", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received request to /ascii")
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
 		paymentHeader := r.Header.Get("X-Cashu-Channel")
-		if paymentHeader == "" {
-			w.WriteHeader(http.StatusPaymentRequired)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Missing X-Cashu-Channel header"})
-			return
-		}
+		var req struct{ Message string }
+		json.NewDecoder(r.Body).Decode(&req)
 
-		var req struct {
-			Message string `json:"message"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		context := map[string]interface{}{"message_length": len(req.Message)}
-		contextJson, _ := json.Marshal(context)
-
-		// Parse payment header to get keyset info if provided
+		ctxJson, _ := json.Marshal(map[string]interface{}{"message_length": len(req.Message)})
 		var keysetInfoJson *string
-		var paymentData struct {
+		var pd struct {
 			Params struct {
 				Mint        string `json:"mint"`
 				KeysetId    string `json:"keyset_id"`
@@ -344,78 +455,163 @@ func main() {
 				InputFeePpk uint64 `json:"input_fee_ppk"`
 			} `json:"params"`
 		}
-		if err := json.Unmarshal([]byte(paymentHeader), &paymentData); err == nil && paymentData.Params.KeysetId != "" {
-			info := fetchKeysetInfo(paymentData.Params.Mint, paymentData.Params.KeysetId, paymentData.Params.Unit, paymentData.Params.InputFeePpk, false)
+		if err := json.Unmarshal([]byte(paymentHeader), &pd); err == nil && pd.Params.KeysetId != "" {
+			log.Printf("  [Server] Found keyset_id %s in header, fetching info...\n", pd.Params.KeysetId)
+			info := fetchKeysetInfo(pd.Params.Mint, pd.Params.KeysetId, pd.Params.Unit, pd.Params.InputFeePpk, false)
 			if info != "" {
+				log.Printf("  [Server] Successfully fetched keyset info (%d bytes)\n", len(info))
 				keysetInfoJson = &info
+			} else {
+				log.Printf("  [Server] Failed to fetch keyset info for %s\n", pd.Params.KeysetId)
 			}
+		} else if err != nil {
+			log.Printf("  [Server] Failed to unmarshal payment header: %v\n", err)
 		}
 
-		respJson, err := bridge.ProcessPayment(paymentHeader, string(contextJson), keysetInfoJson)
+		respJson, err := bridge.ProcessPayment(paymentHeader, string(ctxJson), keysetInfoJson)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			log.Printf("  [Error] ProcessPayment bridge error: %v", err)
 		}
-
 		var resp struct {
-			Success bool            `json:"success"`
-			Error   string          `json:"error"`
-			Header  json.RawMessage `json:"header"`
+			Success bool
+			Error   string
+			Header  json.RawMessage
 		}
 		json.Unmarshal([]byte(respJson), &resp)
 
 		if !resp.Success {
+			log.Printf("  [Error] ProcessPayment failed: %s", resp.Error)
 			w.Header().Set("X-Cashu-Channel", string(resp.Header))
 			w.WriteHeader(http.StatusPaymentRequired)
 			json.NewEncoder(w).Encode(map[string]string{"error": resp.Error})
 			return
 		}
 
-		// Generate ASCII art
-		myFigure := figure.NewFigure(req.Message, "", true)
-		asciiArt := myFigure.String()
-
-		// Prepare response matching Python client expectations
+		art := figure.NewFigure(req.Message, "", true).String()
 		var headerData map[string]interface{}
 		json.Unmarshal(resp.Header, &headerData)
 
-		response := map[string]interface{}{
-			"art":     asciiArt,
-			"payment": headerData,
-		}
-
 		w.Header().Set("X-Cashu-Channel", string(resp.Header))
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(map[string]interface{}{"art": art, "payment": headerData})
 	})
 
-	// 3. POST /channel/:id/close - Close channel
 	http.HandleFunc("/channel/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) < 4 || parts[3] != "close" {
-			http.NotFound(w, r)
-			return
+		if len(parts) >= 4 && parts[3] == "close" {
+			id := parts[2]
+			bridge.CreateUnilateralCloseData(id)
+			mu.Lock()
+			channelClosed[id] = true
+			mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "channel_id": id})
 		}
-		channelId := parts[2]
-
-		// For now, let's just do a simple close if we have the data
-		closeDataJson, err := bridge.CreateUnilateralCloseData(channelId)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// In a real server, we would now POST the swap request to the mint.
-		// See Python server for full logic.
-		fmt.Printf("[Close] Generated close data for %s: %s\n", channelId, closeDataJson)
-
-		mu.Lock()
-		channelClosed[channelId] = true
-		mu.Unlock()
-
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "channel_id": channelId})
 	})
 
-	fmt.Printf("Go ASCII Art Server listening on :%d\n", PORT)
+	log.Printf("Go ASCII Art Server listening on :%d\n", PORT)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", PORT), nil))
+}
+
+func runClient(messages []string) {
+	log.Printf("\n[1/8] Fetching server params from %s...\n", SERVER_URL)
+	resp, err := http.Get(SERVER_URL + "/channel/params")
+	if err != nil {
+		log.Fatalf("Server not found: %v", err)
+	}
+	var sp struct{ Receiver_pubkey, Mint string }
+	json.NewDecoder(resp.Body).Decode(&sp)
+	resp.Body.Close()
+
+	log.Println("[2/8] Generating keypair...")
+	aliceSecret, alicePubkey, err := spilman.GenerateKeypair()
+	if err != nil {
+		log.Fatalf("GenerateKeypair failed: %v", err)
+	}
+	alice := struct{ Secret, Pubkey string }{aliceSecret, alicePubkey}
+	log.Printf("  Alice pubkey: %s...\n\n", alice.Pubkey[:24])
+
+	log.Println("[3/8] Fetching keyset info...")
+	ki, _ := clientFetchActiveKeysetInfo(MINT_URL)
+	kiJson, _ := json.Marshal(ki)
+
+	log.Println("[4/8] Computing shared secret...")
+	ss, _ := spilman.ComputeSharedSecret(alice.Secret, sp.Receiver_pubkey)
+
+	log.Println("[5/8] Building channel parameters...")
+	total := 0
+	for _, m := range messages {
+		total += len(m)
+	}
+	cap := uint64(total + 50)
+	params := map[string]interface{}{
+		"alice_pubkey": alice.Pubkey, "charlie_pubkey": sp.Receiver_pubkey,
+		"mint": MINT_URL, "unit": "sat", "capacity": cap, "maximum_amount": 64,
+		"locktime": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
+		"sender_nonce": fmt.Sprintf("demo-go-%d", time.Now().Unix()),
+		"keyset_id":    ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],
+	}
+	pJson, _ := json.Marshal(params)
+	cid, _ := spilman.ChannelParametersGetChannelId(string(pJson), ss, string(kiJson))
+
+	log.Println("[6/8] Creating funding outputs...")
+	fJson, _ := spilman.CreateFundingOutputs(string(pJson), alice.Secret, string(kiJson))
+	var f struct {
+		Funding_token_nominal uint64
+		Blinded_messages      []interface{}
+		Secrets_with_blinding []interface{}
+	}
+	json.Unmarshal([]byte(fJson), &f)
+
+	log.Println("[7/8] Minting funding token...")
+	sigs, _ := mintFundingToken(MINT_URL, f.Funding_token_nominal, f.Blinded_messages)
+
+	log.Println("[8/8] Constructing proofs...")
+	sigsJ, _ := json.Marshal(sigs)
+	swbJ, _ := json.Marshal(f.Secrets_with_blinding)
+	proofsJ, _ := spilman.ConstructProofs(string(sigsJ), string(swbJ), string(kiJson))
+	var proofs []interface{}
+	json.Unmarshal([]byte(proofsJ), &proofs)
+
+	log.Printf("\nChannel %s funded! Making requests...\n\n", cid[:8])
+	balance := uint64(0)
+	for i, msg := range messages {
+		balance += uint64(len(msg))
+		updJ, _ := spilman.CreateSignedBalanceUpdate(string(pJson), string(kiJson), alice.Secret, proofsJ, balance)
+		var upd struct{ Signature string }
+		json.Unmarshal([]byte(updJ), &upd)
+
+		pay := map[string]interface{}{"channel_id": cid, "balance": balance, "signature": upd.Signature}
+		if i == 0 {
+			pay["params"] = params
+			pay["funding_proofs"] = proofs
+		}
+		payH, _ := json.Marshal(pay)
+
+		reqB, _ := json.Marshal(map[string]string{"message": msg})
+		req, _ := http.NewRequest("POST", SERVER_URL+"/ascii", bytes.NewBuffer(reqB))
+		req.Header.Set("X-Cashu-Channel", string(payH))
+		req.Header.Set("Content-Type", "application/json")
+
+		r, err := (&http.Client{}).Do(req)
+		if err != nil {
+			log.Fatalf("Request failed: %v", err)
+		}
+		if r.StatusCode == 200 {
+			var res struct{ Art string }
+			json.NewDecoder(r.Body).Decode(&res)
+			r.Body.Close()
+			fmt.Printf("[%d/%d] '%s' (%d sat) -> Accepted!\n%s\n", i+1, len(messages), msg, len(msg), res.Art)
+		} else {
+			body, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			log.Fatalf("[%d/%d] '%s' -> FAILED (Status %d): %s", i+1, len(messages), msg, r.StatusCode, string(body))
+		}
+	}
+}
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "client" {
+		runClient(os.Args[2:])
+	} else {
+		runServer()
+	}
 }
