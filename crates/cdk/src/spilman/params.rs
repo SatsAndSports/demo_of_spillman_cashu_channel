@@ -4,15 +4,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{CurrencyUnit, Id, Keys, PublicKey, SecretKey};
+use crate::nuts::{CurrencyUnit, SecretKey};
 use crate::util::hex;
-use crate::Amount;
 use crate::SECP256K1;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{Parity, Scalar};
-use std::collections::BTreeMap;
-use std::str::FromStr;
 
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
@@ -862,6 +859,10 @@ impl ChannelParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nuts::{Id, Keys, PublicKey};
+    use crate::Amount;
+    use std::collections::BTreeMap;
+    use std::str::FromStr;
 
     #[test]
     fn test_json_roundtrip_preserves_channel_id() {
