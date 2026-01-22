@@ -31,6 +31,7 @@ const (
 var (
 	MINT_URL          = getEnv("MINT_URL", MINT_URL_DEFAULT)
 	SERVER_URL        = getEnv("SERVER_URL", SERVER_URL_DEFAULT)
+	SERVER_PORT       = getEnv("PORT", "5001")
 	SERVER_SECRET_KEY = getEnv("SERVER_SECRET_KEY", "0000000000000000000000000000000000000000000000000000000000000001")
 )
 
@@ -107,23 +108,27 @@ func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecr
 	log.Printf("  [Host] Saved funding for channel %s\n", channelId[:8])
 }
 
-func (h *AsciiArtHost) GetAmountDue(channelId, contextJson string) uint64 {
+func (h *AsciiArtHost) GetAmountDue(channelId string, contextJson *string) uint64 {
 	log.Printf("  [Host] GetAmountDue for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
-
-	var context struct {
-		MessageLength int `json:"message_length"`
-	}
-	json.Unmarshal([]byte(contextJson), &context)
 
 	usage := channelUsage[channelId]
 	if usage == nil {
 		usage = make(map[string]uint64)
 	}
 
-	totalRequests := usage["requests"] + 1
-	totalChars := usage["chars"] + uint64(context.MessageLength)
+	totalRequests := usage["requests"]
+	totalChars := usage["chars"]
+
+	if contextJson != nil {
+		var context struct {
+			MessageLength int `json:"message_length"`
+		}
+		json.Unmarshal([]byte(*contextJson), &context)
+		totalRequests += 1
+		totalChars += uint64(context.MessageLength)
+	}
 
 	cost := (totalRequests*500 + totalChars*100 + 999) / 1000
 	return cost
@@ -507,8 +512,8 @@ func runServer() {
 		}
 	})
 
-	log.Printf("Go ASCII Art Server listening on :%d\n", PORT)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", PORT), nil))
+	log.Printf("Go ASCII Art Server listening on :%s\n", SERVER_PORT)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", SERVER_PORT), nil))
 }
 
 func runClient(messages []string) {
