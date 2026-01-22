@@ -794,13 +794,13 @@ The test suite includes:
 - ✅ Remember quality preference in localStorage
 - ❌ Remember volume preference in localStorage
 - ❌ Loop toggle
-- ✅ Picture-in-picture (superseded by popout mini-player)
-- ❌ Video description panel (expandable)
-- ❌ Ctrl+Shift+M and mute?
 
 *Lower Priority:*
+- ? Picture-in-picture - get rid of it? only when overlay visible
 - ✅ drop the volume slider on mobile (detected via coarse pointer, mute remains)
 - ✅ Version display toast on "active" viewers count label tap
+- ❌ Video description panel (expandable)
+- ❌ Ctrl+Shift+M and mute?
 
 ## Future Work: Bridge Architecture Improvements
 
