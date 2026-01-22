@@ -167,7 +167,7 @@ func (h *AsciiArtHost) IsClosed(channelId string) bool {
 	return ok
 }
 
-func (h *AsciiArtHost) GetServerConfig() string {
+func (h *AsciiArtHost) GetChannelPolicy() string {
 	config := map[string]interface{}{
 		"min_expiry_in_seconds": 3600,
 		"pricing": map[string]interface{}{
@@ -184,7 +184,7 @@ func (h *AsciiArtHost) NowSeconds() uint64 {
 	return uint64(time.Now().Unix())
 }
 
-func (h *AsciiArtHost) GetLargestBalanceWithSignature(channelId string) (uint64, string, bool) {
+func (h *AsciiArtHost) GetBalanceAndSignatureForUnilateralExit(channelId string) (uint64, string, bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	data, ok := channelBalance[channelId]

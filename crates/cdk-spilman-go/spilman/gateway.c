@@ -15,9 +15,9 @@ typedef struct {
     uint64_t (*get_amount_due)(void*, const char*, const char*);
     void (*record_payment)(void*, const char*, uint64_t, const char*, const char*);
     int (*is_closed)(void*, const char*);
-    char* (*get_server_config)(void*);
+    char* (*get_channel_policy)(void*);
     uint64_t (*now_seconds)(void*);
-    int (*get_largest_balance_with_signature)(void*, const char*, uint64_t*, char**);
+    int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
     char* (*get_keyset_info)(void*, const char*, const char*);
 } SpilmanHostCallbacks;
@@ -30,9 +30,9 @@ extern void go_save_funding(void*, const char*, const char*, const char*, const 
 extern uint64_t go_get_amount_due(void*, const char*, const char*);
 extern void go_record_payment(void*, const char*, uint64_t, const char*, const char*);
 extern int go_is_closed(void*, const char*);
-extern char* go_get_server_config(void*);
+extern char* go_get_channel_policy(void*);
 extern uint64_t go_now_seconds(void*);
-extern int go_get_largest_balance_with_signature(void*, const char*, uint64_t*, char**);
+extern int go_get_balance_and_signature_for_unilateral_exit(void*, const char*, uint64_t*, char**);
 extern char* go_get_active_keyset_ids(void*, const char*, const char*);
 extern char* go_get_keyset_info(void*, const char*, const char*);
 
@@ -49,9 +49,9 @@ SpilmanHostCallbacks fill_callbacks(void* user_data) {
     cb.get_amount_due = go_get_amount_due;
     cb.record_payment = go_record_payment;
     cb.is_closed = go_is_closed;
-    cb.get_server_config = go_get_server_config;
+    cb.get_channel_policy = go_get_channel_policy;
     cb.now_seconds = go_now_seconds;
-    cb.get_largest_balance_with_signature = go_get_largest_balance_with_signature;
+    cb.get_balance_and_signature_for_unilateral_exit = go_get_balance_and_signature_for_unilateral_exit;
     cb.get_active_keyset_ids = go_get_active_keyset_ids;
     cb.get_keyset_info = go_get_keyset_info;
     return cb;

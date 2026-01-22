@@ -24,9 +24,9 @@ use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 /// - get_amount_due(channel_id: str, context_json: str) -> int
 /// - record_payment(channel_id: str, balance: int, signature: str, context_json: str)
 /// - is_closed(channel_id: str) -> bool
-/// - get_server_config() -> str
+/// - get_channel_policy() -> str
 /// - now_seconds() -> int
-/// - get_largest_balance_with_signature(channel_id: str) -> Optional[Tuple[int, str]]
+/// - get_balance_and_signature_for_unilateral_exit(channel_id: str) -> Optional[Tuple[int, str]]
 /// - get_active_keyset_ids(mint: str, unit: str) -> List[str]
 /// - get_keyset_info(mint: str, keyset_id: str) -> Optional[str]
 struct PySpilmanHost {
@@ -216,10 +216,10 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn get_server_config(&self) -> String {
+    fn get_channel_policy(&self) -> String {
         Python::with_gil(|py| {
             self.py_host
-                .call_method0(py, "get_server_config")
+                .call_method0(py, "get_channel_policy")
                 .and_then(|r| r.extract::<String>(py))
                 .unwrap_or_else(|_| "{}".to_string())
         })
@@ -234,11 +234,18 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)> {
+    fn get_balance_and_signature_for_unilateral_exit(
+        &self,
+        channel_id: &str,
+    ) -> Option<(u64, String)> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
-                .call_method1(py, "get_largest_balance_with_signature", (channel_id,))
+                .call_method1(
+                    py,
+                    "get_balance_and_signature_for_unilateral_exit",
+                    (channel_id,),
+                )
                 .ok()?;
 
             if result.is_none(py) {
