@@ -19,9 +19,9 @@ typedef struct {
     uint64_t (*get_amount_due)(void*, const char*, const char*);
     void (*record_payment)(void*, const char*, uint64_t, const char*, const char*);
     int (*is_closed)(void*, const char*);
-    char* (*get_server_config)(void*);
+    char* (*get_channel_policy)(void*);
     uint64_t (*now_seconds)(void*);
-    int (*get_largest_balance_with_signature)(void*, const char*, uint64_t*, char**);
+    int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
     char* (*get_keyset_info)(void*, const char*, const char*);
 } SpilmanHostCallbacks;
@@ -63,9 +63,9 @@ type SpilmanHost interface {
 	GetAmountDue(channelId string, contextJson *string) uint64
 	RecordPayment(channelId string, balance uint64, signature, contextJson string)
 	IsClosed(channelId string) bool
-	GetServerConfig() string
+	GetChannelPolicy() string
 	NowSeconds() uint64
-	GetLargestBalanceWithSignature(channelId string) (balance uint64, signature string, ok bool)
+	GetBalanceAndSignatureForUnilateralExit(channelId string) (balance uint64, signature string, ok bool)
 	GetActiveKeysetIds(mint, unit string) []string
 	GetKeysetInfo(mint, keysetId string) (string, bool)
 }
@@ -368,11 +368,11 @@ func go_is_closed(userData unsafe.Pointer, channelId *C.char) C.int {
 	return 0
 }
 
-//export go_get_server_config
-func go_get_server_config(userData unsafe.Pointer) *C.char {
+//export go_get_channel_policy
+func go_get_channel_policy(userData unsafe.Pointer) *C.char {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	return C.CString(host.GetServerConfig())
+	return C.CString(host.GetChannelPolicy())
 }
 
 //export go_now_seconds
@@ -382,11 +382,11 @@ func go_now_seconds(userData unsafe.Pointer) C.uint64_t {
 	return C.uint64_t(host.NowSeconds())
 }
 
-//export go_get_largest_balance_with_signature
-func go_get_largest_balance_with_signature(userData unsafe.Pointer, channelId *C.char, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
+//export go_get_balance_and_signature_for_unilateral_exit
+func go_get_balance_and_signature_for_unilateral_exit(userData unsafe.Pointer, channelId *C.char, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	balance, signature, ok := host.GetLargestBalanceWithSignature(C.GoString(channelId))
+	balance, signature, ok := host.GetBalanceAndSignatureForUnilateralExit(C.GoString(channelId))
 	if !ok {
 		return 0
 	}

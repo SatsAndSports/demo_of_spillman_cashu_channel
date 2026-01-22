@@ -69,9 +69,9 @@ pub struct SpilmanHostCallbacks {
         context_json: *const c_char,
     ),
     pub is_closed: extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char) -> c_int,
-    pub get_server_config: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char,
+    pub get_channel_policy: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char,
     pub now_seconds: extern "C" fn(user_data: *mut libc::c_void) -> u64,
-    pub get_largest_balance_with_signature: extern "C" fn(
+    pub get_balance_and_signature_for_unilateral_exit: extern "C" fn(
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
         balance_out: *mut u64,
@@ -191,8 +191,8 @@ impl SpilmanHost for CGoSpilmanHost {
         (self.callbacks.is_closed)(self.callbacks.user_data, id_c.as_ptr()) != 0
     }
 
-    fn get_server_config(&self) -> String {
-        let ptr = (self.callbacks.get_server_config)(self.callbacks.user_data);
+    fn get_channel_policy(&self) -> String {
+        let ptr = (self.callbacks.get_channel_policy)(self.callbacks.user_data);
         if ptr.is_null() {
             return "{}".to_string();
         }
@@ -203,12 +203,15 @@ impl SpilmanHost for CGoSpilmanHost {
         (self.callbacks.now_seconds)(self.callbacks.user_data)
     }
 
-    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)> {
+    fn get_balance_and_signature_for_unilateral_exit(
+        &self,
+        channel_id: &str,
+    ) -> Option<(u64, String)> {
         let id_c = CString::new(channel_id).unwrap();
         let mut balance: u64 = 0;
         let mut sig_ptr: *mut c_char = ptr::null_mut();
 
-        let ok = (self.callbacks.get_largest_balance_with_signature)(
+        let ok = (self.callbacks.get_balance_and_signature_for_unilateral_exit)(
             self.callbacks.user_data,
             id_c.as_ptr(),
             &mut balance,

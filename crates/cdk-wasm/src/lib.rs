@@ -52,14 +52,17 @@ extern "C" {
     #[wasm_bindgen(method, js_name = isClosed)]
     fn is_closed(this: &JsSpilmanHost, channel_id: &str) -> bool;
 
-    #[wasm_bindgen(method, js_name = getServerConfig)]
-    fn get_server_config(this: &JsSpilmanHost) -> String;
+    #[wasm_bindgen(method, js_name = getChannelPolicy)]
+    fn get_channel_policy(this: &JsSpilmanHost) -> String;
 
     #[wasm_bindgen(method, js_name = nowSeconds)]
     fn now_seconds(this: &JsSpilmanHost) -> u64;
 
-    #[wasm_bindgen(method, js_name = getLargestBalanceWithSignature)]
-    fn get_largest_balance_with_signature(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
+    #[wasm_bindgen(method, js_name = getBalanceAndSignatureForUnilateralExit)]
+    fn get_balance_and_signature_for_unilateral_exit(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+    ) -> JsValue;
 
     #[wasm_bindgen(method, js_name = getActiveKeysetIds)]
     fn get_active_keyset_ids(this: &JsSpilmanHost, mint: &str, unit: &str) -> JsValue;
@@ -137,16 +140,21 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         self.js_host.is_closed(channel_id)
     }
 
-    fn get_server_config(&self) -> String {
-        self.js_host.get_server_config()
+    fn get_channel_policy(&self) -> String {
+        self.js_host.get_channel_policy()
     }
 
     fn now_seconds(&self) -> u64 {
         self.js_host.now_seconds()
     }
 
-    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)> {
-        let val = self.js_host.get_largest_balance_with_signature(channel_id);
+    fn get_balance_and_signature_for_unilateral_exit(
+        &self,
+        channel_id: &str,
+    ) -> Option<(u64, String)> {
+        let val = self
+            .js_host
+            .get_balance_and_signature_for_unilateral_exit(channel_id);
         if val.is_null() || val.is_undefined() {
             return None;
         }

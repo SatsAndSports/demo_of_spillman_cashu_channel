@@ -348,7 +348,7 @@ class AsciiArtHost:
         """
         return channel_id in channel_closed  # Works with dict too
     
-    def get_server_config(self) -> str:
+    def get_channel_policy(self) -> str:
         """
         Returns the server's validation policy configuration.
 
@@ -371,7 +371,7 @@ class AsciiArtHost:
         """
         return int(time.time())
     
-    def get_largest_balance_with_signature(self, channel_id: str):
+    def get_balance_and_signature_for_unilateral_exit(self, channel_id: str):
         """
         Retrieves the highest recorded balance and signature for a channel.
 

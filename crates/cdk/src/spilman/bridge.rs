@@ -52,18 +52,21 @@ pub trait SpilmanHost {
     /// Check if a channel has been closed
     fn is_closed(&self, channel_id: &str) -> bool;
 
-    /// Get server configuration (pricing, limits, etc.)
-    fn get_server_config(&self) -> String;
+    /// Get channel policy (pricing, limits, etc.)
+    fn get_channel_policy(&self) -> String;
 
     /// Get the current time in seconds
     fn now_seconds(&self) -> u64;
 
-    /// Get the largest balance and its signature for a channel
+    /// Get the balance and signature for a unilateral exit
     ///
     /// This is used for unilateral closing - the server retrieves the best
     /// payment proof it has stored to close the channel.
     /// Returns (balance, signature_hex) if available.
-    fn get_largest_balance_with_signature(&self, channel_id: &str) -> Option<(u64, String)>;
+    fn get_balance_and_signature_for_unilateral_exit(
+        &self,
+        channel_id: &str,
+    ) -> Option<(u64, String)>;
 
     /// Get currently active keyset IDs for a mint and unit
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
@@ -741,8 +744,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::MintOrKeysetNotAcceptable);
         }
 
-        // Parse server config for validations
-        let config_json = self.host.get_server_config();
+        // Parse channel policy for validations
+        let config_json = self.host.get_channel_policy();
         let config: BridgeServerConfig =
             serde_json::from_str(&config_json).map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1139,10 +1142,10 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::ChannelClosed);
         }
 
-        // 2. Get the largest balance and signature from host
+        // 2. Get the balance and signature from host
         let (balance, signature) = self
             .host
-            .get_largest_balance_with_signature(channel_id)
+            .get_balance_and_signature_for_unilateral_exit(channel_id)
             .ok_or_else(|| {
                 BridgeError::InvalidRequest("no payment proof stored for channel".into())
             })?;
@@ -1353,7 +1356,7 @@ mod tests {
             false
         }
 
-        fn get_server_config(&self) -> String {
+        fn get_channel_policy(&self) -> String {
             serde_json::json!({
                 "min_expiry_in_seconds": 3600,
                 "pricing": {
@@ -1369,7 +1372,10 @@ mod tests {
             1700000000
         }
 
-        fn get_largest_balance_with_signature(&self, _channel_id: &str) -> Option<(u64, String)> {
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<(u64, String)> {
             None
         }
 
@@ -1519,7 +1525,7 @@ mod tests {
         fn is_closed(&self, _channel_id: &str) -> bool {
             false
         }
-        fn get_server_config(&self) -> String {
+        fn get_channel_policy(&self) -> String {
             serde_json::json!({
                 "min_expiry_in_seconds": 3600,
                 "pricing": {
@@ -1533,7 +1539,10 @@ mod tests {
         fn now_seconds(&self) -> u64 {
             1700000000
         }
-        fn get_largest_balance_with_signature(&self, _channel_id: &str) -> Option<(u64, String)> {
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<(u64, String)> {
             None
         }
         fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
