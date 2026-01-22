@@ -56,6 +56,10 @@ go-demo-server: go-build-rust
 test-python-parallel: python-dev
 	@bash scripts/python-parallel-demo.sh
 
+# Run parallel go demo test
+test-go-parallel: go-build-rust
+	@bash scripts/go-parallel-demo.sh
+
 clean:
 	cargo clean
 	rm -rf $(PYTHON_CRATE_DIR)/target
