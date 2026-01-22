@@ -35,13 +35,7 @@ struct PySpilmanHost {
 
 impl SpilmanHost for PySpilmanHost {
     fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
-        let unit_str = match unit {
-            cdk::nuts::CurrencyUnit::Sat => "sat",
-            cdk::nuts::CurrencyUnit::Msat => "msat",
-            cdk::nuts::CurrencyUnit::Usd => "usd",
-            cdk::nuts::CurrencyUnit::Eur => "eur",
-            _ => "units",
-        };
+        let unit_str = unit.to_string();
 
         Python::with_gil(|py| {
             match self
@@ -345,7 +339,7 @@ impl SpilmanBridge {
                     .map(|(s, is_receiver)| {
                         serde_json::json!({
                             "secret": s.secret.to_string(),
-                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                            "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
                             "amount": s.amount,
                             "index": s.index,
                             "is_receiver": is_receiver
@@ -395,7 +389,7 @@ impl SpilmanBridge {
                     .map(|(s, is_receiver)| {
                         serde_json::json!({
                             "secret": s.secret.to_string(),
-                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                            "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
                             "amount": s.amount,
                             "index": s.index,
                             "is_receiver": is_receiver
@@ -501,82 +495,8 @@ fn create_funding_outputs(
     my_secret_hex: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    create_funding_outputs_inner(params_json, my_secret_hex, keyset_info_json)
+    spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
-}
-
-fn create_funding_outputs_inner(
-    params_json: &str,
-    my_secret_hex: &str,
-    keyset_info_json: &str,
-) -> Result<String, String> {
-    use cdk::spilman::{ChannelParameters, DeterministicOutputsForOneContext};
-
-    // Parse keyset info
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-
-    // Parse secret key
-    let my_secret =
-        SecretKey::from_hex(my_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
-
-    // Create channel parameters
-    let params = ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &my_secret)
-        .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
-
-    // Get funding token nominal amount
-    let funding_token_nominal = params
-        .get_total_funding_token_amount()
-        .map_err(|e| format!("Failed to compute funding token amount: {}", e))?;
-
-    // Create deterministic outputs for "funding" context
-    let funding_outputs = DeterministicOutputsForOneContext::new(
-        "funding".to_string(),
-        funding_token_nominal,
-        params,
-    )
-    .map_err(|e| format!("Failed to create funding outputs: {}", e))?;
-
-    // Get blinded messages
-    let blinded_messages = funding_outputs
-        .get_blinded_messages(None)
-        .map_err(|e| format!("Failed to get blinded messages: {}", e))?;
-
-    // Serialize for JSON output
-    let blinded_messages_json: Vec<serde_json::Value> = blinded_messages
-        .iter()
-        .map(|bm| {
-            serde_json::json!({
-                "amount": u64::from(bm.amount),
-                "id": bm.keyset_id.to_string(),
-                "B_": bm.blinded_secret.to_hex()
-            })
-        })
-        .collect();
-
-    // Get secrets with blinding factors
-    let secrets_with_blinding = funding_outputs
-        .get_secrets_with_blinding()
-        .map_err(|e| format!("Failed to get secrets with blinding: {}", e))?;
-
-    let secrets_json: Vec<serde_json::Value> = secrets_with_blinding
-        .into_iter()
-        .map(|s| {
-            serde_json::json!({
-                "secret": s.secret.to_string(),
-                "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
-                "amount": s.amount,
-                "index": s.index
-            })
-        })
-        .collect();
-
-    let result = serde_json::json!({
-        "funding_token_nominal": funding_token_nominal,
-        "blinded_messages": blinded_messages_json,
-        "secrets_with_blinding": secrets_json
-    });
-
-    Ok(result.to_string())
 }
 
 /// Construct proofs from blind signatures.
@@ -594,104 +514,12 @@ fn construct_proofs(
     secrets_with_blinding_json: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    construct_proofs_inner(
+    spilman::construct_proofs(
         signatures_json,
         secrets_with_blinding_json,
         keyset_info_json,
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
-}
-
-fn construct_proofs_inner(
-    signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    keyset_info_json: &str,
-) -> Result<String, String> {
-    use cdk::dhke::construct_proofs as dhke_construct_proofs;
-    use cdk::nuts::{BlindSignature, BlindSignatureDleq};
-    use cdk::secret::Secret;
-    use cdk::Amount;
-
-    // Parse keyset info
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-    let keys = keyset_info.active_keys;
-
-    // Parse blind signatures
-    let sigs_raw: Vec<serde_json::Value> = serde_json::from_str(signatures_json)
-        .map_err(|e| format!("Failed to parse signatures: {}", e))?;
-
-    let mut blind_signatures = Vec::new();
-    for sig in sigs_raw {
-        let amount = sig["amount"]
-            .as_u64()
-            .ok_or("Missing 'amount' in signature")?;
-        let id_str = sig["id"].as_str().ok_or("Missing 'id' in signature")?;
-        let c_str = sig["C_"].as_str().ok_or("Missing 'C_' in signature")?;
-
-        let keyset_id: Id = id_str
-            .parse()
-            .map_err(|e| format!("Invalid keyset id: {}", e))?;
-        let c = PublicKey::from_hex(c_str).map_err(|e| format!("Invalid C_ pubkey: {}", e))?;
-
-        // Parse DLEQ if present
-        let dleq = if let Some(dleq_obj) = sig["dleq"].as_object() {
-            let e_str = dleq_obj
-                .get("e")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'e' in dleq")?;
-            let s_str = dleq_obj
-                .get("s")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 's' in dleq")?;
-            let e = SecretKey::from_hex(e_str).map_err(|e| format!("Invalid dleq.e: {}", e))?;
-            let s = SecretKey::from_hex(s_str).map_err(|e| format!("Invalid dleq.s: {}", e))?;
-            Some(BlindSignatureDleq { e, s })
-        } else {
-            None
-        };
-
-        blind_signatures.push(BlindSignature {
-            amount: Amount::from(amount),
-            keyset_id,
-            c,
-            dleq,
-        });
-    }
-
-    // Parse secrets with blinding factors
-    let secrets_raw: Vec<serde_json::Value> = serde_json::from_str(secrets_with_blinding_json)
-        .map_err(|e| format!("Failed to parse secrets with blinding: {}", e))?;
-
-    let mut secrets: Vec<Secret> = Vec::new();
-    let mut rs: Vec<SecretKey> = Vec::new();
-
-    for swb in secrets_raw {
-        let secret_str = swb["secret"]
-            .as_str()
-            .ok_or("Missing 'secret' in secrets_with_blinding")?;
-        let blinding_factor_hex = swb["blinding_factor"]
-            .as_str()
-            .ok_or("Missing 'blinding_factor' in secrets_with_blinding")?;
-
-        let secret: Secret = secret_str
-            .parse()
-            .map_err(|e| format!("Invalid secret: {}", e))?;
-        let r = SecretKey::from_hex(blinding_factor_hex)
-            .map_err(|e| format!("Invalid blinding factor: {}", e))?;
-
-        secrets.push(secret);
-        rs.push(r);
-    }
-
-    // Construct proofs
-    let proofs = dhke_construct_proofs(blind_signatures, rs, secrets, &keys)
-        .map_err(|e| format!("Failed to construct proofs: {}", e))?;
-
-    // Serialize proofs
-    let proofs_json =
-        serde_json::to_string(&proofs).map_err(|e| format!("Failed to serialize proofs: {}", e))?;
-
-    Ok(proofs_json)
 }
 
 /// Create a signed balance update for a payment.
@@ -713,7 +541,7 @@ fn create_signed_balance_update(
     proofs_json: &str,
     balance: u64,
 ) -> PyResult<String> {
-    create_signed_balance_update_inner(
+    spilman::create_signed_balance_update(
         params_json,
         keyset_info_json,
         secret_hex,
@@ -721,52 +549,6 @@ fn create_signed_balance_update(
         balance,
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
-}
-
-fn create_signed_balance_update_inner(
-    params_json: &str,
-    keyset_info_json: &str,
-    secret_hex: &str,
-    proofs_json: &str,
-    balance: u64,
-) -> Result<String, String> {
-    use cdk::nuts::Proof;
-    use cdk::spilman::{ChannelParameters, EstablishedChannel, SpilmanChannelSender};
-
-    // Parse keyset info
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-
-    // Parse secret key
-    let alice_secret =
-        SecretKey::from_hex(secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
-
-    // Create channel parameters
-    let params =
-        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
-            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
-
-    // Parse funding proofs
-    let funding_proofs: Vec<Proof> =
-        serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
-
-    // Create channel and sender
-    let channel = EstablishedChannel::new(params, funding_proofs)
-        .map_err(|e| format!("Failed to create EstablishedChannel: {}", e))?;
-
-    let sender = SpilmanChannelSender::new(alice_secret, channel);
-
-    // Create signed balance update
-    let (balance_update, _swap_request) = sender
-        .create_signed_balance_update(balance)
-        .map_err(|e| format!("Failed to create balance update: {}", e))?;
-
-    let result = serde_json::json!({
-        "channel_id": balance_update.channel_id,
-        "amount": balance_update.amount,
-        "signature": balance_update.signature.to_string()
-    });
-
-    Ok(result.to_string())
 }
 
 /// Unblind mint signatures and verify DLEQ proofs.
@@ -796,129 +578,16 @@ fn unblind_and_verify_dleq(
     balance: u64,
     output_keyset_info_json: Option<String>,
 ) -> PyResult<String> {
-    unblind_and_verify_dleq_inner(
+    spilman::unblind_and_verify_dleq(
         blind_signatures_json,
         secrets_with_blinding_json,
         params_json,
         keyset_info_json,
         shared_secret_hex,
         balance,
-        output_keyset_info_json,
+        output_keyset_info_json.as_deref(),
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
-}
-
-fn unblind_and_verify_dleq_inner(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    params_json: &str,
-    keyset_info_json: &str,
-    shared_secret_hex: &str,
-    balance: u64,
-    output_keyset_info_json: Option<String>,
-) -> Result<String, String> {
-    use cdk::nuts::BlindSignature;
-    use cdk::secret::Secret;
-    use cdk::spilman::{
-        unblind_and_verify_stage1_response, ChannelParameters, DeterministicSecretWithBlinding,
-    };
-
-    // Parse keyset info
-    let keyset_info = spilman::parse_keyset_info_from_json(keyset_info_json)?;
-
-    // Parse output keyset info if provided, otherwise use funding keyset
-    let output_keyset_info = match output_keyset_info_json {
-        Some(json) => spilman::parse_keyset_info_from_json(&json)?,
-        None => keyset_info.clone(),
-    };
-
-    // Parse shared secret
-    let shared_secret_bytes =
-        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
-        .try_into()
-        .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
-
-    // Create ChannelParameters to compute blinded pubkey
-    let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
-            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
-
-    // Parse blind signatures
-    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
-        .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
-
-    // Parse secrets with blinding from JSON into typed data
-    let secrets_with_blinding_json: Vec<serde_json::Value> =
-        serde_json::from_str(secrets_with_blinding_json)
-            .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
-
-    let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> = Vec::new();
-    for (i, swb) in secrets_with_blinding_json.iter().enumerate() {
-        let secret_str = swb["secret"]
-            .as_str()
-            .ok_or_else(|| format!("Missing 'secret' at index {}", i))?;
-        let blinding_hex = swb["blinding_factor"]
-            .as_str()
-            .ok_or_else(|| format!("Missing 'blinding_factor' at index {}", i))?;
-        let is_receiver = swb["is_receiver"]
-            .as_bool()
-            .ok_or_else(|| format!("Missing 'is_receiver' at index {}", i))?;
-        let amount = swb["amount"]
-            .as_u64()
-            .ok_or_else(|| format!("Missing 'amount' at index {}", i))?;
-        let index = swb["index"]
-            .as_u64()
-            .ok_or_else(|| format!("Missing 'index' at index {}", i))? as usize;
-
-        let secret = Secret::new(secret_str.to_string());
-        let blinding_bytes = hex::decode(blinding_hex)
-            .map_err(|e| format!("Invalid blinding_factor hex at index {}: {}", i, e))?;
-        let blinding_factor = SecretKey::from_slice(&blinding_bytes)
-            .map_err(|e| format!("Invalid blinding_factor at index {}: {}", i, e))?;
-
-        secrets_with_blinding.push((
-            DeterministicSecretWithBlinding {
-                secret,
-                blinding_factor,
-                amount,
-                index,
-            },
-            is_receiver,
-        ));
-    }
-
-    // Call the core function
-    let result = unblind_and_verify_stage1_response(
-        blind_signatures,
-        secrets_with_blinding,
-        &params,
-        &output_keyset_info,
-        balance,
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Serialize proofs for JSON output
-    let receiver_proofs_json: Vec<serde_json::Value> = result
-        .receiver_proofs
-        .iter()
-        .map(|p| serde_json::to_value(p).unwrap())
-        .collect();
-    let sender_proofs_json: Vec<serde_json::Value> = result
-        .sender_proofs
-        .iter()
-        .map(|p| serde_json::to_value(p).unwrap())
-        .collect();
-
-    // Build result
-    let json_result = serde_json::json!({
-        "receiver_proofs": receiver_proofs_json,
-        "sender_proofs": sender_proofs_json,
-        "receiver_sum_after_stage1": result.receiver_sum,
-        "sender_sum_after_stage1": result.sender_sum
-    });
-
-    Ok(json_result.to_string())
 }
 
 // ============================================================================
