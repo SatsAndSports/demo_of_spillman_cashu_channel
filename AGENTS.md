@@ -780,7 +780,10 @@ The test suite includes:
 - ✅ Video quality preference persistence in localStorage
 
 *High Priority:*
-- ❌ Highlight currently playing video in list
+- ? Why two WASM folders?
+- ? script for testing python (and go) setup
+- ? review the python and go servers
+- ? general consolidation check?
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
 - ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
 - ✅ 'share' button looks much better
