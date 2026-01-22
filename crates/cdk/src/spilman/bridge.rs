@@ -43,7 +43,8 @@ pub trait SpilmanHost {
     ///
     /// The host should compute this based on the service provided so far,
     /// plus the current request described in `context_json`.
-    fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64;
+    /// If `context_json` is None, return the amount due based on existing usage.
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
 
     /// Record a successful payment and update usage
     fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
@@ -179,6 +180,10 @@ pub enum BridgeError {
         balance: u64,
         amount_due: u64,
     },
+    BalanceMismatch {
+        expected: u64,
+        actual: u64,
+    },
     Internal(String),
     ReceiverKeyNotAcceptable,
     MintOrKeysetNotAcceptable,
@@ -225,6 +230,9 @@ impl std::fmt::Display for BridgeError {
                 balance,
                 amount_due,
             } => write!(f, "insufficient balance: {} < {}", balance, amount_due),
+            Self::BalanceMismatch { expected, actual } => {
+                write!(f, "balance mismatch: expected {}, got {}", expected, actual)
+            }
             Self::Internal(s) => write!(f, "internal error: {}", s),
             Self::ReceiverKeyNotAcceptable => write!(f, "receiver key not acceptable"),
             Self::MintOrKeysetNotAcceptable => write!(f, "mint or keyset not acceptable"),
@@ -556,6 +564,10 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                         extra.insert("balance".into(), serde_json::json!(balance));
                         extra.insert("amount_due".into(), serde_json::json!(amount_due));
                     }
+                    BridgeError::BalanceMismatch { expected, actual } => {
+                        extra.insert("expected".into(), serde_json::json!(expected));
+                        extra.insert("actual".into(), serde_json::json!(actual));
+                    }
                     BridgeError::ValidationFailed(ref s) => {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(s) {
                             extra.insert("validation_errors".into(), val);
@@ -634,7 +646,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
 
         // 6. Check balance against amount_due
-        let amount_due = self.host.get_amount_due(channel_id, context_json);
+        let amount_due = self.host.get_amount_due(channel_id, Some(context_json));
         if payment.balance < amount_due {
             return Err(BridgeError::InsufficientBalance {
                 balance: payment.balance,
@@ -1011,7 +1023,16 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             });
         }
 
-        // 7. Parse signature
+        // 7. Check balance equals amount_due
+        let amount_due = self.host.get_amount_due(channel_id, None);
+        if payment.balance != amount_due {
+            return Err(BridgeError::BalanceMismatch {
+                expected: amount_due,
+                actual: payment.balance,
+            });
+        }
+
+        // 8. Parse signature
         let sig: bitcoin::secp256k1::schnorr::Signature = payment.signature.parse().map_err(
             |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
                 BridgeError::InvalidSignature(e.to_string())
@@ -1315,7 +1336,7 @@ mod tests {
         ) {
         }
 
-        fn get_amount_due(&self, _channel_id: &str, _context_json: &str) -> u64 {
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
             0
         }
 
@@ -1459,6 +1480,7 @@ mod tests {
         pub active_keyset_ids: Vec<Id>,
         pub keyset_infos: std::collections::HashMap<Id, String>,
         pub funding_data: std::collections::HashMap<String, (String, String, String, String)>,
+        pub amount_due: u64,
     }
 
     impl SpilmanHost for FlexibleMockHost {
@@ -1483,8 +1505,8 @@ mod tests {
             _keyset_info_json: &str,
         ) {
         }
-        fn get_amount_due(&self, _channel_id: &str, _context_json: &str) -> u64 {
-            0
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+            self.amount_due
         }
         fn record_payment(
             &self,
@@ -1559,6 +1581,7 @@ mod tests {
             shared_secret,
         };
         let channel_id = params_struct.get_channel_id();
+        let balance = 100;
 
         // Dummy funding proofs (all for Keyset A)
         let proofs = vec![Proof {
@@ -1592,12 +1615,12 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            amount_due: balance,
         };
 
         let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
 
         // Create a signature for balance update (100 sats to Charlie)
-        let balance = 100;
         let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
         let sender = SpilmanChannelSender::new(alice_sk, channel);
         let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();

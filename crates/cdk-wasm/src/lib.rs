@@ -38,7 +38,7 @@ extern "C" {
     );
 
     #[wasm_bindgen(method, js_name = getAmountDue)]
-    fn get_amount_due(this: &JsSpilmanHost, channel_id: &str, context_json: &str) -> u64;
+    fn get_amount_due(this: &JsSpilmanHost, channel_id: &str, context_json: JsValue) -> u64;
 
     #[wasm_bindgen(method, js_name = recordPayment)]
     fn record_payment(
@@ -120,8 +120,12 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         );
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64 {
-        self.js_host.get_amount_due(channel_id, context_json)
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
+        let ctx_val = match context_json {
+            Some(s) => JsValue::from_str(s),
+            None => JsValue::NULL,
+        };
+        self.js_host.get_amount_due(channel_id, ctx_val)
     }
 
     fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
@@ -284,10 +288,19 @@ impl WasmSpilmanBridge {
             Err(e) => {
                 // Return error in same format as processPayment for consistency
                 let error_msg = e.to_string();
-                let result = serde_json::json!({
+                let mut result = serde_json::json!({
                     "success": false,
                     "error": error_msg
                 });
+
+                // Add extra metadata for specific errors
+                if let cdk::spilman::BridgeError::BalanceMismatch { expected, actual } = e {
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert("expected".into(), serde_json::json!(expected));
+                        obj.insert("actual".into(), serde_json::json!(actual));
+                    }
+                }
+
                 Ok(result.to_string())
             }
         }

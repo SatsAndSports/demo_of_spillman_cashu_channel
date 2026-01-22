@@ -166,10 +166,11 @@ impl SpilmanHost for CGoSpilmanHost {
         );
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64 {
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
         let id_c = CString::new(channel_id).unwrap();
-        let ctx_c = CString::new(context_json).unwrap();
-        (self.callbacks.get_amount_due)(self.callbacks.user_data, id_c.as_ptr(), ctx_c.as_ptr())
+        let ctx_c = context_json.map(|s| CString::new(s).unwrap());
+        let ctx_ptr = ctx_c.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());
+        (self.callbacks.get_amount_due)(self.callbacks.user_data, id_c.as_ptr(), ctx_ptr)
     }
 
     fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {

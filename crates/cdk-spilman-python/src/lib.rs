@@ -184,10 +184,14 @@ impl SpilmanHost for PySpilmanHost {
         });
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: &str) -> u64 {
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
         Python::with_gil(|py| {
+            let ctx = match context_json {
+                Some(s) => s.into_py(py),
+                None => py.None(),
+            };
             self.py_host
-                .call_method1(py, "get_amount_due", (channel_id, context_json))
+                .call_method1(py, "get_amount_due", (channel_id, ctx))
                 .and_then(|r| r.extract::<u64>(py))
                 .unwrap_or(0)
         })
