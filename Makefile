@@ -50,11 +50,11 @@ go-build-rust:
 # Run the Go demo server
 go-demo-server: go-build-rust
 	fuser -k 5001/tcp || true
-	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run main.go
+	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
 
-# Run the Python demo client against the Go server (Port 5001)
+# Run the Go demo client
 go-demo-client:
-	SERVER_URL=http://localhost:5001 $(PYTHON) examples/python-ascii-art/client.py Hello World Cashu
+	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client Hello Go Demo
 
 clean:
 	cargo clean

@@ -41,11 +41,15 @@ CResult spilman_secret_key_to_pubkey(const char* secret_hex);
 CResult spilman_compute_shared_secret(const char* my_secret_hex, const char* their_pubkey_hex);
 CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* shared_secret, uint64_t balance, const char* output_keyset);
 CResult spilman_create_signed_balance_update(const char* params, const char* keyset, const char* secret, const char* proofs, uint64_t balance);
+CResult spilman_channel_parameters_get_channel_id(const char* params, const char* shared_secret, const char* keyset);
+CResult spilman_create_funding_outputs(const char* params, const char* alice_secret, const char* keyset);
+CResult spilman_construct_proofs(const char* blind_signatures, const char* secrets_with_blinding, const char* keyset);
 */
 import "C"
 import (
 	"encoding/json"
 	"errors"
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -67,12 +71,13 @@ type SpilmanHost interface {
 }
 
 type Bridge struct {
-	ptr  unsafe.Pointer
-	host *SpilmanHost // Keep reference to avoid GC of the interface
+	ptr    unsafe.Pointer
+	handle cgo.Handle
 }
 
 func NewBridge(host SpilmanHost, serverSecretKeyHex string) *Bridge {
-	callbacks := C.fill_callbacks(unsafe.Pointer(&host))
+	handle := cgo.NewHandle(host)
+	callbacks := C.fill_callbacks(unsafe.Pointer(handle))
 
 	var cSecret *C.char
 	if serverSecretKeyHex != "" {
@@ -81,7 +86,7 @@ func NewBridge(host SpilmanHost, serverSecretKeyHex string) *Bridge {
 	}
 
 	ptr := C.spilman_bridge_new(callbacks, cSecret)
-	return &Bridge{ptr: ptr, host: &host}
+	return &Bridge{ptr: ptr, handle: handle}
 }
 
 func (b *Bridge) Free() {
@@ -89,6 +94,7 @@ func (b *Bridge) Free() {
 		C.spilman_bridge_free(b.ptr)
 		b.ptr = nil
 	}
+	b.handle.Delete()
 }
 
 func (b *Bridge) ProcessPayment(paymentJson, contextJson string, keysetInfoJson *string) (string, error) {
@@ -97,13 +103,13 @@ func (b *Bridge) ProcessPayment(paymentJson, contextJson string, keysetInfoJson 
 	cContext := C.CString(contextJson)
 	defer C.free(unsafe.Pointer(cContext))
 
-	var cKeyset *C.char
+	var cKeysetInfo *C.char
 	if keysetInfoJson != nil {
-		cKeyset = C.CString(*keysetInfoJson)
-		defer C.free(unsafe.Pointer(cKeyset))
+		cKeysetInfo = C.CString(*keysetInfoJson)
+		defer C.free(unsafe.Pointer(cKeysetInfo))
 	}
 
-	res := C.spilman_bridge_process_payment(b.ptr, cPayment, cContext, cKeyset)
+	res := C.spilman_bridge_process_payment(b.ptr, cPayment, cContext, cKeysetInfo)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
@@ -116,13 +122,13 @@ func (b *Bridge) CreateCloseData(paymentJson string, keysetInfoJson *string) (st
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 
-	var cKeyset *C.char
+	var cKeysetInfo *C.char
 	if keysetInfoJson != nil {
-		cKeyset = C.CString(*keysetInfoJson)
-		defer C.free(unsafe.Pointer(cKeyset))
+		cKeysetInfo = C.CString(*keysetInfoJson)
+		defer C.free(unsafe.Pointer(cKeysetInfo))
 	}
 
-	res := C.spilman_bridge_create_close_data(b.ptr, cPayment, cKeyset)
+	res := C.spilman_bridge_create_close_data(b.ptr, cPayment, cKeysetInfo)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
@@ -238,11 +244,63 @@ func CreateSignedBalanceUpdate(params, keyset, secret, proofs string, balance ui
 	return C.GoString(res.data), nil
 }
 
+func ChannelParametersGetChannelId(params, sharedSecret, keyset string) (string, error) {
+	cParams := C.CString(params)
+	defer C.free(unsafe.Pointer(cParams))
+	cSecret := C.CString(sharedSecret)
+	defer C.free(unsafe.Pointer(cSecret))
+	cKeyset := C.CString(keyset)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_channel_parameters_get_channel_id(cParams, cSecret, cKeyset)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+func CreateFundingOutputs(params, aliceSecret, keyset string) (string, error) {
+	cParams := C.CString(params)
+	defer C.free(unsafe.Pointer(cParams))
+	cSecret := C.CString(aliceSecret)
+	defer C.free(unsafe.Pointer(cSecret))
+	cKeyset := C.CString(keyset)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_create_funding_outputs(cParams, cSecret, cKeyset)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+func ConstructProofs(blindSignatures, secretsWithBlinding, keyset string) (string, error) {
+	cSigs := C.CString(blindSignatures)
+	defer C.free(unsafe.Pointer(cSigs))
+	cSecrets := C.CString(secretsWithBlinding)
+	defer C.free(unsafe.Pointer(cSecrets))
+	cKeyset := C.CString(keyset)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_construct_proofs(cSigs, cSecrets, cKeyset)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
 // --- Callbacks Implementation ---
 
 //export go_receiver_key_is_acceptable
 func go_receiver_key_is_acceptable(userData unsafe.Pointer, pubkeyHex *C.char) C.int {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	if host.ReceiverKeyIsAcceptable(C.GoString(pubkeyHex)) {
 		return 1
 	}
@@ -251,7 +309,8 @@ func go_receiver_key_is_acceptable(userData unsafe.Pointer, pubkeyHex *C.char) C
 
 //export go_mint_and_keyset_is_acceptable
 func go_mint_and_keyset_is_acceptable(userData unsafe.Pointer, mint *C.char, keysetId *C.char) C.int {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	if host.MintAndKeysetIsAcceptable(C.GoString(mint), C.GoString(keysetId)) {
 		return 1
 	}
@@ -260,7 +319,8 @@ func go_mint_and_keyset_is_acceptable(userData unsafe.Pointer, mint *C.char, key
 
 //export go_get_funding_and_params
 func go_get_funding_and_params(userData unsafe.Pointer, channelId *C.char, paramsOut **C.char, proofsOut **C.char, secretOut **C.char, keysetOut **C.char) C.int {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	p, pr, s, k, ok := host.GetFundingAndParams(C.GoString(channelId))
 	if !ok {
 		return 0
@@ -274,25 +334,29 @@ func go_get_funding_and_params(userData unsafe.Pointer, channelId *C.char, param
 
 //export go_save_funding
 func go_save_funding(userData unsafe.Pointer, channelId *C.char, paramsJson *C.char, fundingProofsJson *C.char, sharedSecretHex *C.char, keysetInfoJson *C.char) {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	host.SaveFunding(C.GoString(channelId), C.GoString(paramsJson), C.GoString(fundingProofsJson), C.GoString(sharedSecretHex), C.GoString(keysetInfoJson))
 }
 
 //export go_get_amount_due
 func go_get_amount_due(userData unsafe.Pointer, channelId *C.char, contextJson *C.char) C.uint64_t {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	return C.uint64_t(host.GetAmountDue(C.GoString(channelId), C.GoString(contextJson)))
 }
 
 //export go_record_payment
 func go_record_payment(userData unsafe.Pointer, channelId *C.char, balance C.uint64_t, signature *C.char, contextJson *C.char) {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	host.RecordPayment(C.GoString(channelId), uint64(balance), C.GoString(signature), C.GoString(contextJson))
 }
 
 //export go_is_closed
 func go_is_closed(userData unsafe.Pointer, channelId *C.char) C.int {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	if host.IsClosed(C.GoString(channelId)) {
 		return 1
 	}
@@ -301,19 +365,22 @@ func go_is_closed(userData unsafe.Pointer, channelId *C.char) C.int {
 
 //export go_get_server_config
 func go_get_server_config(userData unsafe.Pointer) *C.char {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	return C.CString(host.GetServerConfig())
 }
 
 //export go_now_seconds
 func go_now_seconds(userData unsafe.Pointer) C.uint64_t {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	return C.uint64_t(host.NowSeconds())
 }
 
 //export go_get_largest_balance_with_signature
 func go_get_largest_balance_with_signature(userData unsafe.Pointer, channelId *C.char, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	balance, signature, ok := host.GetLargestBalanceWithSignature(C.GoString(channelId))
 	if !ok {
 		return 0
@@ -325,7 +392,8 @@ func go_get_largest_balance_with_signature(userData unsafe.Pointer, channelId *C
 
 //export go_get_active_keyset_ids
 func go_get_active_keyset_ids(userData unsafe.Pointer, mint *C.char, unit *C.char) *C.char {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	ids := host.GetActiveKeysetIds(C.GoString(mint), C.GoString(unit))
 	jsonBytes, _ := json.Marshal(ids)
 	return C.CString(string(jsonBytes))
@@ -333,7 +401,8 @@ func go_get_active_keyset_ids(userData unsafe.Pointer, mint *C.char, unit *C.cha
 
 //export go_get_keyset_info
 func go_get_keyset_info(userData unsafe.Pointer, mint *C.char, keysetId *C.char) *C.char {
-	host := *(*SpilmanHost)(userData)
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
 	info, ok := host.GetKeysetInfo(C.GoString(mint), C.GoString(keysetId))
 	if !ok {
 		return nil

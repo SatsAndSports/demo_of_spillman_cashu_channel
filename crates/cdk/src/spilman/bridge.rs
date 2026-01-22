@@ -410,6 +410,84 @@ pub fn unblind_and_verify_stage1_response(
     })
 }
 
+/// Unblind signatures from a swap response and verify DLEQ proofs
+pub fn unblind_and_verify_dleq(
+    blind_signatures_json: &str,
+    secrets_with_blinding_json: &str,
+    params_json: &str,
+    keyset_info_json: &str,
+    shared_secret_hex: &str,
+    balance: u64,
+    output_keyset_info_json: Option<&str>,
+) -> Result<String, String> {
+    use super::{parse_keyset_info_from_json, unblind_and_verify_stage1_response};
+    use crate::nuts::SecretKey;
+    use crate::secret::Secret;
+
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+    let output_keyset_info = match output_keyset_info_json {
+        Some(json) => parse_keyset_info_from_json(json)?,
+        None => keyset_info.clone(),
+    };
+
+    let shared_secret_bytes =
+        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let shared_secret: [u8; 32] = shared_secret_bytes
+        .try_into()
+        .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
+
+    let params =
+        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+
+    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
+        .map_err(|e| format!("Invalid blind signatures JSON: {}", e))?;
+
+    let swb_raw: Vec<serde_json::Value> = serde_json::from_str(secrets_with_blinding_json)
+        .map_err(|e| format!("Invalid secrets_with_blinding JSON: {}", e))?;
+
+    let mut secrets_with_blinding: Vec<(DeterministicSecretWithBlinding, bool)> = Vec::new();
+    for swb in swb_raw {
+        let secret_str = swb["secret"].as_str().ok_or("Missing secret")?;
+        let blinding_hex = swb["blinding_factor"].as_str().ok_or("Missing blinding")?;
+        let is_receiver = swb["is_receiver"].as_bool().ok_or("Missing is_receiver")?;
+        let amount = swb["amount"].as_u64().ok_or("Missing amount")?;
+        let index = swb["index"].as_u64().ok_or("Missing index")? as usize;
+
+        let secret = Secret::new(secret_str.to_string());
+        let blinding_bytes = hex::decode(blinding_hex).map_err(|e| e.to_string())?;
+        let blinding_factor = SecretKey::from_slice(&blinding_bytes).map_err(|e| e.to_string())?;
+
+        secrets_with_blinding.push((
+            DeterministicSecretWithBlinding {
+                secret,
+                blinding_factor,
+                amount,
+                index,
+            },
+            is_receiver,
+        ));
+    }
+
+    let result = unblind_and_verify_stage1_response(
+        blind_signatures,
+        secrets_with_blinding,
+        &params,
+        &output_keyset_info,
+        balance,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let json = serde_json::json!({
+        "receiver_proofs": result.receiver_proofs,
+        "sender_proofs": result.sender_proofs,
+        "receiver_sum_after_stage1": result.receiver_sum,
+        "sender_sum_after_stage1": result.sender_sum
+    });
+
+    Ok(json.to_string())
+}
+
 impl<H: SpilmanHost> SpilmanBridge<H> {
     pub fn new(host: H, server_secret_key: Option<SecretKey>) -> Self {
         Self {

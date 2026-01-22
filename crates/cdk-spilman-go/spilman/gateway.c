@@ -36,7 +36,10 @@ extern int go_get_largest_balance_with_signature(void*, const char*, uint64_t*, 
 extern char* go_get_active_keyset_ids(void*, const char*, const char*);
 extern char* go_get_keyset_info(void*, const char*, const char*);
 
+#include <stdio.h>
+
 SpilmanHostCallbacks fill_callbacks(void* user_data) {
+    printf("  [C] fill_callbacks called with user_data=%p\n", user_data);
     SpilmanHostCallbacks cb;
     cb.user_data = user_data;
     cb.receiver_key_is_acceptable = go_receiver_key_is_acceptable;
