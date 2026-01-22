@@ -461,24 +461,8 @@ def ascii_art():
     # Create context with message length for pricing
     context = json.dumps({"message_length": len(message)})
     
-    # Look up keyset info if params are provided
-    keyset_info_json = None
-    try:
-        payment = json.loads(payment_header)
-        if "params" in payment:
-            params = payment["params"]
-            keyset_info_json = fetch_details_for_one_keyset(
-                params["mint"],
-                params["keyset_id"],
-                params["unit"],
-                params.get("input_fee_ppk", 0),
-                set_the_active_flag=None
-            )
-    except Exception as e:
-        print(f"  [Warning] Failed to parse payment header: {e}")
-    
     # Process payment through bridge
-    result_json = bridge.process_payment(payment_header, context, keyset_info_json)
+    result_json = bridge.process_payment(payment_header, context)
     result = json.loads(result_json)
     
     if not result["success"]:

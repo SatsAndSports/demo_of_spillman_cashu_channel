@@ -307,20 +307,12 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
     ptr: *mut BridgeInstance,
     payment_json: *const c_char,
     context_json: *const c_char,
-    keyset_info_json: *const c_char,
 ) -> CResult {
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
     let context = CStr::from_ptr(context_json).to_str().unwrap();
-    let keyset_info = if !keyset_info_json.is_null() {
-        Some(CStr::from_ptr(keyset_info_json).to_str().unwrap())
-    } else {
-        None
-    };
 
-    let response = instance
-        .bridge
-        .process_payment(payment, context, keyset_info);
+    let response = instance.bridge.process_payment(payment, context);
     let json = serde_json::to_string(&response).unwrap();
     CResult::success(json)
 }
@@ -329,17 +321,11 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
 pub unsafe extern "C" fn spilman_bridge_create_close_data(
     ptr: *mut BridgeInstance,
     payment_json: *const c_char,
-    keyset_info_json: *const c_char,
 ) -> CResult {
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
-    let keyset_info = if !keyset_info_json.is_null() {
-        Some(CStr::from_ptr(keyset_info_json).to_str().unwrap())
-    } else {
-        None
-    };
 
-    match instance.bridge.create_close_data(payment, keyset_info) {
+    match instance.bridge.create_close_data(payment) {
         Ok(close_data) => {
             let swap_request_json = serde_json::to_value(&close_data.swap_request).unwrap();
             let secrets_with_blinding: Vec<serde_json::Value> = close_data
