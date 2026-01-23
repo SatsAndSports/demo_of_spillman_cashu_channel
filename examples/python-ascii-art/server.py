@@ -370,6 +370,69 @@ class AsciiArtHost:
         data = keyset_cache.get((mint, keyset_id))
         return data["info_json"] if data else None
 
+    def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
+        """
+        Call the mint's /v1/swap endpoint.
+
+        The host is responsible for HTTP communication with the mint.
+        Returns the full JSON response body on success.
+        Raises an exception on HTTP error.
+
+        Args:
+            mint_url: The mint's base URL.
+            swap_request_json: The swap request as a JSON string.
+
+        Returns:
+            The mint's response body as a JSON string.
+        """
+        print(f"  [Host] call_mint_swap to {mint_url}")
+        swap_request = json.loads(swap_request_json)
+        response = http_requests.post(
+            f"{mint_url}/v1/swap",
+            json=swap_request,
+            headers={"Content-Type": "application/json"}
+        )
+        if not response.ok:
+            raise Exception(f"Mint rejected swap: {response.text}")
+        print(f"  [Host] Got {len(response.json().get('signatures', []))} blind signatures")
+        return response.text
+
+    def mark_channel_closed(
+        self,
+        channel_id: str,
+        locktime: int,
+        balance: int,
+        receiver_proofs_json: str,
+        sender_proofs_json: str,
+        receiver_sum: int,
+        sender_sum: int
+    ):
+        """
+        Mark a channel as closed and persist the final state.
+
+        Called after successful unblinding and DLEQ verification.
+        The host should store the proofs and mark the channel as closed.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+            locktime: The channel's locktime.
+            balance: The balance at which the channel was closed.
+            receiver_proofs_json: JSON array of receiver's P2PK proofs.
+            sender_proofs_json: JSON array of sender's P2PK proofs (change).
+            receiver_sum: Sum of receiver proof amounts.
+            sender_sum: Sum of sender proof amounts.
+        """
+        channel_closed[channel_id] = {
+            "locktime": locktime,
+            "balance": balance,
+            "receiver_proofs": json.loads(receiver_proofs_json),
+            "sender_proofs": json.loads(sender_proofs_json),
+            "receiver_sum": receiver_sum,
+            "sender_sum": sender_sum
+        }
+        print(f"  [Host] Channel {channel_id[:16]} marked closed. "
+              f"Receiver: {receiver_sum} sat, Sender: {sender_sum} sat")
+
 
 # Initialize host and bridge
 host = AsciiArtHost(SECRET_KEY, MINT_URL)
@@ -523,24 +586,14 @@ def close_channel(channel_id: str) -> dict:
     params = json.loads(funding["params"])
     mint_url = params["mint"]
     
-    # Submit swap to mint
+    # Submit swap to mint via host hook
     print(f"  [Close] Submitting swap to mint: {mint_url}")
     try:
-        response = http_requests.post(
-            f"{mint_url}/v1/swap",
-            json=swap_request,
-            headers={"Content-Type": "application/json"}
-        )
-        if not response.ok:
-            error_text = response.text
-            print(f"  [Close] Mint rejected swap: {error_text}")
-            return {"success": False, "error": f"mint rejected swap: {error_text}"}
-        
-        swap_response = response.json()
-        print(f"  [Close] Got {len(swap_response.get('signatures', []))} blind signatures")
+        swap_response_text = host.call_mint_swap(mint_url, json.dumps(swap_request))
+        swap_response = json.loads(swap_response_text)
     except Exception as e:
-        print(f"  [Close] Failed to contact mint: {e}")
-        return {"success": False, "error": f"failed to contact mint: {e}"}
+        print(f"  [Close] Mint swap failed: {e}")
+        return {"success": False, "error": str(e)}
     
     # Unblind and verify DLEQ
     try:
@@ -562,14 +615,17 @@ def close_channel(channel_id: str) -> dict:
         print(f"  [Close] Unblind/DLEQ verification failed: {e}")
         return {"success": False, "error": f"unblind verification failed: {e}"}
     
-    # Mark channel as closed
-    channel_closed[channel_id] = {
-        "balance": balance,
-        "receiver_proofs": unblind_result["receiver_proofs"],
-        "sender_proofs": unblind_result["sender_proofs"],
-        "receiver_sum": unblind_result["receiver_sum_after_stage1"],
-        "sender_sum": unblind_result["sender_sum_after_stage1"]
-    }
+    # Mark channel as closed via host hook
+    locktime = params.get("locktime", 0)
+    host.mark_channel_closed(
+        channel_id,
+        locktime,
+        balance,
+        json.dumps(unblind_result["receiver_proofs"]),
+        json.dumps(unblind_result["sender_proofs"]),
+        unblind_result["receiver_sum_after_stage1"],
+        unblind_result["sender_sum_after_stage1"]
+    )
     
     print(f"  [Close] SUCCESS! Channel {channel_id[:16]} closed. "
           f"Earned {unblind_result['receiver_sum_after_stage1']} sat")

@@ -30,6 +30,8 @@ use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 /// - get_balance_and_signature_for_unilateral_exit(channel_id: str) -> Optional[Tuple[int, str]]
 /// - get_active_keyset_ids(mint: str, unit: str) -> List[str]
 /// - get_keyset_info(mint: str, keyset_id: str) -> Optional[str]
+/// - call_mint_swap(mint_url: str, swap_request_json: str) -> str  # Returns response JSON or raises
+/// - mark_channel_closed(channel_id: str, locktime: int, balance: int, receiver_proofs_json: str, sender_proofs_json: str, receiver_sum: int, sender_sum: int)
 struct PySpilmanHost {
     py_host: PyObject,
 }
@@ -262,6 +264,48 @@ impl SpilmanHost for PySpilmanHost {
                 tuple.get_item(0).ok()?.extract::<u64>().ok()?,
                 tuple.get_item(1).ok()?.extract::<String>().ok()?,
             ))
+        })
+    }
+
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self
+                .py_host
+                .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
+            {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
+
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String> {
+        Python::with_gil(|py| {
+            match self.py_host.call_method1(
+                py,
+                "mark_channel_closed",
+                (
+                    channel_id,
+                    locktime,
+                    balance,
+                    receiver_proofs_json,
+                    sender_proofs_json,
+                    receiver_sum,
+                    sender_sum,
+                ),
+            ) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
         })
     }
 }
