@@ -2,13 +2,16 @@
 
 # go-parallel-demo.sh
 # Automated test for Spilman Go Demo with dynamic ports and parallel clients.
+#
+# Usage: ./scripts/go-parallel-demo.sh [cdk|nutmix]
 
 set -e
 set -u
 set -o pipefail
 
 # 1. Configuration
-LOG_DIR="./testing/go-demo"
+MINT_TYPE="${1:-cdk}"
+LOG_DIR="./testing/go-demo-$MINT_TYPE"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
@@ -45,11 +48,11 @@ echo "MINT_PORT:   $MINT_PORT"
 echo "SERVER_PORT: $SERVER_PORT"
 
 # 5. Start Mint
-echo "--- Starting Mint (logging to $MINT_LOG) ---"
-./scripts/run_temporary_mint.sh cdk "$MINT_PORT" > "$MINT_LOG" 2>&1 &
+echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
+./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
 # Wait for mint to be ready
-./scripts/wait_for_mint.sh "$MINT_PORT" 10 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+./scripts/wait_for_mint.sh "$MINT_PORT" 50 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
 
 # 6. Start Go Server
 echo "--- Starting Go Server (logging to $SERVER_LOG) ---"

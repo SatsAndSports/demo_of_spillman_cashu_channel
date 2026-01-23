@@ -2,13 +2,16 @@
 
 # python-parallel-demo.sh
 # Automated test for Spilman Python Demo with dynamic ports and parallel clients.
+#
+# Usage: ./scripts/python-parallel-demo.sh [cdk|nutmix]
 
 set -e
 set -u
 set -o pipefail
 
 # 1. Configuration
-LOG_DIR="./testing/python-demo"
+MINT_TYPE="${1:-cdk}"
+LOG_DIR="./testing/python-demo-$MINT_TYPE"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
@@ -40,11 +43,11 @@ echo "MINT_PORT:   $MINT_PORT"
 echo "SERVER_PORT: $SERVER_PORT"
 
 # 4. Start Mint
-echo "--- Starting Mint (logging to $MINT_LOG) ---"
-./scripts/run_temporary_mint.sh cdk "$MINT_PORT" > "$MINT_LOG" 2>&1 &
+echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
+./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
 # Wait for mint to be ready
-./scripts/wait_for_mint.sh "$MINT_PORT" 10 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+./scripts/wait_for_mint.sh "$MINT_PORT" 50 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
 
 # 5. Start Python Server
 echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
