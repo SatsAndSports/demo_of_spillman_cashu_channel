@@ -515,7 +515,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 let mut extra = BTreeMap::new();
                 let msg = e.to_string();
                 let status = match e {
-                    BridgeError::InvalidRequest(_) => BridgeStatus::PaymentRequired,
+                    BridgeError::InvalidRequest(_) => BridgeStatus::BadRequest,
                     BridgeError::ServerMisconfigured(_) => BridgeStatus::ServerError,
                     BridgeError::Internal(_) => BridgeStatus::ServerError,
                     _ => BridgeStatus::PaymentRequired,
@@ -883,7 +883,13 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         header.insert("error".into(), serde_json::json!(msg));
 
         let mut body = extra;
-        body.insert("error".into(), serde_json::json!("Payment required"));
+        let error_title = match status {
+            BridgeStatus::PaymentRequired => "Payment required",
+            BridgeStatus::BadRequest => "Bad Request",
+            BridgeStatus::ServerError => "Server Error",
+            _ => "Error",
+        };
+        body.insert("error".into(), serde_json::json!(error_title));
         body.insert(
             "reason".into(),
             serde_json::json!(match reason {
