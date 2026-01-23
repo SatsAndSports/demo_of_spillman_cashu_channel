@@ -785,7 +785,8 @@ The test suite includes:
 - ✅ Video quality preference persistence in localStorage
 
 *High Priority:*
-- ? add another mint. nutmix?
+- ? (blossom) tests to explicitly check that a mint is running, and give a decent error message
+- ? add another mint. nutmix? is it faster? give multiple options
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
 - ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
 - ✅ 'share' button looks much better
