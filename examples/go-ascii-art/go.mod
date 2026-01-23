@@ -1,6 +1,6 @@
 module github.com/SatsAndSports/cdk/examples/go-ascii-art
 
-go 1.24.1
+go 1.21
 
 replace github.com/SatsAndSports/cdk/spilman => ../../crates/cdk-spilman-go/spilman
 
