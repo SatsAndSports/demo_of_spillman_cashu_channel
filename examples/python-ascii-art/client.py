@@ -40,6 +40,17 @@ MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
 
 
+def get_mint_version(mint_url: str) -> str:
+    """Fetch mint version from /v1/info endpoint."""
+    try:
+        resp = requests.get(f"{mint_url}/v1/info", timeout=2)
+        if resp.ok:
+            return resp.json().get("version", "unknown")
+    except Exception:
+        pass
+    return "unknown"
+
+
 def fetch_active_keyset_info(mint_url: str) -> dict:
     """Fetch active keyset info from mint."""
     print(f"  Fetching keysets from {mint_url}...")
@@ -60,7 +71,8 @@ def fetch_active_keyset_info(mint_url: str) -> dict:
         raise Exception("No active sat keyset found")
     
     keyset_id = active["id"]
-    print(f"  Found keyset: {keyset_id}")
+    unit = active["unit"]
+    print(f"  Found keyset: {keyset_id} ({unit})")
     
     # Get keys for this keyset
     keys_resp = requests.get(f"{mint_url}/v1/keys/{keyset_id}")
@@ -196,6 +208,7 @@ def main():
     
     # 3. Fetch keyset info
     print("[3/8] Fetching keyset info from mint...")
+    print(f"  Mint version: {get_mint_version(MINT_URL)}")
     try:
         keyset_info = fetch_active_keyset_info(MINT_URL)
     except requests.exceptions.ConnectionError:
