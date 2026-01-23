@@ -155,6 +155,43 @@ pub struct CloseData {
     pub output_keyset_info: KeysetInfo,
 }
 
+impl CloseData {
+    /// Serialize CloseData to a JSON value for FFI responses
+    ///
+    /// Returns a JSON object with:
+    /// - `success`: true
+    /// - `swap_request`: The fully-signed swap request
+    /// - `expected_total`: Expected total output value
+    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
+    /// - `output_keyset_info`: The keyset info for outputs
+    pub fn to_json_value(self) -> serde_json::Value {
+        let swap_request_json =
+            serde_json::to_value(&self.swap_request).unwrap_or_else(|_| serde_json::Value::Null);
+
+        let secrets_with_blinding: Vec<serde_json::Value> = self
+            .secrets_with_blinding
+            .into_iter()
+            .map(|(s, is_receiver)| {
+                serde_json::json!({
+                    "secret": s.secret.to_string(),
+                    "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                    "amount": s.amount,
+                    "index": s.index,
+                    "is_receiver": is_receiver
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "success": true,
+            "swap_request": swap_request_json,
+            "expected_total": self.expected_total,
+            "secrets_with_blinding": secrets_with_blinding,
+            "output_keyset_info": serde_json::to_value(&self.output_keyset_info).unwrap_or(serde_json::Value::Null)
+        })
+    }
+}
+
 /// Result of unblinding and verifying stage 1 swap response
 #[derive(Debug)]
 pub struct UnblindResult {

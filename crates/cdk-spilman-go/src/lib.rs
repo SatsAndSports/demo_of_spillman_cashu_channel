@@ -396,31 +396,7 @@ pub unsafe extern "C" fn spilman_bridge_create_close_data(
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
 
     match instance.bridge.create_close_data(payment) {
-        Ok(close_data) => {
-            let swap_request_json = serde_json::to_value(&close_data.swap_request).unwrap();
-            let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                .secrets_with_blinding
-                .into_iter()
-                .map(|(s, is_receiver)| {
-                    serde_json::json!({
-                        "secret": s.secret.to_string(),
-                        "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
-                        "amount": s.amount,
-                        "index": s.index,
-                        "is_receiver": is_receiver
-                    })
-                })
-                .collect();
-
-            let result = serde_json::json!({
-                "success": true,
-                "swap_request": swap_request_json,
-                "expected_total": close_data.expected_total,
-                "secrets_with_blinding": secrets_with_blinding,
-                "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-            });
-            CResult::success(result.to_string())
-        }
+        Ok(close_data) => CResult::success(close_data.to_json_value().to_string()),
         Err(e) => CResult::error(e.to_string()),
     }
 }
@@ -434,31 +410,7 @@ pub unsafe extern "C" fn spilman_bridge_create_unilateral_close_data(
     let id = CStr::from_ptr(channel_id).to_str().unwrap();
 
     match instance.bridge.create_unilateral_close_data(id) {
-        Ok(close_data) => {
-            let swap_request_json = serde_json::to_value(&close_data.swap_request).unwrap();
-            let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                .secrets_with_blinding
-                .into_iter()
-                .map(|(s, is_receiver)| {
-                    serde_json::json!({
-                        "secret": s.secret.to_string(),
-                        "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
-                        "amount": s.amount,
-                        "index": s.index,
-                        "is_receiver": is_receiver
-                    })
-                })
-                .collect();
-
-            let result = serde_json::json!({
-                "success": true,
-                "swap_request": swap_request_json,
-                "expected_total": close_data.expected_total,
-                "secrets_with_blinding": secrets_with_blinding,
-                "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-            });
-            CResult::success(result.to_string())
-        }
+        Ok(close_data) => CResult::success(close_data.to_json_value().to_string()),
         Err(e) => CResult::error(e.to_string()),
     }
 }

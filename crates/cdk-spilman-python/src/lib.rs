@@ -362,34 +362,7 @@ impl SpilmanBridge {
     #[pyo3(signature = (payment_json))]
     fn create_close_data(&self, payment_json: &str) -> PyResult<String> {
         match self.inner.create_close_data(payment_json) {
-            Ok(close_data) => {
-                let swap_request_json = serde_json::to_value(&close_data.swap_request)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-                let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                    .secrets_with_blinding
-                    .into_iter()
-                    .map(|(s, is_receiver)| {
-                        serde_json::json!({
-                            "secret": s.secret.to_string(),
-                            "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
-                            "amount": s.amount,
-                            "index": s.index,
-                            "is_receiver": is_receiver
-                        })
-                    })
-                    .collect();
-
-                let result = serde_json::json!({
-                    "success": true,
-                    "swap_request": swap_request_json,
-                    "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding,
-                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-                });
-
-                Ok(result.to_string())
-            }
+            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
                 let result = serde_json::json!({
                     "success": false,
@@ -412,34 +385,7 @@ impl SpilmanBridge {
     ///     JSON string with swap_request, expected_total, and secrets_with_blinding
     fn create_unilateral_close_data(&self, channel_id: &str) -> PyResult<String> {
         match self.inner.create_unilateral_close_data(channel_id) {
-            Ok(close_data) => {
-                let swap_request_json = serde_json::to_value(&close_data.swap_request)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-
-                let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                    .secrets_with_blinding
-                    .into_iter()
-                    .map(|(s, is_receiver)| {
-                        serde_json::json!({
-                            "secret": s.secret.to_string(),
-                            "blinding_factor": cdk::util::hex::encode(s.blinding_factor.secret_bytes()),
-                            "amount": s.amount,
-                            "index": s.index,
-                            "is_receiver": is_receiver
-                        })
-                    })
-                    .collect();
-
-                let result = serde_json::json!({
-                    "success": true,
-                    "swap_request": swap_request_json,
-                    "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding,
-                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-                });
-
-                Ok(result.to_string())
-            }
+            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
                 let result = serde_json::json!({
                     "success": false,

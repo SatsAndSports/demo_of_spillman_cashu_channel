@@ -313,38 +313,7 @@ impl WasmSpilmanBridge {
     #[wasm_bindgen(js_name = createCloseData)]
     pub fn create_close_data(&self, payment_json: &str) -> Result<String, JsValue> {
         match self.bridge.create_close_data(payment_json) {
-            Ok(close_data) => {
-                // Serialize swap_request
-                let swap_request_json =
-                    serde_json::to_value(&close_data.swap_request).map_err(|e| {
-                        JsValue::from_str(&format!("Failed to serialize swap request: {}", e))
-                    })?;
-
-                // Serialize secrets_with_blinding
-                let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                    .secrets_with_blinding
-                    .into_iter()
-                    .map(|(s, is_receiver)| {
-                        serde_json::json!({
-                            "secret": s.secret.to_string(),
-                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
-                            "amount": s.amount,
-                            "index": s.index,
-                            "is_receiver": is_receiver
-                        })
-                    })
-                    .collect();
-
-                let result = serde_json::json!({
-                    "success": true,
-                    "swap_request": swap_request_json,
-                    "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding,
-                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-                });
-
-                Ok(result.to_string())
-            }
+            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
                 // Return error in same format as processPayment for consistency
                 let error_msg = e.to_string();
@@ -386,43 +355,11 @@ impl WasmSpilmanBridge {
     #[wasm_bindgen(js_name = createUnilateralCloseData)]
     pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<String, JsValue> {
         match self.bridge.create_unilateral_close_data(channel_id) {
-            Ok(close_data) => {
-                // Serialize swap_request
-                let swap_request_json =
-                    serde_json::to_value(&close_data.swap_request).map_err(|e| {
-                        JsValue::from_str(&format!("Failed to serialize swap request: {}", e))
-                    })?;
-
-                // Serialize secrets_with_blinding
-                let secrets_with_blinding: Vec<serde_json::Value> = close_data
-                    .secrets_with_blinding
-                    .into_iter()
-                    .map(|(s, is_receiver)| {
-                        serde_json::json!({
-                            "secret": s.secret.to_string(),
-                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
-                            "amount": s.amount,
-                            "index": s.index,
-                            "is_receiver": is_receiver
-                        })
-                    })
-                    .collect();
-
-                let result = serde_json::json!({
-                    "success": true,
-                    "swap_request": swap_request_json,
-                    "expected_total": close_data.expected_total,
-                    "secrets_with_blinding": secrets_with_blinding,
-                    "output_keyset_info": serde_json::to_value(&close_data.output_keyset_info).unwrap()
-                });
-
-                Ok(result.to_string())
-            }
+            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
-                let error_msg = e.to_string();
                 let result = serde_json::json!({
                     "success": false,
-                    "error": error_msg
+                    "error": e.to_string()
                 });
                 Ok(result.to_string())
             }
