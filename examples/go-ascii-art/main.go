@@ -321,6 +321,23 @@ func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active 
 	return string(infoJson)
 }
 
+func getMintVersion(mintUrl string) string {
+	resp, err := http.Get(mintUrl + "/v1/info")
+	if err != nil {
+		return "unknown"
+	}
+	defer resp.Body.Close()
+
+	var info struct{ Version string }
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "unknown"
+	}
+	if info.Version == "" {
+		return "unknown"
+	}
+	return info.Version
+}
+
 func initializeKeysets() {
 	log.Printf("Fetching keysets from %s...\n", MINT_URL)
 	resp, err := http.Get(MINT_URL + "/v1/keysets")
@@ -699,6 +716,7 @@ func closeAllChannels(bridge *spilman.Bridge, host *AsciiArtHost) {
 func runServer() {
 	initializeKeysets()
 	log.Printf("Starting server with MINT_URL: %s\n", MINT_URL)
+	log.Printf("Mint version: %s\n", getMintVersion(MINT_URL))
 
 	pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
 	host := &AsciiArtHost{pubkey: pubkey}
@@ -825,8 +843,10 @@ func runClient(messages []string) {
 	log.Printf("  Alice pubkey: %s...\n\n", alice.Pubkey[:24])
 
 	log.Println("[3/8] Fetching keyset info...")
+	log.Printf("  Mint version: %s\n", getMintVersion(MINT_URL))
 	ki, _ := clientFetchActiveKeysetInfo(MINT_URL)
 	kiJson, _ := json.Marshal(ki)
+	log.Printf("  Found keyset: %s (%s)\n", ki["keysetId"], ki["unit"])
 
 	log.Println("[4/8] Computing shared secret...")
 	ss, _ := spilman.ComputeSharedSecret(alice.Secret, sp.Receiver_pubkey)

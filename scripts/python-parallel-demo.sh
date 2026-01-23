@@ -68,7 +68,8 @@ $MINT_BIN --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" --enable-logging >
 echo "Waiting for mint to start on port $MINT_PORT..."
 for i in {1..20}; do
     if curl -s "http://localhost:$MINT_PORT/v1/info" > /dev/null; then
-        echo "Mint is ready."
+        MINT_VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
+        echo "Mint is ready. Version: $MINT_VERSION"
         break
     fi
     if [ $i -eq 20 ]; then

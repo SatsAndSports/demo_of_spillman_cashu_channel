@@ -332,7 +332,7 @@ impl SpilmanBridge {
         let secret_key = match secret_key_hex {
             Some(hex) => Some(
                 SecretKey::from_hex(&hex)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?,
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
             ),
             None => None,
         };
@@ -422,7 +422,7 @@ fn generate_keypair() -> PyResult<(String, String)> {
 #[pyfunction]
 fn secret_key_to_pubkey(secret_hex: &str) -> PyResult<String> {
     let secret = SecretKey::from_hex(secret_hex)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(secret.public_key().to_hex())
 }
 
@@ -437,7 +437,7 @@ fn secret_key_to_pubkey(secret_hex: &str) -> PyResult<String> {
 #[pyfunction]
 fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> PyResult<String> {
     spilman::compute_shared_secret_from_hex(my_secret_hex, their_pubkey_hex)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+        .map_err(|e| PyValueError::new_err(e))
 }
 
 /// Get channel ID from parameters.
@@ -456,7 +456,7 @@ fn channel_parameters_get_channel_id(
     keyset_info_json: &str,
 ) -> PyResult<String> {
     spilman::channel_parameters_get_channel_id(params_json, shared_secret_hex, keyset_info_json)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+        .map_err(|e| PyValueError::new_err(e))
 }
 
 /// Create funding outputs (blinded messages) for minting.
@@ -475,7 +475,7 @@ fn create_funding_outputs(
     keyset_info_json: &str,
 ) -> PyResult<String> {
     spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+        .map_err(|e| PyValueError::new_err(e))
 }
 
 /// Construct proofs from blind signatures.
@@ -498,7 +498,7 @@ fn construct_proofs(
         secrets_with_blinding_json,
         keyset_info_json,
     )
-    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+    .map_err(|e| PyValueError::new_err(e))
 }
 
 /// Create a signed balance update for a payment.
@@ -527,7 +527,7 @@ fn create_signed_balance_update(
         proofs_json,
         balance,
     )
-    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+    .map_err(|e| PyValueError::new_err(e))
 }
 
 /// Unblind mint signatures and verify DLEQ proofs.
@@ -566,7 +566,7 @@ fn unblind_and_verify_dleq(
         balance,
         output_keyset_info_json.as_deref(),
     )
-    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+    .map_err(|e| PyValueError::new_err(e))
 }
 
 // ============================================================================

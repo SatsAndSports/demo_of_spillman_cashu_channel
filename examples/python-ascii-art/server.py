@@ -92,6 +92,17 @@ def fetch_details_for_one_keyset(mint_url: str, keyset_id: str, unit: str, input
         return None
 
 
+def get_mint_version(mint_url: str) -> str:
+    """Fetch mint version from /v1/info endpoint."""
+    try:
+        resp = http_requests.get(f"{mint_url}/v1/info", timeout=2)
+        if resp.ok:
+            return resp.json().get("version", "unknown")
+    except Exception:
+        pass
+    return "unknown"
+
+
 def initialize_keysets():
     """Fetch and cache keysets (active and inactive) from approved mints at startup."""
     print(f"Fetching keysets from {MINT_URL}...")
@@ -709,6 +720,7 @@ if __name__ == "__main__":
     
     print(f"Server pubkey: {host.pubkey}")
     print(f"Mint URL:      {MINT_URL}")
+    print(f"Mint version:  {get_mint_version(MINT_URL)}")
     print(f"Pricing:       {PRICE_PER_CHAR} sat per character")
     print(f"Listening on:  http://0.0.0.0:{PORT}")
     print()
