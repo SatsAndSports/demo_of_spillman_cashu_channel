@@ -162,7 +162,7 @@ git checkout spilman.channel
 Build the WASM bindings and copy them to blossom-server:
 
 ```bash
-(cd .. && make wasm-to-blossom-server)
+make wasm
 ```
 
 Install dependencies and build:
@@ -174,10 +174,11 @@ npx pnpm build
 
 ### Running Blossom Server Tests
 
-The blossom-server tests require a mint running at localhost:3338 (see "Running with Nutshell" above):
+The blossom-server tests require a mint running at localhost:3338 (see "Running with CDK Mint" above):
 
 ```bash
-npm test
+make test       # Run tests (without rebuilding WASM)
+make test-full  # Build WASM and run tests
 ```
 
 ## Spilman Channel Architecture
@@ -605,23 +606,22 @@ The player will load the video on page load. Share button provides easy URL copy
 ## Building WASM
 
 ```bash
-cd web/
+cd web/blossom-server/
 
-# Build browser WASM (--target web)
-make wasm-web
+# Fast WASM build (~2s) - skips wasm-opt, for development
+make wasm-dev
 
-# Build Node.js WASM (--target nodejs)
-make wasm-nodejs
+# Optimized WASM build (~32s) - for production
+make wasm
 
-# Build both and copy to blossom-server
-make wasm-to-blossom-server
-```
+# Build TypeScript project
+make build
 
-After copying WASM, rebuild blossom-server:
-```bash
-cd blossom-server
-npx pnpm build
-npx pnpm start
+# Start development server
+make dev
+
+# Clean WASM directories (preserves .gitignore)
+make clean
 ```
 
 ## Running Tests
@@ -786,6 +786,7 @@ The test suite includes:
 
 *High Priority:*
 - ✅ review the python and go servers
+- ? add another mint. nutmix?
 - ✅ script for testing go setup
 - ? general repetition and consolidation check?
 - ? review the MockHost
@@ -850,5 +851,5 @@ Currently, the channel closing logic in Blossom server is spread across server c
 - The approved mint for testing is `http://localhost:3338`
 - Blossom server runs on port 3000 by default
 - Player available at `http://localhost:3000/`
-- Makefile is at `web/Makefile` (in the 'web' subdirectory of main 'cdk' folder)
+- Makefile is at `web/blossom-server/Makefile`
 - Tests run on port 3099 with a separate test config
