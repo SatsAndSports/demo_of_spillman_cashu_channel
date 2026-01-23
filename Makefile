@@ -9,7 +9,7 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
 	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel \
-	test-blossom test-blossom-full wasm wasm-dev
+	test-blossom test-blossom-full wasm wasm-dev test-spilman test-all
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -66,6 +66,12 @@ test-python-parallel: python-dev
 test-go-parallel: go-build-rust
 	@bash scripts/go-parallel-demo.sh
 
+# --- Rust Tests ---
+
+# Run Spilman channel unit tests
+test-spilman:
+	cargo test -p cdk spilman
+
 # --- Blossom Server ---
 
 BLOSSOM_DIR := web/blossom-server
@@ -85,6 +91,15 @@ wasm-dev:
 # Optimized WASM build (~32s) - for production
 wasm:
 	$(MAKE) -C $(BLOSSOM_DIR) wasm
+
+# --- All Tests ---
+
+# Run all test suites
+test-all: test-spilman test-python-parallel test-go-parallel test-blossom
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TEST SUITES PASSED"
+	@echo "========================================="
 
 clean:
 	cargo clean
