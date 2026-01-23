@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/SatsAndSports/cdk/spilman"
@@ -26,6 +28,7 @@ const (
 	MINT_URL_DEFAULT   = "http://localhost:3338"
 	SERVER_URL_DEFAULT = "http://localhost:5001"
 	PORT               = 5001
+	PRICE_PER_CHAR     = 1 // 1 sat per character
 )
 
 var (
@@ -71,10 +74,15 @@ var (
 // Spilman Host Implementation
 // ============================================================================
 
-type AsciiArtHost struct{}
+type AsciiArtHost struct {
+	pubkey string
+}
 
 func (h *AsciiArtHost) ReceiverKeyIsAcceptable(pubkeyHex string) bool {
-	return true
+	result := strings.ToLower(pubkeyHex) == strings.ToLower(h.pubkey)
+	log.Printf("  [Host] ReceiverKeyIsAcceptable: received=%s, expected=%s, result=%v\n",
+		pubkeyHex[:16], h.pubkey[:16], result)
+	return result
 }
 
 func (h *AsciiArtHost) MintAndKeysetIsAcceptable(mint string, keysetId string) bool {
@@ -118,7 +126,6 @@ func (h *AsciiArtHost) GetAmountDue(channelId string, contextJson *string) uint6
 		usage = make(map[string]uint64)
 	}
 
-	totalRequests := usage["requests"]
 	totalChars := usage["chars"]
 
 	if contextJson != nil {
@@ -126,12 +133,10 @@ func (h *AsciiArtHost) GetAmountDue(channelId string, contextJson *string) uint6
 			MessageLength int `json:"message_length"`
 		}
 		json.Unmarshal([]byte(*contextJson), &context)
-		totalRequests += 1
 		totalChars += uint64(context.MessageLength)
 	}
 
-	cost := (totalRequests*500 + totalChars*100 + 999) / 1000
-	return cost
+	return totalChars * PRICE_PER_CHAR
 }
 
 func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature, contextJson string) {
@@ -144,9 +149,12 @@ func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature
 	}
 	json.Unmarshal([]byte(contextJson), &context)
 
-	channelBalance[channelId] = map[string]interface{}{
-		"balance":   balance,
-		"signature": signature,
+	current := channelBalance[channelId]
+	if current == nil || balance > current["balance"].(uint64) {
+		channelBalance[channelId] = map[string]interface{}{
+			"balance":   balance,
+			"signature": signature,
+		}
 	}
 
 	usage := channelUsage[channelId]
@@ -429,16 +437,242 @@ func mintFundingToken(mintUrl string, amount uint64, blindedMessages []interface
 // Runners
 // ============================================================================
 
+func printStatsTable() {
+	fmt.Println()
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Println("  Channel Statistics (Press Ctrl+\\ to refresh)")
+	fmt.Println(strings.Repeat("=", 70))
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(channelFunding) == 0 {
+		fmt.Println("  No channels registered yet.")
+		fmt.Println(strings.Repeat("=", 70))
+		fmt.Println()
+		return
+	}
+
+	// Table header
+	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "ID", "Status", "Capacity", "Balance", "Usage")
+	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "----------", "--------", "----------", "----------", "----------")
+
+	var totalBalance uint64
+	var totalUsage uint64
+
+	// Sort channel IDs for stable display
+	var ids []string
+	for id := range channelFunding {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, cid := range ids {
+		funding := channelFunding[cid]
+		var params struct {
+			Capacity uint64 `json:"capacity"`
+			Unit     string `json:"unit"`
+		}
+		json.Unmarshal([]byte(funding["params"]), &params)
+
+		usage := channelUsage[cid]["chars"]
+		payment := channelBalance[cid]
+		balance := uint64(0)
+		if payment != nil {
+			balance = payment["balance"].(uint64)
+		}
+
+		status := "OPEN"
+		if _, closed := channelClosed[cid]; closed {
+			status = "CLOSED"
+		}
+
+		shortId := cid[:8]
+		fmt.Printf("  %-10s %-8s %7d %-3s %7d %-3s %7d ch\n",
+			shortId, status, params.Capacity, params.Unit, balance, params.Unit, usage)
+
+		totalBalance += balance
+		totalUsage += usage
+	}
+
+	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "----------", "--------", "----------", "----------", "----------")
+	fmt.Printf("  %-10s %-8s %10s %7d sat %7d ch\n", "TOTAL", "", "", totalBalance, totalUsage)
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Println()
+}
+
+func closeChannel(id string, bridge *spilman.Bridge) (uint64, error) {
+	log.Printf("\n[Close] Attempting to close channel %s...\n", id[:16])
+
+	mu.Lock()
+	if _, closed := channelClosed[id]; closed {
+		mu.Unlock()
+		return 0, fmt.Errorf("channel already closed")
+	}
+	payment, hasPayment := channelBalance[id]
+	funding, hasFunding := channelFunding[id]
+	mu.Unlock()
+
+	if !hasPayment {
+		return 0, fmt.Errorf("no payment recorded for channel")
+	}
+	if !hasFunding {
+		return 0, fmt.Errorf("no funding data for channel")
+	}
+
+	// 1. Get close data from bridge
+	resJson, err := bridge.CreateUnilateralCloseData(id)
+	if err != nil {
+		return 0, fmt.Errorf("bridge error: %v", err)
+	}
+
+	var res struct {
+		Success               bool                   `json:"success"`
+		Error                 string                 `json:"error"`
+		Swap_request          interface{}            `json:"swap_request"`
+		Expected_total        uint64                 `json:"expected_total"`
+		Secrets_with_blinding []interface{}          `json:"secrets_with_blinding"`
+		Output_keyset_info    map[string]interface{} `json:"output_keyset_info"`
+	}
+	json.Unmarshal([]byte(resJson), &res)
+
+	if !res.Success {
+		return 0, fmt.Errorf("bridge validation failed: %s", res.Error)
+	}
+
+	// 2. Submit swap to mint
+	var params struct {
+		Mint string `json:"mint"`
+	}
+	json.Unmarshal([]byte(funding["params"]), &params)
+
+	log.Printf("  [Close] Submitting swap to mint: %s\n", params.Mint)
+	swapReqB, _ := json.Marshal(res.Swap_request)
+	resp, err := http.Post(params.Mint+"/v1/swap", "application/json", bytes.NewBuffer(swapReqB))
+	if err != nil {
+		return 0, fmt.Errorf("failed to contact mint: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("mint rejected swap: %s", string(body))
+	}
+
+	var swapResp struct {
+		Signatures []interface{} `json:"signatures"`
+	}
+	json.NewDecoder(resp.Body).Decode(&swapResp)
+
+	// 3. Unblind and verify DLEQ
+	sigsJ, _ := json.Marshal(swapResp.Signatures)
+	swbJ, _ := json.Marshal(res.Secrets_with_blinding)
+	okinfoJ, _ := json.Marshal(res.Output_keyset_info)
+	balance := payment["balance"].(uint64)
+
+	unblindResJ, err := spilman.UnblindAndVerifyDleq(
+		string(sigsJ),
+		string(swbJ),
+		funding["params"],
+		funding["keyset"],
+		funding["secret"],
+		balance,
+		nil, // Use output_keyset from swap if different? Bridge handles this usually.
+	)
+	if err != nil {
+		// Try again with explicit output keyset if needed
+		outputKeysetStr := string(okinfoJ)
+		unblindResJ, err = spilman.UnblindAndVerifyDleq(
+			string(sigsJ),
+			string(swbJ),
+			funding["params"],
+			funding["keyset"],
+			funding["secret"],
+			balance,
+			&outputKeysetStr,
+		)
+	}
+
+	if err != nil {
+		return 0, fmt.Errorf("unblind/DLEQ verification failed: %v", err)
+	}
+
+	var unblindRes struct {
+		Receiver_sum_after_stage1 uint64 `json:"receiver_sum_after_stage1"`
+	}
+	json.Unmarshal([]byte(unblindResJ), &unblindRes)
+
+	// 4. Mark as closed
+	mu.Lock()
+	channelClosed[id] = map[string]interface{}{
+		"receiver_sum": unblindRes.Receiver_sum_after_stage1,
+	}
+	mu.Unlock()
+
+	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], unblindRes.Receiver_sum_after_stage1)
+	return unblindRes.Receiver_sum_after_stage1, nil
+}
+
+func closeAllChannels(bridge *spilman.Bridge) {
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	fmt.Println("  Closing all channels...")
+	fmt.Println(strings.Repeat("=", 70))
+
+	mu.Lock()
+	var openIds []string
+	for id := range channelFunding {
+		if _, closed := channelClosed[id]; !closed {
+			openIds = append(openIds, id)
+		}
+	}
+	mu.Unlock()
+
+	if len(openIds) == 0 {
+		fmt.Println("  No open channels to close.")
+		fmt.Println(strings.Repeat("=", 70))
+		return
+	}
+
+	var totalEarned uint64
+	var closedCount int
+
+	for _, id := range openIds {
+		earned, err := closeChannel(id, bridge)
+		if err == nil {
+			totalEarned += earned
+			closedCount++
+		} else {
+			log.Printf("  [Close] Failed to close %s: %v\n", id[:8], err)
+		}
+	}
+
+	fmt.Printf("\n  Closed %d/%d channels\n", closedCount, len(openIds))
+	fmt.Printf("  Total earned: %d sat\n", totalEarned)
+	fmt.Println(strings.Repeat("=", 70))
+	fmt.Println()
+}
+
 func runServer() {
 	initializeKeysets()
 	log.Printf("Starting server with MINT_URL: %s\n", MINT_URL)
-	host := &AsciiArtHost{}
+
+	pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
+	host := &AsciiArtHost{pubkey: pubkey}
 	bridge := spilman.NewBridge(host, SERVER_SECRET_KEY)
 	defer bridge.Free()
 
 	http.HandleFunc("/channel/params", func(w http.ResponseWriter, r *http.Request) {
-		pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
-		json.NewEncoder(w).Encode(map[string]interface{}{"receiver_pubkey": pubkey, "mint": MINT_URL})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"receiver_pubkey": host.pubkey,
+			"pricing": map[string]interface{}{
+				"sat": map[string]interface{}{
+					"per_char":    PRICE_PER_CHAR,
+					"minCapacity": 10,
+				},
+			},
+			"mint":                  MINT_URL,
+			"min_expiry_in_seconds": 3600,
+		})
 	})
 
 	http.HandleFunc("/ascii", func(w http.ResponseWriter, r *http.Request) {
@@ -483,13 +717,46 @@ func runServer() {
 		parts := strings.Split(r.URL.Path, "/")
 		if len(parts) >= 4 && parts[3] == "close" {
 			id := parts[2]
-			bridge.CreateUnilateralCloseData(id)
-			mu.Lock()
-			channelClosed[id] = true
-			mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "channel_id": id})
+			earned, err := closeChannel(id, bridge)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "channel_id": id, "earned": earned})
 		}
 	})
+
+	// Statistics signal handler (Ctrl+\)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGQUIT)
+	go func() {
+		for range sigChan {
+			printStatsTable()
+		}
+	}()
+
+	// CLI listener
+	go func() {
+		fmt.Println("CLI ready. Commands: 's' = stats, 'c' = close all, 'q' = quit")
+		var cmd string
+		for {
+			fmt.Scanln(&cmd)
+			cmd = strings.TrimSpace(strings.ToLower(cmd))
+			if cmd == "s" {
+				printStatsTable()
+			} else if cmd == "c" {
+				closeAllChannels(bridge)
+			} else if cmd == "q" {
+				fmt.Println("\n[Shutdown] Closing all channels before exit...")
+				closeAllChannels(bridge)
+				fmt.Println("[Shutdown] Exiting...")
+				os.Exit(0)
+			} else if cmd != "" {
+				fmt.Printf("  Unknown command: '%s'. Use 's' (stats), 'c' (close), 'q' (quit)\n", cmd)
+			}
+		}
+	}()
 
 	log.Printf("Go ASCII Art Server listening on :%s\n", SERVER_PORT)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", SERVER_PORT), nil))
