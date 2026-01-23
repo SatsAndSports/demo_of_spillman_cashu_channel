@@ -8,9 +8,6 @@ set -u
 set -o pipefail
 
 # 1. Configuration
-MINT_BIN="./target/debug/cdk-mintd"
-MINT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mint-test-go.XXXXXX")
-CONFIG_FILE="$MINT_WORK_DIR/config.toml"
 LOG_DIR="./testing/go-demo"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
@@ -31,21 +28,13 @@ cleanup() {
         echo "Killing background processes: $JOBS"
         kill $JOBS || true
     fi
-    # Remove temporary mint work directory (includes config file)
-    rm -rf "$MINT_WORK_DIR"
     echo "Cleanup complete. Logs available in $LOG_DIR"
 }
 
 # Register the cleanup function to run on exit (success or failure)
 trap cleanup EXIT
 
-# 3. Build verification
-if [ ! -f "$MINT_BIN" ]; then
-    echo "ERROR: Mint binary not found at $MINT_BIN"
-    echo "Please build it first: cargo build -p cdk-mintd --features fakewallet"
-    exit 1
-fi
-
+# 3. Build Go demo
 echo "--- Building Go demo ---"
 (cd "$GO_DEMO_DIR" && go build -o main .)
 
@@ -55,34 +44,14 @@ read -r MINT_PORT SERVER_PORT < <(python3 -c 'import socket; s1=socket.socket();
 echo "MINT_PORT:   $MINT_PORT"
 echo "SERVER_PORT: $SERVER_PORT"
 
-# 5. Setup dynamic mint config
-echo "--- Setting up test mint ---"
-echo "MINT_WORK_DIR: $MINT_WORK_DIR"
-sed -e "s/listen_port = 3338/listen_port = $MINT_PORT/" \
-    -e "s|url = \"http://127.0.0.1:3338\"|url = \"http://127.0.0.1:$MINT_PORT\"|" \
-    dev-mint/config.toml > "$CONFIG_FILE"
-
-# 6. Start Mint
+# 5. Start Mint
 echo "--- Starting Mint (logging to $MINT_LOG) ---"
-$MINT_BIN --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" --enable-logging > "$MINT_LOG" 2>&1 &
+./scripts/run_temporary_mint.sh cdk "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
 # Wait for mint to be ready
-echo "Waiting for mint to start on port $MINT_PORT..."
-for i in {1..20}; do
-    if curl -s "http://localhost:$MINT_PORT/v1/info" > /dev/null; then
-        MINT_VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
-        echo "Mint is ready. Version: $MINT_VERSION"
-        break
-    fi
-    if [ $i -eq 20 ]; then
-        echo "ERROR: Mint failed to start."
-        cat "$MINT_LOG"
-        exit 1
-    fi
-    sleep 0.5
-done
+./scripts/wait_for_mint.sh "$MINT_PORT" 10 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
 
-# 7. Start Go Server
+# 6. Start Go Server
 echo "--- Starting Go Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
@@ -108,7 +77,7 @@ for i in {1..20}; do
     sleep 0.5
 done
 
-# 8. Run Parallel Clients
+# 7. Run Parallel Clients
 echo "--- Running $CLIENT_COUNT Clients in Parallel (logging to $LOG_DIR/client_N.log) ---"
 
 PIDS=()
@@ -116,13 +85,11 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Go-Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    # We must run client from GO_DEMO_DIR to find main if we didn't use absolute path
-    # But we built it as ./main there.
     (cd "$GO_DEMO_DIR" && MINT_URL="http://localhost:$MINT_PORT" SERVER_URL="http://localhost:$SERVER_PORT" LD_LIBRARY_PATH="$REPO_ROOT/target/debug" ./main client "$MSG") > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 
-# 9. Wait for all clients and check results
+# 8. Wait for all clients and check results
 SUCCESS=true
 for i in "${!PIDS[@]}"; do
     PID="${PIDS[$i]}"
@@ -135,7 +102,7 @@ for i in "${!PIDS[@]}"; do
     fi
 done
 
-# 10. Final Result
+# 9. Final Result
 if [ "$SUCCESS" = true ]; then
     echo ""
     echo "***********************************"
