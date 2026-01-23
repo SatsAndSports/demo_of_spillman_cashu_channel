@@ -21,7 +21,7 @@ wasm-nodejs:
 BLOSSOM_WASM_DIR := blossom-server/public/wasm
 BLOSSOM_WASM_NODEJS_DIR := blossom-server/src/wasm
 wasm-to-blossom-server: wasm-web wasm-nodejs
-	@test -f $(BLOSSOM_WASM_DIR)/.gitkeep || (echo "Error: $(BLOSSOM_WASM_DIR)/.gitkeep not found" && exit 1)
+	@test -f $(BLOSSOM_WASM_DIR)/.gitignore || (echo "Error: $(BLOSSOM_WASM_DIR)/.gitignore not found" && exit 1)
 	cp wasm-web/cdk_wasm.js wasm-web/cdk_wasm.d.ts wasm-web/cdk_wasm_bg.wasm wasm-web/cdk_wasm_bg.wasm.d.ts wasm-web/package.json $(BLOSSOM_WASM_DIR)/
 	@echo "Browser WASM copied to $(BLOSSOM_WASM_DIR)/"
 	@mkdir -p $(BLOSSOM_WASM_NODEJS_DIR)
