@@ -251,11 +251,12 @@ Key functions exported for browser and Node.js:
 - `verify_channel(params_json, shared_secret_hex, funding_proofs_json, keyset_info_json)` - Verify DLEQ proofs on funding proofs
 - `verify_balance_update_signature(params_json, shared_secret_hex, funding_proofs_json, channel_id, balance, signature)` - Verify Alice's signature
 - `spilman_channel_sender_create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, proofs_json, balance)` - Create signed balance update
-- `create_close_swap_request(...)` - Server-side: create fully-signed swap request for channel closing. Returns `{swap_request, expected_total, secrets_with_blinding}`
+- `process_payment(payment_json, context_json)` - Process incoming payment. Automatically resolves keysets via host.
+- `create_close_data(payment_json)` - Collaboration close: validate signature and balance (must match usage), return swap request.
 - `unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance)` - Unblind stage 1 signatures, verify DLEQ proofs, verify receiver proofs are P2PK locked to Charlie's **blinded** pubkey (stage2 context). Returns `{receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1}`
 - `get_sender_blinded_secret_key_for_stage2(params_json, keyset_info_json, alice_secret_hex)` - Get Alice's blinded secret key for signing stage 2 swaps
 - `get_receiver_blinded_secret_key_for_stage2(params_json, keyset_info_json, charlie_secret_hex, shared_secret_hex)` - Get Charlie's blinded secret key for signing stage 2 swaps
-- `WasmSpilmanBridge(host_object, server_secret_key_hex)` - High-level bridge for processing payments with host callbacks (`getFunding`, `saveFunding`, `receiverKeyIsAcceptable`, `mintAndKeysetIsAcceptable`, `getAmountDue`, `recordPayment`, `isClosed`, `getServerConfig`, `nowSeconds`)
+- `WasmSpilmanBridge(host_object, server_secret_key_hex)` - High-level bridge for processing payments with host callbacks (`getFunding`, `saveFunding`, `receiverKeyIsAcceptable`, `mintAndKeysetIsAcceptable`, `getAmountDue`, `recordPayment`, `isClosed`, `getChannelPolicy`, `nowSeconds`, `getBalanceAndSignatureForUnilateralExit`, `getActiveKeysetIds`, `getKeysetInfo`)
 
 ## Universal Bridge Architecture
 
@@ -732,9 +733,13 @@ The test suite includes:
 - ✅ **PyO3 bindings** (`crates/cdk-spilman-python/`): SpilmanBridge + client functions for Python
 - ✅ Python SpilmanHost implementation with all required callbacks
 - ✅ Python server with keyset caching from mint at startup
-- ✅ CLI commands in Python server: `s` (stats), `c` (close all), `q` (quit), `Ctrl+\` (quick stats)
-- ✅ Unilateral channel closing: `get_largest_balance_with_signature` host hook + `create_unilateral_close_data` bridge method
-- ✅ Full settlement flow in Python: create swap request → POST to mint → unblind + verify DLEQ → store proofs
+- ✅ CLI commands in Python and Go servers: `s` (stats), `c` (close all), `q` (quit), `Ctrl+\` (quick stats)
+- ✅ Unilateral channel closing: `get_balance_and_signature_for_unilateral_exit` host hook + `create_unilateral_close_data` bridge method
+- ✅ Full settlement flow in Python and Go: create swap request → POST to mint → unblind + verify DLEQ → store proofs
+- ✅ **Simplified Bridge API**: Removed redundant `keyset_info_json` from `process_payment` and `create_close_data`. Bridge now resolves keysets internally via `get_keyset_info` host hook.
+- ✅ **Automatic Closure Validation**: `create_close_data` now automatically verifies that the provided balance matches exactly with the total `amount_due` (calculated via host hook with no context).
+- ✅ **Go parity with Python**: Go implementation now matches Python feature-for-feature, including hardened security checks and full settlement flow.
+- ✅ **Go Parallel Demo** (`scripts/go-parallel-demo.sh`): Parallel testing for Go implementation (`make test-go-parallel`).
 - ✅ **Consolidated `unblind_and_verify_dleq`**: Core logic in `bridge.rs` (`unblind_and_verify_stage1_response()`), thin wrappers in WASM and Python bindings
 - ✅ **Python client displays BOLT11 invoice + QR code** during funding (uses `qrcode` library with graceful fallback)
 - ✅ **Keyset ID validation** (`InvalidKeysetId` check): Verifies that the keyset ID matches the public keys using NUT-02 V1 derivation (`sha256(sorted_compressed_pubkeys)[:7]`). This prevents attackers from providing fake keys while claiming a legitimate keyset ID.
