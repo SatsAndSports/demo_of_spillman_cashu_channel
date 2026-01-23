@@ -32,3 +32,6 @@ cdk_ffi.py
 
 # llm artifacts
 AGENTS.md
+
+# Test logs
+testing/

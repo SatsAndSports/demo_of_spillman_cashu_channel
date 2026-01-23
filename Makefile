@@ -14,7 +14,7 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
 	wasm wasm-dev test-spilman \
 	test-all-cdk test-all-nutmix test-all \
-	build-nutmix-setup-units clean-nutmix-setup-units
+	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -150,7 +150,11 @@ clean-nutmix-setup-units:
 
 # --- Cleanup ---
 
-clean: clean-nutmix-setup-units
+# Clean test logs
+clean-test-logs:
+	rm -rf testing/
+
+clean: clean-nutmix-setup-units clean-test-logs
 	cargo clean
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target

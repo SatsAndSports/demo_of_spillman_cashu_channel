@@ -25,16 +25,29 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Find a free port
 PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 
-echo "Starting $MINT_TYPE mint on port $PORT..."
+# Create log directory and file
+LOG_DIR="$REPO_ROOT/testing"
+mkdir -p "$LOG_DIR"
+MINT_LOG="$LOG_DIR/mint-${MINT_TYPE}-${PORT}.log"
 
-# Start mint in background
-"$REPO_ROOT/scripts/run_temporary_mint.sh" "$MINT_TYPE" "$PORT" &
+echo "Starting $MINT_TYPE mint on port $PORT..."
+echo "Mint logs: $MINT_LOG"
+
+# Start mint in background with output redirected to log file
+"$REPO_ROOT/scripts/run_temporary_mint.sh" "$MINT_TYPE" "$PORT" > "$MINT_LOG" 2>&1 &
 MINT_PID=$!
 
 cleanup() {
+    local exit_code=$?
     echo "Stopping mint (PID $MINT_PID)..."
     kill "$MINT_PID" 2>/dev/null || true
     wait "$MINT_PID" 2>/dev/null || true
+    # On failure, show tail of mint log to help debug
+    if [ $exit_code -ne 0 ] && [ -f "$MINT_LOG" ]; then
+        echo ""
+        echo "=== Last 30 lines of mint log ($MINT_LOG) ==="
+        tail -30 "$MINT_LOG"
+    fi
 }
 trap cleanup EXIT INT TERM
 
