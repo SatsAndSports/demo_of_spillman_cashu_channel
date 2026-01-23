@@ -73,6 +73,37 @@ pub trait SpilmanHost {
 
     /// Get full KeysetInfo JSON for a specific keyset
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
+
+    /// Call the mint's /v1/swap endpoint
+    ///
+    /// The host is responsible for HTTP communication with the mint.
+    /// Returns the full JSON response body on success (e.g., `{"signatures": [...]}`),
+    /// or an error string on failure.
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+
+    /// Mark a channel as closed and persist the final state
+    ///
+    /// Called after successful unblinding and DLEQ verification.
+    /// The host should store the proofs and mark the channel as closed.
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID
+    /// * `locktime` - The channel's locktime
+    /// * `balance` - The balance at which the channel was closed
+    /// * `receiver_proofs_json` - JSON array of receiver's P2PK proofs
+    /// * `sender_proofs_json` - JSON array of sender's P2PK proofs (change)
+    /// * `receiver_sum` - Sum of receiver proof amounts
+    /// * `sender_sum` - Sum of sender proof amounts
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String>;
 }
 
 /// Bridge for processing Spilman payments
@@ -1374,6 +1405,27 @@ mod tests {
         fn get_keyset_info(&self, _mint: &str, _keyset_id: &Id) -> Option<String> {
             None
         }
+
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            Err("not implemented".to_string())
+        }
+
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _receiver_proofs_json: &str,
+            _sender_proofs_json: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -1536,6 +1588,27 @@ mod tests {
         }
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
+        }
+
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            Err("not implemented".to_string())
+        }
+
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _receiver_proofs_json: &str,
+            _sender_proofs_json: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            Ok(())
         }
     }
 

@@ -224,6 +224,43 @@ func (h *AsciiArtHost) GetKeysetInfo(mint, keysetId string) (string, bool) {
 	return entry.InfoJson, true
 }
 
+func (h *AsciiArtHost) CallMintSwap(mintUrl, swapRequestJson string) (string, error) {
+	log.Printf("  [Host] CallMintSwap to %s\n", mintUrl)
+	resp, err := http.Post(mintUrl+"/v1/swap", "application/json", bytes.NewBufferString(swapRequestJson))
+	if err != nil {
+		return "", fmt.Errorf("failed to contact mint: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("mint rejected swap: %s", string(body))
+	}
+
+	var swapResp struct {
+		Signatures []interface{} `json:"signatures"`
+	}
+	json.Unmarshal(body, &swapResp)
+	log.Printf("  [Host] Got %d blind signatures\n", len(swapResp.Signatures))
+
+	return string(body), nil
+}
+
+func (h *AsciiArtHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
+	log.Printf("  [Host] MarkChannelClosed: channel=%s receiver=%d sender=%d\n", channelId[:8], receiverSum, senderSum)
+	mu.Lock()
+	defer mu.Unlock()
+	channelClosed[channelId] = map[string]interface{}{
+		"locktime":        locktime,
+		"balance":         balance,
+		"receiver_proofs": receiverProofsJson,
+		"sender_proofs":   senderProofsJson,
+		"receiver_sum":    receiverSum,
+		"sender_sum":      senderSum,
+	}
+	return nil
+}
+
 // ============================================================================
 // Initialization & Server Helpers
 // ============================================================================
@@ -501,7 +538,7 @@ func printStatsTable() {
 	fmt.Println()
 }
 
-func closeChannel(id string, bridge *spilman.Bridge) (uint64, error) {
+func closeChannel(id string, bridge *spilman.Bridge, host *AsciiArtHost) (uint64, error) {
 	log.Printf("\n[Close] Attempting to close channel %s...\n", id[:16])
 
 	mu.Lock()
@@ -540,29 +577,24 @@ func closeChannel(id string, bridge *spilman.Bridge) (uint64, error) {
 		return 0, fmt.Errorf("bridge validation failed: %s", res.Error)
 	}
 
-	// 2. Submit swap to mint
+	// 2. Submit swap to mint via host hook
 	var params struct {
-		Mint string `json:"mint"`
+		Mint     string `json:"mint"`
+		Locktime uint64 `json:"locktime"`
 	}
 	json.Unmarshal([]byte(funding["params"]), &params)
 
 	log.Printf("  [Close] Submitting swap to mint: %s\n", params.Mint)
 	swapReqB, _ := json.Marshal(res.Swap_request)
-	resp, err := http.Post(params.Mint+"/v1/swap", "application/json", bytes.NewBuffer(swapReqB))
+	swapRespBody, err := host.CallMintSwap(params.Mint, string(swapReqB))
 	if err != nil {
-		return 0, fmt.Errorf("failed to contact mint: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("mint rejected swap: %s", string(body))
+		return 0, err
 	}
 
 	var swapResp struct {
 		Signatures []interface{} `json:"signatures"`
 	}
-	json.NewDecoder(resp.Body).Decode(&swapResp)
+	json.Unmarshal([]byte(swapRespBody), &swapResp)
 
 	// 3. Unblind and verify DLEQ
 	sigsJ, _ := json.Marshal(swapResp.Signatures)
@@ -598,22 +630,34 @@ func closeChannel(id string, bridge *spilman.Bridge) (uint64, error) {
 	}
 
 	var unblindRes struct {
-		Receiver_sum_after_stage1 uint64 `json:"receiver_sum_after_stage1"`
+		Receiver_proofs           []interface{} `json:"receiver_proofs"`
+		Sender_proofs             []interface{} `json:"sender_proofs"`
+		Receiver_sum_after_stage1 uint64        `json:"receiver_sum_after_stage1"`
+		Sender_sum_after_stage1   uint64        `json:"sender_sum_after_stage1"`
 	}
 	json.Unmarshal([]byte(unblindResJ), &unblindRes)
 
-	// 4. Mark as closed
-	mu.Lock()
-	channelClosed[id] = map[string]interface{}{
-		"receiver_sum": unblindRes.Receiver_sum_after_stage1,
+	// 4. Mark as closed via host hook
+	receiverProofsJson, _ := json.Marshal(unblindRes.Receiver_proofs)
+	senderProofsJson, _ := json.Marshal(unblindRes.Sender_proofs)
+	err = host.MarkChannelClosed(
+		id,
+		params.Locktime,
+		balance,
+		string(receiverProofsJson),
+		string(senderProofsJson),
+		unblindRes.Receiver_sum_after_stage1,
+		unblindRes.Sender_sum_after_stage1,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark channel closed: %v", err)
 	}
-	mu.Unlock()
 
 	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], unblindRes.Receiver_sum_after_stage1)
 	return unblindRes.Receiver_sum_after_stage1, nil
 }
 
-func closeAllChannels(bridge *spilman.Bridge) {
+func closeAllChannels(bridge *spilman.Bridge, host *AsciiArtHost) {
 	fmt.Println("\n" + strings.Repeat("=", 70))
 	fmt.Println("  Closing all channels...")
 	fmt.Println(strings.Repeat("=", 70))
@@ -637,7 +681,7 @@ func closeAllChannels(bridge *spilman.Bridge) {
 	var closedCount int
 
 	for _, id := range openIds {
-		earned, err := closeChannel(id, bridge)
+		earned, err := closeChannel(id, bridge, host)
 		if err == nil {
 			totalEarned += earned
 			closedCount++
@@ -717,7 +761,7 @@ func runServer() {
 		parts := strings.Split(r.URL.Path, "/")
 		if len(parts) >= 4 && parts[3] == "close" {
 			id := parts[2]
-			earned, err := closeChannel(id, bridge)
+			earned, err := closeChannel(id, bridge, host)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
@@ -746,10 +790,10 @@ func runServer() {
 			if cmd == "s" {
 				printStatsTable()
 			} else if cmd == "c" {
-				closeAllChannels(bridge)
+				closeAllChannels(bridge, host)
 			} else if cmd == "q" {
 				fmt.Println("\n[Shutdown] Closing all channels before exit...")
-				closeAllChannels(bridge)
+				closeAllChannels(bridge, host)
 				fmt.Println("[Shutdown] Exiting...")
 				os.Exit(0)
 			} else if cmd != "" {

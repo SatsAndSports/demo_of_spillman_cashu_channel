@@ -24,6 +24,8 @@ typedef struct {
     int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
     char* (*get_keyset_info)(void*, const char*, const char*);
+    int (*call_mint_swap)(void*, const char*, const char*, char**);
+    int (*mark_channel_closed)(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
 } SpilmanHostCallbacks;
 
 // Function declarations from gateway.c and Rust
@@ -68,6 +70,8 @@ type SpilmanHost interface {
 	GetBalanceAndSignatureForUnilateralExit(channelId string) (balance uint64, signature string, ok bool)
 	GetActiveKeysetIds(mint, unit string) []string
 	GetKeysetInfo(mint, keysetId string) (string, bool)
+	CallMintSwap(mintUrl, swapRequestJson string) (string, error)
+	MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
 }
 
 type Bridge struct {
@@ -401,4 +405,36 @@ func go_get_keyset_info(userData unsafe.Pointer, mint *C.char, keysetId *C.char)
 		return nil
 	}
 	return C.CString(info)
+}
+
+//export go_call_mint_swap
+func go_call_mint_swap(userData unsafe.Pointer, mintUrl *C.char, swapReqJson *C.char, responseOut **C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	resp, err := host.CallMintSwap(C.GoString(mintUrl), C.GoString(swapReqJson))
+	if err != nil {
+		*responseOut = C.CString(err.Error())
+		return 0
+	}
+	*responseOut = C.CString(resp)
+	return 1
+}
+
+//export go_mark_channel_closed
+func go_mark_channel_closed(userData unsafe.Pointer, channelId *C.char, locktime C.uint64_t, balance C.uint64_t, receiverProofsJson *C.char, senderProofsJson *C.char, receiverSum C.uint64_t, senderSum C.uint64_t) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	err := host.MarkChannelClosed(
+		C.GoString(channelId),
+		uint64(locktime),
+		uint64(balance),
+		C.GoString(receiverProofsJson),
+		C.GoString(senderProofsJson),
+		uint64(receiverSum),
+		uint64(senderSum),
+	)
+	if err != nil {
+		return 0
+	}
+	return 1
 }

@@ -87,6 +87,22 @@ pub struct SpilmanHostCallbacks {
         mint: *const c_char,
         keyset_id: *const c_char,
     ) -> *mut c_char, // Returns KeysetInfo JSON
+    pub call_mint_swap: extern "C" fn(
+        user_data: *mut libc::c_void,
+        mint_url: *const c_char,
+        swap_request_json: *const c_char,
+        response_out: *mut *mut c_char,
+    ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
+    pub mark_channel_closed: extern "C" fn(
+        user_data: *mut libc::c_void,
+        channel_id: *const c_char,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: *const c_char,
+        sender_proofs_json: *const c_char,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> c_int, // 1 = success, 0 = error
 }
 
 struct CGoSpilmanHost {
@@ -266,6 +282,60 @@ impl SpilmanHost for CGoSpilmanHost {
         }
 
         unsafe { Some(CString::from_raw(json_ptr).into_string().unwrap()) }
+    }
+
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        let mint_c = CString::new(mint_url).unwrap();
+        let req_c = CString::new(swap_request_json).unwrap();
+        let mut response_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.call_mint_swap)(
+            self.callbacks.user_data,
+            mint_c.as_ptr(),
+            req_c.as_ptr(),
+            &mut response_ptr,
+        );
+
+        unsafe {
+            let response = CString::from_raw(response_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(response)
+            } else {
+                Err(response)
+            }
+        }
+    }
+
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String> {
+        let id_c = CString::new(channel_id).unwrap();
+        let rp_c = CString::new(receiver_proofs_json).unwrap();
+        let sp_c = CString::new(sender_proofs_json).unwrap();
+
+        let ok = (self.callbacks.mark_channel_closed)(
+            self.callbacks.user_data,
+            id_c.as_ptr(),
+            locktime,
+            balance,
+            rp_c.as_ptr(),
+            sp_c.as_ptr(),
+            receiver_sum,
+            sender_sum,
+        );
+
+        if ok != 0 {
+            Ok(())
+        } else {
+            Err("mark_channel_closed failed".to_string())
+        }
     }
 }
 

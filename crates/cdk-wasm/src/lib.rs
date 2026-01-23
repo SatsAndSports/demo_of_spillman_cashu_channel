@@ -69,6 +69,21 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = getKeysetInfo)]
     fn get_keyset_info(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = callMintSwap)]
+    fn call_mint_swap(this: &JsSpilmanHost, mint_url: &str, swap_request_json: &str) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = markChannelClosed)]
+    fn mark_channel_closed(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> JsValue;
 }
 
 struct WasmSpilmanHostProxy {
@@ -191,6 +206,53 @@ impl SpilmanHost for WasmSpilmanHostProxy {
             return None;
         }
         val.as_string()
+    }
+
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        let val = self.js_host.call_mint_swap(mint_url, swap_request_json);
+        if val.is_null() || val.is_undefined() {
+            return Err("callMintSwap returned null".to_string());
+        }
+        // Check if it's an error object with .error field
+        if let Some(obj) = js_sys::Object::try_from(&val) {
+            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
+                if let Some(err_str) = err_val.as_string() {
+                    return Err(err_str);
+                }
+            }
+        }
+        val.as_string()
+            .ok_or_else(|| "callMintSwap did not return a string".to_string())
+    }
+
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String> {
+        let val = self.js_host.mark_channel_closed(
+            channel_id,
+            locktime,
+            balance,
+            receiver_proofs_json,
+            sender_proofs_json,
+            receiver_sum,
+            sender_sum,
+        );
+        // Check for error return
+        if let Some(obj) = js_sys::Object::try_from(&val) {
+            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
+                if let Some(err_str) = err_val.as_string() {
+                    return Err(err_str);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
