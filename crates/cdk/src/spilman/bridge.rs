@@ -290,7 +290,7 @@ pub fn unblind_and_verify_stage1_response(
         amount_index_pairs.push((swb.amount, swb.index));
     }
 
-    // Unblind the signatures to get proofs
+    // 1. Unblind the signatures to get proofs
     let proofs = crate::dhke::construct_proofs(
         blind_signatures,
         blinding_factors,
@@ -299,7 +299,7 @@ pub fn unblind_and_verify_stage1_response(
     )
     .map_err(|e| BridgeError::Internal(format!("Failed to construct proofs: {}", e)))?;
 
-    // Verify DLEQ for each proof
+    // 2. Verify DLEQ for each proof
     let mut dleq_failures = 0;
     for (i, proof) in proofs.iter().enumerate() {
         let mint_pubkey = output_keyset_info
@@ -326,7 +326,7 @@ pub fn unblind_and_verify_stage1_response(
         )));
     }
 
-    // Separate proofs by is_receiver flag and compute sums
+    // 3. Separate proofs by is_receiver flag and compute sums
     let mut receiver_proofs = Vec::new();
     let mut receiver_metas = Vec::new(); // (amount, index) for each receiver proof
     let mut sender_proofs = Vec::new();
@@ -349,7 +349,7 @@ pub fn unblind_and_verify_stage1_response(
         }
     }
 
-    // Verify each receiver proof is P2PK locked to Charlie's per-proof blinded pubkey
+    // 4. Verify each receiver proof is P2PK locked to Charlie's per-proof blinded pubkey
     for (i, (proof, (amount, index))) in receiver_proofs
         .iter()
         .zip(receiver_metas.iter())
@@ -395,7 +395,7 @@ pub fn unblind_and_verify_stage1_response(
         }
     }
 
-    // Verify receiver sum matches expected nominal for this balance
+    // 5. Verify receiver sum matches expected nominal for this balance
     let maximum_amount = params.maximum_amount_for_one_output;
     let inverse_result = output_keyset_info
         .inverse_deterministic_value_after_fees(balance, maximum_amount)
@@ -779,15 +779,15 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let alice_pubkey = PublicKey::from_hex(alice_pubkey_hex)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
 
-        // Compute shared secret
+        // 4. Compute shared secret
         let shared_secret = super::compute_shared_secret(server_secret_key, &alice_pubkey);
         let shared_secret_hex = hex::encode(shared_secret);
 
-        // Parse keyset info
+        // 5. Parse keyset info
         let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(BridgeError::InvalidRequest)?;
 
-        // Verify channel_id matches
+        // 6. Verify channel_id matches
         let params = ChannelParameters::from_json_with_shared_secret(
             &params_json,
             keyset_info,
@@ -799,7 +799,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::ChannelIdMismatch);
         }
 
-        // Verify DLEQ proofs
+        // 7. Verify DLEQ proofs
         let verification = verify_valid_channel(funding_proofs, &params);
         if !verification.valid {
             return Err(BridgeError::ValidationFailed(
@@ -807,7 +807,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             ));
         }
 
-        // Save to host
+        // 8. Save to host
         let funding_proofs_json = serde_json::to_string(funding_proofs).unwrap();
         self.host.save_funding(
             channel_id,
@@ -1024,7 +1024,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             },
         )?;
 
-        // 8. Create commitment outputs and swap request
+        // 9. Create commitment outputs and swap request
         let commitment_outputs = CommitmentOutputs::for_balance(payment.balance, &params)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1032,14 +1032,14 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .create_swap_request(funding_proofs.clone(), Some(output_keyset_id))
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 9. Create balance update message
+        // 10. Create balance update message
         let balance_update = BalanceUpdateMessage {
             channel_id: channel_id.to_string(),
             amount: payment.balance,
             signature: sig.clone(),
         };
 
-        // 10. Add Alice's signature to the swap request witness
+        // 11. Add Alice's signature to the swap request witness
         {
             use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
             let first_input = swap_request
@@ -1059,7 +1059,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         }
 
-        // 11. Create channel and receiver, verify + add Charlie's signature
+        // 12. Create channel and receiver, verify + add Charlie's signature
         let channel = EstablishedChannel::new(params.clone(), funding_proofs)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1074,12 +1074,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .add_second_signature(&balance_update, swap_request)
             .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
 
-        // 12. Get expected total (value after stage 1 fees) using the OUTPUT keyset
+        // 13. Get expected total (value after stage 1 fees) using the OUTPUT keyset
         let expected_total = params
             .get_value_after_stage1_with_keyset(&output_keyset_info)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        // 13. Collect secrets with blinding factors for unblinding
+        // 14. Collect secrets with blinding factors for unblinding
         let receiver_secrets = commitment_outputs
             .receiver_outputs
             .get_secrets_with_blinding()
