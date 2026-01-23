@@ -52,7 +52,7 @@ case "$MINT_TYPE" in
         
         sed -e "s/listen_port = 3338/listen_port = $MINT_PORT/" \
             -e "s|url = \"http://127.0.0.1:3338\"|url = \"http://127.0.0.1:$MINT_PORT\"|" \
-            "$REPO_ROOT/dev-mint/config.toml" > "$CONFIG_FILE"
+            "$REPO_ROOT/dev-mint/config.dev.toml" > "$CONFIG_FILE"
         
         "$MINT_BIN" --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" &
         MINT_PID=$!

@@ -1,0 +1,52 @@
+# CDK Development Mint Configuration
+# 
+# This mint is for testing Spilman channels and other CDK features.
+# It uses a FakeWallet backend that auto-pays invoices for easy testing.
+#
+# Usage:
+#   cargo build -p cdk-mintd --features fakewallet
+#   ./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
+#
+# Or in release mode:
+#   cargo build -p cdk-mintd --features fakewallet --release
+#   ./target/release/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
+
+[info]
+url = "http://127.0.0.1:3338"
+listen_host = "127.0.0.1"
+listen_port = 3338
+
+# Fixed mnemonic for reproducible keyset IDs across restarts
+# This ensures tests don't break when the mint restarts
+mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+# No input fees for simpler testing
+input_fee_ppk = 0
+
+[info.logging]
+output = "stderr"
+console_level = "info"
+
+[mint_info]
+name = "CDK Dev Mint"
+description = "Native CDK mint for Spilman channel development and testing"
+
+[ln]
+ln_backend = "fakewallet"
+min_mint = 1
+max_mint = 1000000
+min_melt = 1
+max_melt = 1000000
+
+[fake_wallet]
+# Support multiple units for testing different scenarios
+supported_units = ["sat", "msat", "usd"]
+fee_percent = 0.0
+reserve_fee_min = 0
+# Fast auto-payment for testing (1-3 seconds)
+min_delay_time = 1
+max_delay_time = 3
+
+[database]
+engine = "sqlite"
+# Database will be created in dev-mint/cdk-mintd.sqlite

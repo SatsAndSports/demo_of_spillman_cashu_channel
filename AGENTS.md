@@ -102,10 +102,10 @@ The Blossom server and tests require a mint running at `localhost:3338`. The eas
 cargo build -p cdk-mintd --features fakewallet
 
 # Start the mint with dev config
-./target/debug/cdk-mintd --config dev-mint/config.toml --work-dir dev-mint
+./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
 
 # Or using cargo run:
-cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.toml --work-dir dev-mint
+cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
 ```
 
 The dev config uses a fixed mnemonic for reproducible keyset IDs across restarts:
@@ -124,7 +124,7 @@ ps aux | grep cdk-mintd
 kill <PID>
 
 # Restart
-./target/debug/cdk-mintd --config dev-mint/config.toml --work-dir dev-mint
+./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
 ```
 
 ### Running with Nutshell (Alternative)
