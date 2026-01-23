@@ -16,7 +16,9 @@ FROM debian:bookworm-slim AS chef
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System dependencies (excluding Go - installed separately below)
+# System dependencies
+# - PostgreSQL 15 for NutMix (runs directly, no Docker-in-Docker)
+# - sudo for PostgreSQL service management
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -25,21 +27,34 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    docker.io \
     git \
     make \
     protobuf-compiler \
+    unzip \
+    postgresql-15 \
+    postgresql-client-15 \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Go 1.21 (needed for go-nostr dependency)
+# Go 1.21 (for our cdk-spilman-go and nutmix-setup-units)
 RUN curl -LO https://go.dev/dl/go1.21.13.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go1.21.13.linux-amd64.tar.gz && \
     rm go1.21.13.linux-amd64.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
-# docker-compose (for NutMix tests)
-RUN curl -SL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
-    -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose
+# Go 1.24 (for NutMix which requires go 1.25.4, but 1.24 should work)
+# Install to separate location so we can switch when building NutMix
+RUN curl -LO https://go.dev/dl/go1.24.1.linux-amd64.tar.gz && \
+    mkdir -p /usr/local/go1.24 && \
+    tar -C /usr/local/go1.24 -xzf go1.24.1.linux-amd64.tar.gz --strip-components=1 && \
+    rm go1.24.1.linux-amd64.tar.gz
+
+# just command runner (for NutMix build)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Bun (for NutMix web dashboard build)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
@@ -84,6 +99,20 @@ RUN make venv && make python-dev
 
 # Build Go tools
 RUN make build-nutmix-setup-units
+
+# ============================================================
+# Clone and build NutMix (using Go 1.24)
+# ============================================================
+RUN git clone --depth 1 https://github.com/lescuer97/nutmix.git /nutmix
+
+# Build NutMix with Go 1.24
+WORKDIR /nutmix
+ENV PATH="/usr/local/go1.24/bin:${PATH}"
+RUN just install-deps && just build
+
+# Return to cdk directory and restore Go 1.21 as default
+WORKDIR /cdk
+ENV PATH="/usr/local/go/bin:/root/.bun/bin:/root/.cargo/bin:${PATH}"
 
 # Default: run CDK tests
 CMD ["make", "test-python-parallel-cdk", "test-go-parallel-cdk"]
