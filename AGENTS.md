@@ -788,6 +788,7 @@ The test suite includes:
 - ✅ review the python and go servers
 - ✅ script for testing go setup
 - ? general repetition and consolidation check?
+- ? review the MockHost
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
 - ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
 - ✅ 'share' button looks much better
