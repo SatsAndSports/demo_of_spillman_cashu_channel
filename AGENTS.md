@@ -148,6 +148,62 @@ docker compose build mint
 docker compose up mint
 ```
 
+### Running with NutMix (Alternative)
+
+NutMix is a Go-based Cashu mint. It requires Docker (for postgres) and a setup step to create keysets.
+
+**Prerequisites (one-time setup):**
+```bash
+# Clone NutMix (if not already present)
+cd ~/MyCode/Cashu/NutMix
+git clone https://github.com/lescuer97/nutmix.git
+cd nutmix
+
+# Build the Docker image
+docker compose -f docker-compose-dev.yml build
+```
+
+**Starting NutMix manually:**
+```bash
+cd ~/MyCode/Cashu/NutMix/nutmix
+docker compose -f docker-compose-dev.yml up
+# Then in another terminal, after mint is up:
+MINT_URL=http://localhost:3338 ADMIN_NOSTR_NSEC=nsec1rt4m77wy6lrac7u85ya55eslhm07ufld44aacwu0tqpwpjf59xhs5alxef \
+    ./scripts/nutmix-setup-units/nutmix-setup-units sat
+```
+
+**Using the helper script (recommended for testing):**
+```bash
+# Start an ephemeral NutMix on a dynamic port
+./scripts/run_temporary_mint.sh nutmix 13338
+
+# Or in background with wait:
+./scripts/run_temporary_mint.sh nutmix 13338 &
+./scripts/wait_for_mint.sh 13338 60
+
+# Override the units to create (default: sat)
+NUTMIX_UNITS="sat msat usd" ./scripts/run_temporary_mint.sh nutmix 13338
+```
+
+The helper script automatically:
+1. Finds a free port for postgres
+2. Creates isolated Docker containers with unique project name
+3. Builds `nutmix-setup-units` if needed (from `scripts/nutmix-setup-units/`)
+4. Waits for mint to respond
+5. Runs `nutmix-setup-units` to create keysets
+6. Cleans up containers and volumes on exit
+
+**nutmix-setup-units tool:**
+```bash
+# Build manually (optional - script builds on-demand)
+make build-nutmix-setup-units
+
+# Usage
+MINT_URL=http://localhost:3338 \
+ADMIN_NOSTR_NSEC=nsec1... \
+    ./scripts/nutmix-setup-units/nutmix-setup-units sat msat usd
+```
+
 ### Setting Up Blossom Server
 
 First, clone and set up the blossom-server repo (from the cdk repo root):
@@ -785,6 +841,7 @@ The test suite includes:
 - ✅ Video quality preference persistence in localStorage
 
 *High Priority:*
+- ? what are the LSP errors?
 - ? (blossom) tests to explicitly check that a mint is running, and give a decent error message
 - ? add another mint. nutmix? is it faster? give multiple options
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible

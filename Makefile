@@ -9,7 +9,8 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
 	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel \
-	test-blossom test-blossom-full wasm wasm-dev test-spilman test-all
+	test-blossom test-blossom-full wasm wasm-dev test-spilman test-all \
+	build-nutmix-setup-units clean-nutmix-setup-units
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -101,7 +102,21 @@ test-all: test-spilman test-python-parallel test-go-parallel test-blossom
 	@echo "  ALL TEST SUITES PASSED"
 	@echo "========================================="
 
-clean:
+# --- NutMix Setup Units ---
+
+NUTMIX_SETUP_UNITS_DIR := scripts/nutmix-setup-units
+
+# Build the nutmix-setup-units tool
+build-nutmix-setup-units:
+	cd $(NUTMIX_SETUP_UNITS_DIR) && go build -o nutmix-setup-units .
+
+# Clean the nutmix-setup-units binary
+clean-nutmix-setup-units:
+	rm -f $(NUTMIX_SETUP_UNITS_DIR)/nutmix-setup-units
+
+# --- Cleanup ---
+
+clean: clean-nutmix-setup-units
 	cargo clean
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
