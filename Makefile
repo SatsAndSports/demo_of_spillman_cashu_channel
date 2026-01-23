@@ -8,8 +8,12 @@ MATURIN := $(VENV)/bin/maturin
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
-	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel \
-	test-blossom test-blossom-full wasm wasm-dev test-spilman test-all \
+	go-build-rust go-demo-server go-demo-client \
+	test-python-parallel-cdk test-python-parallel-nutmix \
+	test-go-parallel-cdk test-go-parallel-nutmix \
+	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
+	wasm wasm-dev test-spilman \
+	test-all-cdk test-all-nutmix test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units
 
 # Create virtual environment and install maturin
@@ -59,13 +63,21 @@ go-demo-server: go-build-rust
 go-demo-client:
 	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
 
-# Run parallel python demo test
-test-python-parallel: python-dev
-	@bash scripts/python-parallel-demo.sh
+# --- Parallel Demo Tests (CDK) ---
 
-# Run parallel go demo test
-test-go-parallel: go-build-rust
-	@bash scripts/go-parallel-demo.sh
+test-python-parallel-cdk: python-dev
+	@bash scripts/python-parallel-demo.sh cdk
+
+test-go-parallel-cdk: go-build-rust
+	@bash scripts/go-parallel-demo.sh cdk
+
+# --- Parallel Demo Tests (NutMix) ---
+
+test-python-parallel-nutmix: python-dev build-nutmix-setup-units
+	@bash scripts/python-parallel-demo.sh nutmix
+
+test-go-parallel-nutmix: go-build-rust build-nutmix-setup-units
+	@bash scripts/go-parallel-demo.sh nutmix
 
 # --- Rust Tests ---
 
@@ -77,13 +89,21 @@ test-spilman:
 
 BLOSSOM_DIR := web/blossom-server
 
-# Run blossom server tests (without rebuilding WASM)
-test-blossom:
-	$(MAKE) -C $(BLOSSOM_DIR) test
+# Run blossom server tests with ephemeral CDK mint
+test-blossom-cdk:
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
 
-# Run blossom server tests (with fast WASM rebuild)
-test-blossom-full:
-	$(MAKE) -C $(BLOSSOM_DIR) test-full
+# Run blossom server tests with ephemeral NutMix mint
+test-blossom-nutmix: build-nutmix-setup-units
+	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
+
+# Run blossom server tests with WASM rebuild + CDK mint
+test-blossom-full-cdk:
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
+
+# Run blossom server tests with WASM rebuild + NutMix mint
+test-blossom-full-nutmix: build-nutmix-setup-units
+	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # Fast WASM build (~2s) - for development
 wasm-dev:
@@ -95,8 +115,22 @@ wasm:
 
 # --- All Tests ---
 
-# Run all test suites
-test-all: test-spilman test-python-parallel test-go-parallel test-blossom
+# Run all CDK test suites
+test-all-cdk: test-spilman test-python-parallel-cdk test-go-parallel-cdk test-blossom-cdk
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL CDK TEST SUITES PASSED"
+	@echo "========================================="
+
+# Run all NutMix test suites
+test-all-nutmix: test-python-parallel-nutmix test-go-parallel-nutmix test-blossom-nutmix
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL NUTMIX TEST SUITES PASSED"
+	@echo "========================================="
+
+# Run all test suites (CDK + NutMix)
+test-all: test-all-cdk test-all-nutmix
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TEST SUITES PASSED"
