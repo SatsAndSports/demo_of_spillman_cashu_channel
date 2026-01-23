@@ -99,14 +99,14 @@ done
 if [ "$SUCCESS" = true ]; then
     echo ""
     echo "***********************************"
-    echo "* ALL PARALLEL TESTS PASSED       *"
+    echo "* ALL PYTHON PARALLEL TESTS PASSED       *"
     echo "***********************************"
     echo ""
     exit 0
 else
     echo ""
     echo "***********************************"
-    echo "* SOME TESTS FAILED               *"
+    echo "* SOME PYTHON TESTS FAILED               *"
     echo "***********************************"
     echo ""
     exit 1
