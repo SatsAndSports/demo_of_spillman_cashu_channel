@@ -5,14 +5,18 @@
 #
 # Run:
 #   ./scripts/docker-test.sh [cdk|nutmix|all]
+#
+# Uses cargo-chef for efficient Rust dependency caching.
+# Only rebuilds dependencies when Cargo.toml/Cargo.lock change.
 
-FROM debian:bookworm-slim
+# ============================================================
+# Stage 1: Base image with system deps + Rust + cargo-chef
+# ============================================================
+FROM debian:bookworm-slim AS chef
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ============================================================
-# Layer 1: System dependencies
-# ============================================================
+# System dependencies (excluding Go - installed separately below)
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -21,37 +25,58 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    golang-go \
     docker.io \
     git \
     make \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# ============================================================
-# Layer 2: docker-compose (for NutMix tests)
-# ============================================================
+# Go 1.21 (needed for go-nostr dependency)
+RUN curl -LO https://go.dev/dl/go1.21.13.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.21.13.linux-amd64.tar.gz && \
+    rm go1.21.13.linux-amd64.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# docker-compose (for NutMix tests)
 RUN curl -SL "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
     -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose
 
-# ============================================================
-# Layer 3: Rust toolchain
-# ============================================================
+# Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     --default-toolchain 1.92.0 \
     --component rustfmt,clippy
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ============================================================
-# Layer 4: Copy source and build
-# ============================================================
+# Install cargo-chef for dependency caching
+RUN cargo install cargo-chef
+
 WORKDIR /cdk
+
+# ============================================================
+# Stage 2: Planner - extract dependency info
+# ============================================================
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build CDK mint
+# ============================================================
+# Stage 3: Builder - build deps (cached), then build code
+# ============================================================
+FROM chef AS builder
+
+# Copy recipe and build dependencies (CACHED if Cargo.toml unchanged)
+COPY --from=planner /cdk/recipe.json recipe.json
+RUN cargo chef cook --recipe-path recipe.json -p cdk-mintd --features fakewallet
+RUN cargo chef cook --recipe-path recipe.json -p cdk-spilman-go
+RUN cargo chef cook --recipe-path recipe.json -p cdk-spilman-python
+
+# Pre-download Go dependencies for nutmix-setup-units (CACHED if go.mod/go.sum unchanged)
+COPY scripts/nutmix-setup-units/go.mod scripts/nutmix-setup-units/go.sum scripts/nutmix-setup-units/
+RUN cd scripts/nutmix-setup-units && go mod download
+
+# Copy source and build actual code
+COPY . .
 RUN cargo build -p cdk-mintd --features fakewallet
-
-# Build Go Rust library
 RUN cargo build -p cdk-spilman-go
 
 # Set up Python environment

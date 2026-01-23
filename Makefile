@@ -9,6 +9,7 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
 	go-build-rust go-demo-server go-demo-client \
+	cdk-mintd \
 	test-python-parallel-cdk test-python-parallel-nutmix \
 	test-go-parallel-cdk test-go-parallel-nutmix \
 	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
@@ -64,11 +65,15 @@ go-demo-client:
 	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
 
 # --- Parallel Demo Tests (CDK) ---
+#
 
-test-python-parallel-cdk: python-dev
+cdk-mintd:
+	cargo build -p cdk-mintd --features fakewallet
+
+test-python-parallel-cdk: python-dev cdk-mintd
 	@bash scripts/python-parallel-demo.sh cdk
 
-test-go-parallel-cdk: go-build-rust
+test-go-parallel-cdk: go-build-rust cdk-mintd
 	@bash scripts/go-parallel-demo.sh cdk
 
 # --- Parallel Demo Tests (NutMix) ---
@@ -90,7 +95,7 @@ test-spilman:
 BLOSSOM_DIR := web/blossom-server
 
 # Run blossom server tests with ephemeral CDK mint
-test-blossom-cdk:
+test-blossom-cdk: cdk-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
 
 # Run blossom server tests with ephemeral NutMix mint
@@ -98,7 +103,7 @@ test-blossom-nutmix: build-nutmix-setup-units
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
 
 # Run blossom server tests with WASM rebuild + CDK mint
-test-blossom-full-cdk:
+test-blossom-full-cdk: cdk-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # Run blossom server tests with WASM rebuild + NutMix mint
