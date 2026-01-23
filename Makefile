@@ -8,7 +8,8 @@ MATURIN := $(VENV)/bin/maturin
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
-	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel
+	go-build-rust go-demo-server go-demo-client test-python-parallel test-go-parallel \
+	test-blossom test-blossom-full wasm wasm-dev
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -64,6 +65,26 @@ test-python-parallel: python-dev
 # Run parallel go demo test
 test-go-parallel: go-build-rust
 	@bash scripts/go-parallel-demo.sh
+
+# --- Blossom Server ---
+
+BLOSSOM_DIR := web/blossom-server
+
+# Run blossom server tests (without rebuilding WASM)
+test-blossom:
+	$(MAKE) -C $(BLOSSOM_DIR) test
+
+# Run blossom server tests (with fast WASM rebuild)
+test-blossom-full:
+	$(MAKE) -C $(BLOSSOM_DIR) test-full
+
+# Fast WASM build (~2s) - for development
+wasm-dev:
+	$(MAKE) -C $(BLOSSOM_DIR) wasm-dev
+
+# Optimized WASM build (~32s) - for production
+wasm:
+	$(MAKE) -C $(BLOSSOM_DIR) wasm
 
 clean:
 	cargo clean
