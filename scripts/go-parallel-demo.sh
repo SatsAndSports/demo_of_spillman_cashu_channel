@@ -9,7 +9,8 @@ set -o pipefail
 
 # 1. Configuration
 MINT_BIN="./target/debug/cdk-mintd"
-MINT_WORK_DIR="dev-mint-test-go"
+MINT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mint-test-go.XXXXXX")
+CONFIG_FILE="$MINT_WORK_DIR/config.toml"
 LOG_DIR="./testing/go-demo"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
@@ -30,8 +31,7 @@ cleanup() {
         echo "Killing background processes: $JOBS"
         kill $JOBS || true
     fi
-    # Remove temporary files
-    rm -f config.test.go.toml
+    # Remove temporary mint work directory (includes config file)
     rm -rf "$MINT_WORK_DIR"
     echo "Cleanup complete. Logs available in $LOG_DIR"
 }
@@ -57,14 +57,14 @@ echo "SERVER_PORT: $SERVER_PORT"
 
 # 5. Setup dynamic mint config
 echo "--- Setting up test mint ---"
-mkdir -p "$MINT_WORK_DIR"
+echo "MINT_WORK_DIR: $MINT_WORK_DIR"
 sed -e "s/listen_port = 3338/listen_port = $MINT_PORT/" \
     -e "s|url = \"http://127.0.0.1:3338\"|url = \"http://127.0.0.1:$MINT_PORT\"|" \
-    dev-mint/config.toml > config.test.go.toml
+    dev-mint/config.toml > "$CONFIG_FILE"
 
 # 6. Start Mint
 echo "--- Starting Mint (logging to $MINT_LOG) ---"
-$MINT_BIN --config config.test.go.toml --work-dir "$MINT_WORK_DIR" --enable-logging > "$MINT_LOG" 2>&1 &
+$MINT_BIN --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" --enable-logging > "$MINT_LOG" 2>&1 &
 
 # Wait for mint to be ready
 echo "Waiting for mint to start on port $MINT_PORT..."
