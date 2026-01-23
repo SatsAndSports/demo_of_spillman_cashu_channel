@@ -36,6 +36,12 @@ RUN apt-get update && apt-get install -y \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
+# Configure PostgreSQL for passwordless local access (trust authentication)
+# This is safe in a test container environment
+RUN echo "local all postgres trust" > /etc/postgresql/15/main/pg_hba.conf && \
+    echo "host all postgres 127.0.0.1/32 trust" >> /etc/postgresql/15/main/pg_hba.conf && \
+    echo "host all postgres ::1/128 trust" >> /etc/postgresql/15/main/pg_hba.conf
+
 # Go 1.21 (for our cdk-spilman-go and nutmix-setup-units)
 RUN curl -LO https://go.dev/dl/go1.21.13.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go1.21.13.linux-amd64.tar.gz && \

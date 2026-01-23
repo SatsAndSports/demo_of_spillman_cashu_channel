@@ -5,8 +5,13 @@
 # Usage: ./scripts/run_temporary_mint.sh <mint_type> <port>
 # Example: ./scripts/run_temporary_mint.sh cdk 12345
 #          ./scripts/run_temporary_mint.sh nutmix 12345
+#          ./scripts/run_temporary_mint.sh nutmix-native 12345
 #
-# Supported mint types: cdk, nutmix
+# Supported mint types:
+#   cdk           - CDK mint with fakewallet
+#   nutmix        - NutMix via Docker Compose (for local development)
+#   nutmix-native - NutMix with PostgreSQL directly (for Docker test image)
+#
 # The mint runs in the foreground. Use & to background it.
 # On exit (SIGTERM, SIGINT, or normal), temp directory is cleaned up.
 
@@ -25,17 +30,22 @@ MINT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mint-${MINT_TYPE}.XXXXXX")
 MINT_PID=""
 COMPOSE_PROJECT=""
 COMPOSE_FILES=""
+NUTMIX_DB_NAME=""  # For Docker mode: PostgreSQL database to drop
 
 cleanup() {
-    # CDK cleanup
+    # CDK / NutMix process cleanup
     if [ -n "$MINT_PID" ]; then
         kill "$MINT_PID" 2>/dev/null || true
         wait "$MINT_PID" 2>/dev/null || true
     fi
-    # NutMix cleanup
+    # NutMix Docker Compose cleanup (local mode)
     if [ -n "$COMPOSE_PROJECT" ] && [ -n "$COMPOSE_FILES" ]; then
         # shellcheck disable=SC2086
         docker compose $COMPOSE_FILES -p "$COMPOSE_PROJECT" down -v 2>/dev/null || true
+    fi
+    # NutMix PostgreSQL cleanup (Docker mode)
+    if [ -n "$NUTMIX_DB_NAME" ]; then
+        sudo -u postgres dropdb "$NUTMIX_DB_NAME" 2>/dev/null || true
     fi
     rm -rf "$MINT_WORK_DIR"
 }
@@ -60,7 +70,9 @@ case "$MINT_TYPE" in
         ;;
 
     nutmix)
-        # NutMix paths
+        # ============================================================
+        # NutMix via Docker Compose (for local development)
+        # ============================================================
         NUTMIX_DIR="/home/aaron/MyCode/Cashu/NutMix/nutmix"
         NUTMIX_COMPOSE="$NUTMIX_DIR/docker-compose-dev.yml"
         NUTMIX_SETUP_UNITS="$REPO_ROOT/scripts/nutmix-setup-units/nutmix-setup-units"
@@ -168,8 +180,91 @@ EOF
         wait "$COMPOSE_PID"
         ;;
 
+    nutmix-native)
+        # ============================================================
+        # NutMix with PostgreSQL directly (for Docker test image)
+        # Requires: /nutmix/build/nutmix binary and PostgreSQL installed
+        # ============================================================
+        NUTMIX_BIN="/nutmix/build/nutmix"
+        NUTMIX_SETUP_UNITS="$REPO_ROOT/scripts/nutmix-setup-units/nutmix-setup-units"
+        
+        # Units to create (can be overridden via NUTMIX_UNITS env var)
+        NUTMIX_UNITS="${NUTMIX_UNITS:-sat msat}"
+        
+        # Known test keys (from nutmix .env)
+        NUTMIX_PRIVATE_KEY="6d892d6ae13c60c497ca9d806b84697e7178bdc22e5c21e74c2be426d661c983"
+        NUTMIX_ADMIN_NSEC="nsec1rt4m77wy6lrac7u85ya55eslhm07ufld44aacwu0tqpwpjf59xhs5alxef"
+        NUTMIX_ADMIN_NPUB="npub1rvmqlgrxqeh8hm78n5qeh7nn6027whu44j87qxddh3rjsx463lysjjxgxx"
+        
+        # Verify prerequisites
+        if [ ! -x "$NUTMIX_BIN" ]; then
+            echo "ERROR: $NUTMIX_BIN not found or not executable." >&2
+            echo "This mint type is intended for the Docker test image." >&2
+            exit 1
+        fi
+        
+        if [ ! -x "$NUTMIX_SETUP_UNITS" ]; then
+            echo "ERROR: $NUTMIX_SETUP_UNITS not found. Build it first." >&2
+            exit 1
+        fi
+        
+        NUTMIX_DB_NAME="nutmix_test_${MINT_PORT}"
+        
+        echo "Starting PostgreSQL..." >&2
+        sudo pg_ctlcluster 15 main start 2>/dev/null || true
+        
+        # Wait for PostgreSQL to be ready
+        for i in {1..30}; do
+            if sudo -u postgres pg_isready -q; then
+                break
+            fi
+            if [ "$i" -eq 30 ]; then
+                echo "ERROR: PostgreSQL did not start within 15 seconds." >&2
+                exit 1
+            fi
+            sleep 0.5
+        done
+        
+        # Create database
+        sudo -u postgres createdb "$NUTMIX_DB_NAME" 2>/dev/null || true
+        
+        # Set environment for NutMix
+        export DATABASE_URL="postgres://postgres:@localhost:5432/$NUTMIX_DB_NAME"
+        export MINT_PRIVATE_KEY="$NUTMIX_PRIVATE_KEY"
+        export ADMIN_NOSTR_NPUB="$NUTMIX_ADMIN_NPUB"
+        export MINT_LIGHTNING_BACKEND="FakeWallet"
+        export SIGNER_TYPE="memory"
+        export PORT="$MINT_PORT"
+        
+        echo "Starting NutMix on port $MINT_PORT..." >&2
+        "$NUTMIX_BIN" &
+        MINT_PID=$!
+        
+        # Wait for mint to respond
+        for i in {1..60}; do
+            if curl -s "http://localhost:$MINT_PORT/v1/info" > /dev/null 2>&1; then
+                echo "NutMix is responding." >&2
+                break
+            fi
+            if [ "$i" -eq 60 ]; then
+                echo "ERROR: NutMix did not start within 30 seconds." >&2
+                exit 1
+            fi
+            sleep 0.5
+        done
+        
+        # Run setup-units to create keysets
+        echo "Creating keysets via setup-units ($NUTMIX_UNITS)..." >&2
+        MINT_URL="http://localhost:$MINT_PORT" \
+        ADMIN_NOSTR_NSEC="$NUTMIX_ADMIN_NSEC" \
+            "$NUTMIX_SETUP_UNITS" $NUTMIX_UNITS
+        
+        echo "NutMix ready on port $MINT_PORT" >&2
+        wait "$MINT_PID"
+        ;;
+
     *)
-        echo "Unknown mint type: $MINT_TYPE (supported: cdk, nutmix)" >&2
+        echo "Unknown mint type: $MINT_TYPE (supported: cdk, nutmix, nutmix-native)" >&2
         exit 1
         ;;
 esac
