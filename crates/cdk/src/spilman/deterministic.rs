@@ -241,7 +241,7 @@ impl DeterministicOutputsForOneContext {
         let amounts: Vec<u64> = self
             .ordered_amounts
             .iter_smallest_first()
-            .flat_map(|(&amount, &count)| std::iter::repeat(amount).take(count))
+            .flat_map(|(&amount, &count)| std::iter::repeat_n(amount, count))
             .collect();
 
         // Use override keyset if provided, otherwise use the one from params

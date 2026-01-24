@@ -18,8 +18,8 @@ pub fn get_signatures_from_swap_request(
         .first()
         .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
 
-    let signatures = if let Some(ref witness) = first_proof.witness {
-        if let crate::nuts::Witness::P2PKWitness(p2pk_witness) = witness {
+    let signatures =
+        if let Some(crate::nuts::Witness::P2PKWitness(p2pk_witness)) = &first_proof.witness {
             // Parse all signature strings into Signature objects
             p2pk_witness
                 .signatures
@@ -28,10 +28,7 @@ pub fn get_signatures_from_swap_request(
                 .collect()
         } else {
             vec![]
-        }
-    } else {
-        vec![]
-    };
+        };
 
     Ok(signatures)
 }

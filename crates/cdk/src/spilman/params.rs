@@ -95,12 +95,12 @@ fn derive_blinded_secret_key(secret: &SecretKey, r: &Scalar) -> anyhow::Result<S
     // Our wrapper's x_only_public_key() only returns XOnlyPublicKey, but the inner
     // secp256k1::PublicKey::x_only_public_key() returns (XOnlyPublicKey, Parity)
     let pubkey = secret.public_key();
-    let inner_pubkey: &bitcoin::secp256k1::PublicKey = &*pubkey;
+    let inner_pubkey: &bitcoin::secp256k1::PublicKey = &pubkey;
     let (_, parity) = inner_pubkey.x_only_public_key();
 
     // Get the underlying secp256k1 secret key
     // We need to clone because negate() consumes self
-    let inner_secret: bitcoin::secp256k1::SecretKey = (**secret).clone();
+    let inner_secret: bitcoin::secp256k1::SecretKey = **secret;
 
     // If parity is odd, negate the secret key before adding the tweak
     // This is because BIP-340 signing will use the negated key for odd-Y pubkeys
@@ -133,7 +133,7 @@ fn derive_blinded_pubkey(
     r: &Scalar,
 ) -> anyhow::Result<crate::nuts::PublicKey> {
     // Get parity of the public key
-    let inner_pubkey: &bitcoin::secp256k1::PublicKey = &**pubkey;
+    let inner_pubkey: &bitcoin::secp256k1::PublicKey = pubkey;
     let (_, parity) = inner_pubkey.x_only_public_key();
 
     // If parity is odd, negate the pubkey before adding the tweak
@@ -154,6 +154,7 @@ fn derive_blinded_pubkey(
 
 impl ChannelParameters {
     /// Create new channel parameters with a pre-computed shared secret
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         alice_pubkey: crate::nuts::PublicKey,
         charlie_pubkey: crate::nuts::PublicKey,
@@ -202,6 +203,7 @@ impl ChannelParameters {
     ///
     /// # Errors
     /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_secret_key(
         alice_pubkey: crate::nuts::PublicKey,
         charlie_pubkey: crate::nuts::PublicKey,
@@ -420,7 +422,7 @@ impl ChannelParameters {
             self.mint,
             self.unit_name(),
             self.capacity,
-            self.keyset_info.keyset_id.to_string(),
+            self.keyset_info.keyset_id,
             self.keyset_info.input_fee_ppk,
             self.maximum_amount_for_one_output,
             self.setup_timestamp,

@@ -94,6 +94,7 @@ pub trait SpilmanHost {
     /// * `sender_proofs_json` - JSON array of sender's P2PK proofs (change)
     /// * `receiver_sum` - Sum of receiver proof amounts
     /// * `sender_sum` - Sum of sender proof amounts
+    #[allow(clippy::too_many_arguments)]
     fn mark_channel_closed(
         &self,
         channel_id: &str,
@@ -166,7 +167,7 @@ impl CloseData {
     /// - `output_keyset_info`: The keyset info for outputs
     pub fn to_json_value(self) -> serde_json::Value {
         let swap_request_json =
-            serde_json::to_value(&self.swap_request).unwrap_or_else(|_| serde_json::Value::Null);
+            serde_json::to_value(&self.swap_request).unwrap_or(serde_json::Value::Null);
 
         let secrets_with_blinding: Vec<serde_json::Value> = self
             .secrets_with_blinding
@@ -871,12 +872,14 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let verification = verify_valid_channel(funding_proofs, &params);
         if !verification.valid {
             return Err(BridgeError::ValidationFailed(
-                serde_json::to_string(&verification.errors).unwrap(),
+                serde_json::to_string(&verification.errors)
+                    .expect("ChannelVerificationError should always serialize"),
             ));
         }
 
         // 8. Save to host
-        let funding_proofs_json = serde_json::to_string(funding_proofs).unwrap();
+        let funding_proofs_json =
+            serde_json::to_string(funding_proofs).expect("Vec<Proof> should always serialize");
         self.host.save_funding(
             channel_id,
             &params_json,
@@ -893,6 +896,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_signature(
         &self,
         params_json: &str,
@@ -1110,7 +1114,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let balance_update = BalanceUpdateMessage {
             channel_id: channel_id.to_string(),
             amount: payment.balance,
-            signature: sig.clone(),
+            signature: sig,
         };
 
         // 11. Add Alice's signature to the swap request witness
@@ -1288,7 +1292,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let balance_update = BalanceUpdateMessage {
             channel_id: channel_id.to_string(),
             amount: balance,
-            signature: sig.clone(),
+            signature: sig,
         };
 
         // 10. Add Alice's signature to the swap request witness

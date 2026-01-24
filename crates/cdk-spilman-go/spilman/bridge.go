@@ -81,7 +81,15 @@ type Bridge struct {
 
 func NewBridge(host SpilmanHost, serverSecretKeyHex string) *Bridge {
 	handle := cgo.NewHandle(host)
-	callbacks := C.fill_callbacks(unsafe.Pointer(handle))
+	// Convert cgo.Handle to void* for C callback struct.
+	// cgo.Handle is a uintptr type. We pass it to C as a void* (user_data),
+	// and recover it in gateway.c callbacks via cgo.Handle(uintptr(user_data)).
+	//
+	// go vet reports "possible misuse of unsafe.Pointer" here, but this is a
+	// false positive. This is the documented pattern for passing cgo.Handle
+	// to C code (see: https://pkg.go.dev/runtime/cgo#Handle).
+	// The warning cannot be suppressed with directives.
+	callbacks := C.fill_callbacks(unsafe.Pointer(handle)) //nolint:govet
 
 	var cSecret *C.char
 	if serverSecretKeyHex != "" {
