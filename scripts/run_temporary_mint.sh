@@ -189,7 +189,8 @@ EOF
         NUTMIX_SETUP_UNITS="$REPO_ROOT/scripts/nutmix-setup-units/nutmix-setup-units"
         
         # Units to create (can be overridden via NUTMIX_UNITS env var)
-        NUTMIX_UNITS="${NUTMIX_UNITS:-sat msat}"
+        # Note: 'sat' is created by default, so we only add 'msat usd'
+        NUTMIX_UNITS="${NUTMIX_UNITS:-msat usd}"
         
         # Known test keys (from nutmix .env)
         NUTMIX_PRIVATE_KEY="6d892d6ae13c60c497ca9d806b84697e7178bdc22e5c21e74c2be426d661c983"
