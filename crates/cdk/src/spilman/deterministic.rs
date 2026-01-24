@@ -374,10 +374,14 @@ impl CommitmentOutputs {
         override_keyset_id: Option<Id>,
     ) -> Result<crate::nuts::SwapRequest, anyhow::Error> {
         // Get blinded messages for receiver (Charlie)
-        let mut outputs = self.receiver_outputs.get_blinded_messages(override_keyset_id)?;
+        let mut outputs = self
+            .receiver_outputs
+            .get_blinded_messages(override_keyset_id)?;
 
         // Get blinded messages for sender (Alice)
-        let sender_outputs = self.sender_outputs.get_blinded_messages(override_keyset_id)?;
+        let sender_outputs = self
+            .sender_outputs
+            .get_blinded_messages(override_keyset_id)?;
 
         // Concatenate (receiver first, then sender)
         outputs.extend(sender_outputs);

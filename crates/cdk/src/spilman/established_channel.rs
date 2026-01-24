@@ -23,8 +23,11 @@ impl EstablishedChannel {
         params: ChannelParameters,
         funding_proofs: Vec<Proof>,
     ) -> Result<Self, anyhow::Error> {
-        // TODO: verify everything, especially for Charlie's security, either
-        // here or in another function
+        // Note: This performs basic structural validation only.
+        // DLEQ proof verification (which ensures the mint actually signed these proofs)
+        // is done separately via `verify_valid_channel()` and should be called by the
+        // receiver (Charlie) when first receiving funding. The SpilmanBridge does this
+        // automatically in its `resolve_funding` step.
 
         // Assert all proofs have the expected keyset_id from params
         let expected_keyset_id = params.keyset_info.keyset_id;
