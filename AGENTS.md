@@ -130,19 +130,23 @@ trait SpilmanHost {
 
 ## Quick Reference: Payment Header
 
-Clients send `X-Cashu-Channel` header with each request:
+Clients send `X-Cashu-Channel` header with each request. The header value is **base64-encoded JSON**:
 
-```json
-{
-  "channel_id": "hex_string",
-  "balance": 150,
-  "signature": "schnorr_sig_hex",
-  "params": { ... },           // Optional, cached by server
-  "funding_proofs": [ ... ]    // Optional, cached by server
-}
+```javascript
+// Client-side encoding
+const payment = {
+  channel_id: "hex_string",
+  balance: 150,
+  signature: "schnorr_sig_hex",
+  params: { ... },           // Optional, cached by server
+  funding_proofs: [ ... ]    // Optional, cached by server
+};
+headers["X-Cashu-Channel"] = btoa(JSON.stringify(payment));  // Browser
+// or: base64.b64encode(json.dumps(payment).encode()).decode()  # Python
+// or: base64.StdEncoding.EncodeToString(jsonBytes)  // Go
 ```
 
-Server responds with confirmation header on 200 OK:
+Server responds with confirmation header on 200 OK (plain JSON, not base64):
 
 ```json
 {

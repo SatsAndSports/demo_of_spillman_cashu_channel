@@ -36,23 +36,24 @@ Player                              Server
 
 ### 2. Segment Requests
 
-For each HLS segment, the player adds an `X-Cashu-Channel` header:
+For each HLS segment, the player adds an `X-Cashu-Channel` header with **base64-encoded JSON**:
 
-```json
-{
-  "channel_id": "abc123...",
-  "balance": 150,
-  "signature": "schnorr_sig_hex",
-  "params": { ... },           // Optional, cached by server
-  "funding_proofs": [ ... ]    // Optional, cached by server
-}
+```javascript
+const payment = {
+  channel_id: "abc123...",
+  balance: 150,
+  signature: "schnorr_sig_hex",
+  params: { ... },           // Optional, cached by server
+  funding_proofs: [ ... ]    // Optional, cached by server
+};
+headers["X-Cashu-Channel"] = btoa(JSON.stringify(payment));
 ```
 
 ### 3. Server Validation
 
 The server validates payments in order:
 
-1. Parse JSON from `X-Cashu-Channel` header
+1. Decode base64 and parse JSON from `X-Cashu-Channel` header
 2. Check required fields: `channel_id`, `balance`, `signature`
 3. If `params` + `funding_proofs` provided:
    - Verify DLEQ proofs via WASM
@@ -299,6 +300,8 @@ xhrSetup: function(xhr, url) {
     if (xhr.readyState === XMLHttpRequest.UNSENT) {
         xhr.open('GET', url, true);
     }
+    // Payment header must be base64-encoded JSON
+    const paymentHeader = btoa(JSON.stringify(payment));
     xhr.setRequestHeader('X-Cashu-Channel', paymentHeader);
 }
 ```

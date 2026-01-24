@@ -181,7 +181,7 @@ Remaining: 35 sat
    - `record_payment()` - tracks usage after successful payment
 
 3. **Payment Flow**:
-   - Client sends `X-Cashu-Channel` header with payment
+   - Client sends `X-Cashu-Channel` header with base64-encoded payment JSON
    - Bridge validates signature, checks balance >= amount_due
    - On success, host records payment and server returns ASCII art
 
