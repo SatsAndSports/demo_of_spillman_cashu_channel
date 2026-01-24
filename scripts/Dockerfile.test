@@ -1,0 +1,126 @@
+# CDK Spilman Channel Tests
+#
+# Build:
+#   git archive HEAD | docker build -f scripts/Dockerfile.test -t cdk-test -
+#
+# Run:
+#   ./scripts/docker-test.sh [cdk|nutmix|all]
+#
+# Uses cargo-chef for efficient Rust dependency caching.
+# Only rebuilds dependencies when Cargo.toml/Cargo.lock change.
+
+# ============================================================
+# Stage 1: Base image with system deps + Rust + cargo-chef
+# ============================================================
+FROM debian:bookworm-slim AS chef
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System dependencies
+# - PostgreSQL 15 for NutMix (runs directly, no Docker-in-Docker)
+# - sudo for PostgreSQL service management
+# - jq for JSON parsing in wait_for_mint.sh
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    curl \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    make \
+    protobuf-compiler \
+    unzip \
+    postgresql-15 \
+    postgresql-client-15 \
+    sudo \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure PostgreSQL for passwordless local access (trust authentication)
+# This is safe in a test container environment
+RUN echo "local all postgres trust" > /etc/postgresql/15/main/pg_hba.conf && \
+    echo "host all postgres 127.0.0.1/32 trust" >> /etc/postgresql/15/main/pg_hba.conf && \
+    echo "host all postgres ::1/128 trust" >> /etc/postgresql/15/main/pg_hba.conf
+
+# Go 1.21 (for our cdk-spilman-go and nutmix-setup-units)
+RUN curl -LO https://go.dev/dl/go1.21.13.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.21.13.linux-amd64.tar.gz && \
+    rm go1.21.13.linux-amd64.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Go 1.24 (for NutMix which requires go 1.25.4, but 1.24 should work)
+# Install to separate location so we can switch when building NutMix
+RUN curl -LO https://go.dev/dl/go1.24.1.linux-amd64.tar.gz && \
+    mkdir -p /usr/local/go1.24 && \
+    tar -C /usr/local/go1.24 -xzf go1.24.1.linux-amd64.tar.gz --strip-components=1 && \
+    rm go1.24.1.linux-amd64.tar.gz
+
+# just command runner (for NutMix build)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Bun (for NutMix web dashboard build)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    --default-toolchain 1.92.0 \
+    --component rustfmt,clippy
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install cargo-chef for dependency caching
+RUN cargo install cargo-chef
+
+WORKDIR /cdk
+
+# ============================================================
+# Stage 2: Planner - extract dependency info
+# ============================================================
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================================
+# Stage 3: Builder - build deps (cached), then build code
+# ============================================================
+FROM chef AS builder
+
+# Copy recipe and build dependencies (CACHED if Cargo.toml unchanged)
+COPY --from=planner /cdk/recipe.json recipe.json
+RUN cargo chef cook --recipe-path recipe.json -p cdk-mintd --features fakewallet
+RUN cargo chef cook --recipe-path recipe.json -p cdk-spilman-go
+RUN cargo chef cook --recipe-path recipe.json -p cdk-spilman-python
+
+# Pre-download Go dependencies for nutmix-setup-units (CACHED if go.mod/go.sum unchanged)
+COPY scripts/nutmix-setup-units/go.mod scripts/nutmix-setup-units/go.sum scripts/nutmix-setup-units/
+RUN cd scripts/nutmix-setup-units && go mod download
+
+# Copy source and build actual code
+COPY . .
+RUN cargo build -p cdk-mintd --features fakewallet
+RUN cargo build -p cdk-spilman-go
+
+# Set up Python environment
+RUN make venv && make python-dev
+
+# Build Go tools
+RUN make build-nutmix-setup-units
+
+# ============================================================
+# Clone and build NutMix (using Go 1.24)
+# ============================================================
+RUN git clone --depth 1 https://github.com/lescuer97/nutmix.git /nutmix
+
+# Build NutMix with Go 1.24
+WORKDIR /nutmix
+ENV PATH="/usr/local/go1.24/bin:${PATH}"
+RUN just install-deps && just build
+
+# Return to cdk directory and restore Go 1.21 as default
+WORKDIR /cdk
+ENV PATH="/usr/local/go/bin:/root/.bun/bin:/root/.cargo/bin:${PATH}"
+
+# Default: run CDK tests
+CMD ["make", "test-python-parallel-cdk", "test-go-parallel-cdk"]
