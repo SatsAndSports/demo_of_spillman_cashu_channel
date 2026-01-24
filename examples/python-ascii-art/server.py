@@ -21,6 +21,7 @@ from typing import Optional
 from cdk_spilman import SpilmanBridge, secret_key_to_pubkey, unblind_and_verify_dleq
 import pyfiglet
 import json
+import base64
 import time
 import os
 import signal
@@ -471,12 +472,21 @@ def ascii_art():
     """Generate ASCII art - requires payment via X-Cashu-Channel header."""
     
     # Check for payment header
-    payment_header = request.headers.get("X-Cashu-Channel")
-    if not payment_header:
+    payment_header_b64 = request.headers.get("X-Cashu-Channel")
+    if not payment_header_b64:
         return jsonify({
             "error": "Payment required",
             "reason": "Missing X-Cashu-Channel header"
         }), 402
+    
+    # Decode base64-encoded payment header
+    try:
+        payment_header = base64.b64decode(payment_header_b64).decode()
+    except Exception as e:
+        return jsonify({
+            "error": "Invalid payment header",
+            "reason": "invalid base64 encoding"
+        }), 400
     
     # Get message from request body
     data = request.get_json() or {}
