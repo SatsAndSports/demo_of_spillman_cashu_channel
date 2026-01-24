@@ -280,7 +280,12 @@ impl SpilmanChannelSender {
                 match restore_response {
                     Ok(response) if !response.signatures.is_empty() => {
                         // Success! Unblind the signature to get the proof
-                        let blind_signature = response.signatures.into_iter().next().unwrap();
+                        // SAFETY: We just checked !is_empty() so next() will succeed
+                        let blind_signature = response
+                            .signatures
+                            .into_iter()
+                            .next()
+                            .expect("signatures is non-empty");
 
                         let proof = crate::dhke::construct_proofs(
                             vec![blind_signature],
@@ -290,7 +295,7 @@ impl SpilmanChannelSender {
                         )?
                         .into_iter()
                         .next()
-                        .unwrap();
+                        .expect("construct_proofs returns same count as input");
 
                         recovered_proofs.push(proof);
                         index += 1;

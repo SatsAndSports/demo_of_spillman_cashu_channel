@@ -128,7 +128,7 @@ impl OrderedListOfAmounts {
             return total;
         }
         let num_outputs = self.amounts.len() as u64;
-        let fee = (self.input_fee_ppk * num_outputs + 999) / 1000;
+        let fee = (self.input_fee_ppk * num_outputs).div_ceil(1000);
         total.saturating_sub(fee)
     }
 

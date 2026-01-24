@@ -1,3 +1,11 @@
+//! FFI bindings for CDK Spilman payment channels (for Go integration)
+//!
+//! This module provides C-compatible FFI functions for use with cgo.
+//! All `unsafe extern "C"` functions require valid pointers as documented.
+
+// FFI functions have uniform safety requirements: callers must pass valid pointers
+#![allow(clippy::missing_safety_doc)]
+
 use cdk::nuts::SecretKey;
 use cdk::spilman::{self, SpilmanBridge, SpilmanHost};
 pub use libc::{c_char, c_int};
