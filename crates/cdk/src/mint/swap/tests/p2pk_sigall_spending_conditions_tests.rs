@@ -558,7 +558,7 @@ async fn test_p2pk_sig_all_locktime_after_expiry() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-        let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, alice_pubkey) = create_test_keypair();
     let (_bob_secret, bob_pubkey) = create_test_keypair();
 
     // Set locktime in the past (already expired)
