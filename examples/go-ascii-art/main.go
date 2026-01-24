@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -742,7 +743,17 @@ func runServer() {
 		if r.Method != http.MethodPost {
 			return
 		}
-		paymentHeader := r.Header.Get("X-Cashu-Channel")
+		paymentHeaderB64 := r.Header.Get("X-Cashu-Channel")
+
+		// Decode base64-encoded payment header
+		paymentHeaderBytes, err := base64.StdEncoding.DecodeString(paymentHeaderB64)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid payment header", "reason": "invalid base64 encoding"})
+			return
+		}
+		paymentHeader := string(paymentHeaderBytes)
+
 		var req struct{ Message string }
 		json.NewDecoder(r.Body).Decode(&req)
 
@@ -903,7 +914,7 @@ func runClient(messages []string) {
 
 		reqB, _ := json.Marshal(map[string]string{"message": msg})
 		req, _ := http.NewRequest("POST", SERVER_URL+"/ascii", bytes.NewBuffer(reqB))
-		req.Header.Set("X-Cashu-Channel", string(payH))
+		req.Header.Set("X-Cashu-Channel", base64.StdEncoding.EncodeToString(payH))
 		req.Header.Set("Content-Type", "application/json")
 
 		r, err := (&http.Client{}).Do(req)

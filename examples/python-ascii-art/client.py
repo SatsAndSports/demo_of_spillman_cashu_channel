@@ -18,6 +18,7 @@ Environment variables:
 import sys
 import json
 import time
+import base64
 import requests
 import os
 
@@ -38,6 +39,11 @@ from cdk_spilman import (
 
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
+
+
+def encode_payment_header(payment: dict) -> str:
+    """Encode payment object to base64 for X-Cashu-Channel header."""
+    return base64.b64encode(json.dumps(payment).encode()).decode()
 
 
 def get_mint_version(mint_url: str) -> str:
@@ -325,7 +331,7 @@ def main():
         response = requests.post(
             f"{SERVER_URL}/ascii",
             json={"message": msg},
-            headers={"X-Cashu-Channel": json.dumps(payment)}
+            headers={"X-Cashu-Channel": encode_payment_header(payment)}
         )
         
         if response.status_code == 200:
