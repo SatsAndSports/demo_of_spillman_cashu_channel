@@ -19,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # System dependencies
 # - PostgreSQL 15 for NutMix (runs directly, no Docker-in-Docker)
 # - sudo for PostgreSQL service management
+# - jq for JSON parsing in wait_for_mint.sh
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -34,6 +35,7 @@ RUN apt-get update && apt-get install -y \
     postgresql-15 \
     postgresql-client-15 \
     sudo \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure PostgreSQL for passwordless local access (trust authentication)
