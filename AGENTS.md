@@ -842,8 +842,11 @@ The test suite includes:
 
 *High Priority:*
 - ? what are the LSP errors?
-- ? (blossom) tests to explicitly check that a mint is running, and give a decent error message
-- ? add another mint. nutmix? is it faster? give multiple options
+- ? wait until the three units are available? depend on jq?
+- ? split up this AGENTS.md, and generally remove all the 'historical' stuff
+- ? (blossom) tests to check that all three units are present?
+- ? add nutshell to the set of mints
+- ? add more languages to our set: Python/Go. Maybe TS?
 - ✅ different play/pause/top/click behaviour depending on whetether the 'player overlay' is visible
 - ✅ get rid of the video popout, instead, ensure any below-video content isn't too big
 - ✅ 'share' button looks much better
