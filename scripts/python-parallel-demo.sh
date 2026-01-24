@@ -46,8 +46,8 @@ echo "SERVER_PORT: $SERVER_PORT"
 echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
 ./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
-# Wait for mint to be ready
-./scripts/wait_for_mint.sh "$MINT_PORT" 50 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+# Wait for mint to be ready (Python demo only uses sat)
+./scripts/wait_for_mint.sh "$MINT_PORT" 50 "sat" || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
 
 # 5. Start Python Server
 echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
