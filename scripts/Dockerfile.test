@@ -64,6 +64,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash 
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
+# Node.js 20 (for TypeScript demo)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
 # Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     --default-toolchain 1.92.0 \
@@ -72,6 +77,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install cargo-chef for dependency caching
 RUN cargo install cargo-chef
+
+# Install wasm-pack for WASM builds
+RUN cargo install wasm-pack
 
 WORKDIR /cdk
 
@@ -108,6 +116,12 @@ RUN make venv && make python-dev
 # Build Go tools
 RUN make build-nutmix-setup-units
 
+# Build WASM for TypeScript demo
+RUN make wasm-dev
+
+# Install TypeScript demo dependencies
+RUN cd examples/ts-ascii-art && npm install
+
 # ============================================================
 # Clone and build NutMix (using Go 1.24)
 # ============================================================
@@ -123,4 +137,4 @@ WORKDIR /cdk
 ENV PATH="/usr/local/go/bin:/root/.bun/bin:/root/.cargo/bin:${PATH}"
 
 # Default: run CDK tests
-CMD ["make", "test-python-parallel-cdk", "test-go-parallel-cdk"]
+CMD ["make", "test-python-parallel-cdk", "test-go-parallel-cdk", "test-ts-parallel-cdk"]
