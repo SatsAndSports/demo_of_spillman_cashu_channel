@@ -9,9 +9,11 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
 	go-build-rust go-demo-server go-demo-client \
+	ts-demo-server ts-demo-client \
 	cdk-mintd \
 	test-python-parallel-cdk test-python-parallel-nutmix test-python-parallel-nutmix-native \
 	test-go-parallel-cdk test-go-parallel-nutmix test-go-parallel-nutmix-native \
+	test-ts-parallel-cdk test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
 	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
 	wasm wasm-dev test-spilman \
 	test-all-cdk test-all-nutmix test-all-nutmix-native test-all \
@@ -64,6 +66,18 @@ go-demo-server: go-build-rust
 go-demo-client:
 	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
 
+# --- TypeScript Demo ---
+
+TS_DEMO_DIR := examples/ts-ascii-art
+
+# Run the TypeScript demo server
+ts-demo-server: wasm-dev
+	cd $(TS_DEMO_DIR) && npm install && npm run server
+
+# Run the TypeScript demo client
+ts-demo-client:
+	cd $(TS_DEMO_DIR) && npm run client -- "Hello TypeScript"
+
 # --- Parallel Demo Tests (CDK) ---
 #
 
@@ -76,6 +90,9 @@ test-python-parallel-cdk: python-dev cdk-mintd
 test-go-parallel-cdk: go-build-rust cdk-mintd
 	@bash scripts/go-parallel-demo.sh cdk
 
+test-ts-parallel-cdk: wasm-dev cdk-mintd
+	@bash scripts/ts-parallel-demo.sh cdk
+
 # --- Parallel Demo Tests (NutMix via Docker Compose) ---
 
 test-python-parallel-nutmix: python-dev build-nutmix-setup-units
@@ -84,6 +101,9 @@ test-python-parallel-nutmix: python-dev build-nutmix-setup-units
 test-go-parallel-nutmix: go-build-rust build-nutmix-setup-units
 	@bash scripts/go-parallel-demo.sh nutmix
 
+test-ts-parallel-nutmix: wasm-dev build-nutmix-setup-units
+	@bash scripts/ts-parallel-demo.sh nutmix
+
 # --- Parallel Demo Tests (NutMix Native - for Docker test image) ---
 
 test-python-parallel-nutmix-native: python-dev
@@ -91,6 +111,9 @@ test-python-parallel-nutmix-native: python-dev
 
 test-go-parallel-nutmix-native: go-build-rust
 	@bash scripts/go-parallel-demo.sh nutmix-native
+
+test-ts-parallel-nutmix-native: wasm-dev
+	@bash scripts/ts-parallel-demo.sh nutmix-native
 
 # --- Rust Tests ---
 
@@ -129,21 +152,21 @@ wasm:
 # --- All Tests ---
 
 # Run all CDK test suites
-test-all-cdk: test-spilman test-python-parallel-cdk test-go-parallel-cdk test-blossom-cdk
+test-all-cdk: test-spilman test-python-parallel-cdk test-go-parallel-cdk test-ts-parallel-cdk test-blossom-cdk
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL CDK TEST SUITES PASSED"
 	@echo "========================================="
 
 # Run all NutMix test suites (Docker Compose mode)
-test-all-nutmix: test-python-parallel-nutmix test-go-parallel-nutmix test-blossom-nutmix
+test-all-nutmix: test-python-parallel-nutmix test-go-parallel-nutmix test-ts-parallel-nutmix test-blossom-nutmix
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL NUTMIX TEST SUITES PASSED"
 	@echo "========================================="
 
 # Run all NutMix test suites (native mode - for Docker test image)
-test-all-nutmix-native: test-python-parallel-nutmix-native test-go-parallel-nutmix-native
+test-all-nutmix-native: test-python-parallel-nutmix-native test-go-parallel-nutmix-native test-ts-parallel-nutmix-native
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL NUTMIX-NATIVE TEST SUITES PASSED"
