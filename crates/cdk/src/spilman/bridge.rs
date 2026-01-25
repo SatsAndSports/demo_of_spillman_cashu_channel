@@ -576,6 +576,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
     }
 
+    /// Get a reference to the host
+    pub fn host(&self) -> &H {
+        &self.host
+    }
+
     /// Process an incoming payment
     pub fn process_payment(&self, payment_json: &str, context_json: &str) -> PaymentResponse {
         match self.process_payment_inner(payment_json, context_json) {

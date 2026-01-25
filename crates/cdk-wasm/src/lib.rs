@@ -383,6 +383,193 @@ impl WasmSpilmanBridge {
             .as_string()
             .ok_or_else(|| JsValue::from_str("callMintSwap did not return a string"))
     }
+
+    /// Execute a cooperative close: validate, submit swap, unblind, and mark closed.
+    ///
+    /// This async method orchestrates the full cooperative close flow:
+    /// 1. Validates the payment signature and checks balance == amount_due
+    /// 2. Creates the fully-signed swap request
+    /// 3. Submits the swap to the mint
+    /// 4. Unblinds signatures and verifies DLEQ proofs
+    /// 5. Marks the channel as closed
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
+    ///   and optionally params + funding_proofs for unknown channels
+    ///
+    /// # Returns
+    /// JSON with:
+    /// - On success: `{success: true, channel_id, total_value, sender_proofs, already_closed: false}`
+    /// - On error: `{success: false, error, status, ...details}`
+    #[wasm_bindgen(js_name = executeCooperativeClose)]
+    pub async fn execute_cooperative_close(&self, payment_json: &str) -> Result<String, JsValue> {
+        // 1. Parse payment_json to get channel_id and balance
+        let payment: serde_json::Value = serde_json::from_str(payment_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid payment JSON: {}", e)))?;
+
+        let channel_id = payment["channel_id"]
+            .as_str()
+            .ok_or_else(|| JsValue::from_str("missing channel_id"))?;
+        let balance = payment["balance"]
+            .as_u64()
+            .ok_or_else(|| JsValue::from_str("missing balance"))?;
+
+        // 2. Call create_close_data to validate and build swap request
+        let close_result_json = self.create_close_data(payment_json)?;
+        let close_result: serde_json::Value = serde_json::from_str(&close_result_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid close result: {}", e)))?;
+
+        // Check if validation failed
+        if !close_result["success"].as_bool().unwrap_or(false) {
+            // Return error with status code for HTTP response
+            let error_msg = close_result["error"].as_str().unwrap_or("validation failed");
+            let status = if error_msg.contains("channel closed") {
+                400 // Bad request - can't close an already-closed channel
+            } else {
+                402 // Payment required - client can fix by providing valid params/proofs
+            };
+            
+            // Build response with both error and reason for backward compatibility
+            let mut result = serde_json::json!({
+                "success": false,
+                "error": "Payment required",
+                "reason": error_msg,
+                "status": status
+            });
+            
+            // Copy any extra fields from close_result (e.g., expected/actual for balance mismatch)
+            if let Some(close_obj) = close_result.as_object() {
+                if let Some(result_obj) = result.as_object_mut() {
+                    for (key, value) in close_obj {
+                        if key != "success" && key != "error" && !result_obj.contains_key(key) {
+                            result_obj.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            
+            return Ok(result.to_string());
+        }
+
+        // 3. Get funding data to extract mint_url and other params
+        let (params_json, _funding_proofs_json, shared_secret_hex, keyset_info_json) = self
+            .bridge
+            .host()
+            .get_funding_and_params(channel_id)
+            .ok_or_else(|| JsValue::from_str("channel not found after validation"))?;
+
+        let params: serde_json::Value = serde_json::from_str(&params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
+        let mint_url = params["mint"]
+            .as_str()
+            .ok_or_else(|| JsValue::from_str("missing mint in params"))?;
+
+        // 4. Submit swap to mint
+        let swap_request_json = close_result["swap_request"].to_string();
+        let swap_response_str = self
+            .call_mint_swap_via_host(mint_url, &swap_request_json)
+            .await?;
+
+        let swap_response: serde_json::Value = serde_json::from_str(&swap_response_str)
+            .map_err(|e| JsValue::from_str(&format!("Invalid swap response: {}", e)))?;
+
+        // 5. Check for mint error
+        if let Some(error) = swap_response.get("error") {
+            let result = serde_json::json!({
+                "success": false,
+                "error": "mint rejected swap",
+                "status": 502,
+                "mint_error": error
+            });
+            return Ok(result.to_string());
+        }
+
+        // 6. Unblind and verify DLEQ
+        let signatures_json = swap_response
+            .get("signatures")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "[]".to_string());
+        let secrets_with_blinding_json = close_result["secrets_with_blinding"].to_string();
+        let output_keyset_info_json = close_result["output_keyset_info"].to_string();
+
+        let unblind_result_json = cdk::spilman::unblind_and_verify_dleq(
+            &signatures_json,
+            &secrets_with_blinding_json,
+            &params_json,
+            &keyset_info_json,
+            &shared_secret_hex,
+            balance,
+            Some(&output_keyset_info_json),
+        )
+        .map_err(|e| {
+            // Return structured error instead of throwing
+            serde_json::json!({
+                "success": false,
+                "error": "unblind verification failed",
+                "status": 500,
+                "reason": e
+            })
+            .to_string()
+        });
+
+        let unblind_result_json = match unblind_result_json {
+            Ok(json) => json,
+            Err(error_json) => return Ok(error_json),
+        };
+
+        let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid unblind result: {}", e)))?;
+
+        // 7. Verify totals match
+        let expected_total = close_result["expected_total"].as_u64().unwrap_or(0);
+        let receiver_sum = unblind_result["receiver_sum_after_stage1"].as_u64().unwrap_or(0);
+        let sender_sum = unblind_result["sender_sum_after_stage1"].as_u64().unwrap_or(0);
+        let actual_total = receiver_sum + sender_sum;
+
+        if actual_total != expected_total {
+            let result = serde_json::json!({
+                "success": false,
+                "error": "swap response total mismatch",
+                "status": 500,
+                "expected": expected_total,
+                "actual": actual_total
+            });
+            return Ok(result.to_string());
+        }
+
+        // 8. Mark channel as closed
+        let locktime = params["locktime"].as_u64().unwrap_or(0);
+        let receiver_proofs_json = unblind_result["receiver_proofs"].to_string();
+        let sender_proofs_json = unblind_result["sender_proofs"].to_string();
+
+        if let Err(e) = self.bridge.host().mark_channel_closed(
+            channel_id,
+            locktime,
+            balance,
+            &receiver_proofs_json,
+            &sender_proofs_json,
+            receiver_sum,
+            sender_sum,
+        ) {
+            let result = serde_json::json!({
+                "success": false,
+                "error": "failed to mark channel closed",
+                "status": 500,
+                "reason": e
+            });
+            return Ok(result.to_string());
+        }
+
+        // 9. Return HTTP-tailored success response
+        let result = serde_json::json!({
+            "success": true,
+            "channel_id": channel_id,
+            "total_value": actual_total,
+            "sender_proofs": unblind_result["sender_proofs"],
+            "already_closed": false
+        });
+        Ok(result.to_string())
+    }
 }
 
 /// Compute ECDH shared secret from a secret key and counterparty's public key
