@@ -431,7 +431,7 @@ app.post("/channel/:id/close", async (req, res) => {
   // Submit swap to mint
   let swapResponse: any;
   try {
-    const swapResponseText = await spilmanHooks.callMintSwap(mintUrl, swapRequestJson);
+    const swapResponseText = await bridge.callMintSwapViaHost(mintUrl, swapRequestJson);
     swapResponse = JSON.parse(swapResponseText);
 
     if (swapResponse.error) {
@@ -560,7 +560,7 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
   // Submit swap to mint
   let swapResponse: any;
   try {
-    const swapResponseText = await spilmanHooks.callMintSwap(mintUrl, swapRequestJson);
+    const swapResponseText = await bridge.callMintSwapViaHost(mintUrl, swapRequestJson);
     swapResponse = JSON.parse(swapResponseText);
 
     if (swapResponse.error) {
