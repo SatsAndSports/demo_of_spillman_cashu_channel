@@ -141,13 +141,21 @@ test-blossom-full-cdk: cdk-mintd
 test-blossom-full-nutmix: build-nutmix-setup-units
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
 
-# Fast WASM build (~2s) - for development
-wasm-dev:
-	$(MAKE) -C $(BLOSSOM_DIR) wasm-dev
+# --- WASM Build ---
 
-# Optimized WASM build (~32s) - for production
+WASM_CRATE := crates/cdk-wasm
+
+# Fast WASM build (~1s) - for development
+wasm-dev:
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target nodejs --out-dir ../../web/wasm-nodejs
+	@echo "WASM dev build complete (web/wasm-web, web/wasm-nodejs)"
+
+# Optimized WASM build (~16s) - for production
 wasm:
-	$(MAKE) -C $(BLOSSOM_DIR) wasm
+	cd $(WASM_CRATE) && wasm-pack build --release --target web --out-dir ../../web/wasm-web
+	cd $(WASM_CRATE) && wasm-pack build --release --target nodejs --out-dir ../../web/wasm-nodejs
+	@echo "WASM release build complete (web/wasm-web, web/wasm-nodejs)"
 
 # --- All Tests ---
 
