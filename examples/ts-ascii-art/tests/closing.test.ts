@@ -248,3 +248,114 @@ describe.concurrent('Channel closing', () => {
     console.log(`Close rejected for unknown channel: ${body.reason}`);
   });
 });
+
+describe.concurrent('Unilateral closing', () => {
+  test('server can unilaterally close channel with payments', async ({ server }) => {
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    const message = 'Hello';
+    const cost = message.length * server.getPricePerChar('sat');
+    const paymentHeader = createPaymentHeader(channel, cost, true);
+    await fetchAsciiArt(server, paymentHeader, message);
+
+    const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.channel_id).toBe(channel.channelId);
+    // Server earns at least the cost (may be more due to input fees)
+    expect(body.earnedBeforeStage2Fees).toBeGreaterThanOrEqual(cost);
+    expect(body.already_closed).toBe(false);
+  });
+
+  test('unilateral close earns overpayment for server', async ({ server }) => {
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    const message = 'Hello'; // 5 chars
+    const actualCost = message.length * server.getPricePerChar('sat');
+    const overpayment = 20;
+
+    const paymentHeader = createPaymentHeader(channel, overpayment, true);
+    const { status } = await fetchAsciiArt(server, paymentHeader, message);
+    expect(status).toBe(200);
+
+    const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    // Server keeps full signed balance (stage 2 fees not yet applied)
+    expect(body.earnedBeforeStage2Fees).toBeGreaterThanOrEqual(overpayment);
+    console.log(`Server earnedBeforeStage2Fees=${body.earnedBeforeStage2Fees} (signed balance was ${overpayment}, actual cost was ${actualCost})`);
+  });
+
+  test('unilateral close is idempotent', async ({ server }) => {
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    const cost = 5;
+    const paymentHeader = createPaymentHeader(channel, cost, true);
+    await fetchAsciiArt(server, paymentHeader, 'Hello');
+
+    const resp1 = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
+    expect(resp1.status).toBe(200);
+    const body1 = await resp1.json();
+    expect(body1.already_closed).toBe(false);
+
+    const resp2 = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
+    expect(resp2.status).toBe(200);
+    const body2 = await resp2.json();
+    expect(body2.already_closed).toBe(true);
+    expect(body2.earnedBeforeStage2Fees).toBe(body1.earnedBeforeStage2Fees);
+  });
+
+  test('rejects unilateral close for unknown channel', async ({ server }) => {
+    const response = await fetch(`${server.baseUrl}/channel/${'dead'.repeat(16)}/unilateral-close`, {
+      method: 'POST',
+    });
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.error).toBe('unknown channel');
+  });
+
+  test('rejects unilateral close for channel with no payments', async ({ server }) => {
+    // Register channel by closing cooperatively with balance=0
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    await closeChannel(server, channel, 0, true);
+
+    // Channel is now closed - unilateral should return already_closed with earnedBeforeStage2Fees=0
+    const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.already_closed).toBe(true);
+    expect(body.earnedBeforeStage2Fees).toBe(0);
+  });
+
+  test('cooperative close works after unilateral close', async ({ server }) => {
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    const cost = 5;
+    const paymentHeader = createPaymentHeader(channel, cost, true);
+    await fetchAsciiArt(server, paymentHeader, 'Hello');
+
+    await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
+
+    const { httpStatus, body } = await closeChannel(server, channel, cost, false);
+    expect(httpStatus).toBe(200);
+    expect(body.already_closed).toBe(true);
+  });
+
+  test('rejects payment after unilateral close', async ({ server }) => {
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    const cost = 5;
+    const paymentHeader1 = createPaymentHeader(channel, cost, true);
+    await fetchAsciiArt(server, paymentHeader1, 'Hello');
+
+    await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
+
+    const paymentHeader2 = createPaymentHeader(channel, cost + 1, false);
+    const { status, body } = await fetchAsciiArt(server, paymentHeader2, 'X');
+    expect(status).toBe(402);
+    expect(body.reason).toContain('channel closed');
+  });
+});

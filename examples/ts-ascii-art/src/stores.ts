@@ -29,6 +29,7 @@ export interface ClosedChannelData {
   locktime: number;
   closedAmount: number;
   valueAfterStage1: number;
+  receiverSum: number;
   receiverProofsJson: string;
   senderProofsJson: string;
 }
@@ -120,6 +121,7 @@ export const channelClosed = {
     locktime: number,
     closedAmount: number,
     valueAfterStage1: number,
+    receiverSum: number,
     receiverProofsJson: string,
     senderProofsJson: string
   ): void {
@@ -127,6 +129,7 @@ export const channelClosed = {
       locktime,
       closedAmount,
       valueAfterStage1,
+      receiverSum,
       receiverProofsJson,
       senderProofsJson,
     });
