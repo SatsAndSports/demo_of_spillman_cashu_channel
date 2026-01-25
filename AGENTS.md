@@ -9,7 +9,8 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Minimal Python integration example
-- **Go Demo** (`crates/cdk-spilman-go/`) - Go integration example
+- **Go ASCII Art** (`examples/go-ascii-art/`) - Go integration example
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - TypeScript/Node.js integration example
 
 ## Baseline Commits (for diffing)
 
@@ -28,6 +29,8 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `crates/cdk-spilman-go/` | CGO bindings |
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
 | `examples/python-ascii-art/` | Python demo |
+| `examples/go-ascii-art/` | Go demo |
+| `examples/ts-ascii-art/` | TypeScript demo |
 | `dev-mint/` | CDK mint development config |
 
 ## Key Files by Topic
@@ -72,6 +75,10 @@ cd web/blossom-server && npm test
 
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
+
+# Run TypeScript ASCII demo (requires mint at localhost:3338)
+cd examples/ts-ascii-art && npm install && npm run server  # In one terminal
+cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 ```
 
 ## Documentation Index
@@ -89,15 +96,14 @@ For detailed information, see:
 ## Active TODOs
 
 ### Payments
-- Server-side token storage after close (Charlie should persist proofs)
-- Server-side balance persistence (currently in-memory only)
-- Client-side top-up prompts when channel runs low
+- closing a channel, put it into the automation of the Python and Go
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels
+
+### demos
+- Go: what is the binary examples/go-ascii-art/go-ascii-art? put it in .gitignore?
 
 ### Player
 - Remember volume preference in localStorage
-- Loop toggle
-- Video description panel (expandable)
 
 ### Architecture
 - Two-stage channel closing in SpilmanBridge (see ARCHITECTURE.md "Future Work")
