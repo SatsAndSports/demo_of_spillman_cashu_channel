@@ -35,7 +35,13 @@ import {
 const SECRET_KEY = process.env.SERVER_SECRET_KEY || randomBytes(32).toString("hex");
 const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
 const PORT = parseInt(process.env.PORT || "5002", 10);
-const PRICE_PER_CHAR = 1; // 1 sat per character
+// Pricing per character for each unit
+// Note: msat has higher per_char to stay above mint's minimum denomination
+const PRICING: Record<string, { per_char: number; minCapacity: number }> = {
+  sat: { per_char: 1, minCapacity: 10 },
+  msat: { per_char: 1000, minCapacity: 10000 },  // 1 sat = 1000 msat
+  usd: { per_char: 1, minCapacity: 10 },         // 1 cent per char
+};
 
 // ============================================================================
 // Server Pubkey
@@ -103,7 +109,15 @@ const spilmanHooks = {
       totalChars += context.message_length || 0;
     }
 
-    return BigInt(totalChars * PRICE_PER_CHAR);
+    // Look up unit from stored channel params
+    const funding = channelFunding.get(channelId);
+    if (!funding) return BigInt(0);
+
+    const params = JSON.parse(funding.paramsJson);
+    const pricing = PRICING[params.unit];
+    if (!pricing) return BigInt(0);
+
+    return BigInt(totalChars * pricing.per_char);
   },
 
   recordPayment: (
@@ -128,9 +142,7 @@ const spilmanHooks = {
   getChannelPolicy: (): string => {
     return JSON.stringify({
       min_expiry_in_seconds: 3600,
-      pricing: {
-        sat: { minCapacity: 10 },
-      },
+      pricing: PRICING,
     });
   },
 
@@ -206,7 +218,7 @@ async function initializeKeysets(): Promise<void> {
     const keysetsData = await keysetsResp.json();
 
     for (const ks of keysetsData.keysets) {
-      if (ks.unit === "sat") {
+      if (ks.unit in PRICING) {
         // Fetch full keys for this keyset
         const keysResp = await fetch(`${MINT_URL}/v1/keys/${ks.id}`);
         if (!keysResp.ok) continue;
@@ -258,12 +270,7 @@ app.use(express.json());
 app.get("/channel/params", (_req, res) => {
   res.json({
     receiver_pubkey: SERVER_PUBKEY,
-    pricing: {
-      sat: {
-        per_char: PRICE_PER_CHAR,
-        minCapacity: 10,
-      },
-    },
+    pricing: PRICING,
     mint: MINT_URL,
     min_expiry_in_seconds: 3600,
   });
@@ -319,8 +326,14 @@ app.post("/ascii", (req, res) => {
   }
 
   // Payment accepted - generate ASCII art
-  const cost = message.length * PRICE_PER_CHAR;
   const paymentInfo = result.header || {};
+  
+  // Look up unit from stored channel params to calculate cost
+  const funding = channelFunding.get(paymentInfo.channel_id);
+  const channelParams = funding ? JSON.parse(funding.paramsJson) : null;
+  const unitPricing = channelParams ? PRICING[channelParams.unit] : PRICING.sat;
+  const cost = message.length * (unitPricing?.per_char ?? 1);
+  
   console.log(`  [Payment] ACCEPTED: cost=${cost} balance=${paymentInfo.balance}/${paymentInfo.capacity}`);
 
   const art = figlet.textSync(message);
@@ -338,7 +351,7 @@ app.get("/channel/:id/status", (req, res) => {
   const channelId = req.params.id;
 
   try {
-    const status = getChannelStatus(channelId, PRICE_PER_CHAR);
+    const status = getChannelStatus(channelId, PRICING);
     res.json(status);
   } catch (e) {
     const message = (e as Error).message;
@@ -387,7 +400,12 @@ app.post("/channel/:id/close", async (req, res) => {
   }
 
   // Use bridge.createCloseData() to validate and create swap request
-  const closeBody = { channel_id: channelId, balance, signature };
+  // Include params and funding_proofs if provided (for unknown channels)
+  const { params, funding_proofs } = req.body;
+  const closeBody: any = { channel_id: channelId, balance, signature };
+  if (params) closeBody.params = params;
+  if (funding_proofs) closeBody.funding_proofs = funding_proofs;
+  
   const closeResultJson = bridge.createCloseData(JSON.stringify(closeBody));
   const closeResult = JSON.parse(closeResultJson);
 
@@ -551,8 +569,8 @@ function startCLI(): void {
   });
 
   rl.on("close", () => {
-    // stdin closed - exit gracefully
-    process.exit(0);
+    // stdin closed (e.g., running in background) - don't exit,
+    // just stop reading commands. SIGTERM/SIGINT will handle shutdown.
   });
 
   // Handle SIGTERM/SIGINT for clean shutdown
@@ -578,21 +596,21 @@ export async function startServer(): Promise<void> {
   await initializeKeysets();
   console.log();
 
-  console.log(`Server pubkey: ${SERVER_PUBKEY}`);
-  console.log(`Mint URL:      ${MINT_URL}`);
-  console.log(`Pricing:       ${PRICE_PER_CHAR} sat per character`);
-  console.log(`Listening on:  http://0.0.0.0:${PORT}`);
-  console.log();
-  console.log("Endpoints:");
-  console.log(`  GET  http://localhost:${PORT}/channel/params`);
-  console.log(`  POST http://localhost:${PORT}/ascii`);
-  console.log(`  GET  http://localhost:${PORT}/channel/:id/status`);
-  console.log(`  POST http://localhost:${PORT}/channel/:id/close`);
-  console.log();
-  console.log("=".repeat(60));
-  console.log();
-
   app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server pubkey: ${SERVER_PUBKEY}`);
+    console.log(`Mint URL:      ${MINT_URL}`);
+    console.log(`Pricing:       sat=${PRICING.sat.per_char}/char, msat=${PRICING.msat.per_char}/char, usd=${PRICING.usd.per_char}/char`);
+    console.log(`Listening on:  http://0.0.0.0:${PORT}`);
+    console.log();
+    console.log("Endpoints:");
+    console.log(`  GET  http://localhost:${PORT}/channel/params`);
+    console.log(`  POST http://localhost:${PORT}/ascii`);
+    console.log(`  GET  http://localhost:${PORT}/channel/:id/status`);
+    console.log(`  POST http://localhost:${PORT}/channel/:id/close`);
+    console.log();
+    console.log("=".repeat(60));
+    console.log();
+
     startCLI();
   });
 }

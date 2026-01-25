@@ -55,8 +55,28 @@ See AGENTS.md for more details.
       throw new Error(`Mint returned HTTP ${response.status}`);
     }
 
-    const data = await response.json() as { keysets?: unknown[] };
-    console.log(`Mint available at ${MINT_URL} (${data.keysets?.length || 0} keysets)`);
+    const data = await response.json() as {
+      keysets?: Array<{
+        id: string;
+        unit: string;
+        active: boolean;
+        input_fee_ppk?: number;
+      }>;
+    };
+
+    // Count active keysets
+    const activeKeysets = data.keysets?.filter(ks => ks.active) || [];
+    console.log(`Mint available at ${MINT_URL} (${activeKeysets.length} active keysets)`);
+
+    // Print keyset details
+    if (data.keysets && data.keysets.length > 0) {
+      console.log('Keysets:');
+      for (const ks of data.keysets) {
+        const fee = ks.input_fee_ppk ?? 0;
+        const status = ks.active ? 'active' : 'inactive';
+        console.log(`  ${ks.id} | ${ks.unit.padEnd(4)} | ${status.padEnd(8)} | fee=${fee} ppk`);
+      }
+    }
   } catch (e) {
     console.error(errorMessage);
     throw new Error(`Mint not available at ${MINT_URL}`);
@@ -95,7 +115,7 @@ export async function setup() {
   // Start the server
   console.log(`Starting ts-ascii-art server on port ${port}...`);
 
-  serverProcess = spawn('npx', ['tsx', 'src/index.ts', 'server'], {
+  serverProcess = spawn('node', ['--import', 'tsx', 'src/index.ts', 'server'], {
     env: {
       ...process.env,
       PORT: String(port),

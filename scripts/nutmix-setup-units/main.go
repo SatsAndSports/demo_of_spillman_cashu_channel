@@ -214,7 +214,7 @@ func login(client *http.Client, mintURL string, event *nostr.Event) error {
 func createKeyset(client *http.Client, mintURL string, unit int) error {
 	reqBody := RotateRequest{
 		Unit:             unit,
-		Fee:              0,
+		Fee:              400,  // 400 ppk = 0.4% input fee
 		ExpireLimitHours: 8760, // 1 year
 	}
 
