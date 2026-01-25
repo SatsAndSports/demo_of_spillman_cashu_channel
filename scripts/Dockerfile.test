@@ -20,6 +20,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # - PostgreSQL 15 for NutMix (runs directly, no Docker-in-Docker)
 # - sudo for PostgreSQL service management
 # - jq for JSON parsing in wait_for_mint.sh
+# - clang for WASM builds (secp256k1-sys needs it for wasm32 target)
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -36,6 +37,7 @@ RUN apt-get update && apt-get install -y \
     postgresql-client-15 \
     sudo \
     jq \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure PostgreSQL for passwordless local access (trust authentication)
