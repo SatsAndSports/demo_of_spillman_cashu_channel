@@ -10,6 +10,7 @@
 # 1. /v1/info endpoint responds
 # 2. /v1/keysets has at least one active keyset
 # 3. (optional) All required units have active keysets
+# 4. /v1/keys/{id} is fetchable for each active keyset (NutMix startup issue workaround)
 #
 # On success: prints "Mint is ready. Version: X (N active keysets: unit1, unit2)" and exits 0
 # On timeout: prints error to stderr and exits 1
@@ -59,6 +60,24 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
                     ELAPSED=$((ELAPSED + 1))
                     continue
                 fi
+            fi
+            
+            # Verify /v1/keys/{id} is fetchable for each active keyset.
+            # This is a workaround for a NutMix startup timing issue where keysets
+            # appear in /v1/keysets before the /v1/keys/{id} endpoint is ready.
+            KEYS_READY=true
+            for KEYSET_ID in $(echo "$KEYSETS_JSON" | jq -r '.keysets[] | select(.active) | .id'); do
+                if ! curl -sf "http://localhost:$PORT/v1/keys/$KEYSET_ID" > /dev/null 2>&1; then
+                    KEYS_READY=false
+                    break
+                fi
+            done
+            
+            if [ "$KEYS_READY" = false ]; then
+                # Keys endpoint not ready yet, keep waiting
+                sleep 0.5
+                ELAPSED=$((ELAPSED + 1))
+                continue
             fi
             
             # Get version
