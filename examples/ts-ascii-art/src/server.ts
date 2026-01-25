@@ -181,23 +181,29 @@ const spilmanHooks = {
 
   markChannelClosed: (
     channelId: string,
-    locktime: number,
-    balance: number,
+    locktime: number | bigint,
+    balance: number | bigint,
     receiverProofsJson: string,
     senderProofsJson: string,
-    receiverSum: number,
-    senderSum: number
+    receiverSum: number | bigint,
+    senderSum: number | bigint
   ): void => {
+    // Convert BigInt to Number (WASM passes u64 as BigInt)
+    const locktimeNum = Number(locktime);
+    const balanceNum = Number(balance);
+    const receiverSumNum = Number(receiverSum);
+    const senderSumNum = Number(senderSum);
+    
     channelClosed.markClosed(
       channelId,
-      locktime,
-      balance,
-      receiverSum + senderSum,
-      receiverSum,
+      locktimeNum,
+      balanceNum,
+      receiverSumNum + senderSumNum,
+      receiverSumNum,
       receiverProofsJson,
       senderProofsJson
     );
-    console.log(`  [Host] Channel ${channelId.substring(0, 8)} closed. Earned: ${receiverSum} sat`);
+    console.log(`  [Host] Channel ${channelId.substring(0, 8)} closed. Earned: ${receiverSumNum} sat`);
   },
 };
 
@@ -541,37 +547,25 @@ app.post("/channel/:id/close", async (req, res) => {
     }
   }
 
-  // Use bridge.createCloseData() to validate and create swap request
-  // Include params and funding_proofs if provided (for unknown channels)
+  // Build payment body (include params/funding_proofs for unknown channels)
   const { params, funding_proofs } = req.body;
   const closeBody: any = { channel_id: channelId, balance, signature };
   if (params) closeBody.params = params;
   if (funding_proofs) closeBody.funding_proofs = funding_proofs;
-  
-  const closeResultJson = bridge.createCloseData(JSON.stringify(closeBody));
-  const closeResult = JSON.parse(closeResultJson);
 
-  if (!closeResult.success) {
-    console.log(`  [Close] Validation failed: ${closeResult.error}`);
-    res.status(402).json({ error: "Payment required", reason: closeResult.error });
+  // Execute cooperative close via bridge (validates, submits swap, unblinds, marks closed)
+  const resultJson = await bridge.executeCooperativeClose(JSON.stringify(closeBody));
+  const result = JSON.parse(resultJson);
+
+  if (!result.success) {
+    const status = result.status || 402;
+    console.log(`  [Close] Failed: ${result.error} (status=${status})`);
+    res.status(status).json(result);
     return;
   }
 
-  // Execute the close flow
-  const outcome = await executeChannelClose(channelId, balance, closeResult, "[Close]");
-
-  if (!outcome.success) {
-    res.status(outcome.status).json({ error: outcome.error, ...outcome.details });
-    return;
-  }
-
-  res.json({
-    success: true,
-    channel_id: channelId,
-    total_value: outcome.actualTotal,
-    sender_proofs: outcome.unblindResult.sender_proofs,
-    already_closed: false,
-  });
+  console.log(`  [Close] SUCCESS! total_value=${result.total_value}`);
+  res.json(result);
 });
 
 // POST /channel/:id/unilateral-close - Server-initiated close (uses stored payment)
