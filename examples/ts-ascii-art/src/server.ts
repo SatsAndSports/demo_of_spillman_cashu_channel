@@ -208,6 +208,147 @@ const spilmanHooks = {
 const bridge = new WasmSpilmanBridge(spilmanHooks, SECRET_KEY);
 
 // ============================================================================
+// Shared Channel Close Logic
+// ============================================================================
+
+interface CloseResultFromBridge {
+  success: boolean;
+  error?: string;
+  swap_request: any;
+  expected_total: number;
+  secrets_with_blinding: any[];
+  output_keyset_info: any;
+}
+
+type CloseOutcome = {
+  success: true;
+  unblindResult: {
+    receiver_proofs: any[];
+    sender_proofs: any[];
+    receiver_sum_after_stage1: number;
+    sender_sum_after_stage1: number;
+  };
+  actualTotal: number;
+} | {
+  success: false;
+  error: string;
+  status: number;
+  details?: any;
+};
+
+/**
+ * Execute the common channel close flow: submit swap, unblind, verify, mark closed.
+ * 
+ * Used by both cooperative and unilateral close endpoints after they've obtained
+ * a closeResult from the bridge.
+ */
+async function executeChannelClose(
+  channelId: string,
+  balance: number,
+  closeResult: CloseResultFromBridge,
+  logPrefix: string
+): Promise<CloseOutcome> {
+  // Get funding data and mint URL
+  const funding = channelFunding.get(channelId)!;
+  const channelParams = JSON.parse(funding.paramsJson);
+  const mintUrl = channelParams.mint;
+
+  const swapRequestJson = JSON.stringify(closeResult.swap_request);
+  const expectedTotal = closeResult.expected_total;
+  const secretsWithBlinding = closeResult.secrets_with_blinding;
+  const outputKeysetInfoJson = JSON.stringify(closeResult.output_keyset_info);
+
+  console.log(`  ${logPrefix} Submitting swap to mint: ${mintUrl}`);
+
+  // Submit swap to mint
+  let swapResponse: any;
+  try {
+    const swapResponseText = await bridge.callMintSwapViaHost(mintUrl, swapRequestJson);
+    swapResponse = JSON.parse(swapResponseText);
+
+    if (swapResponse.error) {
+      console.log(`  ${logPrefix} Mint error: ${swapResponse.error}`);
+      return {
+        success: false,
+        error: "mint rejected swap",
+        status: 502,
+        details: { mint_error: swapResponse.error },
+      };
+    }
+    console.log(`  ${logPrefix} Got ${swapResponse.signatures?.length ?? 0} signatures`);
+  } catch (e) {
+    console.log(`  ${logPrefix} Failed to contact mint: ${e}`);
+    return {
+      success: false,
+      error: "failed to contact mint",
+      status: 502,
+      details: { reason: String(e) },
+    };
+  }
+
+  // Unblind and verify DLEQ
+  let unblindResult: {
+    receiver_proofs: any[];
+    sender_proofs: any[];
+    receiver_sum_after_stage1: number;
+    sender_sum_after_stage1: number;
+  };
+  try {
+    unblindResult = JSON.parse(
+      unblind_and_verify_dleq(
+        JSON.stringify(swapResponse.signatures || []),
+        JSON.stringify(secretsWithBlinding),
+        funding.paramsJson,
+        funding.keysetInfoJson,
+        funding.sharedSecret,
+        BigInt(balance),
+        outputKeysetInfoJson
+      )
+    );
+    console.log(`  ${logPrefix} Unblinded: receiver=${unblindResult.receiver_proofs.length} sender=${unblindResult.sender_proofs.length}`);
+  } catch (e) {
+    console.log(`  ${logPrefix} Unblind failed: ${e}`);
+    return {
+      success: false,
+      error: "unblind verification failed",
+      status: 500,
+      details: { reason: String(e) },
+    };
+  }
+
+  // Verify total
+  const actualTotal = unblindResult.receiver_sum_after_stage1 + unblindResult.sender_sum_after_stage1;
+  if (actualTotal !== expectedTotal) {
+    console.log(`  ${logPrefix} Total mismatch: expected=${expectedTotal} actual=${actualTotal}`);
+    return {
+      success: false,
+      error: "swap response total mismatch",
+      status: 500,
+      details: { expected: expectedTotal, actual: actualTotal },
+    };
+  }
+
+  // Mark channel as closed
+  spilmanHooks.markChannelClosed(
+    channelId,
+    channelParams.locktime,
+    balance,
+    JSON.stringify(unblindResult.receiver_proofs),
+    JSON.stringify(unblindResult.sender_proofs),
+    unblindResult.receiver_sum_after_stage1,
+    unblindResult.sender_sum_after_stage1
+  );
+
+  console.log(`  ${logPrefix} SUCCESS! Earned ${unblindResult.receiver_sum_after_stage1} sat`);
+
+  return {
+    success: true,
+    unblindResult,
+    actualTotal,
+  };
+}
+
+// ============================================================================
 // Keyset Initialization
 // ============================================================================
 
@@ -416,88 +557,19 @@ app.post("/channel/:id/close", async (req, res) => {
     return;
   }
 
-  // Get funding data
-  const funding = channelFunding.get(channelId)!;
-  const channelParams = JSON.parse(funding.paramsJson);
-  const mintUrl = channelParams.mint;
+  // Execute the close flow
+  const outcome = await executeChannelClose(channelId, balance, closeResult, "[Close]");
 
-  const swapRequestJson = JSON.stringify(closeResult.swap_request);
-  const expectedTotal = closeResult.expected_total;
-  const secretsWithBlinding = closeResult.secrets_with_blinding;
-  const outputKeysetInfoJson = JSON.stringify(closeResult.output_keyset_info);
-
-  console.log(`  [Close] Submitting swap to mint: ${mintUrl}`);
-
-  // Submit swap to mint
-  let swapResponse: any;
-  try {
-    const swapResponseText = await bridge.callMintSwapViaHost(mintUrl, swapRequestJson);
-    swapResponse = JSON.parse(swapResponseText);
-
-    if (swapResponse.error) {
-      console.log(`  [Close] Mint error: ${swapResponse.error}`);
-      res.status(502).json({ error: "mint rejected swap", mint_error: swapResponse.error });
-      return;
-    }
-    console.log(`  [Close] Got ${swapResponse.signatures?.length ?? 0} signatures`);
-  } catch (e) {
-    console.log(`  [Close] Failed to contact mint: ${e}`);
-    res.status(502).json({ error: "failed to contact mint", reason: String(e) });
+  if (!outcome.success) {
+    res.status(outcome.status).json({ error: outcome.error, ...outcome.details });
     return;
   }
-
-  // Unblind and verify DLEQ
-  let unblindResult: {
-    receiver_proofs: any[];
-    sender_proofs: any[];
-    receiver_sum_after_stage1: number;
-    sender_sum_after_stage1: number;
-  };
-  try {
-    unblindResult = JSON.parse(
-      unblind_and_verify_dleq(
-        JSON.stringify(swapResponse.signatures || []),
-        JSON.stringify(secretsWithBlinding),
-        funding.paramsJson,
-        funding.keysetInfoJson,
-        funding.sharedSecret,
-        BigInt(balance),
-        outputKeysetInfoJson
-      )
-    );
-    console.log(`  [Close] Unblinded: receiver=${unblindResult.receiver_proofs.length} sender=${unblindResult.sender_proofs.length}`);
-  } catch (e) {
-    console.log(`  [Close] Unblind failed: ${e}`);
-    res.status(500).json({ error: "unblind verification failed", reason: String(e) });
-    return;
-  }
-
-  // Verify total
-  const actualTotal = unblindResult.receiver_sum_after_stage1 + unblindResult.sender_sum_after_stage1;
-  if (actualTotal !== expectedTotal) {
-    console.log(`  [Close] Total mismatch: expected=${expectedTotal} actual=${actualTotal}`);
-    res.status(500).json({ error: "swap response total mismatch", expected: expectedTotal, actual: actualTotal });
-    return;
-  }
-
-  // Mark channel as closed
-  spilmanHooks.markChannelClosed(
-    channelId,
-    channelParams.locktime,
-    balance,
-    JSON.stringify(unblindResult.receiver_proofs),
-    JSON.stringify(unblindResult.sender_proofs),
-    unblindResult.receiver_sum_after_stage1,
-    unblindResult.sender_sum_after_stage1
-  );
-
-  console.log(`  [Close] SUCCESS! Earned ${unblindResult.receiver_sum_after_stage1} sat`);
 
   res.json({
     success: true,
     channel_id: channelId,
-    total_value: actualTotal,
-    sender_proofs: unblindResult.sender_proofs,
+    total_value: outcome.actualTotal,
+    sender_proofs: outcome.unblindResult.sender_proofs,
     already_closed: false,
   });
 });
@@ -547,86 +619,19 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
     return;
   }
 
-  const channelParams = JSON.parse(funding.paramsJson);
-  const mintUrl = channelParams.mint;
-
-  const swapRequestJson = JSON.stringify(closeResult.swap_request);
-  const expectedTotal = closeResult.expected_total;
-  const secretsWithBlinding = closeResult.secrets_with_blinding;
-  const outputKeysetInfoJson = JSON.stringify(closeResult.output_keyset_info);
-
-  console.log(`  [Unilateral Close] Submitting swap to mint: ${mintUrl}`);
-
-  // Submit swap to mint
-  let swapResponse: any;
-  try {
-    const swapResponseText = await bridge.callMintSwapViaHost(mintUrl, swapRequestJson);
-    swapResponse = JSON.parse(swapResponseText);
-
-    if (swapResponse.error) {
-      console.log(`  [Unilateral Close] Mint error: ${swapResponse.error}`);
-      res.status(502).json({ error: "mint rejected swap", mint_error: swapResponse.error });
-      return;
-    }
-    console.log(`  [Unilateral Close] Got ${swapResponse.signatures?.length ?? 0} signatures`);
-  } catch (e) {
-    console.log(`  [Unilateral Close] Failed to contact mint: ${e}`);
-    res.status(502).json({ error: "failed to contact mint", reason: String(e) });
-    return;
-  }
-
-  // Unblind and verify DLEQ
+  // Execute the close flow
   const balance = balanceData.balance;
-  let unblindResult: {
-    receiver_proofs: any[];
-    sender_proofs: any[];
-    receiver_sum_after_stage1: number;
-    sender_sum_after_stage1: number;
-  };
-  try {
-    unblindResult = JSON.parse(
-      unblind_and_verify_dleq(
-        JSON.stringify(swapResponse.signatures || []),
-        JSON.stringify(secretsWithBlinding),
-        funding.paramsJson,
-        funding.keysetInfoJson,
-        funding.sharedSecret,
-        BigInt(balance),
-        outputKeysetInfoJson
-      )
-    );
-    console.log(`  [Unilateral Close] Unblinded: receiver=${unblindResult.receiver_proofs.length} sender=${unblindResult.sender_proofs.length}`);
-  } catch (e) {
-    console.log(`  [Unilateral Close] Unblind failed: ${e}`);
-    res.status(500).json({ error: "unblind verification failed", reason: String(e) });
+  const outcome = await executeChannelClose(channelId, balance, closeResult, "[Unilateral Close]");
+
+  if (!outcome.success) {
+    res.status(outcome.status).json({ error: outcome.error, ...outcome.details });
     return;
   }
-
-  // Verify total
-  const actualTotal = unblindResult.receiver_sum_after_stage1 + unblindResult.sender_sum_after_stage1;
-  if (actualTotal !== expectedTotal) {
-    console.log(`  [Unilateral Close] Total mismatch: expected=${expectedTotal} actual=${actualTotal}`);
-    res.status(500).json({ error: "swap response total mismatch", expected: expectedTotal, actual: actualTotal });
-    return;
-  }
-
-  // Mark channel as closed
-  spilmanHooks.markChannelClosed(
-    channelId,
-    channelParams.locktime,
-    balance,
-    JSON.stringify(unblindResult.receiver_proofs),
-    JSON.stringify(unblindResult.sender_proofs),
-    unblindResult.receiver_sum_after_stage1,
-    unblindResult.sender_sum_after_stage1
-  );
-
-  console.log(`  [Unilateral Close] SUCCESS! Earned ${unblindResult.receiver_sum_after_stage1} sat`);
 
   res.json({
     success: true,
     channel_id: channelId,
-    earnedBeforeStage2Fees: unblindResult.receiver_sum_after_stage1,
+    earnedBeforeStage2Fees: outcome.unblindResult.receiver_sum_after_stage1,
     already_closed: false,
   });
 });
