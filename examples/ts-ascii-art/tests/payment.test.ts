@@ -33,6 +33,9 @@ async function fetchKeysetInfo(mintUrl: string, keysetId: string): Promise<any> 
   const keysetsRes = await fetch(`${mintUrl}/v1/keysets`);
   const keysetsData = await keysetsRes.json();
   const keyset = keysetsData.keysets.find((k: any) => k.id === keysetId);
+  if (!keyset) {
+    throw new Error(`Keyset ${keysetId} not found at ${mintUrl}`);
+  }
 
   const keys: Record<string, string> = {};
   if (keysData.keysets && keysData.keysets[0]?.keys) {
@@ -43,9 +46,9 @@ async function fetchKeysetInfo(mintUrl: string, keysetId: string): Promise<any> 
 
   return {
     keysetId,
-    unit: keyset?.unit || 'sat',
+    unit: keyset.unit,
     keys,
-    inputFeePpk: keyset?.input_fee_ppk || 0,
+    inputFeePpk: keyset.input_fee_ppk ?? 0,
     amounts: Object.keys(keys).map(Number).sort((a, b) => b - a),
   };
 }

@@ -95,6 +95,10 @@ For detailed information, see:
 
 ## Active TODOs
 
+- review examples/ts-ascii-art/tests/payment.test.ts
+- allow file parallelism in the TS tests? TS-ascii-art and blossom
+- do the TS-ascii-art tests require multiple units? are they set up?
+
 ### Payments
 - closing a channel, put it into the automation of the Python and Go
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels
