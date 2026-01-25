@@ -3,6 +3,8 @@
 use std::str::FromStr;
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::JsFuture;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{ChannelParameters, SpilmanBridge, SpilmanHost};
@@ -71,7 +73,11 @@ extern "C" {
     fn get_keyset_info(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> JsValue;
 
     #[wasm_bindgen(method, js_name = callMintSwap)]
-    fn call_mint_swap(this: &JsSpilmanHost, mint_url: &str, swap_request_json: &str) -> JsValue;
+    fn call_mint_swap(
+        this: &JsSpilmanHost,
+        mint_url: &str,
+        swap_request_json: &str,
+    ) -> js_sys::Promise;
 
     #[wasm_bindgen(method, js_name = markChannelClosed)]
     fn mark_channel_closed(
@@ -208,21 +214,11 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         val.as_string()
     }
 
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-        let val = self.js_host.call_mint_swap(mint_url, swap_request_json);
-        if val.is_null() || val.is_undefined() {
-            return Err("callMintSwap returned null".to_string());
-        }
-        // Check if it's an error object with .error field
-        if let Some(obj) = js_sys::Object::try_from(&val) {
-            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
-                if let Some(err_str) = err_val.as_string() {
-                    return Err(err_str);
-                }
-            }
-        }
-        val.as_string()
-            .ok_or_else(|| "callMintSwap did not return a string".to_string())
+    fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {
+        Err(
+            "Synchronous call_mint_swap is not supported in WASM. Use callMintSwapViaHost."
+                .to_string(),
+        )
     }
 
     fn mark_channel_closed(
@@ -259,6 +255,7 @@ impl SpilmanHost for WasmSpilmanHostProxy {
 #[wasm_bindgen]
 pub struct WasmSpilmanBridge {
     bridge: SpilmanBridge<WasmSpilmanHostProxy>,
+    js_host: JsSpilmanHost,
 }
 
 #[wasm_bindgen]
@@ -276,7 +273,13 @@ impl WasmSpilmanBridge {
         };
 
         Ok(WasmSpilmanBridge {
-            bridge: SpilmanBridge::new(WasmSpilmanHostProxy { js_host }, secret_key),
+            bridge: SpilmanBridge::new(
+                WasmSpilmanHostProxy {
+                    js_host: js_host.clone().unchecked_into(),
+                },
+                secret_key,
+            ),
+            js_host,
         })
     }
 
@@ -364,6 +367,21 @@ impl WasmSpilmanBridge {
                 Ok(result.to_string())
             }
         }
+    }
+
+    /// Call the mint's /v1/swap endpoint via the JS host
+    #[wasm_bindgen(js_name = callMintSwapViaHost)]
+    pub async fn call_mint_swap_via_host(
+        &self,
+        mint_url: &str,
+        swap_request_json: &str,
+    ) -> Result<String, JsValue> {
+        let promise = self.js_host.call_mint_swap(mint_url, swap_request_json);
+        let result = JsFuture::from(promise).await?;
+
+        result
+            .as_string()
+            .ok_or_else(|| JsValue::from_str("callMintSwap did not return a string"))
     }
 }
 
