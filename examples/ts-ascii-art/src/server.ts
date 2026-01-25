@@ -4,16 +4,16 @@
  * Demonstrates Spilman payment channels in TypeScript using Express.
  * 
  * Endpoints:
- *   GET  /channel/params         - Get server pubkey and pricing info
- *   POST /ascii                  - Generate ASCII art (requires X-Cashu-Channel header)
- *   GET  /channel/:id/status     - Get channel status and amount_due
- *   POST /channel/:id/close      - Close channel cooperatively
+ *   GET  /channel/params              - Get server pubkey and pricing info
+ *   POST /ascii                       - Generate ASCII art (requires X-Cashu-Channel header)
+ *   GET  /channel/:id/status          - Get channel status and amount_due
+ *   POST /channel/:id/close           - Close channel cooperatively (client-initiated)
+ *   POST /channel/:id/unilateral-close - Close channel unilaterally (server-initiated)
  */
 
 import express from "express";
 import figlet from "figlet";
 import * as secp from "@noble/secp256k1";
-import * as readline from "readline";
 import { randomBytes } from "crypto";
 import {
   WasmSpilmanBridge,
@@ -193,6 +193,7 @@ const spilmanHooks = {
       locktime,
       balance,
       receiverSum + senderSum,
+      receiverSum,
       receiverProofsJson,
       senderProofsJson
     );
@@ -501,6 +502,135 @@ app.post("/channel/:id/close", async (req, res) => {
   });
 });
 
+// POST /channel/:id/unilateral-close - Server-initiated close (uses stored payment)
+app.post("/channel/:id/unilateral-close", async (req, res) => {
+  const channelId = req.params.id;
+
+  console.log(`\n[Unilateral Close] Request for channel=${channelId.substring(0, 8)}`);
+
+  // Check if already closed (idempotent)
+  const closedData = channelClosed.get(channelId);
+  if (closedData !== null) {
+    console.log(`  [Unilateral Close] Already closed, returning cached result`);
+    res.json({
+      success: true,
+      channel_id: channelId,
+      earnedBeforeStage2Fees: closedData.receiverSum,
+      already_closed: true,
+    });
+    return;
+  }
+
+  // Check channel exists
+  const funding = channelFunding.get(channelId);
+  if (!funding) {
+    console.log(`  [Unilateral Close] Unknown channel`);
+    res.status(404).json({ error: "unknown channel" });
+    return;
+  }
+
+  // Check channel has payments
+  const balanceData = channelBalance.get(channelId);
+  if (!balanceData) {
+    console.log(`  [Unilateral Close] No payments recorded`);
+    res.status(400).json({ error: "no payments recorded for channel" });
+    return;
+  }
+
+  // Use bridge.createUnilateralCloseData() - uses stored balance/signature
+  const closeResultJson = bridge.createUnilateralCloseData(channelId);
+  const closeResult = JSON.parse(closeResultJson);
+
+  if (!closeResult.success) {
+    console.log(`  [Unilateral Close] Bridge error: ${closeResult.error}`);
+    res.status(500).json({ error: closeResult.error });
+    return;
+  }
+
+  const channelParams = JSON.parse(funding.paramsJson);
+  const mintUrl = channelParams.mint;
+
+  const swapRequestJson = JSON.stringify(closeResult.swap_request);
+  const expectedTotal = closeResult.expected_total;
+  const secretsWithBlinding = closeResult.secrets_with_blinding;
+  const outputKeysetInfoJson = JSON.stringify(closeResult.output_keyset_info);
+
+  console.log(`  [Unilateral Close] Submitting swap to mint: ${mintUrl}`);
+
+  // Submit swap to mint
+  let swapResponse: any;
+  try {
+    const swapResponseText = await spilmanHooks.callMintSwap(mintUrl, swapRequestJson);
+    swapResponse = JSON.parse(swapResponseText);
+
+    if (swapResponse.error) {
+      console.log(`  [Unilateral Close] Mint error: ${swapResponse.error}`);
+      res.status(502).json({ error: "mint rejected swap", mint_error: swapResponse.error });
+      return;
+    }
+    console.log(`  [Unilateral Close] Got ${swapResponse.signatures?.length ?? 0} signatures`);
+  } catch (e) {
+    console.log(`  [Unilateral Close] Failed to contact mint: ${e}`);
+    res.status(502).json({ error: "failed to contact mint", reason: String(e) });
+    return;
+  }
+
+  // Unblind and verify DLEQ
+  const balance = balanceData.balance;
+  let unblindResult: {
+    receiver_proofs: any[];
+    sender_proofs: any[];
+    receiver_sum_after_stage1: number;
+    sender_sum_after_stage1: number;
+  };
+  try {
+    unblindResult = JSON.parse(
+      unblind_and_verify_dleq(
+        JSON.stringify(swapResponse.signatures || []),
+        JSON.stringify(secretsWithBlinding),
+        funding.paramsJson,
+        funding.keysetInfoJson,
+        funding.sharedSecret,
+        BigInt(balance),
+        outputKeysetInfoJson
+      )
+    );
+    console.log(`  [Unilateral Close] Unblinded: receiver=${unblindResult.receiver_proofs.length} sender=${unblindResult.sender_proofs.length}`);
+  } catch (e) {
+    console.log(`  [Unilateral Close] Unblind failed: ${e}`);
+    res.status(500).json({ error: "unblind verification failed", reason: String(e) });
+    return;
+  }
+
+  // Verify total
+  const actualTotal = unblindResult.receiver_sum_after_stage1 + unblindResult.sender_sum_after_stage1;
+  if (actualTotal !== expectedTotal) {
+    console.log(`  [Unilateral Close] Total mismatch: expected=${expectedTotal} actual=${actualTotal}`);
+    res.status(500).json({ error: "swap response total mismatch", expected: expectedTotal, actual: actualTotal });
+    return;
+  }
+
+  // Mark channel as closed
+  spilmanHooks.markChannelClosed(
+    channelId,
+    channelParams.locktime,
+    balance,
+    JSON.stringify(unblindResult.receiver_proofs),
+    JSON.stringify(unblindResult.sender_proofs),
+    unblindResult.receiver_sum_after_stage1,
+    unblindResult.sender_sum_after_stage1
+  );
+
+  console.log(`  [Unilateral Close] SUCCESS! Earned ${unblindResult.receiver_sum_after_stage1} sat`);
+
+  res.json({
+    success: true,
+    channel_id: channelId,
+    earnedBeforeStage2Fees: unblindResult.receiver_sum_after_stage1,
+    already_closed: false,
+  });
+});
+
 // ============================================================================
 // Stats Display
 // ============================================================================
@@ -544,39 +674,12 @@ function printStats(): void {
 }
 
 // ============================================================================
-// CLI Listener
+// Signal Handlers
 // ============================================================================
 
-function startCLI(): void {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false,
-  });
-
-  console.log("CLI ready. Commands: 's' = stats, 'q' = quit");
-
-  rl.on("line", (line) => {
-    const cmd = line.trim().toLowerCase();
-    if (cmd === "s") {
-      printStats();
-    } else if (cmd === "q") {
-      console.log("\n[Shutdown] Exiting...");
-      process.exit(0);
-    } else if (cmd) {
-      console.log(`  Unknown command: '${cmd}'. Use 's' (stats), 'q' (quit)`);
-    }
-  });
-
-  rl.on("close", () => {
-    // stdin closed (e.g., running in background) - don't exit,
-    // just stop reading commands. SIGTERM/SIGINT will handle shutdown.
-  });
-
-  // Handle SIGTERM/SIGINT for clean shutdown
+function setupSignalHandlers(): void {
   const shutdown = () => {
     console.log("\n[Shutdown] Received signal, exiting...");
-    rl.close();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);
@@ -607,10 +710,11 @@ export async function startServer(): Promise<void> {
     console.log(`  POST http://localhost:${PORT}/ascii`);
     console.log(`  GET  http://localhost:${PORT}/channel/:id/status`);
     console.log(`  POST http://localhost:${PORT}/channel/:id/close`);
+    console.log(`  POST http://localhost:${PORT}/channel/:id/unilateral-close`);
     console.log();
     console.log("=".repeat(60));
     console.log();
 
-    startCLI();
+    setupSignalHandlers();
   });
 }
