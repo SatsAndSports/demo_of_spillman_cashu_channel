@@ -7,10 +7,10 @@ This document provides context for AI coding assistants working on this codebase
 This is an extension of CDK that adds **Spilman-style unidirectional payment channels** for Cashu ecash. The core protocol is in Rust with bindings for WASM (TypeScript), Python, and Go.
 
 **Primary demos:**
-- **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming
-- **Python ASCII Art** (`examples/python-ascii-art/`) - Minimal Python integration example
-- **Go ASCII Art** (`examples/go-ascii-art/`) - Go integration example
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - TypeScript/Node.js integration example
+- **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (26 tests)
+- **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
+- **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
 
 ## Baseline Commits (for diffing)
 
@@ -53,7 +53,8 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 
 ### Tests
 - `crates/cdk/src/spilman/tests.rs` - Rust integration tests
-- `web/blossom-server/tests/payment.test.ts` - Payment flow tests
+- `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests: blobs, channels, minting, payment, validation, closing)
+- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (26 tests: channels, minting, payment, validation, closing)
 
 ## Running Commands
 
@@ -95,22 +96,15 @@ For detailed information, see:
 
 ## Active TODOs
 
-- review examples/ts-ascii-art/tests/payment.test.ts
-- allow file parallelism in the TS tests? TS-ascii-art and blossom
-- do the TS-ascii-art tests require multiple units? are they set up?
-
-### Payments
-- closing a channel, put it into the automation of the Python and Go
+### Protocol
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels
-
-### demos
-- Go: what is the binary examples/go-ascii-art/go-ascii-art? put it in .gitignore?
+- Two-stage channel closing in SpilmanBridge (see ARCHITECTURE.md "Future Work")
 
 ### Player
 - Remember volume preference in localStorage
 
-### Architecture
-- Two-stage channel closing in SpilmanBridge (see ARCHITECTURE.md "Future Work")
+### Lower Priority
+- Python/Go demos: Add client-initiated closing (currently server-only CLI close). TS is the reference for this.
 
 ## Conventions
 

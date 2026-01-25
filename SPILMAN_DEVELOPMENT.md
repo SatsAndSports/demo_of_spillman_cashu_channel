@@ -126,7 +126,26 @@ Test coverage includes:
 - `minting.test.ts` - Funding token creation, DLEQ verification
 - `payment.test.ts` - Full payment flow, channel closing
 
-### Python Demo Tests
+### TypeScript ASCII Art Tests
+
+The ts-ascii-art example has a comprehensive test suite (26 tests) and serves as the **reference implementation** for the ASCII Art demo pattern:
+
+```bash
+cd examples/ts-ascii-art
+npm install
+npm test
+```
+
+Test coverage includes:
+- `channel.test.ts` - `/channel/params` and `/channel/:id/status` endpoints
+- `minting.test.ts` - Funding token creation, DLEQ verification
+- `payment.test.ts` - Payment flow, channel policy (minCapacity)
+- `validation.test.ts` - Invalid signatures, balance errors, tampered DLEQ, locktime
+- `closing.test.ts` - Cooperative close, idempotent close, error cases
+
+### Python Demo
+
+**Note:** This is a proof-of-concept demonstrating Python bindings. For comprehensive test coverage, see the TypeScript ASCII Art tests above.
 
 ```bash
 cd examples/python-ascii-art
@@ -145,7 +164,9 @@ python server.py &
 python client.py
 ```
 
-### Go Demo Tests
+### Go Demo
+
+**Note:** This is a proof-of-concept demonstrating Go bindings. For comprehensive test coverage, see the TypeScript ASCII Art tests above.
 
 ```bash
 # Build Go bindings
