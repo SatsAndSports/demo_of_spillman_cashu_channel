@@ -187,7 +187,10 @@ export interface ChannelStatus {
   closed_amount?: number;
 }
 
-export function getChannelStatus(channelId: string, pricePerChar: number): ChannelStatus {
+export function getChannelStatus(
+  channelId: string,
+  pricing: Record<string, { per_char: number; minCapacity: number }>
+): ChannelStatus {
   const funding = channelFunding.get(channelId);
   if (!funding) {
     throw new Error("unknown channel");
@@ -199,6 +202,8 @@ export function getChannelStatus(channelId: string, pricePerChar: number): Chann
   const closedData = channelClosed.get(channelId);
 
   const charsServed = usage?.charsServed ?? 0;
+  const unitPricing = pricing[params.unit];
+  const pricePerChar = unitPricing?.per_char ?? 0;
   const amountDue = charsServed * pricePerChar;
 
   return {

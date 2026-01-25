@@ -20,8 +20,8 @@ listen_port = 3338
 # This ensures tests don't break when the mint restarts
 mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
-# No input fees for simpler testing
-input_fee_ppk = 0
+# Input fee for realistic testing (400 ppk = 0.4% = 4 sats per 1000 sats input)
+input_fee_ppk = 400
 
 [info.logging]
 output = "stderr"

@@ -5,14 +5,14 @@ import * as path from 'path';
 const PORT_FILE = path.join(process.cwd(), 'tests', '.test-port');
 
 // Types
+interface UnitPricing {
+  per_char: number;
+  minCapacity: number;
+}
+
 interface ChannelParams {
   receiver_pubkey: string;
-  pricing: {
-    sat: {
-      per_char: number;
-      minCapacity: number;
-    };
-  };
+  pricing: Record<string, UnitPricing>;
   mint: string;
   min_expiry_in_seconds: number;
 }
@@ -21,9 +21,9 @@ interface Server {
   baseUrl: string;
   mintUrl: string;
   channelParams: ChannelParams;
-  pricePerChar: number;
-  getAmountDue(charsServed: number): number;
-  getMinCapacity(): number;
+  getPricePerChar(unit: string): number;
+  getAmountDue(charsServed: number, unit: string): number;
+  getMinCapacity(unit: string): number;
 }
 
 export const test = base.extend<{
@@ -48,18 +48,18 @@ export const test = base.extend<{
       const paramsRes = await fetch(`${baseUrl}/channel/params`);
       const channelParams: ChannelParams = await paramsRes.json();
 
-      const pricePerChar = channelParams.pricing.sat.per_char;
-
       const server: Server = {
         baseUrl,
         mintUrl,
         channelParams,
-        pricePerChar,
-        getAmountDue(charsServed: number): number {
-          return charsServed * pricePerChar;
+        getPricePerChar(unit: string): number {
+          return channelParams.pricing[unit]?.per_char ?? 0;
         },
-        getMinCapacity(): number {
-          return channelParams.pricing.sat.minCapacity;
+        getAmountDue(charsServed: number, unit: string): number {
+          return charsServed * this.getPricePerChar(unit);
+        },
+        getMinCapacity(unit: string): number {
+          return channelParams.pricing[unit]?.minCapacity ?? 0;
         },
       };
 
@@ -71,3 +71,6 @@ export const test = base.extend<{
 
 // Re-export everything from vitest so tests only need one import
 export { describe, expect } from 'vitest';
+
+// Export types for use in test files
+export type { Server, ChannelParams };

@@ -60,15 +60,15 @@ export PORT="$SERVER_PORT"
 
 (cd "$TS_DEMO_DIR" && npm run server) > "$SERVER_LOG" 2>&1 &
 
-# Wait for server to be ready
+# Wait for server to be ready (up to 30 seconds for slow mints like NutMix)
 echo "Waiting for server to start on port $SERVER_PORT..."
-for i in {1..20}; do
+for i in {1..60}; do
     if curl -s "http://localhost:$SERVER_PORT/channel/params" > /dev/null; then
         echo "Server is ready."
         break
     fi
-    if [ $i -eq 20 ]; then
-        echo "ERROR: Server failed to start."
+    if [ $i -eq 60 ]; then
+        echo "ERROR: Server failed to start within 30 seconds."
         cat "$SERVER_LOG"
         exit 1
     fi
