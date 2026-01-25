@@ -77,8 +77,10 @@ case "$MINT_TYPE" in
         NUTMIX_COMPOSE="$NUTMIX_DIR/docker-compose-dev.yml"
         NUTMIX_SETUP_UNITS="$REPO_ROOT/scripts/nutmix-setup-units/nutmix-setup-units"
         
-        # Units to create (can be overridden via NUTMIX_UNITS env var)
-        NUTMIX_UNITS="${NUTMIX_UNITS:-msat usd}"
+        # Units to create with 400 ppk fees (can be overridden via NUTMIX_UNITS env var)
+        # Note: NutMix creates a default 'sat' keyset with 0 fees on startup,
+        # so we explicitly create 'sat' here to get the 400 ppk fee applied.
+        NUTMIX_UNITS="${NUTMIX_UNITS:-sat msat usd}"
         
         # Known test keys (from nutmix .env)
         NUTMIX_PRIVATE_KEY="6d892d6ae13c60c497ca9d806b84697e7178bdc22e5c21e74c2be426d661c983"
@@ -188,9 +190,10 @@ EOF
         NUTMIX_BIN="/nutmix/build/nutmix"
         NUTMIX_SETUP_UNITS="$REPO_ROOT/scripts/nutmix-setup-units/nutmix-setup-units"
         
-        # Units to create (can be overridden via NUTMIX_UNITS env var)
-        # Note: 'sat' is created by default, so we only add 'msat usd'
-        NUTMIX_UNITS="${NUTMIX_UNITS:-msat usd}"
+        # Units to create with 400 ppk fees (can be overridden via NUTMIX_UNITS env var)
+        # Note: NutMix creates a default 'sat' keyset with 0 fees on startup,
+        # so we explicitly create 'sat' here to get the 400 ppk fee applied.
+        NUTMIX_UNITS="${NUTMIX_UNITS:-sat msat usd}"
         
         # Known test keys (from nutmix .env)
         NUTMIX_PRIVATE_KEY="6d892d6ae13c60c497ca9d806b84697e7178bdc22e5c21e74c2be426d661c983"
