@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "server": "tsx src/index.ts server",
-    "client": "tsx src/index.ts client"
+    "client": "tsx src/index.ts client",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@noble/secp256k1": "^2.1.0",
@@ -19,6 +21,7 @@
     "@types/node": "^22.10.0",
     "@types/qrcode-terminal": "^0.12.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.16"
   }
 }

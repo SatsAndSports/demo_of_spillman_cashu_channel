@@ -15,6 +15,7 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	test-go-parallel-cdk test-go-parallel-nutmix test-go-parallel-nutmix-native \
 	test-ts-parallel-cdk test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
 	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
+	test-ts-ascii-cdk test-ts-ascii-nutmix \
 	wasm wasm-dev test-spilman \
 	test-all-cdk test-all-nutmix test-all-nutmix-native test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs
@@ -140,6 +141,18 @@ test-blossom-full-cdk: cdk-mintd
 # Run blossom server tests with WASM rebuild + NutMix mint
 test-blossom-full-nutmix: build-nutmix-setup-units
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
+
+# --- TS ASCII Art Server Tests ---
+
+TS_ASCII_DIR := examples/ts-ascii-art
+
+# Run ts-ascii-art tests with ephemeral CDK mint
+test-ts-ascii-cdk: cdk-mintd
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
+
+# Run ts-ascii-art tests with ephemeral NutMix mint
+test-ts-ascii-nutmix: build-nutmix-setup-units
+	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(TS_ASCII_DIR) test
 
 # --- WASM Build ---
 

@@ -551,8 +551,18 @@ function startCLI(): void {
   });
 
   rl.on("close", () => {
-    // stdin closed
+    // stdin closed - exit gracefully
+    process.exit(0);
   });
+
+  // Handle SIGTERM/SIGINT for clean shutdown
+  const shutdown = () => {
+    console.log("\n[Shutdown] Received signal, exiting...");
+    rl.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 // ============================================================================
