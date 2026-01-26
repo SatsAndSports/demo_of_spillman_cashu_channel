@@ -90,6 +90,9 @@ extern "C" {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> JsValue;
+
+    #[wasm_bindgen(method, js_name = refreshActiveKeysets)]
+    fn refresh_active_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
 }
 
 struct WasmSpilmanHostProxy {
@@ -387,14 +390,26 @@ impl WasmSpilmanBridge {
             .ok_or_else(|| JsValue::from_str("callMintSwap did not return a string"))
     }
 
+    /// Refresh active keysets cache for a mint via the JS host
+    ///
+    /// Called when a swap fails (possibly due to stale keyset data).
+    /// The host should re-fetch keysets from the mint and update its cache.
+    #[wasm_bindgen(js_name = refreshActiveKeysetsViaHost)]
+    pub async fn refresh_active_keysets_via_host(&self, mint_url: &str) -> Result<(), JsValue> {
+        let promise = self.js_host.refresh_active_keysets(mint_url);
+        JsFuture::from(promise).await?;
+        Ok(())
+    }
+
     /// Execute a cooperative close: validate, submit swap, unblind, and mark closed.
     ///
     /// This async method orchestrates the full cooperative close flow:
     /// 1. Validates the payment signature and checks balance == amount_due
     /// 2. Creates the fully-signed swap request
     /// 3. Submits the swap to the mint
-    /// 4. Unblinds signatures and verifies DLEQ proofs
-    /// 5. Marks the channel as closed
+    /// 4. If swap fails, refreshes keyset cache and retries once
+    /// 5. Unblinds signatures and verifies DLEQ proofs
+    /// 6. Marks the channel as closed
     ///
     /// # Arguments
     /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
@@ -419,7 +434,7 @@ impl WasmSpilmanBridge {
 
         // 2. Call validate_and_prepare_cooperative_close to validate and build swap request
         let close_result_json = self.validate_and_prepare_cooperative_close(payment_json)?;
-        let close_result: serde_json::Value = serde_json::from_str(&close_result_json)
+        let mut close_result: serde_json::Value = serde_json::from_str(&close_result_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid close result: {}", e)))?;
 
         // Check if validation failed
@@ -467,24 +482,63 @@ impl WasmSpilmanBridge {
             .as_str()
             .ok_or_else(|| JsValue::from_str("missing mint in params"))?;
 
-        // 4. Submit swap to mint
+        // 4. Submit swap to mint (with retry on failure)
         let swap_request_json = close_result["swap_request"].to_string();
         let swap_response_str = self
             .call_mint_swap_via_host(mint_url, &swap_request_json)
             .await?;
 
-        let swap_response: serde_json::Value = serde_json::from_str(&swap_response_str)
+        let mut swap_response: serde_json::Value = serde_json::from_str(&swap_response_str)
             .map_err(|e| JsValue::from_str(&format!("Invalid swap response: {}", e)))?;
 
-        // 5. Check for mint error
-        if let Some(error) = swap_response.get("error") {
-            let result = serde_json::json!({
-                "success": false,
-                "error": "mint rejected swap",
-                "status": 502,
-                "mint_error": error
-            });
-            return Ok(result.to_string());
+        // 5. Check for mint error - if so, refresh keysets and retry once
+        if swap_response.get("error").is_some() {
+            // Try to refresh keyset cache (ignore errors - best effort)
+            let _ = self.refresh_active_keysets_via_host(mint_url).await;
+
+            // Re-prepare the close data with potentially updated keyset info
+            let retry_close_result_json = self.validate_and_prepare_cooperative_close(payment_json)?;
+            let retry_close_result: serde_json::Value = serde_json::from_str(&retry_close_result_json)
+                .map_err(|e| JsValue::from_str(&format!("Invalid retry close result: {}", e)))?;
+
+            // Check if re-preparation succeeded
+            if !retry_close_result["success"].as_bool().unwrap_or(false) {
+                // Re-preparation failed, return original mint error
+                let result = serde_json::json!({
+                    "success": false,
+                    "error": "mint rejected swap",
+                    "status": 502,
+                    "mint_error": swap_response["error"],
+                    "retry_failed": true,
+                    "retry_error": retry_close_result["error"]
+                });
+                return Ok(result.to_string());
+            }
+
+            // Retry the swap with updated request
+            let retry_swap_request_json = retry_close_result["swap_request"].to_string();
+            let retry_swap_response_str = self
+                .call_mint_swap_via_host(mint_url, &retry_swap_request_json)
+                .await?;
+
+            let retry_swap_response: serde_json::Value = serde_json::from_str(&retry_swap_response_str)
+                .map_err(|e| JsValue::from_str(&format!("Invalid retry swap response: {}", e)))?;
+
+            // If retry also failed, return error with both attempts
+            if let Some(retry_error) = retry_swap_response.get("error") {
+                let result = serde_json::json!({
+                    "success": false,
+                    "error": "mint rejected swap after retry",
+                    "status": 502,
+                    "mint_error": swap_response["error"],
+                    "retry_error": retry_error
+                });
+                return Ok(result.to_string());
+            }
+
+            // Retry succeeded, use retry results
+            swap_response = retry_swap_response;
+            close_result = retry_close_result;
         }
 
         // 6. Unblind and verify DLEQ

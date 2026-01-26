@@ -174,6 +174,16 @@ export const keysetCache = {
     }
     return result;
   },
+
+  clearForMint(mint: string): void {
+    const prefix = mint + "|";
+    for (const key of keysetCacheStore.keys()) {
+      if (key.startsWith(prefix)) {
+        keysetCacheStore.delete(key);
+      }
+    }
+    console.log(`  [Store] Cleared cached keysets for mint: ${mint}`);
+  },
 };
 
 // ============================================================================

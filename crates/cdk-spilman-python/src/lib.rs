@@ -36,6 +36,9 @@ use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 /// - get_keyset_info(mint: str, keyset_id: str) -> Optional[str]
 /// - call_mint_swap(mint_url: str, swap_request_json: str) -> str  # Returns response JSON or raises
 /// - mark_channel_closed(channel_id: str, locktime: int, balance: int, receiver_proofs_json: str, sender_proofs_json: str, receiver_sum: int, sender_sum: int)
+///
+/// Optional methods (default implementations exist):
+/// - refresh_active_keysets(mint: str) -> None  # Re-fetch keysets from mint (for retry logic)
 struct PySpilmanHost {
     py_host: PyObject,
 }
