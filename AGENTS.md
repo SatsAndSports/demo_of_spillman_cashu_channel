@@ -8,7 +8,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (26 tests)
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (33 tests)
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
 
@@ -54,7 +54,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 ### Tests
 - `crates/cdk/src/spilman/tests.rs` - Rust integration tests
 - `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests: blobs, channels, minting, payment, validation, closing)
-- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (26 tests: channels, minting, payment, validation, closing)
+- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (33 tests: channels, minting, payment, validation, closing)
 
 ## Running Commands
 
@@ -68,11 +68,12 @@ cargo test -p cdk spilman
 # Clippy checks (must pass)
 cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D warnings
 
-# Build WASM
-cd web/blossom-server && make wasm-dev
+# Build WASM (uses sentinel-based dependency tracking - instant when nothing changed)
+make wasm-dev
 
-# Run Blossom tests (requires mint at localhost:3338)
-cd web/blossom-server && npm test
+# Run tests (automatically builds WASM if needed, copies to consumers)
+make test-blossom-cdk      # Blossom server tests with CDK mint
+make test-ts-ascii-cdk     # TypeScript ASCII Art tests with CDK mint
 
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
@@ -81,6 +82,14 @@ cd web/blossom-server && npx tsc --noEmit
 cd examples/ts-ascii-art && npm install && npm run server  # In one terminal
 cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 ```
+
+### WASM Build Details
+
+The `make wasm-dev` target uses **sentinel-based dependency tracking**:
+- Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
+- Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
+- Test targets (`test-blossom-*`, `test-ts-ascii-*`) automatically depend on WASM build
+- Blossom server gets WASM copied (separate git repo); ts-ascii-art uses symlink
 
 ## Documentation Index
 

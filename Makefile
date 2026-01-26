@@ -14,9 +14,9 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	test-python-parallel-cdk test-python-parallel-nutmix test-python-parallel-nutmix-native \
 	test-go-parallel-cdk test-go-parallel-nutmix test-go-parallel-nutmix-native \
 	test-ts-parallel-cdk test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
-	test-blossom-cdk test-blossom-nutmix test-blossom-full-cdk test-blossom-full-nutmix \
+	test-blossom-cdk test-blossom-nutmix \
 	test-ts-ascii-cdk test-ts-ascii-nutmix \
-	wasm wasm-dev test-spilman \
+	wasm-dev blossom-wasm ts-ascii-wasm test-spilman \
 	test-all-cdk test-all-nutmix test-all-nutmix-native test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs
 
@@ -127,48 +127,54 @@ test-spilman:
 BLOSSOM_DIR := web/blossom-server
 
 # Run blossom server tests with ephemeral CDK mint
-test-blossom-cdk: cdk-mintd
+test-blossom-cdk: cdk-mintd blossom-wasm
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
 
 # Run blossom server tests with ephemeral NutMix mint
-test-blossom-nutmix: build-nutmix-setup-units
+test-blossom-nutmix: build-nutmix-setup-units blossom-wasm
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
-
-# Run blossom server tests with WASM rebuild + CDK mint
-test-blossom-full-cdk: cdk-mintd
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
-
-# Run blossom server tests with WASM rebuild + NutMix mint
-test-blossom-full-nutmix: build-nutmix-setup-units
-	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # --- TS ASCII Art Server Tests ---
 
 TS_ASCII_DIR := examples/ts-ascii-art
 
 # Run ts-ascii-art tests with ephemeral CDK mint
-test-ts-ascii-cdk: cdk-mintd
+test-ts-ascii-cdk: cdk-mintd ts-ascii-wasm
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
 
 # Run ts-ascii-art tests with ephemeral NutMix mint
-test-ts-ascii-nutmix: build-nutmix-setup-units
+test-ts-ascii-nutmix: build-nutmix-setup-units ts-ascii-wasm
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(TS_ASCII_DIR) test
 
 # --- WASM Build ---
 
 WASM_CRATE := crates/cdk-wasm
 
-# Fast WASM build (~1s) - for development
-wasm-dev:
+# Source files that WASM depends on
+WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src -name '*.rs' 2>/dev/null)
+
+# Sentinel file tracks when WASM was last built
+# Only rebuilds if Rust sources, Cargo.toml, or Cargo.lock changed
+.wasm-dev-built: $(WASM_SOURCES) crates/cdk-wasm/Cargo.toml crates/cdk/Cargo.toml Cargo.lock
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target nodejs --out-dir ../../web/wasm-nodejs
+	@touch .wasm-dev-built
 	@echo "WASM dev build complete (web/wasm-web, web/wasm-nodejs)"
 
-# Optimized WASM build (~16s) - for production
-wasm:
-	cd $(WASM_CRATE) && wasm-pack build --release --target web --out-dir ../../web/wasm-web
-	cd $(WASM_CRATE) && wasm-pack build --release --target nodejs --out-dir ../../web/wasm-nodejs
-	@echo "WASM release build complete (web/wasm-web, web/wasm-nodejs)"
+wasm-dev: .wasm-dev-built
+
+# Blossom server needs WASM copied (separate git repo)
+BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
+$(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
+	@mkdir -p web/blossom-server/src/wasm web/blossom-server/public/wasm
+	cp web/wasm-nodejs/cdk_wasm* web/blossom-server/src/wasm/
+	cp web/wasm-web/cdk_wasm* web/blossom-server/public/wasm/
+	@echo "WASM copied to blossom-server"
+
+blossom-wasm: .wasm-dev-built $(BLOSSOM_WASM)
+
+# TS ASCII Art uses symlink to web/wasm-nodejs, just needs WASM built
+ts-ascii-wasm: .wasm-dev-built
 
 # --- All Tests ---
 
@@ -223,3 +229,4 @@ clean: clean-nutmix-setup-units clean-test-logs
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(VENV)
+	rm -f .wasm-dev-built

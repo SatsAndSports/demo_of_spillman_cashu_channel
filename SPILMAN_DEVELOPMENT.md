@@ -69,16 +69,39 @@ docker compose up mint
 
 ## Building WASM
 
-The WASM bindings are used by both browser clients and Node.js servers:
+The WASM bindings are used by both browser clients and Node.js servers.
+
+### From CDK root (recommended)
+
+The root Makefile uses **sentinel-based dependency tracking** for fast incremental builds:
+
+```bash
+# Build WASM - instant if nothing changed, ~3-6s if rebuild needed
+make wasm-dev
+
+# The sentinel file .wasm-dev-built tracks when WASM was last built
+# Only rebuilds if these change:
+#   - crates/cdk/src/**/*.rs
+#   - crates/cdk-wasm/src/**/*.rs  
+#   - Cargo.toml, Cargo.lock
+```
+
+Test targets automatically build/copy WASM as needed:
+
+```bash
+make test-blossom-cdk    # Builds WASM if needed, copies to blossom-server, runs tests
+make test-ts-ascii-cdk   # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
+```
+
+### WASM distribution
+
+- **ts-ascii-art**: Uses symlink (`src/wasm` → `../../../web/wasm-nodejs`) - always uses latest
+- **blossom-server**: Gets WASM copied (separate git repo, can't use symlinks)
+
+### From blossom-server directory
 
 ```bash
 cd web/blossom-server/
-
-# Fast build (~2s) - for development
-make wasm-dev
-
-# Optimized build (~32s) - for production
-make wasm
 
 # Build TypeScript project
 make build
@@ -107,17 +130,19 @@ cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D wa
 
 ### Blossom Server Tests
 
-Requires a mint running at `localhost:3338`:
+From CDK root (recommended - handles mint and WASM automatically):
+
+```bash
+make test-blossom-cdk     # Uses CDK mint
+make test-blossom-nutmix  # Uses NutMix mint (requires Docker)
+```
+
+Or manually with a mint running at `localhost:3338`:
 
 ```bash
 cd web/blossom-server
-
 npm test                           # All tests
 npm test -- tests/payment.test.ts  # Specific file
-
-# Or via Makefile
-make test       # Tests only
-make test-full  # Build WASM + tests
 ```
 
 Test coverage includes:
@@ -128,7 +153,16 @@ Test coverage includes:
 
 ### TypeScript ASCII Art Tests
 
-The ts-ascii-art example has a comprehensive test suite (26 tests) and serves as the **reference implementation** for the ASCII Art demo pattern:
+The ts-ascii-art example has a comprehensive test suite (33 tests) and serves as the **reference implementation** for the ASCII Art demo pattern:
+
+From CDK root (recommended - handles mint and WASM automatically):
+
+```bash
+make test-ts-ascii-cdk     # Uses CDK mint
+make test-ts-ascii-nutmix  # Uses NutMix mint (requires Docker)
+```
+
+Or manually with a mint running at `localhost:3338`:
 
 ```bash
 cd examples/ts-ascii-art
