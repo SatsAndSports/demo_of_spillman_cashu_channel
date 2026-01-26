@@ -603,45 +603,22 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
     return;
   }
 
-  // Check channel exists
-  const funding = channelFunding.get(channelId);
-  if (!funding) {
-    console.log(`  [Unilateral Close] Unknown channel`);
-    res.status(404).json({ error: "unknown channel" });
+  // Execute unilateral close via bridge (gets stored balance/sig, submits swap with retry, unblinds, marks closed)
+  const resultJson = await bridge.executeUnilateralClose(channelId);
+  const result = JSON.parse(resultJson);
+
+  if (!result.success) {
+    const status = result.status || 500;
+    console.log(`  [Unilateral Close] Failed: ${result.error} (status=${status})`);
+    res.status(status).json(result);
     return;
   }
 
-  // Check channel has payments
-  const balanceData = channelBalance.get(channelId);
-  if (!balanceData) {
-    console.log(`  [Unilateral Close] No payments recorded`);
-    res.status(400).json({ error: "no payments recorded for channel" });
-    return;
-  }
-
-  // Use bridge.createUnilateralCloseData() - uses stored balance/signature
-  const closeResultJson = bridge.createUnilateralCloseData(channelId);
-  const closeResult = JSON.parse(closeResultJson);
-
-  if (!closeResult.success) {
-    console.log(`  [Unilateral Close] Bridge error: ${closeResult.error}`);
-    res.status(500).json({ error: closeResult.error });
-    return;
-  }
-
-  // Execute the close flow
-  const balance = balanceData.balance;
-  const outcome = await executeChannelClose(channelId, balance, closeResult, "[Unilateral Close]");
-
-  if (!outcome.success) {
-    res.status(outcome.status).json({ error: outcome.error, ...outcome.details });
-    return;
-  }
-
+  console.log(`  [Unilateral Close] SUCCESS! Earned ${result.receiver_sum} sat`);
   res.json({
     success: true,
     channel_id: channelId,
-    earnedBeforeStage2Fees: outcome.unblindResult.receiver_sum_after_stage1,
+    earnedBeforeStage2Fees: result.receiver_sum,
     already_closed: false,
   });
 });
