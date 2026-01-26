@@ -80,6 +80,19 @@ pub trait SpilmanHost {
     /// out of date, it may call 'refresh_active_keysets'
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
 
+    /// Refresh the active keyset cache for a mint
+    ///
+    /// Called when a swap fails (possibly due to stale keyset data).
+    /// The host should re-fetch keysets from the mint and update its cache.
+    /// Returns Ok(()) on success, or an error string on failure.
+    ///
+    /// Note: This is primarily used by async WASM bindings which implement
+    /// retry logic. The sync Rust implementation returns an error by default.
+    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String> {
+        let _ = mint;
+        Err("refresh_active_keysets not implemented (sync)".to_string())
+    }
+
     /// Call the mint's /v1/swap endpoint
     ///
     /// The host is responsible for HTTP communication with the mint.

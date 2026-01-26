@@ -205,6 +205,17 @@ const spilmanHooks = {
     );
     console.log(`  [Host] Channel ${channelId.substring(0, 8)} closed. Earned: ${receiverSumNum} sat`);
   },
+
+  refreshActiveKeysets: async (mint: string): Promise<void> => {
+    console.log(`  [Host] Refreshing keysets for mint: ${mint}`);
+    keysetCache.clearForMint(mint);
+    try {
+      await fetchAndCacheKeysetsForMint(mint);
+      console.log(`  [Host] Keyset refresh complete for: ${mint}`);
+    } catch (e) {
+      console.error(`  [Host] Failed to refresh keysets: ${e}`);
+    }
+  },
 };
 
 // ============================================================================
@@ -358,36 +369,41 @@ async function executeChannelClose(
 // Keyset Initialization
 // ============================================================================
 
+// Fetch and cache keysets for a specific mint
+async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void> {
+  const keysetsResp = await fetch(`${mintUrl}/v1/keysets`);
+  if (!keysetsResp.ok) throw new Error(`Failed to fetch keysets: ${keysetsResp.status}`);
+  const keysetsData = await keysetsResp.json();
+
+  for (const ks of keysetsData.keysets) {
+    if (ks.unit in PRICING) {
+      // Fetch full keys for this keyset
+      const keysResp = await fetch(`${mintUrl}/v1/keys/${ks.id}`);
+      if (!keysResp.ok) continue;
+      const keysData = await keysResp.json();
+      const keys = keysData.keysets[0].keys;
+
+      const keysetInfo = {
+        keysetId: ks.id,
+        unit: ks.unit,
+        keys: keys,
+        inputFeePpk: ks.input_fee_ppk || 0,
+        amounts: Object.keys(keys).map(Number).sort((a, b) => b - a),
+      };
+
+      keysetCache.set(mintUrl, ks.id, {
+        infoJson: JSON.stringify(keysetInfo),
+        active: ks.active,
+        unit: ks.unit,
+      });
+    }
+  }
+}
+
 async function initializeKeysets(): Promise<void> {
   console.log(`Fetching keysets from ${MINT_URL}...`);
   try {
-    const keysetsResp = await fetch(`${MINT_URL}/v1/keysets`);
-    if (!keysetsResp.ok) throw new Error(`Failed to fetch keysets: ${keysetsResp.status}`);
-    const keysetsData = await keysetsResp.json();
-
-    for (const ks of keysetsData.keysets) {
-      if (ks.unit in PRICING) {
-        // Fetch full keys for this keyset
-        const keysResp = await fetch(`${MINT_URL}/v1/keys/${ks.id}`);
-        if (!keysResp.ok) continue;
-        const keysData = await keysResp.json();
-        const keys = keysData.keysets[0].keys;
-
-        const keysetInfo = {
-          keysetId: ks.id,
-          unit: ks.unit,
-          keys: keys,
-          inputFeePpk: ks.input_fee_ppk || 0,
-          amounts: Object.keys(keys).map(Number).sort((a, b) => b - a),
-        };
-
-        keysetCache.set(MINT_URL, ks.id, {
-          infoJson: JSON.stringify(keysetInfo),
-          active: ks.active,
-          unit: ks.unit,
-        });
-      }
-    }
+    await fetchAndCacheKeysetsForMint(MINT_URL);
     console.log(`Cached keysets for ${MINT_URL}`);
   } catch (e) {
     console.error(`WARNING: Failed to fetch keysets: ${e}`);
