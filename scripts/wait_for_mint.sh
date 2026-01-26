@@ -1,107 +1,31 @@
 #!/bin/bash
 # wait_for_mint.sh
-# Waits for a mint to be ready and prints version info.
+# Waits for MINT_READY_WITH_KEYSETS marker in the mint log file.
 #
-# Usage: ./scripts/wait_for_mint.sh <port> [timeout_seconds] [required_units]
-# Example: ./scripts/wait_for_mint.sh 12345 10
-#          ./scripts/wait_for_mint.sh 3338 60 "sat msat usd"
+# Usage: ./scripts/wait_for_mint.sh <log_file> [timeout_seconds]
 #
-# Checks:
-# 1. /v1/info endpoint responds
-# 2. /v1/keysets has at least one active keyset
-# 3. (optional) All required units have active keysets
-# 4. /v1/keys/{id} is fetchable for each active keyset (NutMix startup issue workaround)
+# The marker is printed by run_temporary_mint.sh after the mint is fully
+# configured and ready to accept requests (including all keysets created).
 #
-# On success: prints "Mint is ready. Version: X (N active keysets: unit1, unit2)" and exits 0
+# On success: prints the marker line and exits 0
 # On timeout: prints error to stderr and exits 1
 
 set -e
 set -u
 
-PORT="${1:-3338}"
-TIMEOUT="${2:-10}"
-REQUIRED_UNITS="${3:-}"
-
-# Check for jq dependency
-if ! command -v jq &> /dev/null; then
-    echo "ERROR: jq is required but not installed." >&2
-    echo "Install with: apt install jq / brew install jq" >&2
-    exit 1
-fi
-
-if [ -n "$REQUIRED_UNITS" ]; then
-    echo "Waiting for units: $REQUIRED_UNITS" >&2
-fi
+LOG_FILE="${1:?Usage: wait_for_mint.sh <log_file> [timeout_seconds]}"
+TIMEOUT="${2:-60}"
 
 ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
-    if curl -s "http://localhost:$PORT/v1/info" > /dev/null 2>&1; then
-        KEYSETS_JSON=$(curl -s "http://localhost:$PORT/v1/keysets")
-        
-        # Count active keysets
-        ACTIVE_COUNT=$(echo "$KEYSETS_JSON" | jq '[.keysets[] | select(.active)] | length')
-        
-        if [ "$ACTIVE_COUNT" -gt 0 ]; then
-            # Get available units (sorted, unique)
-            AVAILABLE_UNITS=$(echo "$KEYSETS_JSON" | jq -r '[.keysets[] | select(.active) | .unit] | unique | sort | join(", ")')
-            
-            # Check required units if specified
-            if [ -n "$REQUIRED_UNITS" ]; then
-                # Check if all required units are present
-                MISSING=$(echo "$KEYSETS_JSON" | jq -r --arg units "$REQUIRED_UNITS" '
-                    ($units | split(" ")) as $required |
-                    [.keysets[] | select(.active) | .unit] | unique as $available |
-                    ($required - $available) | join(" ")
-                ')
-                
-                if [ -n "$MISSING" ]; then
-                    # Not all units available yet, keep waiting
-                    sleep 0.5
-                    ELAPSED=$((ELAPSED + 1))
-                    continue
-                fi
-            fi
-            
-            # Verify /v1/keys/{id} is fetchable for each active keyset.
-            # This is a workaround for a NutMix startup timing issue where keysets
-            # appear in /v1/keysets before the /v1/keys/{id} endpoint is ready.
-            KEYS_READY=true
-            for KEYSET_ID in $(echo "$KEYSETS_JSON" | jq -r '.keysets[] | select(.active) | .id'); do
-                if ! curl -sf "http://localhost:$PORT/v1/keys/$KEYSET_ID" > /dev/null 2>&1; then
-                    KEYS_READY=false
-                    break
-                fi
-            done
-            
-            if [ "$KEYS_READY" = false ]; then
-                # Keys endpoint not ready yet, keep waiting
-                sleep 0.5
-                ELAPSED=$((ELAPSED + 1))
-                continue
-            fi
-            
-            # Get version
-            VERSION=$(curl -s "http://localhost:$PORT/v1/info" | jq -r '.version // "unknown"')
-            
-            echo "Mint is ready. Version: $VERSION ($ACTIVE_COUNT active keysets: $AVAILABLE_UNITS)"
-            exit 0
-        fi
+    if grep -q "MINT_READY_WITH_KEYSETS" "$LOG_FILE" 2>/dev/null; then
+        # Print the full line for visibility
+        grep "MINT_READY_WITH_KEYSETS" "$LOG_FILE"
+        exit 0
     fi
     sleep 0.5
     ELAPSED=$((ELAPSED + 1))
 done
 
-# Timeout - provide helpful error message
-if [ -n "$REQUIRED_UNITS" ]; then
-    # Try to get current state for error message
-    AVAILABLE=""
-    if curl -s "http://localhost:$PORT/v1/keysets" > /dev/null 2>&1; then
-        AVAILABLE=$(curl -s "http://localhost:$PORT/v1/keysets" | jq -r '[.keysets[] | select(.active) | .unit] | unique | sort | join(" ")' 2>/dev/null || echo "none")
-    fi
-    echo "ERROR: Mint did not have all required units within ${TIMEOUT}s on port $PORT" >&2
-    echo "  Required: $REQUIRED_UNITS" >&2
-    echo "  Available: ${AVAILABLE:-none}" >&2
-else
-    echo "ERROR: Mint did not start within ${TIMEOUT}s on port $PORT" >&2
-fi
+echo "ERROR: MINT_READY_WITH_KEYSETS not found in $LOG_FILE within ${TIMEOUT}s" >&2
 exit 1

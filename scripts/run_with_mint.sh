@@ -51,8 +51,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Wait for mint to be ready (blossom-server tests need sat, msat, usd)
-"$REPO_ROOT/scripts/wait_for_mint.sh" "$PORT" 60 "sat msat usd"
+# Wait for mint to be fully ready
+"$REPO_ROOT/scripts/wait_for_mint.sh" "$MINT_LOG" 60
 
 echo "Mint ready at http://localhost:$PORT"
 echo "Running: $*"
