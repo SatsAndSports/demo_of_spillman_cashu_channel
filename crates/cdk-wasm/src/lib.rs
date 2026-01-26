@@ -313,9 +313,12 @@ impl WasmSpilmanBridge {
     ///
     /// # Errors
     /// Returns error JSON with same structure as processPayment 402 responses
-    #[wasm_bindgen(js_name = createCloseData)]
-    pub fn create_close_data(&self, payment_json: &str) -> Result<String, JsValue> {
-        match self.bridge.create_close_data(payment_json) {
+    #[wasm_bindgen(js_name = validateAndPrepareCooperativeClose)]
+    pub fn validate_and_prepare_cooperative_close(
+        &self,
+        payment_json: &str,
+    ) -> Result<String, JsValue> {
+        match self.bridge.validate_and_prepare_cooperative_close(payment_json) {
             Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
                 // Return error in same format as processPayment for consistency
@@ -347,7 +350,7 @@ impl WasmSpilmanBridge {
     /// * `channel_id` - The channel ID to close
     ///
     /// # Returns
-    /// JSON with same structure as createCloseData:
+    /// JSON with same structure as validateAndPrepareCooperativeClose:
     /// - `swap_request`: The fully-signed swap request ready for mint
     /// - `expected_total`: Expected total output value after stage 1 fees
     /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
@@ -414,8 +417,8 @@ impl WasmSpilmanBridge {
             .as_u64()
             .ok_or_else(|| JsValue::from_str("missing balance"))?;
 
-        // 2. Call create_close_data to validate and build swap request
-        let close_result_json = self.create_close_data(payment_json)?;
+        // 2. Call validate_and_prepare_cooperative_close to validate and build swap request
+        let close_result_json = self.validate_and_prepare_cooperative_close(payment_json)?;
         let close_result: serde_json::Value = serde_json::from_str(&close_result_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid close result: {}", e)))?;
 
@@ -626,12 +629,12 @@ pub fn create_funding_outputs(
 /// Unblind blind signatures and verify DLEQ proofs
 ///
 /// Takes blind signatures from a mint swap response, unblinds them using the
-/// secrets and blinding factors from bridge.createCloseData(), verifies DLEQ
-/// proofs, and returns the separated receiver/sender proofs.
+/// secrets and blinding factors from bridge.validateAndPrepareCooperativeClose(),
+/// verifies DLEQ proofs, and returns the separated receiver/sender proofs.
 ///
 /// # Arguments
 /// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
-/// * `secrets_with_blinding_json` - JSON array from createCloseData's secrets_with_blinding
+/// * `secrets_with_blinding_json` - JSON array from validateAndPrepareCooperativeClose's secrets_with_blinding
 /// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
 /// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
 /// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation

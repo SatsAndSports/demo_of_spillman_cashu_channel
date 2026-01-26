@@ -33,7 +33,7 @@ SpilmanHostCallbacks fill_callbacks(void* user_data);
 void* spilman_bridge_new(SpilmanHostCallbacks callbacks, const char* server_secret_key_hex);
 void spilman_bridge_free(void* ptr);
 CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json);
-CResult spilman_bridge_create_close_data(void* ptr, const char* payment_json);
+CResult spilman_bridge_validate_and_prepare_cooperative_close(void* ptr, const char* payment_json);
 CResult spilman_bridge_create_unilateral_close_data(void* ptr, const char* channel_id);
 void spilman_free_string(char* ptr);
 void spilman_free_cresult(CResult res);
@@ -124,11 +124,11 @@ func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (string, error)
 	return C.GoString(res.data), nil
 }
 
-func (b *Bridge) CreateCloseData(paymentJson string) (string, error) {
+func (b *Bridge) ValidateAndPrepareCooperativeClose(paymentJson string) (string, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 
-	res := C.spilman_bridge_create_close_data(b.ptr, cPayment)
+	res := C.spilman_bridge_validate_and_prepare_cooperative_close(b.ptr, cPayment)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
