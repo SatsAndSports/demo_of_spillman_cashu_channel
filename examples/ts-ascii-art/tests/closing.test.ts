@@ -563,4 +563,190 @@ describe('Keyset refresh retry logic', () => {
     expect(result.success).toBe(true);
     expect(result.channel_id).toBe(channelId);
   });
+
+  test('retries unilateral close with refreshed keysets when first swap fails', async ({ server }) => {
+    // 1. Generate keypairs for our test bridge
+    const charlie = generateKeypair();
+    const alice = generateKeypair();
+    const mintUrl = server.mintUrl;
+
+    // 2. Get keyset info for building a channel
+    const keysetId = await getFirstKeysetId(mintUrl, 'sat');
+    const keysetInfo = await fetchKeysetInfo(mintUrl, keysetId);
+
+    // 3. Create channel parameters
+    const setupTimestamp = Math.floor(Date.now() / 1000);
+    const locktime = setupTimestamp + 7 * 24 * 60 * 60;
+    const capacity = 100;
+
+    const channelParams = {
+      mint: mintUrl,
+      unit: 'sat',
+      capacity,
+      keyset_id: keysetId,
+      input_fee_ppk: keysetInfo.inputFeePpk,
+      maximum_amount: 64,
+      setup_timestamp: setupTimestamp,
+      alice_pubkey: alice.pubkeyHex,
+      charlie_pubkey: charlie.pubkeyHex,
+      locktime,
+      sender_nonce: randomBytes(32).toString('hex'),
+    };
+    const channelParamsJson = JSON.stringify(channelParams);
+
+    // 4. Mint funded channel
+    const fundingOutputsJson = create_funding_outputs(channelParamsJson, alice.secretHex, JSON.stringify(keysetInfo));
+    const fundingOutputs = JSON.parse(fundingOutputsJson);
+
+    const quoteRes = await fetch(`${mintUrl}/v1/mint/quote/bolt11`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: fundingOutputs.funding_token_nominal, unit: 'sat' }),
+    });
+    const quote = await quoteRes.json();
+
+    for (let i = 0; i < 30; i++) {
+      const statusRes = await fetch(`${mintUrl}/v1/mint/quote/bolt11/${quote.quote}`);
+      const status = await statusRes.json();
+      if (status.state === 'PAID') break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    const mintReq = {
+      quote: quote.quote,
+      outputs: fundingOutputs.blinded_messages.map((bm: any) => ({
+        amount: bm.amount,
+        id: bm.id,
+        B_: bm.B_,
+      })),
+    };
+    const mintRes = await fetch(`${mintUrl}/v1/mint/bolt11`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mintReq),
+    });
+    const mintData = await mintRes.json();
+
+    const proofsJson = construct_proofs(
+      JSON.stringify(mintData.signatures),
+      JSON.stringify(fundingOutputs.secrets_with_blinding),
+      JSON.stringify(keysetInfo)
+    );
+    const proofs = JSON.parse(proofsJson);
+
+    const sharedSecret = compute_shared_secret(alice.secretHex, charlie.pubkeyHex);
+    const channelId = channel_parameters_get_channel_id(channelParamsJson, sharedSecret, JSON.stringify(keysetInfo));
+
+    console.log(`Channel ${channelId.substring(0, 8)} created for unilateral close retry test`);
+
+    // 5. Create a signed balance update to simulate a recorded payment
+    const paymentBalance = 50;
+    const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
+      channelParamsJson,
+      JSON.stringify(keysetInfo),
+      alice.secretHex,
+      JSON.stringify(proofs),
+      BigInt(paymentBalance)
+    );
+    const balanceUpdate = JSON.parse(balanceUpdateJson);
+
+    // 6. Track retry behavior
+    let swapAttempts = 0;
+    let refreshWasCalled = false;
+
+    // 7. Build keyset cache for the test host
+    const keysetCache = new Map<string, string>();
+    keysetCache.set(`${mintUrl}|${keysetId}`, JSON.stringify(keysetInfo));
+
+    // 8. Create test host - key difference: getBalanceAndSignatureForUnilateralExit returns the payment
+    const testHost = {
+      receiverKeyIsAcceptable: (pubkeyHex: string): boolean => {
+        return pubkeyHex.toLowerCase() === charlie.pubkeyHex.toLowerCase();
+      },
+
+      mintAndKeysetIsAcceptable: (mint: string, ksId: string): boolean => {
+        return mint === mintUrl && keysetCache.has(`${mint}|${ksId}`);
+      },
+
+      getFundingAndParams: (chId: string): [string, string, string, string] | null => {
+        if (chId !== channelId) return null;
+        return [channelParamsJson, JSON.stringify(proofs), sharedSecret, JSON.stringify(keysetInfo)];
+      },
+
+      saveFunding: () => {},
+
+      getAmountDue: (): bigint => BigInt(paymentBalance),
+
+      recordPayment: () => {},
+
+      isClosed: (): boolean => false,
+
+      getChannelPolicy: (): string => JSON.stringify({
+        min_expiry_in_seconds: 3600,
+        pricing: { sat: { per_char: 1, minCapacity: 10 } },
+      }),
+
+      nowSeconds: (): bigint => BigInt(Math.floor(Date.now() / 1000)),
+
+      // Key difference from cooperative test: return recorded balance/signature
+      // IMPORTANT: Return [number, string], NOT [bigint, string] - WASM uses as_f64()
+      getBalanceAndSignatureForUnilateralExit: (chId: string): [number, string] | null => {
+        if (chId !== channelId) return null;
+        return [paymentBalance, balanceUpdate.signature];
+      },
+
+      getActiveKeysetIds: (mint: string, unit: string): string[] => {
+        if (mint === mintUrl && unit === 'sat') return [keysetId];
+        return [];
+      },
+
+      getKeysetInfo: (mint: string, ksId: string): string | null => {
+        return keysetCache.get(`${mint}|${ksId}`) ?? null;
+      },
+
+      callMintSwap: async (mint: string, swapRequestJson: string): Promise<string> => {
+        swapAttempts++;
+        console.log(`  [TestHost] callMintSwap attempt #${swapAttempts}`);
+        if (swapAttempts === 1) {
+          console.log(`  [TestHost] Returning fake "Inactive Keyset" error`);
+          return JSON.stringify({ error: "Inactive Keyset", code: 12002 });
+        }
+        console.log(`  [TestHost] Passing through to real mint`);
+        const response = await fetch(`${mint}/v1/swap`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: swapRequestJson,
+        });
+        return await response.text();
+      },
+
+      refreshActiveKeysets: async (mint: string): Promise<void> => {
+        console.log(`  [TestHost] refreshActiveKeysets called for ${mint}`);
+        refreshWasCalled = true;
+        const newKeysetInfo = await fetchKeysetInfo(mint, keysetId);
+        keysetCache.set(`${mint}|${keysetId}`, JSON.stringify(newKeysetInfo));
+      },
+
+      markChannelClosed: (): void => {},
+    };
+
+    // 9. Create test bridge
+    const testBridge = new WasmSpilmanBridge(testHost, charlie.secretHex);
+
+    // 10. Execute UNILATERAL close - should retry on keyset error
+    const resultJson = await testBridge.executeUnilateralClose(channelId);
+    const result = JSON.parse(resultJson);
+
+    // 11. Verify retry happened and succeeded
+    console.log(`Unilateral retry test: swapAttempts=${swapAttempts}, refreshWasCalled=${refreshWasCalled}, success=${result.success}`);
+    if (!result.success) {
+      console.log(`  Error: ${result.error}`);
+    }
+    expect(swapAttempts).toBe(2);
+    expect(refreshWasCalled).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.channel_id).toBe(channelId);
+    // Verify receiver got payment (unilateral close - receiver keeps the signed balance)
+    expect(result.receiver_sum).toBeGreaterThanOrEqual(paymentBalance);
+  });
 });
