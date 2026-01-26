@@ -21,8 +21,8 @@ This document tracks the completed features and improvements for the Spilman Cha
 - Validation of empty signatures early in payment processing
 - Comprehensive unit tests for `SpilmanBridge` acceptability hooks
 - Atomic usage and payment proof updates via `recordPayment(context)`
-- Simplified Bridge API: Removed redundant `keyset_info_json` from `process_payment` and `create_close_data`
-- Automatic Closure Validation: `create_close_data` verifies balance matches `amount_due`
+- Simplified Bridge API: Removed redundant `keyset_info_json` from `process_payment` and `validate_and_prepare_cooperative_close`
+- Automatic Closure Validation: `validate_and_prepare_cooperative_close` verifies balance matches `amount_due`
 - Consolidated `unblind_and_verify_dleq`: Core logic in `bridge.rs`, thin wrappers in WASM and Python
 
 ### Channel Operations

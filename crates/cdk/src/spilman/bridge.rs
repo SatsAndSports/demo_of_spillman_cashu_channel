@@ -995,7 +995,10 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// 3. Use secrets_with_blinding to unblind the response
     ///
     /// Returns Err if validation fails (same errors as process_payment).
-    pub fn create_close_data(&self, payment_json: &str) -> Result<CloseData, BridgeError> {
+    pub fn validate_and_prepare_cooperative_close(
+        &self,
+        payment_json: &str,
+    ) -> Result<CloseData, BridgeError> {
         // 1. Parse payment request
         let payment: PaymentRequest = serde_json::from_str(payment_json)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
@@ -1659,7 +1662,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_close_data_with_keyset_rotation() {
+    fn test_validate_and_prepare_cooperative_close_with_keyset_rotation() {
         use crate::nuts::Proof;
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
@@ -1748,7 +1751,9 @@ mod tests {
 
         // EXECUTE: Create close data
         // Bridge should see Keyset A is inactive and switch to Keyset B
-        let close_data = bridge.create_close_data(&payment_json).unwrap();
+        let close_data = bridge
+            .validate_and_prepare_cooperative_close(&payment_json)
+            .unwrap();
 
         // VERIFY: Output keyset is Keyset B
         assert_eq!(close_data.output_keyset_info.keyset_id, keyset_b_id);

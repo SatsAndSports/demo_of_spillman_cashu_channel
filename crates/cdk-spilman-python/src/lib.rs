@@ -363,8 +363,11 @@ impl SpilmanBridge {
     }
 
     #[pyo3(signature = (payment_json))]
-    fn create_close_data(&self, payment_json: &str) -> PyResult<String> {
-        match self.inner.create_close_data(payment_json) {
+    fn validate_and_prepare_cooperative_close(&self, payment_json: &str) -> PyResult<String> {
+        match self
+            .inner
+            .validate_and_prepare_cooperative_close(payment_json)
+        {
             Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
                 let result = serde_json::json!({
@@ -540,7 +543,7 @@ fn create_signed_balance_update(
 ///
 /// Args:
 ///     blind_signatures_json: JSON array of blind signatures from mint
-///     secrets_with_blinding_json: JSON array from create_close_data
+///     secrets_with_blinding_json: JSON array from validate_and_prepare_cooperative_close
 ///     params_json: Channel parameters JSON
 ///     keyset_info_json: Keyset info JSON (funding keyset)
 ///     shared_secret_hex: Shared secret (hex)

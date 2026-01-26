@@ -396,14 +396,17 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn spilman_bridge_create_close_data(
+pub unsafe extern "C" fn spilman_bridge_validate_and_prepare_cooperative_close(
     ptr: *mut BridgeInstance,
     payment_json: *const c_char,
 ) -> CResult {
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
 
-    match instance.bridge.create_close_data(payment) {
+    match instance
+        .bridge
+        .validate_and_prepare_cooperative_close(payment)
+    {
         Ok(close_data) => CResult::success(close_data.to_json_value().to_string()),
         Err(e) => CResult::error(e.to_string()),
     }
