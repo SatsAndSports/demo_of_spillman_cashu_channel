@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { test, describe, expect } from './fixtures.js';
 import {
   mintFundedChannel,
@@ -5,7 +6,18 @@ import {
   fetchAsciiArt,
   fetchChannelStatus,
   closeChannel,
+  generateKeypair,
+  fetchKeysetInfo,
+  getFirstKeysetId,
 } from './helpers.js';
+import {
+  WasmSpilmanBridge,
+  spilman_channel_sender_create_signed_balance_update,
+  compute_shared_secret,
+  channel_parameters_get_channel_id,
+  create_funding_outputs,
+  construct_proofs,
+} from '../src/wasm/cdk_wasm.js';
 
 describe.concurrent('Channel closing', () => {
   test('closes unused channel directly with params (balance=0)', async ({ server }) => {
@@ -357,5 +369,198 @@ describe.concurrent('Unilateral closing', () => {
     const { status, body } = await fetchAsciiArt(server, paymentHeader2, 'X');
     expect(status).toBe(402);
     expect(body.reason).toContain('channel closed');
+  });
+});
+
+describe('Keyset refresh retry logic', () => {
+  test('retries cooperative close with refreshed keysets when first swap fails', async ({ server }) => {
+    // 1. Generate a keypair for our test bridge (Charlie/receiver)
+    const charlie = generateKeypair();
+    const mintUrl = server.mintUrl;
+
+    // 2. Get keyset info for building a channel
+    const keysetId = await getFirstKeysetId(mintUrl, 'sat');
+    const keysetInfo = await fetchKeysetInfo(mintUrl, keysetId);
+
+    // 3. Create a funded channel with our test Charlie as receiver
+    //    (We can't use mintFundedChannel because it uses server's pubkey)
+    const alice = generateKeypair();
+
+    const setupTimestamp = Math.floor(Date.now() / 1000);
+    const locktime = setupTimestamp + 7 * 24 * 60 * 60;
+    const capacity = 100;
+
+    const channelParams = {
+      mint: mintUrl,
+      unit: 'sat',
+      capacity,
+      keyset_id: keysetId,
+      input_fee_ppk: keysetInfo.inputFeePpk,
+      maximum_amount: 64,
+      setup_timestamp: setupTimestamp,
+      alice_pubkey: alice.pubkeyHex,
+      charlie_pubkey: charlie.pubkeyHex,
+      locktime,
+      sender_nonce: randomBytes(32).toString('hex'),
+    };
+    const channelParamsJson = JSON.stringify(channelParams);
+
+    // Generate funding outputs and mint them
+    const fundingOutputsJson = create_funding_outputs(channelParamsJson, alice.secretHex, JSON.stringify(keysetInfo));
+    const fundingOutputs = JSON.parse(fundingOutputsJson);
+
+    const quoteRes = await fetch(`${mintUrl}/v1/mint/quote/bolt11`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: fundingOutputs.funding_token_nominal, unit: 'sat' }),
+    });
+    const quote = await quoteRes.json();
+
+    // Wait for payment (FakeWallet auto-pays)
+    for (let i = 0; i < 30; i++) {
+      const statusRes = await fetch(`${mintUrl}/v1/mint/quote/bolt11/${quote.quote}`);
+      const status = await statusRes.json();
+      if (status.state === 'PAID') break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    const mintReq = {
+      quote: quote.quote,
+      outputs: fundingOutputs.blinded_messages.map((bm: any) => ({
+        amount: bm.amount,
+        id: bm.id,
+        B_: bm.B_,
+      })),
+    };
+    const mintRes = await fetch(`${mintUrl}/v1/mint/bolt11`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mintReq),
+    });
+    const mintData = await mintRes.json();
+
+    const proofsJson = construct_proofs(
+      JSON.stringify(mintData.signatures),
+      JSON.stringify(fundingOutputs.secrets_with_blinding),
+      JSON.stringify(keysetInfo)
+    );
+    const proofs = JSON.parse(proofsJson);
+
+    const sharedSecret = compute_shared_secret(alice.secretHex, charlie.pubkeyHex);
+    const channelId = channel_parameters_get_channel_id(channelParamsJson, sharedSecret, JSON.stringify(keysetInfo));
+
+    console.log(`Channel ${channelId.substring(0, 8)} created with test keypair`);
+
+    // 4. Track retry behavior
+    let swapAttempts = 0;
+    let refreshWasCalled = false;
+
+    // 5. Build keyset cache for the test host
+    const keysetCache = new Map<string, string>();
+    keysetCache.set(`${mintUrl}|${keysetId}`, JSON.stringify(keysetInfo));
+
+    // 6. Create test host with tracking
+    const testHost = {
+      receiverKeyIsAcceptable: (pubkeyHex: string): boolean => {
+        return pubkeyHex.toLowerCase() === charlie.pubkeyHex.toLowerCase();
+      },
+
+      mintAndKeysetIsAcceptable: (mint: string, ksId: string): boolean => {
+        return mint === mintUrl && keysetCache.has(`${mint}|${ksId}`);
+      },
+
+      getFundingAndParams: (chId: string): [string, string, string, string] | null => {
+        if (chId !== channelId) return null;
+        return [channelParamsJson, JSON.stringify(proofs), sharedSecret, JSON.stringify(keysetInfo)];
+      },
+
+      saveFunding: () => {},
+
+      getAmountDue: (): bigint => BigInt(0), // No amount due for this test
+
+      recordPayment: () => {},
+
+      isClosed: (): boolean => false,
+
+      getChannelPolicy: (): string => JSON.stringify({
+        min_expiry_in_seconds: 3600,
+        pricing: { sat: { per_char: 1, minCapacity: 10 } },
+      }),
+
+      nowSeconds: (): bigint => BigInt(Math.floor(Date.now() / 1000)),
+
+      getBalanceAndSignatureForUnilateralExit: (): null => null,
+
+      getActiveKeysetIds: (mint: string, unit: string): string[] => {
+        if (mint === mintUrl && unit === 'sat') return [keysetId];
+        return [];
+      },
+
+      getKeysetInfo: (mint: string, ksId: string): string | null => {
+        return keysetCache.get(`${mint}|${ksId}`) ?? null;
+      },
+
+      callMintSwap: async (mint: string, swapRequestJson: string): Promise<string> => {
+        swapAttempts++;
+        console.log(`  [TestHost] callMintSwap attempt #${swapAttempts}`);
+        if (swapAttempts === 1) {
+          console.log(`  [TestHost] Returning fake "Inactive Keyset" error`);
+          return JSON.stringify({ error: "Inactive Keyset", code: 12002 });
+        }
+        console.log(`  [TestHost] Passing through to real mint`);
+        const response = await fetch(`${mint}/v1/swap`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: swapRequestJson,
+        });
+        return await response.text();
+      },
+
+      refreshActiveKeysets: async (mint: string): Promise<void> => {
+        console.log(`  [TestHost] refreshActiveKeysets called for ${mint}`);
+        refreshWasCalled = true;
+        // Actually refresh keyset info
+        const newKeysetInfo = await fetchKeysetInfo(mint, keysetId);
+        keysetCache.set(`${mint}|${keysetId}`, JSON.stringify(newKeysetInfo));
+      },
+
+      markChannelClosed: (): void => {},
+    };
+
+    // 7. Create test bridge with our host
+    const testBridge = new WasmSpilmanBridge(testHost, charlie.secretHex);
+
+    // 8. Build close request with balance=0 (no payments made)
+    const balance = 0;
+    const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
+      channelParamsJson,
+      JSON.stringify(keysetInfo),
+      alice.secretHex,
+      JSON.stringify(proofs),
+      BigInt(balance)
+    );
+    const balanceUpdate = JSON.parse(balanceUpdateJson);
+
+    const closeBody = {
+      channel_id: channelId,
+      balance,
+      signature: balanceUpdate.signature,
+      params: channelParams,
+      funding_proofs: proofs,
+    };
+
+    // 9. Execute close directly on test bridge
+    const resultJson = await testBridge.executeCooperativeClose(JSON.stringify(closeBody));
+    const result = JSON.parse(resultJson);
+
+    // 10. Verify retry happened and succeeded
+    console.log(`Retry test: swapAttempts=${swapAttempts}, refreshWasCalled=${refreshWasCalled}, success=${result.success}`);
+    if (!result.success) {
+      console.log(`  Error: ${result.error}, reason: ${result.reason}`);
+    }
+    expect(swapAttempts).toBe(2);
+    expect(refreshWasCalled).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.channel_id).toBe(channelId);
   });
 });

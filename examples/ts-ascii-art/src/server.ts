@@ -32,8 +32,8 @@ import {
 // Configuration
 // ============================================================================
 
-const SECRET_KEY = process.env.SERVER_SECRET_KEY || randomBytes(32).toString("hex");
-const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
+export const SECRET_KEY = process.env.SERVER_SECRET_KEY || randomBytes(32).toString("hex");
+export const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
 const PORT = parseInt(process.env.PORT || "5002", 10);
 // Pricing per character for each unit
 // Note: msat has higher per_char to stay above mint's minimum denomination
@@ -59,7 +59,7 @@ const SERVER_PUBKEY = getServerPubkey();
 // SpilmanHost Implementation
 // ============================================================================
 
-const spilmanHooks = {
+export const spilmanHooks = {
   receiverKeyIsAcceptable: (pubkeyHex: string): boolean => {
     const result = pubkeyHex.toLowerCase() === SERVER_PUBKEY.toLowerCase();
     console.log(`  [Host] receiverKeyIsAcceptable: ${pubkeyHex.substring(0, 16)}... = ${result}`);
@@ -370,7 +370,7 @@ async function executeChannelClose(
 // ============================================================================
 
 // Fetch and cache keysets for a specific mint
-async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void> {
+export async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void> {
   const keysetsResp = await fetch(`${mintUrl}/v1/keysets`);
   if (!keysetsResp.ok) throw new Error(`Failed to fetch keysets: ${keysetsResp.status}`);
   const keysetsData = await keysetsResp.json();
