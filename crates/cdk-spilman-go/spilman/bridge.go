@@ -25,6 +25,7 @@ typedef struct {
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
     char* (*get_keyset_info)(void*, const char*, const char*);
     int (*call_mint_swap)(void*, const char*, const char*, char**);
+    int (*refresh_active_keysets)(void*, const char*);
     int (*mark_channel_closed)(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
 } SpilmanHostCallbacks;
 
@@ -35,6 +36,8 @@ void spilman_bridge_free(void* ptr);
 CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json);
 CResult spilman_bridge_validate_and_prepare_cooperative_close(void* ptr, const char* payment_json);
 CResult spilman_bridge_create_unilateral_close_data(void* ptr, const char* channel_id);
+CResult spilman_bridge_execute_cooperative_close(void* ptr, const char* payment_json);
+CResult spilman_bridge_execute_unilateral_close(void* ptr, const char* channel_id);
 void spilman_free_string(char* ptr);
 void spilman_free_cresult(CResult res);
 
@@ -71,6 +74,7 @@ type SpilmanHost interface {
 	GetActiveKeysetIds(mint, unit string) []string
 	GetKeysetInfo(mint, keysetId string) (string, bool)
 	CallMintSwap(mintUrl, swapRequestJson string) (string, error)
+	RefreshActiveKeysets(mintUrl string) error
 	MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
 }
 
@@ -142,6 +146,36 @@ func (b *Bridge) CreateUnilateralCloseData(channelId string) (string, error) {
 	defer C.free(unsafe.Pointer(cId))
 
 	res := C.spilman_bridge_create_unilateral_close_data(b.ptr, cId)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// ExecuteCooperativeClose orchestrates the full cooperative close flow:
+// validate, submit swap to mint, retry on error, unblind, and mark closed.
+func (b *Bridge) ExecuteCooperativeClose(paymentJson string) (string, error) {
+	cPayment := C.CString(paymentJson)
+	defer C.free(unsafe.Pointer(cPayment))
+
+	res := C.spilman_bridge_execute_cooperative_close(b.ptr, cPayment)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// ExecuteUnilateralClose orchestrates the full unilateral close flow:
+// retrieve stored payment, submit swap to mint, retry on error, unblind, and mark closed.
+func (b *Bridge) ExecuteUnilateralClose(channelId string) (string, error) {
+	cId := C.CString(channelId)
+	defer C.free(unsafe.Pointer(cId))
+
+	res := C.spilman_bridge_execute_unilateral_close(b.ptr, cId)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
@@ -425,6 +459,17 @@ func go_call_mint_swap(userData unsafe.Pointer, mintUrl *C.char, swapReqJson *C.
 		return 0
 	}
 	*responseOut = C.CString(resp)
+	return 1
+}
+
+//export go_refresh_active_keysets
+func go_refresh_active_keysets(userData unsafe.Pointer, mintUrl *C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	err := host.RefreshActiveKeysets(C.GoString(mintUrl))
+	if err != nil {
+		return 0
+	}
 	return 1
 }
 
