@@ -1277,9 +1277,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// - CloseData with fully-signed swap request ready for the mint
     /// - Err if no payment proof is stored, channel is closed, or validation fails
     pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<CloseData, BridgeError> {
-        // 1. Check if channel is closed
-        if self.host.is_closed(channel_id) {
-            return Err(BridgeError::ChannelClosed);
+        // 1. Check channel exists first (so we return "unknown channel" not "no payment proof")
+        if self.host.get_funding_and_params(channel_id).is_none() {
+            return Err(BridgeError::UnknownChannel);
         }
 
         // 2. Get the balance and signature from host
@@ -1290,19 +1290,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 BridgeError::InvalidRequest("no payment proof stored for channel".into())
             })?;
 
-        // 3. Get funding data
-        let funding_data = self
-            .host
-            .get_funding_and_params(channel_id)
-            .ok_or(BridgeError::UnknownChannel)?;
-
-        // 4. Build close data (without balance validation)
-        self.prepare_close_data_impl(
-            channel_id,
-            balance,
-            &signature,
-            funding_data,
-            false, // validate_balance_equals_amount_due
+        // 3. Delegate to prepare_close_data (no params/proofs for unilateral, no balance validation)
+        self.prepare_close_data(
+            channel_id, balance, &signature, None,  // no params - channel must already exist
+            None,  // no funding_proofs - channel must already exist
+            false, // don't validate_balance_equals_amount_due
         )
     }
 }
