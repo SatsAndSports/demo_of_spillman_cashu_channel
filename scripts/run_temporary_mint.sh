@@ -66,6 +66,22 @@ case "$MINT_TYPE" in
         
         "$MINT_BIN" --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" &
         MINT_PID=$!
+        
+        # Wait for mint to respond
+        # (CDK is pre-configured with sat, msat, usd keysets via dev-mint/config.dev.toml)
+        for i in {1..60}; do
+            if curl -s "http://localhost:$MINT_PORT/v1/info" > /dev/null 2>&1; then
+                VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
+                echo "MINT_READY_WITH_KEYSETS $VERSION (sat, msat, usd)" >&2
+                break
+            fi
+            if [ $i -eq 60 ]; then
+                echo "ERROR: CDK mint did not start within 30 seconds" >&2
+                exit 1
+            fi
+            sleep 0.5
+        done
+        
         wait "$MINT_PID"
         ;;
 
@@ -173,10 +189,8 @@ EOF
         ADMIN_NOSTR_NSEC="$NUTMIX_ADMIN_NSEC" \
             "$NUTMIX_SETUP_UNITS" $NUTMIX_UNITS
         
-        echo "NutMix ready on port $MINT_PORT" >&2
-
-        #sleep 1
-        #curl "http://localhost:$MINT_PORT"/v1/keysets | jq '.keysets[].unit'
+        VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
+        echo "MINT_READY_WITH_KEYSETS $VERSION ($NUTMIX_UNITS)" >&2
         
         # Block until compose exits or we're killed
         wait "$COMPOSE_PID"
@@ -263,7 +277,9 @@ EOF
         ADMIN_NOSTR_NSEC="$NUTMIX_ADMIN_NSEC" \
             "$NUTMIX_SETUP_UNITS" $NUTMIX_UNITS
         
-        echo "NutMix ready on port $MINT_PORT" >&2
+        VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
+        echo "MINT_READY_WITH_KEYSETS $VERSION ($NUTMIX_UNITS)" >&2
+        
         wait "$MINT_PID"
         ;;
 
