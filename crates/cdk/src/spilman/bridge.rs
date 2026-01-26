@@ -68,10 +68,16 @@ pub trait SpilmanHost {
         channel_id: &str,
     ) -> Option<(u64, String)>;
 
-    /// Get currently active keyset IDs for a mint and unit
+    /// Get active keyset IDs for a mint and unit
+    /// There is no requirement that this be up-to-date
+    /// If the bridge concludes that the ids might be
+    /// out of date, it may call 'refresh_active_keysets'
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
 
     /// Get full KeysetInfo JSON for a specific keyset
+    /// There is no requirement that this be complete
+    /// If the bridge concludes that the data maybe be
+    /// out of date, it may call 'refresh_active_keysets'
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
 
     /// Call the mint's /v1/swap endpoint
