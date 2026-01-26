@@ -128,6 +128,32 @@ def initialize_keysets():
         print("Payment validation may fail for new channels")
 
 
+def refresh_active_keysets(mint_url: str):
+    """Re-fetch keysets from mint to update active status in cache.
+    
+    Called when a swap fails (e.g., "Inactive Keyset" error) to refresh
+    the keyset cache before retrying.
+    """
+    print(f"  [Keyset] Refreshing keysets from {mint_url}...")
+    try:
+        resp = http_requests.get(f"{mint_url}/v1/keysets")
+        resp.raise_for_status()
+        keysets = resp.json()["keysets"]
+        
+        for k in keysets:
+            if k.get("unit") == "sat":
+                fetch_details_for_one_keyset(
+                    mint_url,
+                    k["id"],
+                    k["unit"],
+                    k.get("input_fee_ppk", 0),
+                    set_the_active_flag=k.get("active", False)
+                )
+        print(f"  [Keyset] Refresh complete, {len(keyset_cache)} keysets cached")
+    except Exception as e:
+        print(f"  [Keyset] Refresh failed: {e}")
+
+
 class AsciiArtHost:
     """
     SpilmanHost implementation for the ASCII Art service.
@@ -525,6 +551,223 @@ def ascii_art():
     })
 
 
+@app.route("/channel/<channel_id>/status")
+def channel_status(channel_id: str):
+    """Get channel status including balance and closed state."""
+    funding = channel_funding.get(channel_id)
+    if not funding:
+        return jsonify({"error": "unknown channel"}), 404
+    
+    params = json.loads(funding["params"])
+    payment = channel_largest_payment.get(channel_id, {})
+    closed_info = channel_closed.get(channel_id)
+    
+    return jsonify({
+        "channel_id": channel_id,
+        "capacity": params.get("capacity", 0),
+        "balance": payment.get("balance", 0),
+        "amount_due": host.get_amount_due(channel_id, None),
+        "closed": closed_info is not None,
+        "closed_amount": closed_info.get("balance") if closed_info else None,
+    })
+
+
+@app.route("/channel/<channel_id>/close", methods=["POST"])
+def cooperative_close(channel_id: str):
+    """Cooperative channel close - client provides balance and signature."""
+    data = request.get_json() or {}
+    
+    balance = data.get("balance")
+    signature = data.get("signature")
+    params = data.get("params")
+    funding_proofs = data.get("funding_proofs")
+    
+    if balance is None or not signature:
+        return jsonify({"error": "missing balance or signature"}), 400
+    
+    print(f"\n[CooperativeClose] Channel {channel_id[:16]}... balance={balance}")
+    
+    # Check if already closed - return idempotent response
+    if channel_id in channel_closed:
+        closed_info = channel_closed[channel_id]
+        if closed_info.get("balance") == balance:
+            print(f"  [CooperativeClose] Already closed at same balance, returning cached result")
+            return jsonify({
+                "success": True,
+                "channel_id": channel_id,
+                "already_closed": True,
+                "total_value": closed_info.get("receiver_sum", 0) + closed_info.get("sender_sum", 0),
+                "receiver_sum": closed_info.get("receiver_sum", 0),
+                "sender_sum": closed_info.get("sender_sum", 0),
+                "sender_proofs": json.loads(closed_info.get("sender_proofs", "[]")),
+            })
+        else:
+            return jsonify({
+                "error": "channel already closed at different balance",
+                "closed_amount": closed_info.get("balance"),
+                "requested_amount": balance,
+            }), 400
+    
+    # Build payment request for the bridge
+    payment_request = {
+        "channel_id": channel_id,
+        "balance": balance,
+        "signature": signature,
+    }
+    if params:
+        payment_request["params"] = params
+    if funding_proofs:
+        payment_request["funding_proofs"] = funding_proofs
+    
+    # Get close data from bridge
+    close_result_json = bridge.validate_and_prepare_cooperative_close(json.dumps(payment_request))
+    close_result = json.loads(close_result_json)
+    
+    if not close_result.get("success"):
+        error_msg = close_result.get("error", "validation failed")
+        print(f"  [CooperativeClose] Bridge error: {error_msg}")
+        return jsonify({"error": error_msg, "reason": error_msg}), 402
+    
+    # Get mint URL from funding or params
+    funding = channel_funding.get(channel_id)
+    if funding:
+        channel_params = json.loads(funding["params"])
+        mint_url = channel_params["mint"]
+    elif params:
+        mint_url = params.get("mint")
+    else:
+        return jsonify({"error": "no mint URL available"}), 400
+    
+    # Attempt swap with retry on error
+    max_attempts = 2
+    swap_response = None
+    
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            # Re-prepare close data after keyset refresh
+            close_result_json = bridge.validate_and_prepare_cooperative_close(json.dumps(payment_request))
+            close_result = json.loads(close_result_json)
+            if not close_result.get("success"):
+                return jsonify({"error": close_result.get("error")}), 402
+        
+        swap_request = close_result["swap_request"]
+        print(f"  [CooperativeClose] Submitting swap (attempt {attempt})")
+        
+        try:
+            swap_response_text = host.call_mint_swap(mint_url, json.dumps(swap_request))
+            swap_response = json.loads(swap_response_text)
+        except Exception as e:
+            print(f"  [CooperativeClose] Swap failed: {e}")
+            if attempt < max_attempts:
+                print(f"  [CooperativeClose] Refreshing keysets and retrying...")
+                refresh_active_keysets(mint_url)
+                continue
+            return jsonify({"error": str(e)}), 502
+        
+        if "error" in swap_response:
+            print(f"  [CooperativeClose] Mint error: {swap_response.get('error')}")
+            if attempt < max_attempts:
+                print(f"  [CooperativeClose] Refreshing keysets and retrying...")
+                refresh_active_keysets(mint_url)
+                continue
+            return jsonify({"error": f"mint error: {swap_response.get('error')}"}), 502
+        
+        break
+    
+    # Unblind and verify DLEQ
+    secrets_with_blinding = close_result["secrets_with_blinding"]
+    output_keyset_info = json.dumps(close_result["output_keyset_info"])
+    
+    # Get funding info for unblinding
+    if funding:
+        params_json = funding["params"]
+        keyset_info_json = funding["keyset_info"]
+        shared_secret = funding["shared_secret"]
+    else:
+        # New channel - compute from params
+        from cdk_spilman import compute_shared_secret as compute_ss
+        params_json = json.dumps(params)
+        keyset_id = params.get("keyset_id")
+        keyset_info_json = host.get_keyset_info(mint_url, keyset_id)
+        shared_secret = compute_ss(SECRET_KEY, params.get("alice_pubkey"))
+    
+    try:
+        unblind_result_json = unblind_and_verify_dleq(
+            json.dumps(swap_response.get("signatures", [])),
+            json.dumps(secrets_with_blinding),
+            params_json,
+            keyset_info_json,
+            shared_secret,
+            balance,
+            output_keyset_info
+        )
+        unblind_result = json.loads(unblind_result_json)
+    except Exception as e:
+        print(f"  [CooperativeClose] Unblind failed: {e}")
+        return jsonify({"error": f"unblind verification failed: {e}"}), 500
+    
+    # Mark channel as closed
+    channel_params = json.loads(params_json)
+    locktime = channel_params.get("locktime", 0)
+    host.mark_channel_closed(
+        channel_id,
+        locktime,
+        balance,
+        json.dumps(unblind_result["receiver_proofs"]),
+        json.dumps(unblind_result["sender_proofs"]),
+        unblind_result["receiver_sum_after_stage1"],
+        unblind_result["sender_sum_after_stage1"]
+    )
+    
+    print(f"  [CooperativeClose] SUCCESS! receiver={unblind_result['receiver_sum_after_stage1']}, "
+          f"sender={unblind_result['sender_sum_after_stage1']}")
+    
+    return jsonify({
+        "success": True,
+        "channel_id": channel_id,
+        "already_closed": False,
+        "total_value": unblind_result["receiver_sum_after_stage1"] + unblind_result["sender_sum_after_stage1"],
+        "receiver_sum": unblind_result["receiver_sum_after_stage1"],
+        "sender_sum": unblind_result["sender_sum_after_stage1"],
+        "sender_proofs": unblind_result["sender_proofs"],
+    })
+
+
+@app.route("/channel/<channel_id>/unilateral-close", methods=["POST"])
+def unilateral_close_endpoint(channel_id: str):
+    """Server-initiated channel close using stored payment proof."""
+    print(f"\n[UnilateralClose] Channel {channel_id[:16]}...")
+    
+    # Check if already closed - return idempotent response
+    if channel_id in channel_closed:
+        closed_info = channel_closed[channel_id]
+        print(f"  [UnilateralClose] Already closed, returning cached result")
+        return jsonify({
+            "success": True,
+            "channel_id": channel_id,
+            "already_closed": True,
+            "earnedBeforeStage2Fees": closed_info.get("receiver_sum", 0),
+        })
+    
+    # Check if channel exists
+    if channel_id not in channel_funding:
+        return jsonify({"error": "unknown channel"}), 404
+    
+    # Use existing close_channel function which has retry logic
+    result = close_channel(channel_id)
+    
+    if not result.get("success"):
+        error = result.get("error", "close failed")
+        return jsonify({"error": error}), 400
+    
+    return jsonify({
+        "success": True,
+        "channel_id": channel_id,
+        "already_closed": False,
+        "earnedBeforeStage2Fees": result.get("receiver_sum", 0),
+    })
+
+
 def print_stats_table(sig=None, frame=None):
     """Print ASCII table of all channel stats. Can be called via Ctrl+\\ (SIGQUIT)."""
     print()
@@ -572,7 +815,10 @@ def print_stats_table(sig=None, frame=None):
 
 
 def close_channel(channel_id: str) -> dict:
-    """Close a single channel unilaterally using the largest stored payment."""
+    """Close a single channel unilaterally using the largest stored payment.
+    
+    Includes retry logic: if the swap fails, refreshes keysets and retries once.
+    """
     print(f"\n[Close] Attempting to close channel {channel_id[:16]}...")
     
     # Check if already closed
@@ -583,40 +829,61 @@ def close_channel(channel_id: str) -> dict:
     if channel_id not in channel_largest_payment:
         return {"success": False, "error": "no payment recorded for channel"}
     
-    # Get the close data from the bridge
-    close_result_json = bridge.create_unilateral_close_data(channel_id)
-    close_result = json.loads(close_result_json)
-    
-    if not close_result["success"]:
-        print(f"  [Close] Bridge error: {close_result.get('error')}")
-        return close_result
-    
-    swap_request = close_result["swap_request"]
-    expected_total = close_result["expected_total"]
-    secrets_with_blinding = close_result["secrets_with_blinding"]
-    output_keyset_info = json.dumps(close_result["output_keyset_info"])
-    balance = channel_largest_payment[channel_id]["balance"]
-    
-    print(f"  [Close] Swap request created, expected_total={expected_total}")
-    
-    # Get channel params for mint URL
+    # Get channel params for mint URL (needed for retry)
     funding = channel_funding.get(channel_id)
     if not funding:
         return {"success": False, "error": "no funding data for channel"}
     
     params = json.loads(funding["params"])
     mint_url = params["mint"]
+    balance = channel_largest_payment[channel_id]["balance"]
     
-    # Submit swap to mint via host hook
-    print(f"  [Close] Submitting swap to mint: {mint_url}")
-    try:
-        swap_response_text = host.call_mint_swap(mint_url, json.dumps(swap_request))
-        swap_response = json.loads(swap_response_text)
-    except Exception as e:
-        print(f"  [Close] Mint swap failed: {e}")
-        return {"success": False, "error": str(e)}
+    # Attempt swap with retry on error
+    max_attempts = 2
+    swap_response = None
+    close_result = None
+    
+    for attempt in range(1, max_attempts + 1):
+        # Get the close data from the bridge
+        close_result_json = bridge.create_unilateral_close_data(channel_id)
+        close_result = json.loads(close_result_json)
+        
+        if not close_result["success"]:
+            print(f"  [Close] Bridge error: {close_result.get('error')}")
+            return close_result
+        
+        swap_request = close_result["swap_request"]
+        print(f"  [Close] Swap request created (attempt {attempt}), expected_total={close_result['expected_total']}")
+        
+        # Submit swap to mint
+        print(f"  [Close] Submitting swap to mint: {mint_url}")
+        try:
+            swap_response_text = host.call_mint_swap(mint_url, json.dumps(swap_request))
+            swap_response = json.loads(swap_response_text)
+        except Exception as e:
+            print(f"  [Close] Mint swap failed: {e}")
+            if attempt < max_attempts:
+                print(f"  [Close] Refreshing keysets and retrying...")
+                refresh_active_keysets(mint_url)
+                continue
+            return {"success": False, "error": str(e)}
+        
+        # Check for error in response
+        if "error" in swap_response:
+            print(f"  [Close] Mint returned error: {swap_response.get('error')}")
+            if attempt < max_attempts:
+                print(f"  [Close] Refreshing keysets and retrying...")
+                refresh_active_keysets(mint_url)
+                continue
+            return {"success": False, "error": f"mint error: {swap_response.get('error')}"}
+        
+        # Success - break out of retry loop
+        break
     
     # Unblind and verify DLEQ
+    secrets_with_blinding = close_result["secrets_with_blinding"]
+    output_keyset_info = json.dumps(close_result["output_keyset_info"])
+    
     try:
         unblind_result_json = unblind_and_verify_dleq(
             json.dumps(swap_response.get("signatures", [])),
