@@ -366,6 +366,33 @@ func initializeKeysets() {
 	log.Printf("Cached %d keysets\n", len(keysetCache))
 }
 
+func refreshActiveKeysets(mintUrl string) {
+	log.Printf("  [Keyset] Refreshing keysets from %s...\n", mintUrl)
+	resp, err := http.Get(mintUrl + "/v1/keysets")
+	if err != nil {
+		log.Printf("  [Keyset] Refresh failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		Keysets []struct {
+			Id          string `json:"id"`
+			Unit        string `json:"unit"`
+			Active      bool   `json:"active"`
+			InputFeePpk uint64 `json:"input_fee_ppk"`
+		} `json:"keysets"`
+	}
+	json.NewDecoder(resp.Body).Decode(&data)
+
+	for _, k := range data.Keysets {
+		if k.Unit == "sat" {
+			fetchKeysetInfo(mintUrl, k.Id, k.Unit, k.InputFeePpk, k.Active)
+		}
+	}
+	log.Printf("  [Keyset] Refresh complete, %d keysets cached\n", len(keysetCache))
+}
+
 // ============================================================================
 // Client Helpers
 // ============================================================================
@@ -575,12 +602,16 @@ func closeChannel(id string, bridge *spilman.Bridge, host *AsciiArtHost) (uint64
 		return 0, fmt.Errorf("no funding data for channel")
 	}
 
-	// 1. Get close data from bridge
-	resJson, err := bridge.CreateUnilateralCloseData(id)
-	if err != nil {
-		return 0, fmt.Errorf("bridge error: %v", err)
+	// Get mint URL from funding params
+	var params struct {
+		Mint     string `json:"mint"`
+		Locktime uint64 `json:"locktime"`
 	}
+	json.Unmarshal([]byte(funding["params"]), &params)
+	balance := payment["balance"].(uint64)
 
+	// Attempt swap with retry on error
+	maxAttempts := 2
 	var res struct {
 		Success               bool                   `json:"success"`
 		Error                 string                 `json:"error"`
@@ -589,36 +620,58 @@ func closeChannel(id string, bridge *spilman.Bridge, host *AsciiArtHost) (uint64
 		Secrets_with_blinding []interface{}          `json:"secrets_with_blinding"`
 		Output_keyset_info    map[string]interface{} `json:"output_keyset_info"`
 	}
-	json.Unmarshal([]byte(resJson), &res)
-
-	if !res.Success {
-		return 0, fmt.Errorf("bridge validation failed: %s", res.Error)
-	}
-
-	// 2. Submit swap to mint via host hook
-	var params struct {
-		Mint     string `json:"mint"`
-		Locktime uint64 `json:"locktime"`
-	}
-	json.Unmarshal([]byte(funding["params"]), &params)
-
-	log.Printf("  [Close] Submitting swap to mint: %s\n", params.Mint)
-	swapReqB, _ := json.Marshal(res.Swap_request)
-	swapRespBody, err := host.CallMintSwap(params.Mint, string(swapReqB))
-	if err != nil {
-		return 0, err
-	}
-
 	var swapResp struct {
 		Signatures []interface{} `json:"signatures"`
+		Error      string        `json:"error"`
 	}
-	json.Unmarshal([]byte(swapRespBody), &swapResp)
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// 1. Get close data from bridge
+		resJson, err := bridge.CreateUnilateralCloseData(id)
+		if err != nil {
+			return 0, fmt.Errorf("bridge error: %v", err)
+		}
+
+		json.Unmarshal([]byte(resJson), &res)
+		if !res.Success {
+			return 0, fmt.Errorf("bridge validation failed: %s", res.Error)
+		}
+
+		// 2. Submit swap to mint
+		log.Printf("  [Close] Submitting swap to mint (attempt %d): %s\n", attempt, params.Mint)
+		swapReqB, _ := json.Marshal(res.Swap_request)
+		swapRespBody, err := host.CallMintSwap(params.Mint, string(swapReqB))
+		if err != nil {
+			log.Printf("  [Close] Swap failed: %v\n", err)
+			if attempt < maxAttempts {
+				log.Printf("  [Close] Refreshing keysets and retrying...\n")
+				refreshActiveKeysets(params.Mint)
+				continue
+			}
+			return 0, err
+		}
+
+		json.Unmarshal([]byte(swapRespBody), &swapResp)
+
+		// Check for error in response
+		if swapResp.Error != "" {
+			log.Printf("  [Close] Mint returned error: %s\n", swapResp.Error)
+			if attempt < maxAttempts {
+				log.Printf("  [Close] Refreshing keysets and retrying...\n")
+				refreshActiveKeysets(params.Mint)
+				continue
+			}
+			return 0, fmt.Errorf("mint error: %s", swapResp.Error)
+		}
+
+		// Success - break out of retry loop
+		break
+	}
 
 	// 3. Unblind and verify DLEQ
 	sigsJ, _ := json.Marshal(swapResp.Signatures)
 	swbJ, _ := json.Marshal(res.Secrets_with_blinding)
 	okinfoJ, _ := json.Marshal(res.Output_keyset_info)
-	balance := payment["balance"].(uint64)
 
 	unblindResJ, err := spilman.UnblindAndVerifyDleq(
 		string(sigsJ),
@@ -627,7 +680,7 @@ func closeChannel(id string, bridge *spilman.Bridge, host *AsciiArtHost) (uint64
 		funding["keyset"],
 		funding["secret"],
 		balance,
-		nil, // Use output_keyset from swap if different? Bridge handles this usually.
+		nil,
 	)
 	if err != nil {
 		// Try again with explicit output keyset if needed
@@ -788,15 +841,324 @@ func runServer() {
 
 	http.HandleFunc("/channel/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) >= 4 && parts[3] == "close" {
-			id := parts[2]
-			earned, err := closeChannel(id, bridge, host)
+		if len(parts) < 3 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		channelId := parts[2]
+		action := ""
+		if len(parts) >= 4 {
+			action = parts[3]
+		}
+
+		switch action {
+		case "status":
+			// GET /channel/{id}/status
+			mu.Lock()
+			funding, hasFunding := channelFunding[channelId]
+			payment := channelBalance[channelId]
+			closedInfoRaw, isClosed := channelClosed[channelId]
+			mu.Unlock()
+
+			if !hasFunding {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
+				return
+			}
+
+			var params struct {
+				Capacity uint64 `json:"capacity"`
+			}
+			json.Unmarshal([]byte(funding["params"]), &params)
+
+			balance := uint64(0)
+			if payment != nil {
+				if b, ok := payment["balance"].(uint64); ok {
+					balance = b
+				}
+			}
+
+			var closedAmount interface{} = nil
+			if isClosed {
+				if closedInfo, ok := closedInfoRaw.(map[string]interface{}); ok {
+					closedAmount = closedInfo["balance"]
+				}
+			}
+
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"channel_id":    channelId,
+				"capacity":      params.Capacity,
+				"balance":       balance,
+				"amount_due":    host.GetAmountDue(channelId, nil),
+				"closed":        isClosed,
+				"closed_amount": closedAmount,
+			})
+
+		case "close":
+			// POST /channel/{id}/close - Cooperative close
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			var req struct {
+				Balance       uint64      `json:"balance"`
+				Signature     string      `json:"signature"`
+				Params        interface{} `json:"params"`
+				FundingProofs interface{} `json:"funding_proofs"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+
+			if req.Signature == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "missing signature"})
+				return
+			}
+
+			log.Printf("\n[CooperativeClose] Channel %s... balance=%d\n", channelId[:min(16, len(channelId))], req.Balance)
+
+			// Check if already closed
+			mu.Lock()
+			closedInfoRaw, isClosed := channelClosed[channelId]
+			funding, hasFunding := channelFunding[channelId]
+			mu.Unlock()
+
+			if isClosed {
+				closedInfo, _ := closedInfoRaw.(map[string]interface{})
+				if closedInfo["balance"] == req.Balance {
+					log.Printf("  [CooperativeClose] Already closed at same balance, returning cached result\n")
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"success":        true,
+						"channel_id":     channelId,
+						"already_closed": true,
+						"total_value":    closedInfo["receiver_sum"].(uint64) + closedInfo["sender_sum"].(uint64),
+						"receiver_sum":   closedInfo["receiver_sum"],
+						"sender_sum":     closedInfo["sender_sum"],
+						"sender_proofs":  json.RawMessage(closedInfo["sender_proofs"].(string)),
+					})
+					return
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":            "channel already closed at different balance",
+					"closed_amount":    closedInfo["balance"],
+					"requested_amount": req.Balance,
+				})
+				return
+			}
+
+			// Build payment request for bridge
+			paymentRequest := map[string]interface{}{
+				"channel_id": channelId,
+				"balance":    req.Balance,
+				"signature":  req.Signature,
+			}
+			if req.Params != nil {
+				paymentRequest["params"] = req.Params
+			}
+			if req.FundingProofs != nil {
+				paymentRequest["funding_proofs"] = req.FundingProofs
+			}
+			paymentRequestJson, _ := json.Marshal(paymentRequest)
+
+			// Get mint URL
+			var mintUrl string
+			if hasFunding {
+				var params struct {
+					Mint string `json:"mint"`
+				}
+				json.Unmarshal([]byte(funding["params"]), &params)
+				mintUrl = params.Mint
+			} else if req.Params != nil {
+				paramsJson, _ := json.Marshal(req.Params)
+				var params struct {
+					Mint string `json:"mint"`
+				}
+				json.Unmarshal(paramsJson, &params)
+				mintUrl = params.Mint
+			}
+			if mintUrl == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "no mint URL available"})
+				return
+			}
+
+			// Attempt close with retry
+			maxAttempts := 2
+			var closeRes struct {
+				Success               bool                   `json:"success"`
+				Error                 string                 `json:"error"`
+				Swap_request          interface{}            `json:"swap_request"`
+				Secrets_with_blinding []interface{}          `json:"secrets_with_blinding"`
+				Output_keyset_info    map[string]interface{} `json:"output_keyset_info"`
+			}
+			var swapResp struct {
+				Signatures []interface{} `json:"signatures"`
+				Error      string        `json:"error"`
+			}
+
+			for attempt := 1; attempt <= maxAttempts; attempt++ {
+				closeResJson, err := bridge.ValidateAndPrepareCooperativeClose(string(paymentRequestJson))
+				if err != nil {
+					w.WriteHeader(http.StatusPaymentRequired)
+					json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error(), "reason": err.Error()})
+					return
+				}
+				json.Unmarshal([]byte(closeResJson), &closeRes)
+
+				if !closeRes.Success {
+					w.WriteHeader(http.StatusPaymentRequired)
+					json.NewEncoder(w).Encode(map[string]interface{}{"error": closeRes.Error, "reason": closeRes.Error})
+					return
+				}
+
+				log.Printf("  [CooperativeClose] Submitting swap (attempt %d)\n", attempt)
+				swapReqB, _ := json.Marshal(closeRes.Swap_request)
+				swapRespBody, err := host.CallMintSwap(mintUrl, string(swapReqB))
+				if err != nil {
+					log.Printf("  [CooperativeClose] Swap failed: %v\n", err)
+					if attempt < maxAttempts {
+						log.Printf("  [CooperativeClose] Refreshing keysets and retrying...\n")
+						refreshActiveKeysets(mintUrl)
+						continue
+					}
+					w.WriteHeader(http.StatusBadGateway)
+					json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+					return
+				}
+
+				json.Unmarshal([]byte(swapRespBody), &swapResp)
+				if swapResp.Error != "" {
+					log.Printf("  [CooperativeClose] Mint error: %s\n", swapResp.Error)
+					if attempt < maxAttempts {
+						log.Printf("  [CooperativeClose] Refreshing keysets and retrying...\n")
+						refreshActiveKeysets(mintUrl)
+						continue
+					}
+					w.WriteHeader(http.StatusBadGateway)
+					json.NewEncoder(w).Encode(map[string]string{"error": "mint error: " + swapResp.Error})
+					return
+				}
+				break
+			}
+
+			// Unblind and verify DLEQ
+			sigsJ, _ := json.Marshal(swapResp.Signatures)
+			swbJ, _ := json.Marshal(closeRes.Secrets_with_blinding)
+			okinfoJ, _ := json.Marshal(closeRes.Output_keyset_info)
+
+			var paramsJson, keysetJson, sharedSecret string
+			if hasFunding {
+				paramsJson = funding["params"]
+				keysetJson = funding["keyset"]
+				sharedSecret = funding["secret"]
+			} else {
+				// New channel - use provided params
+				paramsBytes, _ := json.Marshal(req.Params)
+				paramsJson = string(paramsBytes)
+				var p struct {
+					KeysetId    string `json:"keyset_id"`
+					AlicePubkey string `json:"alice_pubkey"`
+				}
+				json.Unmarshal(paramsBytes, &p)
+				keysetJson, _ = host.GetKeysetInfo(mintUrl, p.KeysetId)
+				sharedSecret, _ = spilman.ComputeSharedSecret(SERVER_SECRET_KEY, p.AlicePubkey)
+			}
+
+			outputKeysetStr := string(okinfoJ)
+			unblindResJ, err := spilman.UnblindAndVerifyDleq(
+				string(sigsJ), string(swbJ), paramsJson, keysetJson, sharedSecret, req.Balance, &outputKeysetStr,
+			)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"error": "unblind verification failed: " + err.Error()})
+				return
+			}
+
+			var unblindRes struct {
+				Receiver_proofs           []interface{} `json:"receiver_proofs"`
+				Sender_proofs             []interface{} `json:"sender_proofs"`
+				Receiver_sum_after_stage1 uint64        `json:"receiver_sum_after_stage1"`
+				Sender_sum_after_stage1   uint64        `json:"sender_sum_after_stage1"`
+			}
+			json.Unmarshal([]byte(unblindResJ), &unblindRes)
+
+			// Mark as closed
+			var channelParams struct {
+				Locktime uint64 `json:"locktime"`
+			}
+			json.Unmarshal([]byte(paramsJson), &channelParams)
+
+			receiverProofsJson, _ := json.Marshal(unblindRes.Receiver_proofs)
+			senderProofsJson, _ := json.Marshal(unblindRes.Sender_proofs)
+			host.MarkChannelClosed(
+				channelId, channelParams.Locktime, req.Balance,
+				string(receiverProofsJson), string(senderProofsJson),
+				unblindRes.Receiver_sum_after_stage1, unblindRes.Sender_sum_after_stage1,
+			)
+
+			log.Printf("  [CooperativeClose] SUCCESS! receiver=%d, sender=%d\n",
+				unblindRes.Receiver_sum_after_stage1, unblindRes.Sender_sum_after_stage1)
+
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":        true,
+				"channel_id":     channelId,
+				"already_closed": false,
+				"total_value":    unblindRes.Receiver_sum_after_stage1 + unblindRes.Sender_sum_after_stage1,
+				"receiver_sum":   unblindRes.Receiver_sum_after_stage1,
+				"sender_sum":     unblindRes.Sender_sum_after_stage1,
+				"sender_proofs":  unblindRes.Sender_proofs,
+			})
+
+		case "unilateral-close":
+			// POST /channel/{id}/unilateral-close - Server-initiated close
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			log.Printf("\n[UnilateralClose] Channel %s...\n", channelId[:min(16, len(channelId))])
+
+			// Check if already closed
+			mu.Lock()
+			closedInfoRaw, isClosed := channelClosed[channelId]
+			_, hasFunding := channelFunding[channelId]
+			mu.Unlock()
+
+			if isClosed {
+				closedInfo, _ := closedInfoRaw.(map[string]interface{})
+				log.Printf("  [UnilateralClose] Already closed, returning cached result\n")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success":                true,
+					"channel_id":             channelId,
+					"already_closed":         true,
+					"earnedBeforeStage2Fees": closedInfo["receiver_sum"],
+				})
+				return
+			}
+
+			if !hasFunding {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
+				return
+			}
+
+			earned, err := closeChannel(channelId, bridge, host)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "channel_id": id, "earned": earned})
+
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":                true,
+				"channel_id":             channelId,
+				"already_closed":         false,
+				"earnedBeforeStage2Fees": earned,
+			})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
 	})
 
@@ -877,6 +1239,7 @@ func runClient(messages []string) {
 	}
 	pJson, _ := json.Marshal(params)
 	cid, _ := spilman.ChannelParametersGetChannelId(string(pJson), ss, string(kiJson))
+	log.Printf("  Full channel ID: %s\n", cid)
 
 	log.Println("[6/8] Creating funding outputs...")
 	fJson, _ := spilman.CreateFundingOutputs(string(pJson), alice.Secret, string(kiJson))

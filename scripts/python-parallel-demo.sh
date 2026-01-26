@@ -95,7 +95,43 @@ for i in "${!PIDS[@]}"; do
     fi
 done
 
-# 8. Final Result
+# 8. Close all channels via unilateral-close endpoint
+echo ""
+echo "--- Closing all channels ---"
+# Get channel IDs from client logs (each client prints "Channel ID: <hex>...")
+CLOSE_COUNT=0
+CLOSE_FAILED=0
+
+for i in $(seq 1 $CLIENT_COUNT); do
+    LOG="$LOG_DIR/client_$i.log"
+    # Extract full channel ID from client log
+    CHANNEL_ID=$(grep -oP 'Full channel ID: \K[a-f0-9]+' "$LOG" | head -1 || true)
+    
+    if [ -n "$CHANNEL_ID" ]; then
+        echo "Closing channel ${CHANNEL_ID:0:16}... (from client $i)"
+        CLOSE_RESULT=$(curl -s -X POST "http://localhost:$SERVER_PORT/channel/$CHANNEL_ID/unilateral-close" 2>/dev/null || echo '{"success":false}')
+        if echo "$CLOSE_RESULT" | grep -q '"success":\s*true'; then
+            EARNED=$(echo "$CLOSE_RESULT" | grep -oP '"earnedBeforeStage2Fees":\s*\K[0-9]+' || echo "?")
+            echo "  Closed! Earned $EARNED sat"
+            CLOSE_COUNT=$((CLOSE_COUNT + 1))
+        else
+            echo "  Failed: $CLOSE_RESULT"
+            CLOSE_FAILED=$((CLOSE_FAILED + 1))
+        fi
+    else
+        echo "  No channel ID found in client $i log"
+    fi
+done
+
+echo ""
+echo "Closed $CLOSE_COUNT/$CLIENT_COUNT channels ($CLOSE_FAILED failed)"
+
+# If any closes failed, mark test as failed
+if [ $CLOSE_FAILED -gt 0 ]; then
+    SUCCESS=false
+fi
+
+# 9. Final Result
 if [ "$SUCCESS" = true ]; then
     echo ""
     echo "***********************************"

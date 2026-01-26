@@ -255,6 +255,7 @@ def main():
         json.dumps(keyset_info)
     )
     print(f"  Channel ID: {channel_id[:24]}...")
+    print(f"  Full channel ID: {channel_id}")
     print(f"  Capacity:   {capacity} sat")
     print()
     
