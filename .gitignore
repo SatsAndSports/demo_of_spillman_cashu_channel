@@ -35,3 +35,6 @@ AGENTS.md
 
 # Test logs
 testing/
+
+# WASM build sentinel
+.wasm-dev-built
