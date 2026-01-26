@@ -9,7 +9,13 @@
 #   ./scripts/docker-test.sh build     # Just build the image
 #
 # Docker layer caching handles rebuilds automatically.
-# Only git-tracked files at HEAD are included.
+#
+# Build includes:
+#   - All committed files at HEAD
+#   - Uncommitted modifications to tracked files (via git stash create)
+# Build does NOT include:
+#   - Untracked files (files never added to git)
+#   - Files in .gitignore
 
 set -e
 
@@ -20,8 +26,11 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
 build_image() {
-    echo "Building test image from git HEAD..."
-    git archive --format=tar HEAD | docker build -f scripts/Dockerfile.test -t "$IMAGE_NAME" -
+    # Use git stash create to include uncommitted changes to tracked files.
+    # If working tree is clean, stash create returns empty, so we fall back to HEAD.
+    STASH_COMMIT=$(git stash create)
+    echo "Building test image from ${STASH_COMMIT:-HEAD}..."
+    git archive --format=tar "${STASH_COMMIT:-HEAD}" | docker build -f scripts/Dockerfile.test -t "$IMAGE_NAME" -
 }
 
 case "${1:-help}" in

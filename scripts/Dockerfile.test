@@ -1,7 +1,7 @@
 # CDK Spilman Channel Tests
 #
-# Build:
-#   git archive HEAD | docker build -f scripts/Dockerfile.test -t cdk-test -
+# Build (via docker-test.sh, includes uncommitted changes to tracked files):
+#   ./scripts/docker-test.sh build
 #
 # Run:
 #   ./scripts/docker-test.sh [cdk|nutmix|all]
