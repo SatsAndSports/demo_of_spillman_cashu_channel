@@ -1003,7 +1003,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
     }
 
-    /// Internal helper for creating close data given a balance and signature.
+    /// Implementation helper for prepare_close_data.
     ///
     /// This contains the shared logic between cooperative and unilateral close:
     /// - Parse funding data
@@ -1018,7 +1018,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// * `signature` - Alice's signature authorizing this balance
     /// * `funding_data` - Tuple of (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
     /// * `validate_balance_equals_amount_due` - If true, verify balance == amount_due (for cooperative close)
-    fn create_close_data_internal(
+    fn prepare_close_data_impl(
         &self,
         channel_id: &str,
         balance: u64,
@@ -1185,6 +1185,47 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         })
     }
 
+    /// Prepare close data for a channel given balance and signature.
+    ///
+    /// Handles both known channels (funding already stored) and unknown channels
+    /// (params/funding_proofs provided for validation).
+    ///
+    /// This is the shared helper used by both cooperative and unilateral close.
+    fn prepare_close_data(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
+        validate_balance_equals_amount_due: bool,
+    ) -> Result<CloseData, BridgeError> {
+        // 1. Check if channel is closed
+        if self.host.is_closed(channel_id) {
+            return Err(BridgeError::ChannelClosed);
+        }
+
+        // 2. Get or validate funding
+        let funding_data = match self.host.get_funding_and_params(channel_id) {
+            Some(f) => f,
+            None => {
+                // Unknown channel - must provide params and funding_proofs
+                let p = params.ok_or(BridgeError::UnknownChannel)?;
+                let fp = funding_proofs.ok_or(BridgeError::UnknownChannel)?;
+                self.validate_and_save_new_channel(channel_id, p, fp)?
+            }
+        };
+
+        // 3. Build close data
+        self.prepare_close_data_impl(
+            channel_id,
+            balance,
+            signature,
+            funding_data,
+            validate_balance_equals_amount_due,
+        )
+    }
+
     /// Create the data needed to close a channel (cooperative close)
     ///
     /// This validates the payment (signature, balance, etc.) and if valid,
@@ -1212,35 +1253,13 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::InvalidRequest("missing signature".into()));
         }
 
-        let channel_id = &payment.channel_id;
-
-        // 2. Check if channel is closed
-        if self.host.is_closed(channel_id) {
-            return Err(BridgeError::ChannelClosed);
-        }
-
-        // 3. Get or validate funding
-        let funding_data = match self.host.get_funding_and_params(channel_id) {
-            Some(f) => f,
-            None => {
-                // Unknown channel - must provide params and funding_proofs
-                let params_val = payment.params.as_ref().ok_or(BridgeError::UnknownChannel)?;
-                let funding_proofs = payment
-                    .funding_proofs
-                    .as_ref()
-                    .ok_or(BridgeError::UnknownChannel)?;
-
-                // Perform full validation
-                self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?
-            }
-        };
-
-        // 4. Use internal helper with balance validation enabled
-        self.create_close_data_internal(
-            channel_id,
+        // 2. Delegate to helper
+        self.prepare_close_data(
+            &payment.channel_id,
             payment.balance,
             &payment.signature,
-            funding_data,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
             true, // validate_balance_equals_amount_due
         )
     }
@@ -1277,8 +1296,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .get_funding_and_params(channel_id)
             .ok_or(BridgeError::UnknownChannel)?;
 
-        // 4. Use internal helper with balance validation disabled
-        self.create_close_data_internal(
+        // 4. Build close data (without balance validation)
+        self.prepare_close_data_impl(
             channel_id,
             balance,
             &signature,
