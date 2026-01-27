@@ -314,7 +314,7 @@ export async function mintFundedChannel(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       amount: fundingOutputs.funding_token_nominal,
-      unit: 'sat',
+      unit: unit,
     }),
   });
   const quote = await quoteRes.json();

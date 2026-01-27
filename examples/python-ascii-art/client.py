@@ -197,10 +197,9 @@ def main():
         print("Make sure the server is running: python server.py")
         sys.exit(1)
     
-    # Use mint from server if provided
-    if "mint" in server_params:
-        MINT_URL = server_params["mint"]
-        print(f"  Using mint from server: {MINT_URL}")
+    # Use mint from server params
+    MINT_URL = next(iter(server_params["mints_units_keysets"]))
+    print(f"  Using mint from server: {MINT_URL}")
     
     charlie_pubkey = server_params["receiver_pubkey"]
     print(f"  Server pubkey: {charlie_pubkey[:24]}...")

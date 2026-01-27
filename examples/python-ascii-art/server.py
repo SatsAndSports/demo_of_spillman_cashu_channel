@@ -36,7 +36,33 @@ app = Flask(__name__)
 SECRET_KEY = os.environ.get("SERVER_SECRET_KEY") or secrets.token_hex(32)
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 PORT = int(os.environ.get("PORT", "5000"))
-PRICE_PER_CHAR = 1  # 1 sat per character
+# Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
+ALL_PRICING = {
+    "sat":  {"per_char": 1,    "minCapacity": 10},
+    "msat": {"per_char": 1000, "minCapacity": 10000},  # 1 sat = 1000 msat
+    "usd":  {"per_char": 1,    "minCapacity": 10},     # 1 cent per char
+}
+
+
+def get_active_pricing():
+    """Returns pricing filtered to only units that have active keysets in the mint."""
+    active_units = {data["unit"] for data in keyset_cache.values() if data.get("active")}
+    return {u: p for u, p in ALL_PRICING.items() if u in active_units}
+
+
+def get_mints_units_keysets():
+    """Returns {mint_url: {unit: [keyset_id, ...]}} for all active keysets."""
+    result = {}
+    for (mint, kid), data in keyset_cache.items():
+        if not data.get("active"):
+            continue
+        if mint not in result:
+            result[mint] = {}
+        unit = data["unit"]
+        if unit not in result[mint]:
+            result[mint][unit] = []
+        result[mint][unit].append(kid)
+    return result
 
 # In-memory stores
 channel_funding = {}   # channel_id -> {params, proofs, shared_secret, keyset_info}
@@ -113,7 +139,7 @@ def initialize_keysets():
         keysets = resp.json()["keysets"]
         
         for k in keysets:
-            if k["unit"] == "sat":
+            if k["unit"] in ALL_PRICING:
                 fetch_details_for_one_keyset(
                     MINT_URL, 
                     k["id"], 
@@ -141,7 +167,7 @@ def refresh_active_keysets(mint_url: str):
         keysets = resp.json()["keysets"]
         
         for k in keysets:
-            if k.get("unit") == "sat":
+            if k.get("unit") in ALL_PRICING:
                 fetch_details_for_one_keyset(
                     mint_url,
                     k["id"],
@@ -282,7 +308,13 @@ class AsciiArtHost:
             except Exception as e:
                 print(f"  [Bridge] Error parsing context: {e}")
 
-        return total_chars * PRICE_PER_CHAR
+        # Look up unit from stored channel params
+        funding = channel_funding.get(channel_id)
+        if funding:
+            params = json.loads(funding["params"])
+            unit_pricing = ALL_PRICING.get(params.get("unit", "sat"), ALL_PRICING["sat"])
+            return total_chars * unit_pricing["per_char"]
+        return total_chars * ALL_PRICING["sat"]["per_char"]
     
     def record_payment(
         self,
@@ -349,9 +381,7 @@ class AsciiArtHost:
         """
         return json.dumps({
             "min_expiry_in_seconds": 3600,
-            "pricing": {
-                "sat": {"minCapacity": 10}
-            }
+            "pricing": get_active_pricing(),
         })
     
     def now_seconds(self) -> int:
@@ -482,13 +512,8 @@ def get_params():
     """Return server pubkey and pricing info for channel setup."""
     return jsonify({
         "receiver_pubkey": host.pubkey,
-        "pricing": {
-            "sat": {
-                "per_char": PRICE_PER_CHAR,
-                "minCapacity": 10
-            }
-        },
-        "mint": MINT_URL,
+        "pricing": get_active_pricing(),
+        "mints_units_keysets": get_mints_units_keysets(),
         "min_expiry_in_seconds": 3600,
     })
 
@@ -537,8 +562,14 @@ def ascii_art():
         return response, 402
     
     # Payment accepted - generate ASCII art
-    cost = len(message) * PRICE_PER_CHAR
     payment_info = result.get("header", {})
+    # Look up unit-specific pricing from channel params
+    funding = channel_funding.get(payment_info.get("channel_id", ""))
+    unit_pricing = ALL_PRICING["sat"]  # default
+    if funding:
+        params = json.loads(funding["params"])
+        unit_pricing = ALL_PRICING.get(params.get("unit", "sat"), ALL_PRICING["sat"])
+    cost = len(message) * unit_pricing["per_char"]
     print(f"  [Payment] ACCEPTED: cost={cost} balance={payment_info.get('balance')}/{payment_info.get('capacity')}")
     
     art = pyfiglet.figlet_format(message)
@@ -803,7 +834,9 @@ if __name__ == "__main__":
     print(f"Server pubkey: {host.pubkey}")
     print(f"Mint URL:      {MINT_URL}")
     print(f"Mint version:  {get_mint_version(MINT_URL)}")
-    print(f"Pricing:       {PRICE_PER_CHAR} sat per character")
+    active = get_active_pricing()
+    pricing_str = ", ".join(f"{u}={p['per_char']}/char" for u, p in active.items())
+    print(f"Pricing:       {pricing_str or '(no active units)'}")
     print(f"Listening on:  http://0.0.0.0:{PORT}")
     print()
     print("Endpoints:")
