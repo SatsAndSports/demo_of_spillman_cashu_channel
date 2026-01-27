@@ -104,7 +104,8 @@ channel:
 |----------|-------------|
 | `GET /channel/params` | Returns receiver pubkey, pricing, approved mints/keysets |
 | `GET /channel/:id/status` | Returns channel capacity, balance, usage, amount_due |
-| `POST /channel/:id/close` | Close channel and settle with mint |
+| `POST /channel/:id/close` | Cooperative close: client provides final balance + signature |
+| `POST /channel/:id/unilateral-close` | Server-initiated unilateral close using stored payment proof |
 | `GET /channel/stats?window=N` | Count of active channels in last N seconds |
 | `GET /videos` | List registered videos with metadata |
 | `GET /<sha256>` | Fetch blob (requires payment header) |
@@ -183,7 +184,7 @@ Error types:
 | `channelFunding` | channel_id | paramsJson, fundingProofsJson, sharedSecret, keysetInfoJson |
 | `channelBalance` | channel_id | balance, signature |
 | `channelUsage` | channel_id | blobsServed, bytesServed |
-| `channelClosed` | channel_id | locktime, closedAmount, valueAfterStage1, receiverProofsJson |
+| `channelClosed` | channel_id | locktime, closedAmount, receiverSum, senderSum, receiverProofsJson |
 
 ### Client-Side (IndexedDB)
 
@@ -277,9 +278,21 @@ Client                          Server                          Mint
    |<------------------------------|                               |
 ```
 
-The close endpoint is idempotent:
-- Same amount: returns `{success: true, already_closed: true}`
+Both cooperative and unilateral close are fully orchestrated by the bridge (`executeCooperativeClose` / `executeUnilateralClose` in WASM). Servers call the bridge method and pass through the result.
+
+The close endpoints are idempotent:
+- Same amount: returns `{success: true, already_closed: true, receiver_sum, sender_sum}`
 - Different amount: returns 400 error
+
+### Unilateral Close
+
+The server can also close a channel unilaterally (without client cooperation) using the best payment proof it has stored:
+
+```
+POST /channel/:id/unilateral-close
+```
+
+The bridge retrieves the stored balance/signature via the `get_balance_and_signature_for_unilateral_exit` host hook, then follows the same swap/unblind/verify flow as cooperative close.
 
 ## Player URL Format
 

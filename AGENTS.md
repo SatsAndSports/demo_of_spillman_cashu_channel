@@ -8,7 +8,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (33 tests)
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (35 tests)
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
 
@@ -46,7 +46,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 - `web/blossom-server/src/api/fetch.ts` - Payment validation, 402 responses
 - `web/blossom-server/src/api/bridge-hooks.ts` - `SpilmanHost` implementation
 - `web/blossom-server/src/api/stores.ts` - Channel state stores
-- `web/blossom-server/src/api/channel.ts` - `/channel/params` endpoint
+- `web/blossom-server/src/api/channel.ts` - `/channel/params`, cooperative close, unilateral close endpoints
 
 ### CashuTube Player
 - `web/blossom-server/public/index.html` - Video player with payment headers
@@ -54,7 +54,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 ### Tests
 - `crates/cdk/src/spilman/tests.rs` - Rust integration tests
 - `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests: blobs, channels, minting, payment, validation, closing)
-- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (33 tests: channels, minting, payment, validation, closing)
+- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (35 tests: channels, minting, payment, validation, closing)
 
 ## Running Commands
 
@@ -107,7 +107,6 @@ For detailed information, see:
 
 ### Protocol
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels
-- Two-stage channel closing in SpilmanBridge (see ARCHITECTURE.md "Future Work")
 
 ### Player
 - Remember volume preference in localStorage
@@ -137,7 +136,14 @@ trait SpilmanHost {
     fn is_closed(&self, channel_id: &str) -> bool;
     fn get_channel_policy(&self) -> ChannelPolicy;
     fn now_seconds(&self) -> u64;
-    fn get_keyset_info(&self, mint: &str, keyset_id: &str) -> Option<KeysetInfo>;
+    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<(u64, String)>;
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
+    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    fn mark_channel_closed(&self, channel_id: &str, locktime: u64, balance: u64,
+        receiver_proofs_json: &str, sender_proofs_json: &str,
+        receiver_sum: u64, sender_sum: u64) -> Result<(), String>;
 }
 ```
 
