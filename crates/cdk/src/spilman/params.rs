@@ -465,21 +465,20 @@ impl ChannelParameters {
     /// - "sender_stage1_refund" - for funding token locktime refund
     /// - "sender_stage2" / "receiver_stage2" - for stage 1 outputs (spent in stage 2)
     ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || context || retry_counter)
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     ///
     /// Note: This produces a SHARED blinding scalar for all proofs with the same context.
     /// For per-proof blinding (stage2), use `derive_blinding_scalar_for_output()` instead.
     fn derive_blinding_scalar(&self, context: &str) -> anyhow::Result<Scalar> {
-        let channel_id_bytes = self.get_channel_id_bytes();
+        let channel_id = self.get_channel_id();
 
         for retry_counter in 0u8..=255 {
+            let text = format!("{}|{}|{}", channel_id, context, retry_counter);
             let mut input = Vec::new();
             input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
-            input.extend_from_slice(&channel_id_bytes);
             input.extend_from_slice(&self.shared_secret);
-            input.extend_from_slice(context.as_bytes());
-            input.push(retry_counter);
+            input.extend_from_slice(text.as_bytes());
 
             let hash = sha256::Hash::hash(&input);
             let bytes: [u8; 32] = hash.to_byte_array();
@@ -503,7 +502,7 @@ impl ChannelParameters {
     /// better privacy for stage 1 outputs - the mint cannot trivially link proofs
     /// from the same channel closure.
     ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || context || amount || index || retry_counter)
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     fn derive_blinding_scalar_for_output(
         &self,
@@ -511,20 +510,17 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<Scalar> {
-        let channel_id_bytes = self.get_channel_id_bytes();
-        let amount_bytes = amount.to_le_bytes();
-        // Use u64 for platform-independent serialization (usize is 4 bytes on wasm32, 8 on x86_64)
-        let index_bytes = (index as u64).to_le_bytes();
+        let channel_id = self.get_channel_id();
 
         for retry_counter in 0u8..=255 {
+            let text = format!(
+                "{}|{}|{}|{}|{}",
+                channel_id, context, amount, index, retry_counter
+            );
             let mut input = Vec::new();
             input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
-            input.extend_from_slice(&channel_id_bytes);
             input.extend_from_slice(&self.shared_secret);
-            input.extend_from_slice(context.as_bytes());
-            input.extend_from_slice(&amount_bytes);
-            input.extend_from_slice(&index_bytes);
-            input.push(retry_counter);
+            input.extend_from_slice(text.as_bytes());
 
             let hash = sha256::Hash::hash(&input);
             let bytes: [u8; 32] = hash.to_byte_array();
@@ -727,30 +723,21 @@ impl ChannelParameters {
         index: usize,
     ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
         let channel_id = self.get_channel_id();
-        let amount_bytes = amount.to_le_bytes();
-        // Use u64 for platform-independent serialization (usize is 4 bytes on wasm32, 8 on x86_64)
-        let index_bytes = (index as u64).to_le_bytes();
 
-        // Derive deterministic nonce: SHA256(shared_secret || channel_id || context || amount || "nonce" || index)
+        // Derive deterministic nonce: SHA256(shared_secret || "{channel_id}|{context}|{amount}|nonce|{index}")
+        let nonce_text = format!("{}|{}|{}|nonce|{}", channel_id, context, amount, index);
         let mut nonce_input = Vec::new();
         nonce_input.extend_from_slice(&self.shared_secret);
-        nonce_input.extend_from_slice(channel_id.as_bytes());
-        nonce_input.extend_from_slice(context.as_bytes());
-        nonce_input.extend_from_slice(&amount_bytes);
-        nonce_input.extend_from_slice(b"nonce");
-        nonce_input.extend_from_slice(&index_bytes);
+        nonce_input.extend_from_slice(nonce_text.as_bytes());
 
         let hash = sha256::Hash::hash(&nonce_input);
         let nonce = hex::encode(hash.to_byte_array());
 
-        // Derive deterministic blinding factor: SHA256(shared_secret || channel_id || context || amount || "blinding" || index)
+        // Derive deterministic blinding factor: SHA256(shared_secret || "{channel_id}|{context}|{amount}|blinding|{index}")
+        let blinding_text = format!("{}|{}|{}|blinding|{}", channel_id, context, amount, index);
         let mut blinding_input = Vec::new();
         blinding_input.extend_from_slice(&self.shared_secret);
-        blinding_input.extend_from_slice(channel_id.as_bytes());
-        blinding_input.extend_from_slice(context.as_bytes());
-        blinding_input.extend_from_slice(&amount_bytes);
-        blinding_input.extend_from_slice(b"blinding");
-        blinding_input.extend_from_slice(&index_bytes);
+        blinding_input.extend_from_slice(blinding_text.as_bytes());
 
         let hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(hash.as_byte_array())?;
