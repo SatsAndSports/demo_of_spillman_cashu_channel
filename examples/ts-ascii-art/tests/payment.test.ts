@@ -47,6 +47,37 @@ describe.concurrent('Payment flow', () => {
   });
 });
 
+describe.concurrent('Multi-unit payment', () => {
+  test('makes payment with msat channel', async ({ server }) => {
+    const capacity = server.getMinCapacity('msat');
+    // Use larger maximum_amount to keep proof count small (10000 msat / 64 = 156 outputs overflows headers)
+    const channel = await mintFundedChannel(server, 'msat', capacity, { maximumAmount: 8192 });
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    console.log(`Channel capacity: ${channel.capacity} msat`);
+
+    const message = 'Hi';
+    const expectedCost = message.length * server.getPricePerChar('msat');
+    console.log(`Message: "${message}" (${message.length} chars, cost=${expectedCost} msat)`);
+
+    const paymentHeader = createPaymentHeader(channel, expectedCost, true);
+    const { status: httpStatus, body } = await fetchAsciiArt(server, paymentHeader, message);
+
+    expect(httpStatus).toBe(200);
+    expect(body.art).toBeDefined();
+    if (body.cost !== undefined) expect(body.cost).toBe(expectedCost);
+    console.log(`ASCII art generated, cost=${expectedCost} msat`);
+
+    // Verify channel status
+    const { httpStatus: statusCode, body: status } = await fetchChannelStatus(server, channel.channelId);
+    expect(statusCode).toBe(200);
+    expect(status!.amount_due).toBe(expectedCost);
+    expect(status!.balance).toBe(expectedCost);
+    expect(status!.capacity).toBe(capacity);
+    expect(status!.closed).toBe(false);
+    console.log(`Channel status verified: amount_due=${status!.amount_due} msat`);
+  });
+});
+
 describe.concurrent('Channel policy', () => {
   test('rejects channel with capacity below minCapacity', async ({ server }) => {
     const minCapacity = server.getMinCapacity('sat');
