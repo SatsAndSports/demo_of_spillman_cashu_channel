@@ -187,6 +187,28 @@ export const keysetCache = {
     }
     console.log(`  [Store] Cleared cached keysets for mint: ${mint}`);
   },
+
+  /** Returns { mintUrl: { unit: [keysetId, ...] } } for all active keysets. */
+  getMintsUnitsKeysets(): Record<string, Record<string, string[]>> {
+    const result: Record<string, Record<string, string[]>> = {};
+    for (const [key, entry] of keysetCacheStore) {
+      if (!entry.active) continue;
+      const [mint, keysetId] = key.split("|");
+      if (!result[mint]) result[mint] = {};
+      if (!result[mint][entry.unit]) result[mint][entry.unit] = [];
+      result[mint][entry.unit].push(keysetId);
+    }
+    return result;
+  },
+
+  /** Returns the set of units that have at least one active keyset across all mints. */
+  getActiveUnits(): Set<string> {
+    const units = new Set<string>();
+    for (const entry of keysetCacheStore.values()) {
+      if (entry.active) units.add(entry.unit);
+    }
+    return units;
+  },
 };
 
 // ============================================================================

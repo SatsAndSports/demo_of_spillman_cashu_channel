@@ -13,7 +13,7 @@ interface UnitPricing {
 interface ChannelParams {
   receiver_pubkey: string;
   pricing: Record<string, UnitPricing>;
-  mint: string;
+  mints_units_keysets: Record<string, Record<string, string[]>>;
   min_expiry_in_seconds: number;
 }
 

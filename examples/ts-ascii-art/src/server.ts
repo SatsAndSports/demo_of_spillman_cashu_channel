@@ -32,13 +32,25 @@ import {
 export const SECRET_KEY = process.env.SERVER_SECRET_KEY || randomBytes(32).toString("hex");
 export const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
 const PORT = parseInt(process.env.PORT || "5002", 10);
-// Pricing per character for each unit
+// Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
 // Note: msat has higher per_char to stay above mint's minimum denomination
-const PRICING: Record<string, { per_char: number; minCapacity: number }> = {
+const ALL_PRICING: Record<string, { per_char: number; minCapacity: number }> = {
   sat: { per_char: 1, minCapacity: 10 },
   msat: { per_char: 1000, minCapacity: 10000 },  // 1 sat = 1000 msat
   usd: { per_char: 1, minCapacity: 10 },         // 1 cent per char
 };
+
+/** Returns pricing filtered to only units that have active keysets in the mint. */
+function getActivePricing(): Record<string, { per_char: number; minCapacity: number }> {
+  const activeUnits = keysetCache.getActiveUnits();
+  const result: Record<string, { per_char: number; minCapacity: number }> = {};
+  for (const unit of activeUnits) {
+    if (unit in ALL_PRICING) {
+      result[unit] = ALL_PRICING[unit];
+    }
+  }
+  return result;
+}
 
 // ============================================================================
 // Server Pubkey
@@ -111,7 +123,7 @@ export const spilmanHooks = {
     if (!funding) return BigInt(0);
 
     const params = JSON.parse(funding.paramsJson);
-    const pricing = PRICING[params.unit];
+    const pricing = ALL_PRICING[params.unit];
     if (!pricing) return BigInt(0);
 
     return BigInt(totalChars * pricing.per_char);
@@ -141,7 +153,7 @@ export const spilmanHooks = {
   getChannelPolicy: (): string => {
     return JSON.stringify({
       min_expiry_in_seconds: 3600,
-      pricing: PRICING,
+      pricing: getActivePricing(),
     });
   },
 
@@ -234,7 +246,7 @@ export async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void
   const keysetsData = await keysetsResp.json();
 
   for (const ks of keysetsData.keysets) {
-    if (ks.unit in PRICING) {
+    if (ks.unit in ALL_PRICING) {
       // Fetch full keys for this keyset
       const keysResp = await fetch(`${mintUrl}/v1/keys/${ks.id}`);
       if (!keysResp.ok) continue;
@@ -288,12 +300,12 @@ function decodePaymentHeader(header: string): string {
 const app = express();
 app.use(express.json());
 
-// GET /channel/params - Return server pubkey and pricing info
+// GET /channel/params - Return server pubkey, pricing, and trusted keysets
 app.get("/channel/params", (_req, res) => {
   res.json({
     receiver_pubkey: SERVER_PUBKEY,
-    pricing: PRICING,
-    mint: MINT_URL,
+    pricing: getActivePricing(),
+    mints_units_keysets: keysetCache.getMintsUnitsKeysets(),
     min_expiry_in_seconds: 3600,
   });
 });
@@ -353,7 +365,7 @@ app.post("/ascii", (req, res) => {
   // Look up unit from stored channel params to calculate cost
   const funding = channelFunding.get(paymentInfo.channel_id);
   const channelParams = funding ? JSON.parse(funding.paramsJson) : null;
-  const unitPricing = channelParams ? PRICING[channelParams.unit] : PRICING.sat;
+  const unitPricing = channelParams ? ALL_PRICING[channelParams.unit] : ALL_PRICING.sat;
   const cost = message.length * (unitPricing?.per_char ?? 1);
   
   console.log(`  [Payment] ACCEPTED: cost=${cost} balance=${paymentInfo.balance}/${paymentInfo.capacity}`);
@@ -373,7 +385,7 @@ app.get("/channel/:id/status", (req, res) => {
   const channelId = req.params.id;
 
   try {
-    const status = getChannelStatus(channelId, PRICING);
+    const status = getChannelStatus(channelId, ALL_PRICING);
     res.json(status);
   } catch (e) {
     const message = (e as Error).message;
@@ -560,7 +572,9 @@ export async function startServer(): Promise<void> {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server pubkey: ${SERVER_PUBKEY}`);
     console.log(`Mint URL:      ${MINT_URL}`);
-    console.log(`Pricing:       sat=${PRICING.sat.per_char}/char, msat=${PRICING.msat.per_char}/char, usd=${PRICING.usd.per_char}/char`);
+    const activePricing = getActivePricing();
+    const pricingStr = Object.entries(activePricing).map(([u, p]) => `${u}=${p.per_char}/char`).join(', ');
+    console.log(`Pricing:       ${pricingStr || '(no active units)'}`);
     console.log(`Listening on:  http://0.0.0.0:${PORT}`);
     console.log();
     console.log("Endpoints:");

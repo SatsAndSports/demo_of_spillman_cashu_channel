@@ -29,8 +29,66 @@ const (
 	MINT_URL_DEFAULT   = "http://localhost:3338"
 	SERVER_URL_DEFAULT = "http://localhost:5001"
 	PORT               = 5001
-	PRICE_PER_CHAR     = 1 // 1 sat per character
 )
+
+// Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
+type UnitPricing struct {
+	PerChar     int `json:"per_char"`
+	MinCapacity int `json:"minCapacity"`
+}
+
+var allPricing = map[string]UnitPricing{
+	"sat":  {PerChar: 1, MinCapacity: 10},
+	"msat": {PerChar: 1000, MinCapacity: 10000}, // 1 sat = 1000 msat
+	"usd":  {PerChar: 1, MinCapacity: 10},       // 1 cent per char
+}
+
+// getActivePricing returns pricing filtered to only units with active keysets
+func getActivePricing() map[string]UnitPricing {
+	keysetCacheMu.RLock()
+	defer keysetCacheMu.RUnlock()
+	activeUnits := map[string]bool{}
+	for _, entry := range keysetCache {
+		if entry.Active {
+			activeUnits[entry.Unit] = true
+		}
+	}
+	result := map[string]UnitPricing{}
+	for unit, pricing := range allPricing {
+		if activeUnits[unit] {
+			result[unit] = pricing
+		}
+	}
+	return result
+}
+
+// getMintsUnitsKeysets returns {mintUrl: {unit: [keysetId, ...]}} for all active keysets
+func getMintsUnitsKeysets() map[string]map[string][]string {
+	keysetCacheMu.RLock()
+	defer keysetCacheMu.RUnlock()
+	result := map[string]map[string][]string{}
+	for kid, entry := range keysetCache {
+		if !entry.Active {
+			continue
+		}
+		// keysetCache key is just keysetId; we need to find the mint
+		// Since we only support one mint, use MINT_URL
+		mint := MINT_URL
+		if result[mint] == nil {
+			result[mint] = map[string][]string{}
+		}
+		result[mint][entry.Unit] = append(result[mint][entry.Unit], kid)
+	}
+	return result
+}
+
+// getPricePerChar returns the per_char price for a given unit
+func getPricePerChar(unit string) uint64 {
+	if p, ok := allPricing[unit]; ok {
+		return uint64(p.PerChar)
+	}
+	return uint64(allPricing["sat"].PerChar)
+}
 
 var (
 	MINT_URL          = getEnv("MINT_URL", MINT_URL_DEFAULT)
@@ -137,7 +195,18 @@ func (h *AsciiArtHost) GetAmountDue(channelId string, contextJson *string) uint6
 		totalChars += uint64(context.MessageLength)
 	}
 
-	return totalChars * PRICE_PER_CHAR
+	// Look up unit from stored channel params
+	pricePerChar := uint64(allPricing["sat"].PerChar) // default
+	if funding, ok := channelFunding[channelId]; ok {
+		var params struct {
+			Unit string `json:"unit"`
+		}
+		json.Unmarshal([]byte(funding["params"]), &params)
+		if params.Unit != "" {
+			pricePerChar = getPricePerChar(params.Unit)
+		}
+	}
+	return totalChars * pricePerChar
 }
 
 func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature, contextJson string) {
@@ -177,15 +246,10 @@ func (h *AsciiArtHost) IsClosed(channelId string) bool {
 }
 
 func (h *AsciiArtHost) GetChannelPolicy() string {
-	config := map[string]interface{}{
+	b, _ := json.Marshal(map[string]interface{}{
 		"min_expiry_in_seconds": 3600,
-		"pricing": map[string]interface{}{
-			"sat": map[string]interface{}{
-				"minCapacity": 10,
-			},
-		},
-	}
-	b, _ := json.Marshal(config)
+		"pricing":               getActivePricing(),
+	})
 	return string(b)
 }
 
@@ -365,7 +429,7 @@ func initializeKeysets() {
 	json.NewDecoder(resp.Body).Decode(&data)
 
 	for _, k := range data.Keysets {
-		if k.Unit == "sat" {
+		if _, ok := allPricing[k.Unit]; ok {
 			fetchKeysetInfo(MINT_URL, k.Id, k.Unit, k.InputFeePpk, k.Active)
 		}
 	}
@@ -392,7 +456,7 @@ func refreshActiveKeysets(mintUrl string) {
 	json.NewDecoder(resp.Body).Decode(&data)
 
 	for _, k := range data.Keysets {
-		if k.Unit == "sat" {
+		if _, ok := allPricing[k.Unit]; ok {
 			fetchKeysetInfo(mintUrl, k.Id, k.Unit, k.InputFeePpk, k.Active)
 		}
 	}
@@ -676,14 +740,9 @@ func runServer() {
 
 	http.HandleFunc("/channel/params", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"receiver_pubkey": host.pubkey,
-			"pricing": map[string]interface{}{
-				"sat": map[string]interface{}{
-					"per_char":    PRICE_PER_CHAR,
-					"minCapacity": 10,
-				},
-			},
-			"mint":                  MINT_URL,
+			"receiver_pubkey":       host.pubkey,
+			"pricing":               getActivePricing(),
+			"mints_units_keysets":   getMintsUnitsKeysets(),
 			"min_expiry_in_seconds": 3600,
 		})
 	})
@@ -999,9 +1058,20 @@ func runClient(messages []string) {
 	if err != nil {
 		log.Fatalf("Server not found: %v", err)
 	}
-	var sp struct{ Receiver_pubkey, Mint string }
+	var sp struct {
+		Receiver_pubkey     string                         `json:"receiver_pubkey"`
+		Mints_units_keysets map[string]map[string][]string `json:"mints_units_keysets"`
+	}
 	json.NewDecoder(resp.Body).Decode(&sp)
 	resp.Body.Close()
+
+	// Derive mint URL from mints_units_keysets
+	var clientMintUrl string
+	for m := range sp.Mints_units_keysets {
+		clientMintUrl = m
+		break
+	}
+	log.Printf("  Using mint: %s\n", clientMintUrl)
 
 	log.Println("[2/8] Generating keypair...")
 	aliceSecret, alicePubkey, err := spilman.GenerateKeypair()
@@ -1012,8 +1082,8 @@ func runClient(messages []string) {
 	log.Printf("  Alice pubkey: %s...\n\n", alice.Pubkey[:24])
 
 	log.Println("[3/8] Fetching keyset info...")
-	log.Printf("  Mint version: %s\n", getMintVersion(MINT_URL))
-	ki, _ := clientFetchActiveKeysetInfo(MINT_URL)
+	log.Printf("  Mint version: %s\n", getMintVersion(clientMintUrl))
+	ki, _ := clientFetchActiveKeysetInfo(clientMintUrl)
 	kiJson, _ := json.Marshal(ki)
 	log.Printf("  Found keyset: %s (%s)\n", ki["keysetId"], ki["unit"])
 
@@ -1028,7 +1098,7 @@ func runClient(messages []string) {
 	cap := uint64(total + 50)
 	params := map[string]interface{}{
 		"alice_pubkey": alice.Pubkey, "charlie_pubkey": sp.Receiver_pubkey,
-		"mint": MINT_URL, "unit": "sat", "capacity": cap, "maximum_amount": 64,
+		"mint": clientMintUrl, "unit": "sat", "capacity": cap, "maximum_amount": 64,
 		"locktime": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
 		"sender_nonce": fmt.Sprintf("demo-go-%d", time.Now().Unix()),
 		"keyset_id":    ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],
@@ -1047,7 +1117,7 @@ func runClient(messages []string) {
 	json.Unmarshal([]byte(fJson), &f)
 
 	log.Println("[7/8] Minting funding token...")
-	sigs, _ := mintFundingToken(MINT_URL, f.Funding_token_nominal, f.Blinded_messages)
+	sigs, _ := mintFundingToken(clientMintUrl, f.Funding_token_nominal, f.Blinded_messages)
 
 	log.Println("[8/8] Constructing proofs...")
 	sigsJ, _ := json.Marshal(sigs)

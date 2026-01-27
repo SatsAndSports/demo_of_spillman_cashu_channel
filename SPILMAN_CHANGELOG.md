@@ -4,6 +4,12 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features
 
+### Dynamic Multi-Unit Pricing and `mints_units_keysets`
+- **All three servers (TS, Python, Go) dynamically discover and advertise supported units**: `/channel/params` now returns `pricing` filtered to only units with active mint keysets, and `mints_units_keysets` (replacing the old `mint` field) mapping `{mint_url: {unit: [keyset_id, ...]}}`.
+- **`ALL_PRICING` constant with dynamic filtering**: Each server defines a superset of pricing (sat, msat, usd) and filters at request time via `getActivePricing()` / `get_active_pricing()` so keyset rotation is reflected immediately.
+- **Clients derive mint URL from `mints_units_keysets`**: Python and Go clients extract the mint URL from the new field.
+- **Test suite updated**: Channel params tests assert `mints_units_keysets` structure and all-unit pricing for all servers.
+
 ### Cross-Platform Bug Fixes
 - **Fixed `usize` platform-dependent bug** in `params.rs`: `index.to_le_bytes()` produced 4 bytes on WASM (wasm32) but 8 bytes on native x86_64 (PyO3/CGo), causing deterministic output derivation to differ between WASM clients and native servers. Fixed by casting to `u64` before `to_le_bytes()` in `derive_blinding_scalar_for_output()` and `create_deterministic_output_with_blinding()`.
 - **Fixed Python server `json.loads` bug** in `server.py`: Cooperative close idempotent path called `json.loads()` on an already-parsed Python list (stored as parsed JSON in `mark_channel_closed`).

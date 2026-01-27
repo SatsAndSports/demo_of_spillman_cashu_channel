@@ -12,7 +12,7 @@ describe.concurrent('Channel params endpoint', () => {
     console.log(`Receiver pubkey: ${params.receiver_pubkey.substring(0, 16)}...`);
   });
 
-  test('returns pricing for all units', async ({ server }) => {
+  test('returns pricing for all active units', async ({ server }) => {
     const response = await fetch(`${server.baseUrl}/channel/params`);
     expect(response.status).toBe(200);
 
@@ -24,31 +24,48 @@ describe.concurrent('Channel params endpoint', () => {
     expect(params.pricing.sat.per_char).toBeGreaterThan(0);
     expect(params.pricing.sat.minCapacity).toBeGreaterThan(0);
 
-    // Check msat pricing (optional - only TS server supports multiple units)
-    if (params.pricing.msat) {
-      expect(params.pricing.msat.per_char).toBeGreaterThan(0);
-      expect(params.pricing.msat.minCapacity).toBeGreaterThan(0);
-    }
+    // Check msat pricing (CDK dev mint has msat keysets)
+    expect(params.pricing.msat).toBeDefined();
+    expect(params.pricing.msat.per_char).toBeGreaterThan(0);
+    expect(params.pricing.msat.minCapacity).toBeGreaterThan(0);
 
-    // Check usd pricing (optional - only TS server supports multiple units)
-    if (params.pricing.usd) {
-      expect(params.pricing.usd.per_char).toBeGreaterThan(0);
-      expect(params.pricing.usd.minCapacity).toBeGreaterThan(0);
-    }
+    // Check usd pricing (CDK dev mint has usd keysets)
+    expect(params.pricing.usd).toBeDefined();
+    expect(params.pricing.usd.per_char).toBeGreaterThan(0);
+    expect(params.pricing.usd.minCapacity).toBeGreaterThan(0);
 
     const units = Object.keys(params.pricing);
     console.log(`Pricing units: ${units.join(', ')} (sat=${params.pricing.sat.per_char}/char)`);
   });
 
-  test('returns mint URL', async ({ server }) => {
+  test('returns mints_units_keysets with trusted keysets', async ({ server }) => {
     const response = await fetch(`${server.baseUrl}/channel/params`);
     expect(response.status).toBe(200);
 
     const params = await response.json();
-    expect(params.mint).toBeDefined();
-    expect(params.mint).toMatch(/^https?:\/\//); // valid URL format
-    expect(params.mint).toBe(server.mintUrl);
-    console.log(`Mint URL: ${params.mint}`);
+    expect(params.mints_units_keysets).toBeDefined();
+
+    // Should have at least one mint
+    const mints = Object.keys(params.mints_units_keysets);
+    expect(mints.length).toBeGreaterThan(0);
+
+    // The mint should match the test mint URL
+    expect(params.mints_units_keysets[server.mintUrl]).toBeDefined();
+
+    // Should have sat keysets
+    const mintKeysets = params.mints_units_keysets[server.mintUrl];
+    expect(mintKeysets.sat).toBeDefined();
+    expect(Array.isArray(mintKeysets.sat)).toBe(true);
+    expect(mintKeysets.sat.length).toBeGreaterThan(0);
+
+    // Should also have msat and usd keysets (CDK dev mint)
+    expect(mintKeysets.msat).toBeDefined();
+    expect(mintKeysets.usd).toBeDefined();
+
+    console.log(`Mint URL: ${server.mintUrl}`);
+    for (const [unit, ids] of Object.entries(mintKeysets)) {
+      console.log(`  ${unit}: ${(ids as string[]).join(', ')}`);
+    }
   });
 
   test('returns min_expiry_in_seconds', async ({ server }) => {
