@@ -258,20 +258,14 @@ Alice                                Charlie                              Mint
 
 ## Future Work
 
-### Two-Stage Channel Closing
+### Two-Stage Channel Closing (Implemented)
 
-Currently, the closing logic is spread across server code and multiple WASM functions. A cleaner approach:
+Channel closing is now fully orchestrated by the bridge:
 
-**Stage 1: `close_stage1()`** - Validation & Swap Preparation
-- Verify Alice's signature
-- Verify `balance === get_amount_due()`
-- Output: Prepared swap request JSON
+1. **Sync stage** (`prepare_cooperative_close_for_execution` / `prepare_unilateral_close_for_execution`): Validates signatures, verifies balance, creates the swap request
+2. **Async stage** (handled by WASM/PyO3/CGO bindings): Submits swap to mint, retries on keyset error, unblinds signatures, verifies DLEQ, calls `mark_channel_closed` host hook
 
-**Stage 2: `close_stage2()`** - Settle & Finalize
-- Unblind mint's signatures
-- Verify DLEQ proofs
-- Call `mark_closed()` host hook
-- Output: Sender proofs (Alice's change)
+All four server demos (CashuTube, TS ASCII Art, Python ASCII Art, Go ASCII Art) use identical patterns: call the bridge's close method and pass through the result.
 
 ### Keyset Rotation Handling
 

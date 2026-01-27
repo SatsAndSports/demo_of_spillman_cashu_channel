@@ -34,6 +34,16 @@ This document tracks the completed features and improvements for the Spilman Cha
 - Unilateral channel closing: `get_balance_and_signature_for_unilateral_exit` host hook + `create_unilateral_close_data` bridge method
 - Full settlement flow in Python and Go: create swap request -> POST to mint -> unblind + verify DLEQ -> store proofs
 
+### Unified Channel Closing
+- Bridge-orchestrated closing: `executeCooperativeClose` / `executeUnilateralClose` across WASM, PyO3, CGO
+- All four servers (CashuTube, TS ASCII Art, Python, Go) use identical closing patterns (call bridge, pass through result)
+- CashuTube migrated from manual close flow to bridge-based `executeCooperativeClose`
+- CashuTube gained `POST /channel/:id/unilateral-close` endpoint
+- Stores updated to track `receiverSum` / `senderSum` separately (replacing `valueAfterStage1`)
+- Idempotent close responses include `receiver_sum` and `sender_sum`
+- BigInt-to-Number conversion at WASM hook boundary for numeric params
+- Python/Go: Removed redundant store checks from close helpers (bridge handles internally)
+
 ### Language Bindings
 - **Python demo** (`examples/python-ascii-art/`): Pay-per-character ASCII art generator
 - **PyO3 bindings** (`crates/cdk-spilman-python/`): SpilmanBridge + client functions for Python
