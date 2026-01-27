@@ -695,6 +695,13 @@ func runServer() {
 		}
 		paymentHeaderB64 := r.Header.Get("X-Cashu-Channel")
 
+		// Check for missing header
+		if paymentHeaderB64 == "" {
+			w.WriteHeader(http.StatusPaymentRequired)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Payment required", "reason": "Missing X-Cashu-Channel header"})
+			return
+		}
+
 		// Decode base64-encoded payment header
 		paymentHeaderBytes, err := base64.StdEncoding.DecodeString(paymentHeaderB64)
 		if err != nil {
@@ -717,6 +724,7 @@ func runServer() {
 			Success bool
 			Error   string
 			Header  json.RawMessage
+			Body    json.RawMessage
 		}
 		json.Unmarshal([]byte(respJson), &resp)
 
@@ -724,7 +732,12 @@ func runServer() {
 			log.Printf("  [Error] ProcessPayment failed: %s", resp.Error)
 			w.Header().Set("X-Cashu-Channel", string(resp.Header))
 			w.WriteHeader(http.StatusPaymentRequired)
-			json.NewEncoder(w).Encode(map[string]string{"error": resp.Error})
+			// Forward the structured body from the bridge (includes reason, capacity, balance, etc.)
+			if len(resp.Body) > 0 {
+				w.Write(resp.Body)
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"error": resp.Error})
+			}
 			return
 		}
 

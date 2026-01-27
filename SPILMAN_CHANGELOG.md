@@ -4,6 +4,16 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features
 
+### Cross-Platform Bug Fixes
+- **Fixed `usize` platform-dependent bug** in `params.rs`: `index.to_le_bytes()` produced 4 bytes on WASM (wasm32) but 8 bytes on native x86_64 (PyO3/CGo), causing deterministic output derivation to differ between WASM clients and native servers. Fixed by casting to `u64` before `to_le_bytes()` in `derive_blinding_scalar_for_output()` and `create_deterministic_output_with_blinding()`.
+- **Fixed Python server `json.loads` bug** in `server.py`: Cooperative close idempotent path called `json.loads()` on an already-parsed Python list (stored as parsed JSON in `mark_channel_closed`).
+- **Fixed Go server error response format** in `main.go`: Error responses returned `{"error": ...}` instead of the bridge's structured `body` containing `reason`, `capacity`, `balance`, `locktime`, `min_capacity`, `min_expiry_in_seconds`, and `validation_errors` fields. Also added missing-header guard for empty `X-Cashu-Channel`.
+
+### Cross-Server Testing
+- **TS test suite runs against all three servers**: The 35-test TypeScript suite validates TS, Python, and Go servers via `SERVER_PORT` / `SERVER_CMD` env vars in `globalSetup.ts`
+- **Makefile targets**: `make test-python-via-ts-cdk` and `make test-go-via-ts-cdk` run the full cross-server test suite with ephemeral mints
+- **All servers pass 35/35 tests**: TS, Python, and Go ASCII Art servers produce identical behavior for channels, payments, validation, minting, and closing
+
 ### Core Protocol
 - Channel ID computed and verified (WASM on both client and server)
 - Real Schnorr signatures from Alice (sender)

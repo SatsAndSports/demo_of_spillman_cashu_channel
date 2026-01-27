@@ -75,6 +75,14 @@ make wasm-dev
 make test-blossom-cdk      # Blossom server tests with CDK mint
 make test-ts-ascii-cdk     # TypeScript ASCII Art tests with CDK mint
 
+# Cross-server tests (TS test suite against Python/Go servers)
+make test-python-via-ts-cdk  # TS tests against Python server (35 tests)
+make test-go-via-ts-cdk      # TS tests against Go server (35 tests)
+
+# Or manually with an already-running server:
+# Terminal 1: start mint + server
+# Terminal 2: SERVER_PORT=3099 MINT_URL=http://localhost:3338 npx vitest run
+
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
 

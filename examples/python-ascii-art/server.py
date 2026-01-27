@@ -599,7 +599,7 @@ def cooperative_close(channel_id: str):
                 "total_value": closed_info.get("receiver_sum", 0) + closed_info.get("sender_sum", 0),
                 "receiver_sum": closed_info.get("receiver_sum", 0),
                 "sender_sum": closed_info.get("sender_sum", 0),
-                "sender_proofs": json.loads(closed_info.get("sender_proofs", "[]")),
+                "sender_proofs": closed_info.get("sender_proofs", []),
             })
         else:
             return jsonify({
