@@ -631,14 +631,7 @@ def cooperative_close(channel_id: str):
         return jsonify({"error": error_msg, "reason": reason}), status
     
     print(f"  [CooperativeClose] SUCCESS! total_value={result.get('total_value')}")
-    
-    return jsonify({
-        "success": True,
-        "channel_id": channel_id,
-        "already_closed": False,
-        "total_value": result.get("total_value", 0),
-        "sender_proofs": result.get("sender_proofs", []),
-    })
+    return jsonify(result)
 
 
 @app.route("/channel/<channel_id>/unilateral-close", methods=["POST"])
@@ -661,12 +654,13 @@ def unilateral_close_endpoint(channel_id: str):
     if channel_id not in channel_funding:
         return jsonify({"error": "unknown channel"}), 404
     
-    # Use existing close_channel function which has retry logic
+    # Use existing close_channel function
     result = close_channel(channel_id)
     
     if not result.get("success"):
         error = result.get("error", "close failed")
-        return jsonify({"error": error}), 400
+        status = result.get("status", 400)
+        return jsonify({"error": error}), status
     
     return jsonify({
         "success": True,
@@ -723,43 +717,14 @@ def print_stats_table(sig=None, frame=None):
 
 
 def close_channel(channel_id: str) -> dict:
-    """Close a single channel unilaterally using the largest stored payment.
-    
-    Uses the bridge's execute_unilateral_close which handles:
-    - Validation, swap request creation
-    - HTTP swap call with retry on keyset error
-    - Unblinding and DLEQ verification
-    - Marking channel as closed
     """
-    print(f"\n[Close] Attempting to close channel {channel_id[:16]}...")
+    Close a channel unilaterally using the bridge.
     
-    # Check if already closed
-    if channel_id in channel_closed:
-        return {"success": False, "error": "channel already closed"}
-    
-    # Check if we have a payment for this channel
-    if channel_id not in channel_largest_payment:
-        return {"success": False, "error": "no payment recorded for channel"}
-    
+    Returns the bridge result dictionary.
+    """
     # Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
     result_json = bridge.execute_unilateral_close(channel_id)
-    result = json.loads(result_json)
-    
-    if not result.get("success"):
-        error_msg = result.get("error", "close failed")
-        print(f"  [Close] Failed: {error_msg}")
-        return {"success": False, "error": error_msg}
-    
-    print(f"  [Close] SUCCESS! Channel {channel_id[:16]} closed. "
-          f"Earned {result.get('receiver_sum', 0)} sat")
-    
-    return {
-        "success": True,
-        "channel_id": channel_id,
-        "balance": result.get("balance", 0),
-        "receiver_sum": result.get("receiver_sum", 0),
-        "sender_sum": result.get("sender_sum", 0)
-    }
+    return json.loads(result_json)
 
 
 def close_all_channels():
@@ -779,8 +744,13 @@ def close_all_channels():
     closed_count = 0
     
     for cid in open_channels:
+        # Check if we have payments to close with
         if cid in channel_largest_payment:
             result = close_channel(cid)
+            if result.get("success"):
+                print(f"  [CLI] Closed {cid[:16]}... earned {result.get('receiver_sum')} sat")
+            else:
+                print(f"  [CLI] Failed to close {cid[:16]}: {result.get('error')}")
             if result["success"]:
                 total_earned += result["receiver_sum"]
                 closed_count += 1

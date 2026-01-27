@@ -589,41 +589,32 @@ func printStatsTable() {
 	fmt.Println()
 }
 
-func closeChannel(id string, bridge *spilman.Bridge, host *AsciiArtHost) (uint64, error) {
+type UnilateralCloseResult struct {
+	Success     bool   `json:"success"`
+	Error       string `json:"error"`
+	Status      int    `json:"status"`
+	ReceiverSum uint64 `json:"receiver_sum"`
+}
+
+func closeChannel(id string, bridge *spilman.Bridge) (UnilateralCloseResult, error) {
 	log.Printf("\n[Close] Attempting to close channel %s...\n", id[:16])
-
-	mu.Lock()
-	if _, closed := channelClosed[id]; closed {
-		mu.Unlock()
-		return 0, fmt.Errorf("channel already closed")
-	}
-	_, hasPayment := channelBalance[id]
-	mu.Unlock()
-
-	if !hasPayment {
-		return 0, fmt.Errorf("no payment recorded for channel")
-	}
 
 	// Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
 	resultJson, err := bridge.ExecuteUnilateralClose(id)
 	if err != nil {
-		return 0, fmt.Errorf("bridge error: %v", err)
+		return UnilateralCloseResult{}, fmt.Errorf("bridge error: %v", err)
 	}
 
-	var result struct {
-		Success     bool   `json:"success"`
-		Error       string `json:"error"`
-		ReceiverSum uint64 `json:"receiver_sum"`
-	}
+	var result UnilateralCloseResult
 	json.Unmarshal([]byte(resultJson), &result)
 
 	if !result.Success {
 		log.Printf("  [Close] Failed: %s\n", result.Error)
-		return 0, fmt.Errorf(result.Error)
+		return result, fmt.Errorf("%s", result.Error)
 	}
 
 	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], result.ReceiverSum)
-	return result.ReceiverSum, nil
+	return result, nil
 }
 
 func closeAllChannels(bridge *spilman.Bridge, host *AsciiArtHost) {
@@ -650,12 +641,20 @@ func closeAllChannels(bridge *spilman.Bridge, host *AsciiArtHost) {
 	var closedCount int
 
 	for _, id := range openIds {
-		earned, err := closeChannel(id, bridge, host)
-		if err == nil {
-			totalEarned += earned
-			closedCount++
-		} else {
-			log.Printf("  [Close] Failed to close %s: %v\n", id[:8], err)
+		// Only attempt to close if we have payments
+		mu.Lock()
+		_, hasPayment := channelBalance[id]
+		mu.Unlock()
+
+		if hasPayment {
+			result, err := closeChannel(id, bridge)
+			if err != nil {
+				log.Printf("  [CLI] Failed to close %s: %v\n", id[:8], err)
+			} else {
+				log.Printf("  [CLI] Closed %s... earned %d sat\n", id[:8], result.ReceiverSum)
+				totalEarned += result.ReceiverSum
+				closedCount++
+			}
 		}
 	}
 
@@ -867,14 +866,10 @@ func runServer() {
 			}
 
 			var result struct {
-				Success      bool          `json:"success"`
-				Error        string        `json:"error"`
-				Reason       string        `json:"reason"`
-				Status       int           `json:"status"`
-				TotalValue   uint64        `json:"total_value"`
-				ReceiverSum  uint64        `json:"receiver_sum"`
-				SenderSum    uint64        `json:"sender_sum"`
-				SenderProofs []interface{} `json:"sender_proofs"`
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+				Reason  string `json:"reason"`
+				Status  int    `json:"status"`
 			}
 			json.Unmarshal([]byte(resultJson), &result)
 
@@ -888,18 +883,11 @@ func runServer() {
 				return
 			}
 
-			log.Printf("  [CooperativeClose] SUCCESS! receiver=%d, sender=%d\n",
-				result.ReceiverSum, result.SenderSum)
+			log.Printf("  [CooperativeClose] SUCCESS!\n")
 
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":        true,
-				"channel_id":     channelId,
-				"already_closed": false,
-				"total_value":    result.TotalValue,
-				"receiver_sum":   result.ReceiverSum,
-				"sender_sum":     result.SenderSum,
-				"sender_proofs":  result.SenderProofs,
-			})
+			// Pass through bridge result directly
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(resultJson))
 
 		case "unilateral-close":
 			// POST /channel/{id}/unilateral-close - Server-initiated close
@@ -934,9 +922,13 @@ func runServer() {
 				return
 			}
 
-			earned, err := closeChannel(channelId, bridge, host)
+			result, err := closeChannel(channelId, bridge)
 			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
+				status := result.Status
+				if status == 0 {
+					status = http.StatusBadRequest
+				}
+				w.WriteHeader(status)
 				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 				return
 			}
@@ -945,7 +937,7 @@ func runServer() {
 				"success":                true,
 				"channel_id":             channelId,
 				"already_closed":         false,
-				"earnedBeforeStage2Fees": earned,
+				"earnedBeforeStage2Fees": result.ReceiverSum,
 			})
 
 		default:

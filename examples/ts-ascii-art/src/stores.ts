@@ -30,6 +30,7 @@ export interface ClosedChannelData {
   closedAmount: number;
   valueAfterStage1: number;
   receiverSum: number;
+  senderSum: number;
   receiverProofsJson: string;
   senderProofsJson: string;
 }
@@ -122,6 +123,7 @@ export const channelClosed = {
     closedAmount: number,
     valueAfterStage1: number,
     receiverSum: number,
+    senderSum: number,
     receiverProofsJson: string,
     senderProofsJson: string
   ): void {
@@ -130,6 +132,7 @@ export const channelClosed = {
       closedAmount,
       valueAfterStage1,
       receiverSum,
+      senderSum,
       receiverProofsJson,
       senderProofsJson,
     });
