@@ -117,9 +117,11 @@ export const spilmanHooks = {
     return BigInt(totalChars * pricing.per_char);
   },
 
+  // Note: WASM passes u64 values as BigInt; we convert to number at this boundary
+  // since all channel values fit safely in JS number (< 2^53).
   recordPayment: (
     channelId: string,
-    balance: bigint,
+    balance: number,
     signature: string,
     contextJson: string
   ): void => {
@@ -178,14 +180,13 @@ export const spilmanHooks = {
 
   markChannelClosed: (
     channelId: string,
-    locktime: number | bigint,
-    balance: number | bigint,
+    locktime: number,
+    balance: number,
     receiverProofsJson: string,
     senderProofsJson: string,
-    receiverSum: number | bigint,
-    senderSum: number | bigint
+    receiverSum: number,
+    senderSum: number
   ): void => {
-    // Convert BigInt to Number (WASM passes u64 as BigInt)
     const locktimeNum = Number(locktime);
     const balanceNum = Number(balance);
     const receiverSumNum = Number(receiverSum);
@@ -197,6 +198,7 @@ export const spilmanHooks = {
       balanceNum,
       receiverSumNum + senderSumNum,
       receiverSumNum,
+      senderSumNum,
       receiverProofsJson,
       senderProofsJson
     );
@@ -404,6 +406,8 @@ app.post("/channel/:id/close", async (req, res) => {
         success: true,
         channel_id: channelId,
         total_value: closedData.valueAfterStage1,
+        receiver_sum: closedData.receiverSum,
+        sender_sum: closedData.senderSum,
         sender_proofs: JSON.parse(closedData.senderProofsJson),
         already_closed: true,
       });
@@ -456,6 +460,12 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
       earnedBeforeStage2Fees: closedData.receiverSum,
       already_closed: true,
     });
+    return;
+  }
+
+  // Check if channel exists
+  if (!channelFunding.get(channelId)) {
+    res.status(404).json({ error: "unknown channel" });
     return;
   }
 
