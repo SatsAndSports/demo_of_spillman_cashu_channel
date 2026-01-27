@@ -4,6 +4,8 @@ import * as net from 'net';
 import * as path from 'path';
 
 const MINT_URL = process.env.MINT_URL || 'http://localhost:3338';
+const SERVER_CMD = process.env.SERVER_CMD || '';
+const SERVER_CWD = process.env.SERVER_CWD || '';
 const PORT_FILE = path.join(process.cwd(), 'tests', '.test-port');
 
 let serverProcess: ChildProcess | null = null;
@@ -108,21 +110,47 @@ export async function setup() {
   // Check mint is available before starting tests
   await checkMintAvailable();
 
+  // If SERVER_PORT is set, use an already-running external server (no spawn)
+  const externalPort = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 0;
+
+  if (externalPort > 0) {
+    console.log(`Using external server on port ${externalPort} (SERVER_PORT env var)`);
+    await waitForServer(externalPort);
+    console.log('External server is ready!');
+    writeFileSync(PORT_FILE, JSON.stringify({ port: externalPort, mintUrl: MINT_URL }));
+    return;
+  }
+
   // Find an empty port
   const port = await findEmptyPort();
   console.log(`Found empty port: ${port}`);
 
-  // Start the server
-  console.log(`Starting ts-ascii-art server on port ${port}...`);
+  // Start the server (use SERVER_CMD env var if set, otherwise default to TS server)
+  let spawnCmd: string;
+  let spawnArgs: string[];
+  let spawnCwd: string;
 
-  serverProcess = spawn('node', ['--import', 'tsx', 'src/index.ts', 'server'], {
+  if (SERVER_CMD) {
+    const parts = SERVER_CMD.split(/\s+/);
+    spawnCmd = parts[0];
+    spawnArgs = parts.slice(1);
+    spawnCwd = SERVER_CWD || process.cwd();
+    console.log(`Starting external server: ${SERVER_CMD} (cwd: ${spawnCwd}) on port ${port}...`);
+  } else {
+    spawnCmd = 'node';
+    spawnArgs = ['--import', 'tsx', 'src/index.ts', 'server'];
+    spawnCwd = process.cwd();
+    console.log(`Starting ts-ascii-art server on port ${port}...`);
+  }
+
+  serverProcess = spawn(spawnCmd, spawnArgs, {
     env: {
       ...process.env,
       PORT: String(port),
       MINT_URL: MINT_URL,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
-    cwd: process.cwd(),
+    cwd: spawnCwd,
   });
 
   // Log server output for debugging

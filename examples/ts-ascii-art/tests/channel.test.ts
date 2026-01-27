@@ -19,22 +19,25 @@ describe.concurrent('Channel params endpoint', () => {
     const params = await response.json();
     expect(params.pricing).toBeDefined();
 
-    // Check sat pricing
+    // Check sat pricing (all servers must support sat)
     expect(params.pricing.sat).toBeDefined();
     expect(params.pricing.sat.per_char).toBeGreaterThan(0);
     expect(params.pricing.sat.minCapacity).toBeGreaterThan(0);
 
-    // Check msat pricing
-    expect(params.pricing.msat).toBeDefined();
-    expect(params.pricing.msat.per_char).toBeGreaterThan(0);
-    expect(params.pricing.msat.minCapacity).toBeGreaterThan(0);
+    // Check msat pricing (optional - only TS server supports multiple units)
+    if (params.pricing.msat) {
+      expect(params.pricing.msat.per_char).toBeGreaterThan(0);
+      expect(params.pricing.msat.minCapacity).toBeGreaterThan(0);
+    }
 
-    // Check usd pricing
-    expect(params.pricing.usd).toBeDefined();
-    expect(params.pricing.usd.per_char).toBeGreaterThan(0);
-    expect(params.pricing.usd.minCapacity).toBeGreaterThan(0);
+    // Check usd pricing (optional - only TS server supports multiple units)
+    if (params.pricing.usd) {
+      expect(params.pricing.usd.per_char).toBeGreaterThan(0);
+      expect(params.pricing.usd.minCapacity).toBeGreaterThan(0);
+    }
 
-    console.log(`Pricing: sat=${params.pricing.sat.per_char}/char, msat=${params.pricing.msat.per_char}/char, usd=${params.pricing.usd.per_char}/char`);
+    const units = Object.keys(params.pricing);
+    console.log(`Pricing units: ${units.join(', ')} (sat=${params.pricing.sat.per_char}/char)`);
   });
 
   test('returns mint URL', async ({ server }) => {

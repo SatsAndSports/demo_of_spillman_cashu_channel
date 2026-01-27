@@ -192,6 +192,7 @@ impl SpilmanChannelSender {
             .channel
             .params
             .get_sender_blinded_secret_key_for_stage1(&self.alice_secret)?;
+
         swap_request.sign_sig_all(blinded_secret)?;
 
         // Create the balance update message

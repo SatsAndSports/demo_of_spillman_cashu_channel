@@ -513,7 +513,8 @@ impl ChannelParameters {
     ) -> anyhow::Result<Scalar> {
         let channel_id_bytes = self.get_channel_id_bytes();
         let amount_bytes = amount.to_le_bytes();
-        let index_bytes = index.to_le_bytes();
+        // Use u64 for platform-independent serialization (usize is 4 bytes on wasm32, 8 on x86_64)
+        let index_bytes = (index as u64).to_le_bytes();
 
         for retry_counter in 0u8..=255 {
             let mut input = Vec::new();
@@ -727,7 +728,8 @@ impl ChannelParameters {
     ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
         let channel_id = self.get_channel_id();
         let amount_bytes = amount.to_le_bytes();
-        let index_bytes = index.to_le_bytes();
+        // Use u64 for platform-independent serialization (usize is 4 bytes on wasm32, 8 on x86_64)
+        let index_bytes = (index as u64).to_le_bytes();
 
         // Derive deterministic nonce: SHA256(shared_secret || channel_id || context || amount || "nonce" || index)
         let mut nonce_input = Vec::new();
