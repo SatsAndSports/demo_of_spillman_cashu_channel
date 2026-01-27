@@ -225,6 +225,147 @@ pub struct UnblindResult {
     pub sender_sum: u64,
 }
 
+/// Everything needed to execute a close operation after sync validation.
+///
+/// Contains all data for the HTTP phase (swap request) and subsequent
+/// finalization (unblinding and marking closed).
+#[derive(Debug)]
+pub struct PreparedClose {
+    /// The channel being closed
+    pub channel_id: String,
+    /// The balance at which the channel is being closed
+    pub balance: u64,
+    /// The mint URL to submit the swap to
+    pub mint_url: String,
+    /// The fully-signed swap request, ready to POST to /v1/swap
+    pub swap_request: serde_json::Value,
+    /// Secrets with blinding factors for unblinding the response
+    pub secrets_with_blinding: serde_json::Value,
+    /// Keyset info for the output proofs
+    pub output_keyset_info: serde_json::Value,
+    /// Channel parameters (for unblinding phase)
+    pub params_json: String,
+    /// Keyset info JSON (for unblinding phase)
+    pub keyset_info_json: String,
+    /// Shared secret hex (for unblinding phase)
+    pub shared_secret: String,
+}
+
+/// HTTP-friendly error for close preparation.
+///
+/// Not a Rust Error type - just a struct that serializes to JSON with status code.
+/// Used by bindings to return errors with appropriate HTTP status codes.
+#[derive(Debug)]
+pub struct ClosePreparationError {
+    /// Short error message (e.g., "Payment required")
+    pub error: String,
+    /// Detailed reason (e.g., "invalid signature: Alice did not authorize...")
+    pub reason: String,
+    /// HTTP status code (400, 402, 404, 500)
+    pub status: u16,
+    /// Additional fields for specific errors (e.g., expected/actual for mismatch)
+    pub extra: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl ClosePreparationError {
+    /// Serialize to JSON string for FFI responses
+    pub fn to_json(&self) -> String {
+        let mut obj = serde_json::json!({
+            "success": false,
+            "error": self.error,
+            "reason": self.reason,
+            "status": self.status
+        });
+
+        // Merge extra fields into the response
+        if let Some(extra) = &self.extra {
+            if let Some(obj_map) = obj.as_object_mut() {
+                for (k, v) in extra {
+                    obj_map.insert(k.clone(), v.clone());
+                }
+            }
+        }
+
+        obj.to_string()
+    }
+
+    /// Create a 400 Bad Request error
+    pub fn bad_request(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            error: "Bad request".into(),
+            reason,
+            status: 400,
+            extra: None,
+        }
+    }
+
+    /// Create a 402 Payment Required error
+    pub fn payment_required(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            error: "Payment required".into(),
+            reason,
+            status: 402,
+            extra: None,
+        }
+    }
+
+    /// Create a 404 Not Found error
+    /// Uses the reason as both error and reason since specific error messages
+    /// (like "unknown channel") are more useful than generic "Not found"
+    pub fn not_found(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            error: reason.clone(),
+            reason,
+            status: 404,
+            extra: None,
+        }
+    }
+
+    /// Create a 500 Internal Server Error
+    pub fn internal(reason: impl Into<String>) -> Self {
+        let reason = reason.into();
+        Self {
+            error: "Internal error".into(),
+            reason,
+            status: 500,
+            extra: None,
+        }
+    }
+
+    /// Add extra fields to the error
+    pub fn with_extra(mut self, extra: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.extra = Some(extra);
+        self
+    }
+
+    /// Create from a BridgeError with appropriate status code
+    pub fn from_bridge_error(err: BridgeError) -> Self {
+        let reason = err.to_string();
+
+        match &err {
+            BridgeError::ChannelClosed => Self::bad_request(reason),
+            BridgeError::UnknownChannel => Self::not_found(reason),
+            BridgeError::InvalidRequest(msg) if msg.contains("no payment proof") => {
+                Self::bad_request(reason)
+            }
+            BridgeError::Internal(_) | BridgeError::ServerMisconfigured(_) => {
+                Self::internal(reason)
+            }
+            BridgeError::BalanceMismatch { expected, actual } => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("expected".into(), serde_json::json!(expected));
+                extra.insert("actual".into(), serde_json::json!(actual));
+                Self::payment_required(reason).with_extra(extra)
+            }
+            // All validation errors are 402 Payment Required
+            _ => Self::payment_required(reason),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BridgeServerConfig {
     pub min_expiry_in_seconds: u64,
@@ -1296,6 +1437,163 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             None,  // no funding_proofs - channel must already exist
             false, // don't validate_balance_equals_amount_due
         )
+    }
+
+    /// Validate payment and prepare everything needed for cooperative close execution.
+    ///
+    /// This is the sync phase before any HTTP calls to the mint. It validates the
+    /// payment request and prepares all data needed for the HTTP swap and subsequent
+    /// finalization (unblinding).
+    ///
+    /// Returns either:
+    /// - `Ok(PreparedClose)` - ready to POST `swap_request` to `mint_url/v1/swap`
+    /// - `Err(ClosePreparationError)` - with HTTP-friendly status code
+    ///
+    /// After this succeeds, the caller should:
+    /// 1. POST `swap_request` to `{mint_url}/v1/swap`
+    /// 2. On mint error: call `refresh_active_keysets()`, re-call this method, retry step 1
+    /// 3. Call `unblind_and_verify_dleq()` with the mint response
+    /// 4. Call `host.mark_channel_closed()` with the unblinded proofs
+    ///
+    /// # Arguments
+    /// * `payment_json` - JSON string with `channel_id`, `balance`, `signature`, and
+    ///   optionally `params` and `funding_proofs` for new channels
+    pub fn prepare_cooperative_close_for_execution(
+        &self,
+        payment_json: &str,
+    ) -> Result<PreparedClose, ClosePreparationError> {
+        // 1. Parse payment_json to extract channel_id and balance for later
+        let payment: serde_json::Value = serde_json::from_str(payment_json).map_err(|e| {
+            ClosePreparationError::bad_request(format!("Invalid payment JSON: {}", e))
+        })?;
+
+        let channel_id = payment["channel_id"]
+            .as_str()
+            .ok_or_else(|| ClosePreparationError::bad_request("missing channel_id"))?
+            .to_string();
+
+        let balance = payment["balance"]
+            .as_u64()
+            .ok_or_else(|| ClosePreparationError::bad_request("missing balance"))?;
+
+        // 2. Validate and prepare (this does signature verification, balance checks, etc.)
+        let close_data = self
+            .validate_and_prepare_cooperative_close(payment_json)
+            .map_err(ClosePreparationError::from_bridge_error)?;
+
+        // 3. Get funding data for unblinding phase
+        let (params_json, _funding_proofs_json, shared_secret, keyset_info_json) = self
+            .host
+            .get_funding_and_params(&channel_id)
+            .ok_or_else(|| ClosePreparationError::internal("channel not found after validation"))?;
+
+        // 4. Extract mint_url from params
+        let params: serde_json::Value = serde_json::from_str(&params_json)
+            .map_err(|e| ClosePreparationError::internal(format!("Invalid params JSON: {}", e)))?;
+
+        let mint_url = params["mint"]
+            .as_str()
+            .ok_or_else(|| ClosePreparationError::internal("missing mint in params"))?
+            .to_string();
+
+        // 5. Convert CloseData to PreparedClose (JSON values for FFI)
+        Ok(PreparedClose {
+            channel_id,
+            balance,
+            mint_url,
+            swap_request: serde_json::to_value(&close_data.swap_request)
+                .unwrap_or(serde_json::Value::Null),
+            secrets_with_blinding: close_data
+                .secrets_with_blinding
+                .iter()
+                .map(|(s, is_receiver)| {
+                    serde_json::json!({
+                        "secret": s.secret.to_string(),
+                        "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                        "amount": s.amount,
+                        "index": s.index,
+                        "is_receiver": is_receiver
+                    })
+                })
+                .collect(),
+            output_keyset_info: serde_json::to_value(&close_data.output_keyset_info)
+                .unwrap_or(serde_json::Value::Null),
+            params_json,
+            keyset_info_json,
+            shared_secret,
+        })
+    }
+
+    /// Prepare everything needed for unilateral (server-initiated) close execution.
+    ///
+    /// Same as `prepare_cooperative_close_for_execution` but uses the stored payment
+    /// proof instead of requiring a client-provided signature.
+    ///
+    /// Returns either:
+    /// - `Ok(PreparedClose)` - ready to POST `swap_request` to `mint_url/v1/swap`
+    /// - `Err(ClosePreparationError)` - with HTTP-friendly status code:
+    ///   - 400: channel already closed, or no payment recorded
+    ///   - 404: unknown channel
+    ///   - 500: internal error
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID to close
+    pub fn prepare_unilateral_close_for_execution(
+        &self,
+        channel_id: &str,
+    ) -> Result<PreparedClose, ClosePreparationError> {
+        // 1. Create close data (this checks channel exists, gets stored payment, validates)
+        let close_data = self
+            .create_unilateral_close_data(channel_id)
+            .map_err(ClosePreparationError::from_bridge_error)?;
+
+        // 2. Get funding data for unblinding phase
+        let (params_json, _funding_proofs_json, shared_secret, keyset_info_json) = self
+            .host
+            .get_funding_and_params(channel_id)
+            .ok_or_else(|| ClosePreparationError::internal("channel not found after validation"))?;
+
+        // 3. Get balance from host (we need it for PreparedClose)
+        let (balance, _signature) = self
+            .host
+            .get_balance_and_signature_for_unilateral_exit(channel_id)
+            .ok_or_else(|| ClosePreparationError::internal("balance not found after validation"))?;
+
+        // 4. Extract mint_url from params
+        let params: serde_json::Value = serde_json::from_str(&params_json)
+            .map_err(|e| ClosePreparationError::internal(format!("Invalid params JSON: {}", e)))?;
+
+        let mint_url = params["mint"]
+            .as_str()
+            .ok_or_else(|| ClosePreparationError::internal("missing mint in params"))?
+            .to_string();
+
+        // 5. Convert CloseData to PreparedClose (JSON values for FFI)
+        Ok(PreparedClose {
+            channel_id: channel_id.to_string(),
+            balance,
+            mint_url,
+            swap_request: serde_json::to_value(&close_data.swap_request)
+                .unwrap_or(serde_json::Value::Null),
+            secrets_with_blinding: close_data
+                .secrets_with_blinding
+                .iter()
+                .map(|(s, is_receiver)| {
+                    serde_json::json!({
+                        "secret": s.secret.to_string(),
+                        "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                        "amount": s.amount,
+                        "index": s.index,
+                        "is_receiver": is_receiver
+                    })
+                })
+                .collect(),
+            output_keyset_info: serde_json::to_value(&close_data.output_keyset_info)
+                .unwrap_or(serde_json::Value::Null),
+            params_json,
+            keyset_info_json,
+            shared_secret,
+        })
     }
 }
 

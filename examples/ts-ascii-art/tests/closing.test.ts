@@ -254,10 +254,10 @@ describe.concurrent('Channel closing', () => {
       }),
     });
 
-    expect(response.status).toBe(402);
+    expect(response.status).toBe(404);
     const body = await response.json();
-    expect(body.reason).toContain('unknown channel');
-    console.log(`Close rejected for unknown channel: ${body.reason}`);
+    expect(body.error).toContain('unknown channel');
+    console.log(`Close rejected for unknown channel: ${body.error}`);
   });
 });
 
