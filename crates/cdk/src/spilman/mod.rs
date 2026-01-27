@@ -26,7 +26,7 @@ pub use bindings::{
 };
 pub use bridge::{
     unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, CloseData,
-    SpilmanBridge, SpilmanHost, UnblindResult,
+    ClosePreparationError, PreparedClose, SpilmanBridge, SpilmanHost, UnblindResult,
 };
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,

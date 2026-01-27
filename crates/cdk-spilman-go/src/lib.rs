@@ -447,157 +447,20 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     let instance = &*ptr;
     let payment_str = CStr::from_ptr(payment_json).to_str().unwrap();
 
-    // Parse payment_json
-    let payment: serde_json::Value = match serde_json::from_str(payment_str) {
-        Ok(v) => v,
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid payment JSON: {}", e),
-                    "status": 400
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    let channel_id = match payment["channel_id"].as_str() {
-        Some(id) => id.to_string(),
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "missing channel_id",
-                    "status": 400
-                })
-                .to_string(),
-            );
-        }
-    };
-    let balance = match payment["balance"].as_u64() {
-        Some(b) => b,
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "missing balance",
-                    "status": 400
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    // Step 1: Validate and prepare (via bridge)
-    let close_result_json = match instance
+    // 1. Sync preparation: validate payment, build swap request, get all needed data
+    let mut prepared = match instance
         .bridge
-        .validate_and_prepare_cooperative_close(payment_str)
+        .prepare_cooperative_close_for_execution(payment_str)
     {
-        Ok(data) => data.to_json_value().to_string(),
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": e.to_string(),
-                    "reason": e.to_string(),
-                    "status": 402
-                })
-                .to_string(),
-            );
-        }
+        Ok(p) => p,
+        Err(e) => return CResult::success(e.to_json()),
     };
 
-    let mut close_result: serde_json::Value = match serde_json::from_str(&close_result_json) {
-        Ok(v) => v,
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid close result: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    if !close_result["success"].as_bool().unwrap_or(false) {
-        let error_msg = close_result["error"]
-            .as_str()
-            .unwrap_or("validation failed");
-        let status = if error_msg.contains("channel closed") {
-            400
-        } else {
-            402
-        };
-        let mut result = serde_json::json!({
-            "success": false,
-            "error": "Payment required",
-            "reason": error_msg,
-            "status": status
-        });
-        if let Some(obj) = close_result.as_object() {
-            if let Some(res_obj) = result.as_object_mut() {
-                for (k, v) in obj {
-                    if k != "success" && k != "error" && !res_obj.contains_key(k) {
-                        res_obj.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-        }
-        return CResult::success(result.to_string());
-    }
-
-    // Get funding data (via bridge.host())
-    let (params_json, _, shared_secret_hex, keyset_info_json) =
-        match instance.bridge.host().get_funding_and_params(&channel_id) {
-            Some(data) => data,
-            None => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": "channel not found after validation",
-                        "status": 500
-                    })
-                    .to_string(),
-                );
-            }
-        };
-
-    let params: serde_json::Value = match serde_json::from_str(&params_json) {
-        Ok(v) => v,
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-    let mint_url = match params["mint"].as_str() {
-        Some(url) => url.to_string(),
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "missing mint in params",
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    // Step 2: Submit swap to mint (via host)
-    let swap_request_json = close_result["swap_request"].to_string();
+    // 2. Submit swap to mint (via host)
     let mut swap_response: serde_json::Value = match instance
         .bridge
         .host()
-        .call_mint_swap(&mint_url, &swap_request_json)
+        .call_mint_swap(&prepared.mint_url, &prepared.swap_request.to_string())
     {
         Ok(resp) => match serde_json::from_str(&resp) {
             Ok(v) => v,
@@ -624,15 +487,19 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         }
     };
 
-    // Step 3: On error, refresh keysets and retry
+    // 3. On error, refresh keysets and retry
     if swap_response.get("error").is_some() {
-        let _ = instance.bridge.host().refresh_active_keysets(&mint_url);
-
-        let retry_close_result_json = match instance
+        let _ = instance
             .bridge
-            .validate_and_prepare_cooperative_close(payment_str)
+            .host()
+            .refresh_active_keysets(&prepared.mint_url);
+
+        // Re-prepare with potentially updated keyset info
+        let retry_prepared = match instance
+            .bridge
+            .prepare_cooperative_close_for_execution(payment_str)
         {
-            Ok(data) => data.to_json_value().to_string(),
+            Ok(p) => p,
             Err(e) => {
                 return CResult::success(
                     serde_json::json!({
@@ -640,48 +507,19 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
                         "error": "mint rejected swap",
                         "status": 502,
                         "mint_error": swap_response["error"],
-                        "retry_error": e.to_string()
+                        "retry_failed": true,
+                        "retry_error": e.reason
                     })
                     .to_string(),
                 );
             }
         };
 
-        let retry_close_result: serde_json::Value =
-            match serde_json::from_str(&retry_close_result_json) {
-                Ok(v) => v,
-                Err(_) => {
-                    return CResult::success(
-                        serde_json::json!({
-                            "success": false,
-                            "error": "mint rejected swap",
-                            "status": 502,
-                            "mint_error": swap_response["error"]
-                        })
-                        .to_string(),
-                    );
-                }
-            };
-
-        if !retry_close_result["success"].as_bool().unwrap_or(false) {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "mint rejected swap",
-                    "status": 502,
-                    "mint_error": swap_response["error"],
-                    "retry_error": retry_close_result["error"]
-                })
-                .to_string(),
-            );
-        }
-
-        let retry_swap_json = retry_close_result["swap_request"].to_string();
-        match instance
-            .bridge
-            .host()
-            .call_mint_swap(&mint_url, &retry_swap_json)
-        {
+        // Retry swap
+        match instance.bridge.host().call_mint_swap(
+            &retry_prepared.mint_url,
+            &retry_prepared.swap_request.to_string(),
+        ) {
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => {
                     let retry_resp: serde_json::Value = v;
@@ -698,7 +536,7 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
                         );
                     }
                     swap_response = retry_resp;
-                    close_result = retry_close_result;
+                    prepared = retry_prepared;
                 }
                 Err(e) => {
                     return CResult::success(
@@ -724,22 +562,20 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         }
     }
 
-    // Step 4: Unblind and verify DLEQ
+    // 4. Unblind and verify DLEQ
     let signatures_json = swap_response
         .get("signatures")
         .map(|v| v.to_string())
         .unwrap_or_else(|| "[]".to_string());
-    let secrets_json = close_result["secrets_with_blinding"].to_string();
-    let output_keyset_json = close_result["output_keyset_info"].to_string();
 
     let unblind_result_json = match spilman::unblind_and_verify_dleq(
         &signatures_json,
-        &secrets_json,
-        &params_json,
-        &keyset_info_json,
-        &shared_secret_hex,
-        balance,
-        Some(&output_keyset_json),
+        &prepared.secrets_with_blinding.to_string(),
+        &prepared.params_json,
+        &prepared.keyset_info_json,
+        &prepared.shared_secret,
+        prepared.balance,
+        Some(&prepared.output_keyset_info.to_string()),
     ) {
         Ok(json) => json,
         Err(e) => {
@@ -769,8 +605,7 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         }
     };
 
-    // Verify totals
-    let expected_total = close_result["expected_total"].as_u64().unwrap_or(0);
+    // 5. Extract results
     let receiver_sum = unblind_result["receiver_sum_after_stage1"]
         .as_u64()
         .unwrap_or(0);
@@ -779,30 +614,28 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         .unwrap_or(0);
     let actual_total = receiver_sum + sender_sum;
 
-    if actual_total != expected_total {
-        return CResult::success(
-            serde_json::json!({
-                "success": false,
-                "error": "swap response total mismatch",
-                "status": 500,
-                "expected": expected_total,
-                "actual": actual_total
-            })
-            .to_string(),
-        );
-    }
-
-    // Step 5: Mark channel closed (via host)
+    // 6. Mark channel closed (via host)
+    let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return CResult::success(
+                serde_json::json!({
+                    "success": false,
+                    "error": format!("Invalid params: {}", e),
+                    "status": 500
+                })
+                .to_string(),
+            );
+        }
+    };
     let locktime = params["locktime"].as_u64().unwrap_or(0);
-    let receiver_proofs_json = unblind_result["receiver_proofs"].to_string();
-    let sender_proofs_json = unblind_result["sender_proofs"].to_string();
 
     if let Err(e) = instance.bridge.host().mark_channel_closed(
-        &channel_id,
+        &prepared.channel_id,
         locktime,
-        balance,
-        &receiver_proofs_json,
-        &sender_proofs_json,
+        prepared.balance,
+        &unblind_result["receiver_proofs"].to_string(),
+        &unblind_result["sender_proofs"].to_string(),
         receiver_sum,
         sender_sum,
     ) {
@@ -820,7 +653,7 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     CResult::success(
         serde_json::json!({
             "success": true,
-            "channel_id": channel_id,
+            "channel_id": prepared.channel_id,
             "total_value": actual_total,
             "sender_proofs": unblind_result["sender_proofs"],
             "already_closed": false
@@ -838,139 +671,20 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     let instance = &*ptr;
     let channel_id_str = CStr::from_ptr(channel_id).to_str().unwrap();
 
-    // Step 1: Create close data (via bridge)
-    let close_result_json = match instance.bridge.create_unilateral_close_data(channel_id_str) {
-        Ok(data) => data.to_json_value().to_string(),
-        Err(e) => {
-            let error_msg = e.to_string();
-            let status = if error_msg.contains("channel closed") {
-                400
-            } else if error_msg.contains("unknown channel") {
-                404
-            } else if error_msg.contains("no payment") {
-                400
-            } else {
-                500
-            };
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": error_msg,
-                    "status": status
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    let mut close_result: serde_json::Value = match serde_json::from_str(&close_result_json) {
-        Ok(v) => v,
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid close result: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    if !close_result["success"].as_bool().unwrap_or(false) {
-        let error_msg = close_result["error"]
-            .as_str()
-            .unwrap_or("preparation failed");
-        let status = if error_msg.contains("channel closed") {
-            400
-        } else if error_msg.contains("unknown channel") {
-            404
-        } else if error_msg.contains("no payment") {
-            400
-        } else {
-            500
-        };
-        return CResult::success(
-            serde_json::json!({
-                "success": false,
-                "error": error_msg,
-                "status": status
-            })
-            .to_string(),
-        );
-    }
-
-    // Get funding data (via bridge.host())
-    let (params_json, _, shared_secret_hex, keyset_info_json) = match instance
+    // 1. Sync preparation: validate, get stored payment, build swap request
+    let mut prepared = match instance
         .bridge
-        .host()
-        .get_funding_and_params(channel_id_str)
+        .prepare_unilateral_close_for_execution(channel_id_str)
     {
-        Some(data) => data,
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "channel not found after preparation",
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
+        Ok(p) => p,
+        Err(e) => return CResult::success(e.to_json()),
     };
 
-    let params: serde_json::Value = match serde_json::from_str(&params_json) {
-        Ok(v) => v,
-        Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-    let mint_url = match params["mint"].as_str() {
-        Some(url) => url.to_string(),
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "missing mint in params",
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    // Get balance from host
-    let (balance, _) = match instance
-        .bridge
-        .host()
-        .get_balance_and_signature_for_unilateral_exit(channel_id_str)
-    {
-        Some(data) => data,
-        None => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "no payment proof after preparation",
-                    "status": 500
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    // Step 2: Submit swap to mint (via host)
-    let swap_request_json = close_result["swap_request"].to_string();
+    // 2. Submit swap to mint (via host)
     let mut swap_response: serde_json::Value = match instance
         .bridge
         .host()
-        .call_mint_swap(&mint_url, &swap_request_json)
+        .call_mint_swap(&prepared.mint_url, &prepared.swap_request.to_string())
     {
         Ok(resp) => match serde_json::from_str(&resp) {
             Ok(v) => v,
@@ -997,62 +711,39 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         }
     };
 
-    // Step 3: On error, refresh keysets and retry
+    // 3. On error, refresh keysets and retry
     if swap_response.get("error").is_some() {
-        let _ = instance.bridge.host().refresh_active_keysets(&mint_url);
-
-        let retry_close_result_json =
-            match instance.bridge.create_unilateral_close_data(channel_id_str) {
-                Ok(data) => data.to_json_value().to_string(),
-                Err(e) => {
-                    return CResult::success(
-                        serde_json::json!({
-                            "success": false,
-                            "error": "mint rejected swap",
-                            "status": 502,
-                            "mint_error": swap_response["error"],
-                            "retry_error": e.to_string()
-                        })
-                        .to_string(),
-                    );
-                }
-            };
-
-        let retry_close_result: serde_json::Value =
-            match serde_json::from_str(&retry_close_result_json) {
-                Ok(v) => v,
-                Err(_) => {
-                    return CResult::success(
-                        serde_json::json!({
-                            "success": false,
-                            "error": "mint rejected swap",
-                            "status": 502,
-                            "mint_error": swap_response["error"]
-                        })
-                        .to_string(),
-                    );
-                }
-            };
-
-        if !retry_close_result["success"].as_bool().unwrap_or(false) {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "mint rejected swap",
-                    "status": 502,
-                    "mint_error": swap_response["error"],
-                    "retry_error": retry_close_result["error"]
-                })
-                .to_string(),
-            );
-        }
-
-        let retry_swap_json = retry_close_result["swap_request"].to_string();
-        match instance
+        let _ = instance
             .bridge
             .host()
-            .call_mint_swap(&mint_url, &retry_swap_json)
+            .refresh_active_keysets(&prepared.mint_url);
+
+        // Re-prepare with potentially updated keyset info
+        let retry_prepared = match instance
+            .bridge
+            .prepare_unilateral_close_for_execution(channel_id_str)
         {
+            Ok(p) => p,
+            Err(e) => {
+                return CResult::success(
+                    serde_json::json!({
+                        "success": false,
+                        "error": "mint rejected swap",
+                        "status": 502,
+                        "mint_error": swap_response["error"],
+                        "retry_failed": true,
+                        "retry_error": e.reason
+                    })
+                    .to_string(),
+                );
+            }
+        };
+
+        // Retry swap
+        match instance.bridge.host().call_mint_swap(
+            &retry_prepared.mint_url,
+            &retry_prepared.swap_request.to_string(),
+        ) {
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => {
                     let retry_resp: serde_json::Value = v;
@@ -1069,7 +760,7 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
                         );
                     }
                     swap_response = retry_resp;
-                    close_result = retry_close_result;
+                    prepared = retry_prepared;
                 }
                 Err(e) => {
                     return CResult::success(
@@ -1095,22 +786,20 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         }
     }
 
-    // Step 4: Unblind and verify DLEQ
+    // 4. Unblind and verify DLEQ
     let signatures_json = swap_response
         .get("signatures")
         .map(|v| v.to_string())
         .unwrap_or_else(|| "[]".to_string());
-    let secrets_json = close_result["secrets_with_blinding"].to_string();
-    let output_keyset_json = close_result["output_keyset_info"].to_string();
 
     let unblind_result_json = match spilman::unblind_and_verify_dleq(
         &signatures_json,
-        &secrets_json,
-        &params_json,
-        &keyset_info_json,
-        &shared_secret_hex,
-        balance,
-        Some(&output_keyset_json),
+        &prepared.secrets_with_blinding.to_string(),
+        &prepared.params_json,
+        &prepared.keyset_info_json,
+        &prepared.shared_secret,
+        prepared.balance,
+        Some(&prepared.output_keyset_info.to_string()),
     ) {
         Ok(json) => json,
         Err(e) => {
@@ -1140,8 +829,7 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         }
     };
 
-    // Verify totals
-    let expected_total = close_result["expected_total"].as_u64().unwrap_or(0);
+    // 5. Extract results
     let receiver_sum = unblind_result["receiver_sum_after_stage1"]
         .as_u64()
         .unwrap_or(0);
@@ -1150,30 +838,28 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         .unwrap_or(0);
     let actual_total = receiver_sum + sender_sum;
 
-    if actual_total != expected_total {
-        return CResult::success(
-            serde_json::json!({
-                "success": false,
-                "error": "swap response total mismatch",
-                "status": 500,
-                "expected": expected_total,
-                "actual": actual_total
-            })
-            .to_string(),
-        );
-    }
-
-    // Step 5: Mark channel closed (via host)
+    // 6. Mark channel closed (via host)
+    let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return CResult::success(
+                serde_json::json!({
+                    "success": false,
+                    "error": format!("Invalid params: {}", e),
+                    "status": 500
+                })
+                .to_string(),
+            );
+        }
+    };
     let locktime = params["locktime"].as_u64().unwrap_or(0);
-    let receiver_proofs_json = unblind_result["receiver_proofs"].to_string();
-    let sender_proofs_json = unblind_result["sender_proofs"].to_string();
 
     if let Err(e) = instance.bridge.host().mark_channel_closed(
-        channel_id_str,
+        &prepared.channel_id,
         locktime,
-        balance,
-        &receiver_proofs_json,
-        &sender_proofs_json,
+        prepared.balance,
+        &unblind_result["receiver_proofs"].to_string(),
+        &unblind_result["sender_proofs"].to_string(),
         receiver_sum,
         sender_sum,
     ) {
@@ -1191,10 +877,11 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     CResult::success(
         serde_json::json!({
             "success": true,
-            "channel_id": channel_id_str,
+            "channel_id": prepared.channel_id,
             "total_value": actual_total,
             "receiver_sum": receiver_sum,
             "sender_sum": sender_sum,
+            "balance": prepared.balance,
             "already_closed": false
         })
         .to_string(),
