@@ -113,6 +113,10 @@ For detailed information, see:
 
 ## Active TODOs
 
+- scale back the demos, they're not really needed as we now have so many tests
+- large max acmount as tiny ouptuts "over HTTP headers" !!!
+- split out 'validate_payment' from 'process_payment'
+
 ### Protocol
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels
 
