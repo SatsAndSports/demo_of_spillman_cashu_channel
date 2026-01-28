@@ -2,7 +2,23 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
-## Completed Features
+## Completed Features (Late Jan 2026)
+
+### Hash Input Normalization
+- **Normalized all hash-based derivations to pipe-delimited text**: All 5 protocol-critical derivations now use consistent string interpolation instead of raw integer bytes or platform-dependent `usize`.
+- **Derivations affected**: Channel ID, shared blinding scalars, per-output blinding scalars, deterministic nonces, and deterministic blinding factors.
+- **Improved cross-platform consistency**: Ensures identical behavior between WASM (wasm32) and native (x86_64) implementations regardless of integer endianness or pointer size.
+
+### Multi-Unit and msat Coverage
+- **Added msat payment tests**: Verified high-precision payments (msat unit) work correctly across the full channel lifecycle.
+- **Fixed `mintFundedChannel` unit bug**: The TS test helper now correctly respects the requested unit when minting tokens.
+- **Discovered HTTP transport constraints**: High-capacity channels with small output amounts generate many proofs (~150+), which can exceed the 16KB limit for the `X-Cashu-Channel` header in Node.js/Express.
+
+### Cleanup and Fixes
+- **Removed legacy `mint` field fallbacks**: Python and Go clients now exclusively use the `mints_units_keysets` field for parameter discovery.
+- **Fixed Python server scoping bug**: Resolved `UnboundLocalError` in the `/ascii` handler where `payment_info` was accessed before assignment.
+
+## Completed Features (Previous)
 
 ### Dynamic Multi-Unit Pricing and `mints_units_keysets`
 - **All three servers (TS, Python, Go) dynamically discover and advertise supported units**: `/channel/params` now returns `pricing` filtered to only units with active mint keysets, and `mints_units_keysets` (replacing the old `mint` field) mapping `{mint_url: {unit: [keyset_id, ...]}}`.

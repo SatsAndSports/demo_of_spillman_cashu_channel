@@ -153,7 +153,15 @@ Test coverage includes:
 
 ### TypeScript ASCII Art Tests
 
-The ts-ascii-art example has a comprehensive test suite (33 tests) and serves as the **reference implementation** for the ASCII Art demo pattern:
+The ts-ascii-art example has a comprehensive test suite (36 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
+
+#### Cross-Server Verification
+Since all three servers (TS, Python, Go) use the same Rust core, we use the TS test suite to validate all of them:
+
+```bash
+make test-python-via-ts-cdk  # Runs TS tests against Python server
+make test-go-via-ts-cdk      # Runs TS tests against Go server
+```
 
 From CDK root (recommended - handles mint and WASM automatically):
 
@@ -272,6 +280,11 @@ git diff 4a505bae --stat
 - **Test server:** Port 3099
 
 ## Troubleshooting
+
+### HTTP 431 / Request Header Fields Too Large
+This happens when the `X-Cashu-Channel` header exceeds the server's limit (usually 16KB). This is common when funding high-capacity `msat` channels with many small proofs.
+
+**Workaround**: Use a larger `maximumAmount` when creating the channel (e.g., 8192 instead of the default 64) to reduce the number of funding proofs.
 
 ### Mint database issues
 

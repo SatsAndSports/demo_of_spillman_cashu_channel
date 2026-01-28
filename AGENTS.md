@@ -114,11 +114,11 @@ For detailed information, see:
 ## Active TODOs
 
 - scale back the demos, they're not really needed as we now have so many tests
-- large max acmount as tiny ouptuts "over HTTP headers" !!!
-- split out 'validate_payment' from 'process_payment'
+- split out 'validate_payment' from 'process_payment' (High Priority)
+- Optimize header size: high-capacity msat channels with many small outputs overflow 16KB HTTP headers. Need POST body for funding or better output fragmentation.
 
 ### Protocol
-- Keyset rotation issue: deactivated keysets removed from cache break existing channels
+- Keyset rotation issue: deactivated keysets removed from cache break existing channels (High Priority)
 
 ### Player
 - Remember volume preference in localStorage

@@ -91,14 +91,18 @@ With P2BK:
 
 ### Blinding Derivation
 
+All protocol-critical derivations (scalars, nonces, blinding factors) use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency.
+
 ```
-r = SHA256("Cashu_Spilman_P2BK_v1" || channel_id || shared_secret || context || retry_counter)
+r = SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{retry_counter}")
 
 If pubkey has even Y:  blinded_pubkey = raw_pubkey + r*G
 If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity)
 
 blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
 ```
+
+Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings. `channel_id` is a hex string. Raw bytes are only used for the domain separator prefix and the `shared_secret`.
 
 ### Blinding Contexts
 
@@ -255,6 +259,17 @@ Alice                                Charlie                              Mint
 | `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait |
 | `spilman/bindings.rs` | FFI-friendly wrapper functions |
 | `spilman/tests.rs` | Integration tests against real mint |
+
+## Transport Constraints
+
+### HTTP Header Limits
+The Spilman protocol typically transmits `X-Cashu-Channel` as a base64-encoded JSON header. Standard web servers (Node.js, Express, Nginx) often impose a **16KB limit** on total header size.
+
+A single funding proof occupies ~350-400 bytes when base64 encoded. Consequently, a funding token containing more than **~40 proofs** will likely overflow this limit. 
+
+This is particularly relevant for:
+- **High-capacity msat channels**: A 10,000 sat channel funded with `msat` tokens using standard 64-output fragmentation will generate ~150+ proofs (~60KB).
+- **Workaround**: Use a larger `maximum_amount` (e.g., 8192) to keep the proof count small, or move funding to a `POST` request body.
 
 ## Future Work
 
