@@ -19,7 +19,8 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	test-python-via-ts-cdk test-go-via-ts-cdk \
 	wasm-dev blossom-wasm ts-ascii-wasm test-spilman \
 	test-all-cdk test-all-nutmix test-all-nutmix-native test-all \
-	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs
+	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs \
+	ensure-nutmix-image
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -97,13 +98,13 @@ test-ts-parallel-cdk: wasm-dev cdk-mintd
 
 # --- Parallel Demo Tests (NutMix via Docker Compose) ---
 
-test-python-parallel-nutmix: python-dev build-nutmix-setup-units
+test-python-parallel-nutmix: python-dev build-nutmix-setup-units ensure-nutmix-image
 	@bash scripts/python-parallel-demo.sh nutmix
 
-test-go-parallel-nutmix: go-build-rust build-nutmix-setup-units
+test-go-parallel-nutmix: go-build-rust build-nutmix-setup-units ensure-nutmix-image
 	@bash scripts/go-parallel-demo.sh nutmix
 
-test-ts-parallel-nutmix: wasm-dev build-nutmix-setup-units
+test-ts-parallel-nutmix: wasm-dev build-nutmix-setup-units ensure-nutmix-image
 	@bash scripts/ts-parallel-demo.sh nutmix
 
 # --- Parallel Demo Tests (NutMix Native - for Docker test image) ---
@@ -232,6 +233,13 @@ build-nutmix-setup-units:
 # Clean the nutmix-setup-units binary
 clean-nutmix-setup-units:
 	rm -f $(NUTMIX_SETUP_UNITS_DIR)/nutmix-setup-units
+
+# Ensure nutmix-mint Docker image exists, build if needed
+ensure-nutmix-image:
+	@if ! docker image inspect nutmix-mint:latest > /dev/null 2>&1; then \
+		echo "Building nutmix-mint Docker image..."; \
+		cd /home/aaron/MyCode/Cashu/NutMix/nutmix && docker compose -f docker-compose-dev.yml build; \
+	fi
 
 # --- Cleanup ---
 
