@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use cdk::spilman::{unblind_and_verify_dleq, BridgeStatus, SpilmanBridge, SpilmanHost};
+use cdk::spilman::{unblind_and_verify_dleq, BridgeStatus, ClosePreparationError, SpilmanBridge, SpilmanHost};
 
 use crate::host::AsciiArtHost;
 use crate::stores::{get_channel_status, Stores, UnitPricing};
@@ -220,23 +220,24 @@ async fn post_channel_register(
             .into_response()
         }
         Err(e) => {
-            let error_msg = e.to_string();
-            tracing::info!("  [Register] REJECTED: {}", error_msg);
+            // Use ClosePreparationError to get proper status code mapping
+            let error_response = ClosePreparationError::from_bridge_error(e);
+            tracing::info!("  [Register] REJECTED: {}", error_response.reason);
 
-            // Determine status code based on error type
-            let status = if error_msg.contains("invalid signature") {
-                StatusCode::PAYMENT_REQUIRED
-            } else {
-                StatusCode::BAD_REQUEST
+            let status = match error_response.status {
+                402 => StatusCode::PAYMENT_REQUIRED,
+                404 => StatusCode::NOT_FOUND,
+                500 => StatusCode::INTERNAL_SERVER_ERROR,
+                _ => StatusCode::BAD_REQUEST,
             };
 
             (
                 status,
                 Json(serde_json::json!({
                     "success": false,
-                    "error": "Bad request",
-                    "reason": error_msg,
-                    "status": status.as_u16(),
+                    "error": error_response.error,
+                    "reason": error_response.reason,
+                    "status": error_response.status,
                 })),
             )
                 .into_response()
