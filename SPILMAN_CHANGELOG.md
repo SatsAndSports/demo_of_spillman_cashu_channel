@@ -10,8 +10,8 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Axum HTTP server**: Endpoints for `/channel/params`, `/channel/register`, `/ascii`, `/channel/:id/status`, `/channel/:id/close`, `/channel/:id/unilateral-close`.
 - **In-memory stores**: Thread-safe (`RwLock<HashMap>`) storage for channel funding, balances, usage, closed channels, and keyset cache.
 - **Async mint interaction**: `call_mint_swap_async()` for swap requests during channel close (avoids `reqwest::blocking` in tokio runtime).
-- **Full test coverage**: Passes all 42 tests from the TypeScript test suite via `make test-rust-via-ts-cdk`.
-- **Added to CI**: Included in `make test-all-cdk` and `scripts/docker-test.sh`.
+- **Full test coverage**: Passes all 55 tests from the TypeScript test suite via `make test-rust-via-ts-cdkmintd`.
+- **Added to CI**: Included in `make test-all-cdkmintd` and `scripts/docker-test.sh`.
 
 ### Hash Input Normalization
 - **Normalized all hash-based derivations to pipe-delimited text**: All 5 protocol-critical derivations now use consistent string interpolation instead of raw integer bytes or platform-dependent `usize`.
@@ -42,8 +42,8 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ### Cross-Server Testing
 - **TS test suite runs against all four servers**: The 42-test TypeScript suite validates TS, Rust, Python, and Go servers via `SERVER_PORT` / `SERVER_CMD` env vars in `globalSetup.ts`
-- **Makefile targets**: `make test-rust-via-ts-cdk`, `make test-python-via-ts-cdk`, and `make test-go-via-ts-cdk` run the full cross-server test suite with ephemeral mints
-- **All servers pass tests**: TS and Rust pass 42/42 tests; Python and Go pass 35/35 tests (subset without keyset refresh retry tests)
+- **Makefile targets**: `make test-rust-via-ts-cdkmintd`, `make test-python-via-ts-cdkmintd`, and `make test-go-via-ts-cdkmintd` run the full cross-server test suite with ephemeral mints
+- **All servers pass tests**: TS, Rust, Python, and Go all pass 55/55 tests
 
 ### Core Protocol
 - Channel ID computed and verified (WASM on both client and server)

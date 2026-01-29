@@ -139,4 +139,4 @@ WORKDIR /cdk
 ENV PATH="/usr/local/go/bin:/root/.bun/bin:/root/.cargo/bin:${PATH}"
 
 # Default: run CDK tests
-CMD ["make", "test-python-parallel-cdk", "test-go-parallel-cdk", "test-ts-parallel-cdk"]
+CMD ["make", "test-python-parallel-cdkmintd", "test-go-parallel-cdkmintd", "test-ts-parallel-cdkmintd"]

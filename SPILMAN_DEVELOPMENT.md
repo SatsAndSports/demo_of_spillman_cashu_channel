@@ -89,8 +89,8 @@ make wasm-dev
 Test targets automatically build/copy WASM as needed:
 
 ```bash
-make test-blossom-cdk    # Builds WASM if needed, copies to blossom-server, runs tests
-make test-ts-ascii-cdk   # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
+make test-blossom-cdkmintd    # Builds WASM if needed, copies to blossom-server, runs tests
+make test-ts-ascii-cdkmintd   # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
 ```
 
 ### WASM distribution
@@ -133,8 +133,8 @@ cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D wa
 From CDK root (recommended - handles mint and WASM automatically):
 
 ```bash
-make test-blossom-cdk     # Uses CDK mint
-make test-blossom-nutmix  # Uses NutMix mint (requires Docker)
+make test-blossom-cdkmintd     # Uses CDK mint
+make test-blossom-nutmix       # Uses NutMix mint (requires Docker)
 ```
 
 Or manually with a mint running at `localhost:3338`:
@@ -153,22 +153,22 @@ Test coverage includes:
 
 ### TypeScript ASCII Art Tests
 
-The ts-ascii-art example has a comprehensive test suite (42 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
+The ts-ascii-art example has a comprehensive test suite (55 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
 
 #### Cross-Server Verification
 Since all four servers (TS, Rust, Python, Go) implement the same protocol, we use the TS test suite to validate all of them:
 
 ```bash
-make test-rust-via-ts-cdk    # Runs TS tests against Rust server (42 tests)
-make test-python-via-ts-cdk  # Runs TS tests against Python server (35 tests)
-make test-go-via-ts-cdk      # Runs TS tests against Go server (35 tests)
+make test-rust-via-ts-cdkmintd    # Runs TS tests against Rust server (55 tests)
+make test-python-via-ts-cdkmintd  # Runs TS tests against Python server (55 tests)
+make test-go-via-ts-cdkmintd      # Runs TS tests against Go server (55 tests)
 ```
 
 From CDK root (recommended - handles mint and WASM automatically):
 
 ```bash
-make test-ts-ascii-cdk     # Uses CDK mint
-make test-ts-ascii-nutmix  # Uses NutMix mint (requires Docker)
+make test-ts-ascii-cdkmintd     # Uses CDK mint
+make test-ts-ascii-nutmix       # Uses NutMix mint (requires Docker)
 ```
 
 Or manually with a mint running at `localhost:3338`:

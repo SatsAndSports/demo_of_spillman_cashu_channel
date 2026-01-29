@@ -36,8 +36,8 @@ ERROR: Mint not available at ${MINT_URL}
 The ts-ascii-art tests require a Cashu mint.
 
 Recommended: Use the Makefile targets that start an ephemeral mint:
-  make test-ts-ascii-cdk      # Uses CDK mint
-  make test-ts-ascii-nutmix   # Uses NutMix mint
+  make test-ts-ascii-cdkmintd      # Uses CDK mint
+  make test-ts-ascii-nutmix        # Uses NutMix mint
 
 Or set MINT_URL to an existing mint:
   MINT_URL=http://localhost:3338 npm test
