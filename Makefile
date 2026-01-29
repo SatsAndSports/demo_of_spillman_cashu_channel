@@ -162,6 +162,15 @@ test-go-via-ts-cdk: go-build-rust ts-ascii-wasm cdk-mintd
 	LD_LIBRARY_PATH="$(shell pwd)/target/debug" \
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
 
+# Run TS tests against the Rust ASCII Art server
+test-rust-via-ts-cdk: rust-ascii-build ts-ascii-wasm cdk-mintd
+	SERVER_CMD="$(shell pwd)/target/debug/cdk-ascii-art" \
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
+
+# Build the Rust ASCII Art server
+rust-ascii-build:
+	cargo build -p cdk-ascii-art
+
 # --- WASM Build ---
 
 WASM_CRATE := crates/cdk-wasm
@@ -195,7 +204,7 @@ ts-ascii-wasm: .wasm-dev-built
 # --- All Tests ---
 
 # Run all CDK test suites
-test-all-cdk: test-spilman test-python-parallel-cdk test-go-parallel-cdk test-ts-parallel-cdk test-blossom-cdk
+test-all-cdk: test-spilman test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk test-ts-parallel-cdk test-blossom-cdk
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL CDK TEST SUITES PASSED"

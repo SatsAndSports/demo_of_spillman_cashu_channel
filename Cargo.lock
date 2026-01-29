@@ -1206,6 +1206,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdk-ascii-art"
+version = "0.14.0"
+dependencies = [
+ "axum 0.8.7",
+ "base64 0.22.1",
+ "cdk",
+ "figlet-rs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cdk-axum"
 version = "0.14.0"
 dependencies = [
@@ -2818,6 +2834,12 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "figlet-rs"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4742a071cd9694fc86f9fa1a08fa3e53d40cc899d7ee532295da2d085639fbc5"
 
 [[package]]
 name = "figment"

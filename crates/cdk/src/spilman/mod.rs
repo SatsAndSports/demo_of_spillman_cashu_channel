@@ -25,8 +25,8 @@ pub use bindings::{
     create_funding_outputs, create_signed_balance_update, parse_keyset_info_from_json,
 };
 pub use bridge::{
-    unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, CloseData,
-    ClosePreparationError, PreparedClose, SpilmanBridge, SpilmanHost, UnblindResult,
+    unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, BridgeStatus,
+    CloseData, ClosePreparationError, PreparedClose, SpilmanBridge, SpilmanHost, UnblindResult,
 };
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,
