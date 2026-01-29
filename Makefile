@@ -19,7 +19,8 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	wasm-dev blossom-wasm ts-ascii-wasm test-spilman \
 	test-all-cdkmintd test-all-nutmix test-all-nutmix-native test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs \
-	ensure-nutmix-image
+	ensure-nutmix-image \
+	list-orphans kill-orphans
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -256,3 +257,29 @@ clean: clean-nutmix-setup-units clean-test-logs
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(VENV)
 	rm -f .wasm-dev-built
+
+# --- Orphan Process Management ---
+
+# List orphaned test processes (servers and mints left running after tests)
+list-orphans:
+	@echo "=== Orphaned test processes ==="
+	@echo "cdk-mintd:"
+	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
+	@echo "cdk-ascii-art:"
+	@pgrep -af "cdk-ascii-art" | grep -v pgrep || echo "  (none)"
+	@echo "python server.py:"
+	@pgrep -af "python.*server\.py" | grep -v pgrep || echo "  (none)"
+	@echo "tsx server:"
+	@pgrep -af "tsx.*server" | grep -v pgrep || echo "  (none)"
+	@echo "go-ascii-art:"
+	@pgrep -af "go-ascii-art" | grep -v pgrep || echo "  (none)"
+
+# Kill orphaned test processes
+kill-orphans:
+	@echo "Killing orphaned test processes..."
+	-@pkill -f "cdk-ascii-art" 2>/dev/null || true
+	-@pkill -f "python.*server\.py" 2>/dev/null || true
+	-@pkill -f "tsx.*server" 2>/dev/null || true
+	-@pkill -f "go-ascii-art" 2>/dev/null || true
+	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
+	@echo "Done. Run 'make list-orphans' to verify."
