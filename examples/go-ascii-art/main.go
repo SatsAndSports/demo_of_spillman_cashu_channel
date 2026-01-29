@@ -747,6 +747,94 @@ func runServer() {
 		})
 	})
 
+	http.HandleFunc("/channel/register", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ChannelId     string      `json:"channel_id"`
+			Balance       int         `json:"balance"`
+			Signature     string      `json:"signature"`
+			Params        interface{} `json:"params"`
+			FundingProofs interface{} `json:"funding_proofs"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// Validate required fields
+		if req.ChannelId == "" || req.Signature == "" || req.Params == nil || req.FundingProofs == nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":  "Bad request",
+				"reason": "missing required fields: channel_id, signature, params, funding_proofs",
+			})
+			return
+		}
+
+		// balance must be 0 for registration
+		if req.Balance != 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":  "Bad request",
+				"reason": fmt.Sprintf("funding requires balance=0, got %d", req.Balance),
+			})
+			return
+		}
+
+		shortId := req.ChannelId
+		if len(shortId) > 16 {
+			shortId = shortId[:16]
+		}
+		log.Printf("\n[Register] Channel %s...\n", shortId)
+
+		// Build request body in the same format as payment
+		registerBody := map[string]interface{}{
+			"channel_id":     req.ChannelId,
+			"balance":        0,
+			"signature":      req.Signature,
+			"params":         req.Params,
+			"funding_proofs": req.FundingProofs,
+		}
+		registerJson, _ := json.Marshal(registerBody)
+
+		// Use FundChannel to validate and store the channel
+		resultJson, err := bridge.FundChannel(string(registerJson))
+		if err != nil {
+			log.Printf("  [Register] Error: %v\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		var result map[string]interface{}
+		json.Unmarshal([]byte(resultJson), &result)
+
+		if success, ok := result["success"].(bool); !ok || !success {
+			status := http.StatusBadRequest
+			if statusNum, ok := result["status"].(float64); ok {
+				status = int(statusNum)
+			}
+			reason := "unknown"
+			if r, ok := result["reason"].(string); ok {
+				reason = r
+			} else if e, ok := result["error"].(string); ok {
+				reason = e
+			}
+			log.Printf("  [Register] REJECTED: %s\n", reason)
+			w.WriteHeader(status)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		channelId := result["channel_id"].(string)
+		capacity := result["capacity"]
+		alreadyKnown := result["already_known"]
+		log.Printf("  [Register] SUCCESS! channel=%s capacity=%v already_known=%v\n",
+			channelId[:16], capacity, alreadyKnown)
+		json.NewEncoder(w).Encode(result)
+	})
+
 	http.HandleFunc("/ascii", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Received request to /ascii")
 		if r.Method != http.MethodPost {

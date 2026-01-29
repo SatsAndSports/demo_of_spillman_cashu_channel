@@ -297,6 +297,71 @@ impl WasmSpilmanBridge {
         serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Validate a payment without recording it
+    ///
+    /// Performs all validation (parsing, channel verification, balance checks,
+    /// signature verification) but does NOT call `record_payment`.
+    ///
+    /// For new channels, funding data IS saved (idempotent).
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
+    ///   and optionally params + funding_proofs for unknown channels
+    /// * `context_json` - Context JSON describing the request (e.g., `{"type": "blob", "size": 1024}`)
+    ///
+    /// # Returns
+    /// JSON with PaymentValidationResult on success, or error JSON on failure
+    #[wasm_bindgen(js_name = validatePayment)]
+    pub fn validate_payment(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> Result<String, JsValue> {
+        match self.bridge.validate_payment(payment_json, context_json) {
+            Ok(result) => {
+                serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            Err(e) => {
+                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+                Ok(error_response.to_json())
+            }
+        }
+    }
+
+    /// Register/fund a channel without recording any usage
+    ///
+    /// Validates the channel (params, funding proofs, signature for balance=0)
+    /// and saves it to the funding store, but does NOT record any payment/usage.
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with:
+    ///   - `channel_id`: The channel ID
+    ///   - `balance`: Must be 0
+    ///   - `signature`: Schnorr signature for balance=0
+    ///   - `params`: Channel parameters
+    ///   - `funding_proofs`: Funding proofs with DLEQ
+    ///
+    /// # Returns
+    /// JSON with FundChannelResult:
+    /// - `success`: true
+    /// - `channel_id`: The channel ID
+    /// - `capacity`: Channel capacity
+    /// - `already_known`: true if channel was already registered
+    ///
+    /// On error, returns JSON with `success: false` and error details.
+    #[wasm_bindgen(js_name = fundChannel)]
+    pub fn fund_channel(&self, payment_json: &str) -> Result<String, JsValue> {
+        match self.bridge.fund_channel(payment_json) {
+            Ok(result) => {
+                serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+            }
+            Err(e) => {
+                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+                Ok(error_response.to_json())
+            }
+        }
+    }
+
     /// Create data needed to close a channel
     ///
     /// Validates the payment signature and creates the fully-signed swap request

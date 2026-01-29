@@ -4,8 +4,9 @@ ASCII Art Generator Server - Pay 1 sat per character
 Demonstrates the Spilman payment channel bridge in Python.
 
 Endpoints:
-    GET  /channel/params  - Get server pubkey and pricing info
-    POST /ascii           - Generate ASCII art (requires X-Cashu-Channel header)
+    GET  /channel/params    - Get server pubkey and pricing info
+    POST /channel/register  - Pre-register a channel (balance=0, no usage)
+    POST /ascii             - Generate ASCII art (requires X-Cashu-Channel header)
 
 Usage:
     python server.py
@@ -516,6 +517,56 @@ def get_params():
         "mints_units_keysets": get_mints_units_keysets(),
         "min_expiry_in_seconds": 3600,
     })
+
+
+@app.route("/channel/register", methods=["POST"])
+def register_channel():
+    """Pre-register a channel with balance=0 signature (no usage recorded)."""
+    data = request.get_json() or {}
+    
+    channel_id = data.get("channel_id")
+    balance = data.get("balance")
+    signature = data.get("signature")
+    params = data.get("params")
+    funding_proofs = data.get("funding_proofs")
+    
+    # Validate required fields
+    if not channel_id or signature is None or not params or not funding_proofs:
+        return jsonify({
+            "error": "Bad request",
+            "reason": "missing required fields: channel_id, signature, params, funding_proofs",
+        }), 400
+    
+    # balance must be 0 for registration
+    if balance != 0:
+        return jsonify({
+            "error": "Bad request",
+            "reason": f"funding requires balance=0, got {balance}",
+        }), 400
+    
+    print(f"\n[Register] Channel {channel_id[:16]}...")
+    
+    # Build request body in the same format as payment
+    register_body = {
+        "channel_id": channel_id,
+        "balance": 0,
+        "signature": signature,
+        "params": params,
+        "funding_proofs": funding_proofs,
+    }
+    
+    # Use fund_channel to validate and store the channel
+    result_json = bridge.fund_channel(json.dumps(register_body))
+    result = json.loads(result_json)
+    
+    if not result.get("success"):
+        status = result.get("status", 400)
+        reason = result.get("reason", result.get("error", "unknown"))
+        print(f"  [Register] REJECTED: {reason}")
+        return jsonify(result), status
+    
+    print(f"  [Register] SUCCESS! channel={result['channel_id'][:16]} capacity={result['capacity']} already_known={result['already_known']}")
+    return jsonify(result)
 
 
 @app.route("/ascii", methods=["POST"])

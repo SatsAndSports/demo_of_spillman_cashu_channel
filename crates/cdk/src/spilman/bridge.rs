@@ -382,6 +382,21 @@ pub struct PaymentValidationResult {
     pub error: Option<String>,
 }
 
+/// Result of registering/funding a channel
+///
+/// Returned by `fund_channel` which validates and saves a channel
+/// without recording any usage.
+#[derive(Debug, Clone, Serialize)]
+pub struct FundChannelResult {
+    pub success: bool,
+    pub channel_id: String,
+    pub capacity: u64,
+    /// True if the channel was already known (idempotent call)
+    pub already_known: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BridgeServerConfig {
     pub min_expiry_in_seconds: u64,
@@ -871,7 +886,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// which is computed and stored during channel setup.
     ///
     /// Returns `PaymentValidationResult` with validation outcome on success.
-    fn validate_payment(
+    pub fn validate_payment(
         &self,
         payment_json: &str,
         context_json: &str,
@@ -957,6 +972,99 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             amount_due,
             capacity,
             sender_signature: payment.signature,
+            error: None,
+        })
+    }
+
+    /// Register/fund a channel without recording any usage
+    ///
+    /// This validates the channel (params, funding proofs, signature for balance=0)
+    /// and saves it to the funding store, but does NOT record any payment/usage.
+    ///
+    /// The request must have `balance: 0` - this is for pre-registering channels
+    /// before any actual payments are made.
+    ///
+    /// Returns `FundChannelResult` with channel info. Idempotent - calling multiple
+    /// times with the same data succeeds with `already_known: true`.
+    pub fn fund_channel(&self, payment_json: &str) -> Result<FundChannelResult, BridgeError> {
+        // 1. Parse payment request
+        let payment: PaymentRequest = serde_json::from_str::<PaymentRequest>(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+
+        // 2. Verify balance is 0 (funding requires balance=0)
+        if payment.balance != 0 {
+            return Err(BridgeError::InvalidRequest(format!(
+                "funding requires balance=0, got {}",
+                payment.balance
+            )));
+        }
+
+        if payment.channel_id.is_empty() {
+            return Err(BridgeError::InvalidRequest("missing channel_id".into()));
+        }
+
+        if payment.signature.is_empty() {
+            return Err(BridgeError::InvalidRequest("missing signature".into()));
+        }
+
+        let channel_id = &payment.channel_id;
+
+        // 3. Check if channel is closed
+        if self.host.is_closed(channel_id) {
+            return Err(BridgeError::ChannelClosed);
+        }
+
+        // 4. Resolve or verify funding (saves funding for new channels - idempotent)
+        let (funding_and_params, already_known) = match self.host.get_funding_and_params(channel_id)
+        {
+            Some(f) => (f, true),
+            None => {
+                // Unknown channel - must provide params and funding_proofs
+                let params_val = payment.params.as_ref().ok_or(BridgeError::InvalidRequest(
+                    "missing params for new channel".into(),
+                ))?;
+                let funding_proofs =
+                    payment
+                        .funding_proofs
+                        .as_ref()
+                        .ok_or(BridgeError::InvalidRequest(
+                            "missing funding_proofs for new channel".into(),
+                        ))?;
+
+                // Perform full validation and save funding
+                let f =
+                    self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?;
+                (f, false)
+            }
+        };
+
+        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
+            funding_and_params;
+
+        // 6. Parse params for capacity
+        let params: serde_json::Value = serde_json::from_str(&params_json)
+            .map_err(|e| BridgeError::Internal(format!("failed to parse cached params: {}", e)))?;
+
+        let capacity = params["capacity"].as_u64().unwrap_or(0);
+
+        // 7. Verify signature for balance=0
+        self.verify_signature(
+            &params_json,
+            &funding_proofs_json,
+            &shared_secret_hex,
+            &keyset_info_json,
+            channel_id,
+            0, // balance must be 0
+            &payment.signature,
+        )
+        .map_err(BridgeError::InvalidSignature)?;
+
+        // 8. Return success (no record_payment call)
+        Ok(FundChannelResult {
+            success: true,
+            channel_id: channel_id.to_string(),
+            capacity,
+            already_known,
             error: None,
         })
     }

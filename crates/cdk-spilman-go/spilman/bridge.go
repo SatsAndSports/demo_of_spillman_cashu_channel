@@ -34,6 +34,8 @@ SpilmanHostCallbacks fill_callbacks(void* user_data);
 void* spilman_bridge_new(SpilmanHostCallbacks callbacks, const char* server_secret_key_hex);
 void spilman_bridge_free(void* ptr);
 CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json);
+CResult spilman_bridge_validate_payment(void* ptr, const char* payment_json, const char* context_json);
+CResult spilman_bridge_fund_channel(void* ptr, const char* payment_json);
 CResult spilman_bridge_validate_and_prepare_cooperative_close(void* ptr, const char* payment_json);
 CResult spilman_bridge_create_unilateral_close_data(void* ptr, const char* channel_id);
 CResult spilman_bridge_execute_cooperative_close(void* ptr, const char* payment_json);
@@ -120,6 +122,41 @@ func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (string, error)
 	defer C.free(unsafe.Pointer(cContext))
 
 	res := C.spilman_bridge_process_payment(b.ptr, cPayment, cContext)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// ValidatePayment validates a payment without recording it.
+// Performs all validation (parsing, channel verification, balance checks,
+// signature verification) but does NOT call RecordPayment.
+// For new channels, funding data IS saved (idempotent).
+func (b *Bridge) ValidatePayment(paymentJson, contextJson string) (string, error) {
+	cPayment := C.CString(paymentJson)
+	defer C.free(unsafe.Pointer(cPayment))
+	cContext := C.CString(contextJson)
+	defer C.free(unsafe.Pointer(cContext))
+
+	res := C.spilman_bridge_validate_payment(b.ptr, cPayment, cContext)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// FundChannel registers/funds a channel without recording any usage.
+// Validates the channel (params, funding proofs, signature for balance=0)
+// and saves it to the funding store, but does NOT record any payment/usage.
+func (b *Bridge) FundChannel(paymentJson string) (string, error) {
+	cPayment := C.CString(paymentJson)
+	defer C.free(unsafe.Pointer(cPayment))
+
+	res := C.spilman_bridge_fund_channel(b.ptr, cPayment)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {

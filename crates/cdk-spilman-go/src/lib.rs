@@ -407,6 +407,58 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
     CResult::success(json)
 }
 
+/// Validate a payment without recording it.
+///
+/// Performs all validation (parsing, channel verification, balance checks,
+/// signature verification) but does NOT call record_payment.
+///
+/// For new channels, funding data IS saved (idempotent).
+#[no_mangle]
+pub unsafe extern "C" fn spilman_bridge_validate_payment(
+    ptr: *mut BridgeInstance,
+    payment_json: *const c_char,
+    context_json: *const c_char,
+) -> CResult {
+    let instance = &*ptr;
+    let payment = CStr::from_ptr(payment_json).to_str().unwrap();
+    let context = CStr::from_ptr(context_json).to_str().unwrap();
+
+    match instance.bridge.validate_payment(payment, context) {
+        Ok(result) => {
+            let json = serde_json::to_string(&result).unwrap();
+            CResult::success(json)
+        }
+        Err(e) => {
+            let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+            CResult::success(error_response.to_json())
+        }
+    }
+}
+
+/// Register/fund a channel without recording any usage.
+///
+/// Validates the channel (params, funding proofs, signature for balance=0)
+/// and saves it to the funding store, but does NOT record any payment/usage.
+#[no_mangle]
+pub unsafe extern "C" fn spilman_bridge_fund_channel(
+    ptr: *mut BridgeInstance,
+    payment_json: *const c_char,
+) -> CResult {
+    let instance = &*ptr;
+    let payment = CStr::from_ptr(payment_json).to_str().unwrap();
+
+    match instance.bridge.fund_channel(payment) {
+        Ok(result) => {
+            let json = serde_json::to_string(&result).unwrap();
+            CResult::success(json)
+        }
+        Err(e) => {
+            let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+            CResult::success(error_response.to_json())
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_validate_and_prepare_cooperative_close(
     ptr: *mut BridgeInstance,
