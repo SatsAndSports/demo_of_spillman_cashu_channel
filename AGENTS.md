@@ -8,10 +8,12 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (42 tests)
-- **Rust ASCII Art** (`crates/cdk-ascii-art/`) - Native Rust server using core `cdk` library (42 tests via TS suite)
+- **Rust ASCII Art** (`crates/cdk-ascii-art/`) - Native Rust server using core `cdk` library
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
+
+**Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (~54 tests)
 
 ## Baseline Commits (for diffing)
 
@@ -26,6 +28,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 |------|---------|
 | `crates/cdk/src/spilman/` | Core Rust implementation |
 | `crates/cdk-ascii-art/` | Rust ASCII Art server (native, uses core `cdk`) |
+| `crates/cdk-spilman-server-integration-tests/` | Rust test client for all servers |
 | `crates/cdk-wasm/` | WASM bindings for browser/Node.js |
 | `crates/cdk-spilman-python/` | PyO3 bindings |
 | `crates/cdk-spilman-go/` | CGO bindings |
@@ -55,9 +58,8 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 
 ### Tests
 - `crates/cdk/src/spilman/tests.rs` - Rust unit/integration tests
-- `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests: blobs, channels, minting, payment, validation, closing)
-- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (42 tests: channels, minting, payment, validation, closing)
-  - Also used for cross-server testing of Rust, Python, and Go servers
+- `crates/cdk-spilman-server-integration-tests/tests/integration.rs` - Server integration tests (Rust client testing all servers)
+- `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests)
 
 ## Running Commands
 
@@ -69,23 +71,23 @@ cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.tom
 cargo test -p cdk spilman
 
 # Clippy checks (must pass)
-cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D warnings
+cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-spilman-server-integration-tests -- -D warnings
 
 # Build WASM (uses sentinel-based dependency tracking - instant when nothing changed)
 make wasm-dev
 
-# Run tests (automatically builds WASM if needed, copies to consumers)
-make test-blossom-cdk      # Blossom server tests with CDK mint
-make test-ts-ascii-cdk     # TypeScript ASCII Art tests with CDK mint
+# Run server integration tests
+make test-ts-cdkmintd        # Test TypeScript server
+make test-rust-cdkmintd      # Test Rust server
+make test-python-cdkmintd    # Test Python server
+make test-go-cdkmintd        # Test Go server
+make test-servers-cdkmintd   # Test all servers
 
-# Cross-server tests (TS test suite against Rust/Python/Go servers)
-make test-rust-via-ts-cdk    # TS tests against Rust server (42 tests)
-make test-python-via-ts-cdk  # TS tests against Python server (35 tests)
-make test-go-via-ts-cdk      # TS tests against Go server (35 tests)
+# Run blossom tests
+make test-blossom-cdkmintd
 
-# Or manually with an already-running server:
-# Terminal 1: start mint + server
-# Terminal 2: SERVER_PORT=3099 MINT_URL=http://localhost:3338 npx vitest run
+# Run all tests
+make test-all-cdkmintd
 
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
@@ -100,7 +102,6 @@ cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 The `make wasm-dev` target uses **sentinel-based dependency tracking**:
 - Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
 - Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
-- Test targets (`test-blossom-*`, `test-ts-ascii-*`) automatically depend on WASM build
 - Blossom server gets WASM copied (separate git repo); ts-ascii-art uses symlink
 
 ## Documentation Index
