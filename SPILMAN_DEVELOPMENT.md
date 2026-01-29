@@ -153,14 +153,15 @@ Test coverage includes:
 
 ### TypeScript ASCII Art Tests
 
-The ts-ascii-art example has a comprehensive test suite (36 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
+The ts-ascii-art example has a comprehensive test suite (42 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
 
 #### Cross-Server Verification
-Since all three servers (TS, Python, Go) use the same Rust core, we use the TS test suite to validate all of them:
+Since all four servers (TS, Rust, Python, Go) implement the same protocol, we use the TS test suite to validate all of them:
 
 ```bash
-make test-python-via-ts-cdk  # Runs TS tests against Python server
-make test-go-via-ts-cdk      # Runs TS tests against Go server
+make test-rust-via-ts-cdk    # Runs TS tests against Rust server (42 tests)
+make test-python-via-ts-cdk  # Runs TS tests against Python server (35 tests)
+make test-go-via-ts-cdk      # Runs TS tests against Go server (35 tests)
 ```
 
 From CDK root (recommended - handles mint and WASM automatically):
@@ -184,6 +185,26 @@ Test coverage includes:
 - `payment.test.ts` - Payment flow, channel policy (minCapacity)
 - `validation.test.ts` - Invalid signatures, balance errors, tampered DLEQ, locktime
 - `closing.test.ts` - Cooperative close, idempotent close, error cases
+
+### Rust ASCII Art Server
+
+The Rust ASCII Art server (`crates/cdk-ascii-art/`) is a native implementation using the core `cdk` Spilman library directly (no WASM or FFI).
+
+```bash
+# Build
+cargo build -p cdk-ascii-art
+
+# Run tests (uses TS test suite)
+make test-rust-via-ts-cdk
+
+# Run manually (requires mint at localhost:3338)
+PORT=5003 MINT_URL=http://localhost:3338 cargo run -p cdk-ascii-art
+```
+
+The server implements:
+- `SpilmanHost` trait for policy (pricing, storage, keyset caching)
+- Axum HTTP handlers for all channel endpoints
+- In-memory stores for channel state
 
 ### Python Demo
 
@@ -247,11 +268,14 @@ The server runs on `http://localhost:3000` by default.
 cdk/
 ├── crates/
 │   ├── cdk/src/spilman/          # Core Spilman implementation
+│   ├── cdk-ascii-art/             # Rust ASCII Art server (native)
 │   ├── cdk-wasm/                  # WASM bindings (browser + Node.js)
 │   ├── cdk-spilman-python/        # PyO3 bindings
 │   └── cdk-spilman-go/            # CGO bindings
 ├── examples/
-│   └── python-ascii-art/          # Python demo server + client
+│   ├── ts-ascii-art/              # TypeScript demo (reference impl + test suite)
+│   ├── python-ascii-art/          # Python demo server + client
+│   └── go-ascii-art/              # Go demo server + client
 ├── web/
 │   ├── Makefile                   # WASM build targets
 │   ├── wasm-web/                  # Browser WASM output
