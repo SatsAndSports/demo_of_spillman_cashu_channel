@@ -8,6 +8,7 @@ description = "Integration tests for Spilman payment channel servers"
 # This crate is for tests only - no lib to publish
 [lib]
 path = "src/lib.rs"
+doctest = false
 
 [[test]]
 name = "integration"
