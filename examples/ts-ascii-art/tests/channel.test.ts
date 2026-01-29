@@ -268,8 +268,8 @@ describe.concurrent('Channel register endpoint', () => {
     expect(registerResponse.status).toBe(200);
     console.log(`Channel registered`);
 
-    // Now make a payment (without params/funding_proofs since already registered)
-    const paymentHeader = createPaymentHeader(channel, 5, false /* no params */);
+    // Now make a payment (channel already registered)
+    const paymentHeader = createPaymentHeader(channel, 5);
     const artResponse = await fetchAsciiArt(server, paymentHeader, 'Hello');
 
     expect(artResponse.status).toBe(200);

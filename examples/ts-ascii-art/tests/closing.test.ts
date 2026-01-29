@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import { test, describe, expect } from './fixtures.js';
 import {
   mintFundedChannel,
+  registerChannel,
   createPaymentHeader,
   fetchAsciiArt,
   fetchChannelStatus,
@@ -20,14 +21,14 @@ import {
 } from '../src/wasm/cdk_wasm.js';
 
 describe.concurrent('Channel closing', () => {
-  test('closes unused channel directly with params (balance=0)', async ({ server }) => {
-    // Mint a funded channel but make NO payments
+  test('closes unused channel (balance=0)', async ({ server }) => {
+    // Mint and register a funded channel but make NO payments
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
-    // Close directly with balance=0 and includeParams=true
-    // The server doesn't know about this channel, so we must provide params/proofs
-    const { httpStatus, body } = await closeChannel(server, channel, 0, true);
+    // Close with balance=0
+    const { httpStatus, body } = await closeChannel(server, channel, 0);
 
     console.log(`Close response: status=${httpStatus}`);
     expect(httpStatus).toBe(200);
@@ -53,20 +54,21 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('closes channel immediately after first payment (balance=cost)', async ({ server }) => {
-    // Mint a funded channel
+    // Mint and register a funded channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
-    // Make a minimal payment to establish the channel
+    // Make a minimal payment
     const message = 'X';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
     console.log(`Made payment: cost=${cost}`);
 
     // Close with balance=cost (minimal usage)
-    const { httpStatus, body } = await closeChannel(server, channel, cost, false);
+    const { httpStatus, body } = await closeChannel(server, channel, cost);
 
     console.log(`Close response: status=${httpStatus}`);
     expect(httpStatus).toBe(200);
@@ -91,14 +93,15 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('closes used channel with correct balance', async ({ server }) => {
-    // Mint a funded channel
+    // Mint and register a funded channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
     // Make a payment
     const message = 'Hello';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
     console.log(`Made payment: cost=${cost}`);
@@ -109,7 +112,7 @@ describe.concurrent('Channel closing', () => {
     console.log(`Amount due before close: ${amountDue}`);
 
     // Close with amount_due
-    const { httpStatus, body } = await closeChannel(server, channel, amountDue, false);
+    const { httpStatus, body } = await closeChannel(server, channel, amountDue);
 
     expect(httpStatus).toBe(200);
     expect(body.success).toBe(true);
@@ -128,26 +131,27 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('idempotent close with same amount succeeds', async ({ server }) => {
-    // Mint a channel and make a payment to establish it
+    // Mint and register a channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
-    // Make a payment to establish the channel
+    // Make a payment
     const message = 'X';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
 
     // First close
-    const { httpStatus: status1, body: body1 } = await closeChannel(server, channel, cost, false);
+    const { httpStatus: status1, body: body1 } = await closeChannel(server, channel, cost);
     expect(status1).toBe(200);
     expect(body1.success).toBe(true);
     expect(body1.already_closed).toBe(false);
     console.log(`First close: total_value=${body1.total_value}, sender_proofs=${body1.sender_proofs.length}`);
 
     // Second close with same amount - should succeed with already_closed=true
-    const { httpStatus: status2, body: body2 } = await closeChannel(server, channel, cost, false);
+    const { httpStatus: status2, body: body2 } = await closeChannel(server, channel, cost);
     expect(status2).toBe(200);
     expect(body2.success).toBe(true);
     expect(body2.already_closed).toBe(true);
@@ -157,26 +161,27 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('rejects close with different amount after already closed', async ({ server }) => {
-    // Mint a channel and make a payment
+    // Mint and register a channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
     // Make a payment
     const message = 'Hi';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
 
     // Close with the correct amount
-    const { httpStatus: status1, body: body1 } = await closeChannel(server, channel, cost, false);
+    const { httpStatus: status1, body: body1 } = await closeChannel(server, channel, cost);
     expect(status1).toBe(200);
     expect(body1.success).toBe(true);
     console.log(`First close with balance=${cost} succeeded`);
 
     // Try to close again with different amount
     const differentAmount = cost + 1;
-    const { httpStatus: status2, body: body2 } = await closeChannel(server, channel, differentAmount, false);
+    const { httpStatus: status2, body: body2 } = await closeChannel(server, channel, differentAmount);
     expect(status2).toBe(400);
     expect(body2.error).toContain('already closed');
     expect(body2.closed_amount).toBe(cost);
@@ -185,26 +190,27 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('rejects payment on closed channel', async ({ server }) => {
-    // Mint a channel and make a payment to establish it
+    // Mint and register a channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
-    // Make a payment to establish the channel
+    // Make a payment
     const message = 'Hi';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader1 = createPaymentHeader(channel, cost, true);
+    const paymentHeader1 = createPaymentHeader(channel, cost);
     const { status: paymentStatus } = await fetchAsciiArt(server, paymentHeader1, message);
     expect(paymentStatus).toBe(200);
     console.log(`Payment made: cost=${cost}`);
 
     // Close the channel
-    const { httpStatus: closeStatus } = await closeChannel(server, channel, cost, false);
+    const { httpStatus: closeStatus } = await closeChannel(server, channel, cost);
     expect(closeStatus).toBe(200);
     console.log('Channel closed');
 
     // Try to make another payment on the closed channel
     const newCost = cost + 1; // Try to pay more
-    const paymentHeader2 = createPaymentHeader(channel, newCost, false);
+    const paymentHeader2 = createPaymentHeader(channel, newCost);
     const { status, body } = await fetchAsciiArt(server, paymentHeader2, 'X');
 
     expect(status).toBe(402);
@@ -213,14 +219,15 @@ describe.concurrent('Channel closing', () => {
   });
 
   test('rejects close with invalid signature', async ({ server }) => {
-    // Mint a funded channel and establish it with a payment
+    // Mint and register a funded channel
     const channel = await mintFundedChannel(server, 'sat', 100);
     console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
 
-    // Make a payment to establish the channel
+    // Make a payment
     const message = 'X';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
 
@@ -264,9 +271,10 @@ describe.concurrent('Channel closing', () => {
 describe.concurrent('Unilateral closing', () => {
   test('server can unilaterally close channel with payments', async ({ server }) => {
     const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
     const message = 'Hello';
     const cost = message.length * server.getPricePerChar('sat');
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     await fetchAsciiArt(server, paymentHeader, message);
 
     const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, {
@@ -284,11 +292,12 @@ describe.concurrent('Unilateral closing', () => {
 
   test('unilateral close earns overpayment for server', async ({ server }) => {
     const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
     const message = 'Hello'; // 5 chars
     const actualCost = message.length * server.getPricePerChar('sat');
     const overpayment = 20;
 
-    const paymentHeader = createPaymentHeader(channel, overpayment, true);
+    const paymentHeader = createPaymentHeader(channel, overpayment);
     const { status } = await fetchAsciiArt(server, paymentHeader, message);
     expect(status).toBe(200);
 
@@ -306,8 +315,9 @@ describe.concurrent('Unilateral closing', () => {
 
   test('unilateral close is idempotent', async ({ server }) => {
     const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
     const cost = 5;
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     await fetchAsciiArt(server, paymentHeader, 'Hello');
 
     const resp1 = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
@@ -332,9 +342,10 @@ describe.concurrent('Unilateral closing', () => {
   });
 
   test('rejects unilateral close for channel with no payments', async ({ server }) => {
-    // Register channel by closing cooperatively with balance=0
+    // Register channel then close cooperatively with balance=0
     const channel = await mintFundedChannel(server, 'sat', 100);
-    await closeChannel(server, channel, 0, true);
+    await registerChannel(server, channel);
+    await closeChannel(server, channel, 0);
 
     // Channel is now closed - unilateral should return already_closed with earnedBeforeStage2Fees=0
     const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
@@ -346,26 +357,28 @@ describe.concurrent('Unilateral closing', () => {
 
   test('cooperative close works after unilateral close', async ({ server }) => {
     const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
     const cost = 5;
-    const paymentHeader = createPaymentHeader(channel, cost, true);
+    const paymentHeader = createPaymentHeader(channel, cost);
     await fetchAsciiArt(server, paymentHeader, 'Hello');
 
     await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
 
-    const { httpStatus, body } = await closeChannel(server, channel, cost, false);
+    const { httpStatus, body } = await closeChannel(server, channel, cost);
     expect(httpStatus).toBe(200);
     expect(body.already_closed).toBe(true);
   });
 
   test('rejects payment after unilateral close', async ({ server }) => {
     const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
     const cost = 5;
-    const paymentHeader1 = createPaymentHeader(channel, cost, true);
+    const paymentHeader1 = createPaymentHeader(channel, cost);
     await fetchAsciiArt(server, paymentHeader1, 'Hello');
 
     await fetch(`${server.baseUrl}/channel/${channel.channelId}/unilateral-close`, { method: 'POST' });
 
-    const paymentHeader2 = createPaymentHeader(channel, cost + 1, false);
+    const paymentHeader2 = createPaymentHeader(channel, cost + 1);
     const { status, body } = await fetchAsciiArt(server, paymentHeader2, 'X');
     expect(status).toBe(402);
     expect(body.reason).toContain('channel closed');

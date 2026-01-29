@@ -89,11 +89,10 @@ export function encodePaymentHeader(payment: object): string {
   return Buffer.from(JSON.stringify(payment)).toString('base64');
 }
 
-/** Create a signed payment header for a channel */
+/** Create a signed payment header for a channel (channel must be pre-registered) */
 export function createPaymentHeader(
   channel: Channel,
-  balance: number,
-  includeParams: boolean
+  balance: number
 ): string {
   const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
     channel.channelParamsJson,
@@ -104,16 +103,11 @@ export function createPaymentHeader(
   );
   const balanceUpdate = JSON.parse(balanceUpdateJson);
 
-  const payment: any = {
+  const payment = {
     channel_id: balanceUpdate.channel_id,
     balance: balanceUpdate.amount,
     signature: balanceUpdate.signature,
   };
-
-  if (includeParams) {
-    payment.params = channel.channelParams;
-    payment.funding_proofs = channel.proofs;
-  }
 
   return encodePaymentHeader(payment);
 }
@@ -166,14 +160,40 @@ export interface CloseChannelResponse {
   body: any;
 }
 
-/** Close a channel cooperatively
- * @param includeParams - If true, include params and funding_proofs in close body (needed for unknown channels)
- */
+/** Register a channel with the server (balance=0). Must be called before making payments. */
+export async function registerChannel(server: Server, channel: Channel): Promise<void> {
+  const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
+    channel.channelParamsJson,
+    JSON.stringify(channel.keysetInfo),
+    channel.alice.secretHex,
+    JSON.stringify(channel.proofs),
+    BigInt(0)
+  );
+  const balanceUpdate = JSON.parse(balanceUpdateJson);
+
+  const response = await fetch(`${server.baseUrl}/channel/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      channel_id: channel.channelId,
+      balance: 0,
+      signature: balanceUpdate.signature,
+      params: channel.channelParams,
+      funding_proofs: channel.proofs,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json();
+    throw new Error(`Registration failed (${response.status}): ${body.reason || body.error || 'unknown error'}`);
+  }
+}
+
+/** Close a channel cooperatively. Channel must be pre-registered. */
 export async function closeChannel(
   server: Server,
   channel: Channel,
-  balance: number,
-  includeParams: boolean
+  balance: number
 ): Promise<CloseChannelResponse> {
   // Create signed balance update for the close
   const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
@@ -185,15 +205,10 @@ export async function closeChannel(
   );
   const balanceUpdate = JSON.parse(balanceUpdateJson);
 
-  const closeBody: any = {
+  const closeBody = {
     balance: balance,
     signature: balanceUpdate.signature,
   };
-
-  if (includeParams) {
-    closeBody.params = channel.channelParams;
-    closeBody.funding_proofs = channel.proofs;
-  }
 
   const response = await fetch(`${server.baseUrl}/channel/${channel.channelId}/close`, {
     method: 'POST',
