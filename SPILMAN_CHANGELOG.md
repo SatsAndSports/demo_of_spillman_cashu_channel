@@ -4,6 +4,15 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features (Late Jan 2026)
 
+### Rust ASCII Art Server (`cdk-ascii-art`)
+- **Native Rust implementation**: New crate implementing a Spilman channel payment server using the core `cdk` library directly (no WASM or FFI).
+- **Full SpilmanHost implementation**: `AsciiArtHost` struct with all required callbacks for pricing, storage, keyset caching, and mint interaction.
+- **Axum HTTP server**: Endpoints for `/channel/params`, `/channel/register`, `/ascii`, `/channel/:id/status`, `/channel/:id/close`, `/channel/:id/unilateral-close`.
+- **In-memory stores**: Thread-safe (`RwLock<HashMap>`) storage for channel funding, balances, usage, closed channels, and keyset cache.
+- **Async mint interaction**: `call_mint_swap_async()` for swap requests during channel close (avoids `reqwest::blocking` in tokio runtime).
+- **Full test coverage**: Passes all 42 tests from the TypeScript test suite via `make test-rust-via-ts-cdk`.
+- **Added to CI**: Included in `make test-all-cdk` and `scripts/docker-test.sh`.
+
 ### Hash Input Normalization
 - **Normalized all hash-based derivations to pipe-delimited text**: All 5 protocol-critical derivations now use consistent string interpolation instead of raw integer bytes or platform-dependent `usize`.
 - **Derivations affected**: Channel ID, shared blinding scalars, per-output blinding scalars, deterministic nonces, and deterministic blinding factors.
@@ -32,9 +41,9 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Fixed Go server error response format** in `main.go`: Error responses returned `{"error": ...}` instead of the bridge's structured `body` containing `reason`, `capacity`, `balance`, `locktime`, `min_capacity`, `min_expiry_in_seconds`, and `validation_errors` fields. Also added missing-header guard for empty `X-Cashu-Channel`.
 
 ### Cross-Server Testing
-- **TS test suite runs against all three servers**: The 35-test TypeScript suite validates TS, Python, and Go servers via `SERVER_PORT` / `SERVER_CMD` env vars in `globalSetup.ts`
-- **Makefile targets**: `make test-python-via-ts-cdk` and `make test-go-via-ts-cdk` run the full cross-server test suite with ephemeral mints
-- **All servers pass 35/35 tests**: TS, Python, and Go ASCII Art servers produce identical behavior for channels, payments, validation, minting, and closing
+- **TS test suite runs against all four servers**: The 42-test TypeScript suite validates TS, Rust, Python, and Go servers via `SERVER_PORT` / `SERVER_CMD` env vars in `globalSetup.ts`
+- **Makefile targets**: `make test-rust-via-ts-cdk`, `make test-python-via-ts-cdk`, and `make test-go-via-ts-cdk` run the full cross-server test suite with ephemeral mints
+- **All servers pass tests**: TS and Rust pass 42/42 tests; Python and Go pass 35/35 tests (subset without keyset refresh retry tests)
 
 ### Core Protocol
 - Channel ID computed and verified (WASM on both client and server)
@@ -67,14 +76,19 @@ This document tracks the completed features and improvements for the Spilman Cha
 - Full settlement flow in Python and Go: create swap request -> POST to mint -> unblind + verify DLEQ -> store proofs
 
 ### Unified Channel Closing
-- Bridge-orchestrated closing: `executeCooperativeClose` / `executeUnilateralClose` across WASM, PyO3, CGO
-- All four servers (CashuTube, TS ASCII Art, Python, Go) use identical closing patterns (call bridge, pass through result)
+- Bridge-orchestrated closing: `executeCooperativeClose` / `executeUnilateralClose` across WASM, PyO3, CGO, and native Rust
+- All five servers (CashuTube, TS ASCII Art, Rust ASCII Art, Python, Go) use identical closing patterns (call bridge, pass through result)
 - CashuTube migrated from manual close flow to bridge-based `executeCooperativeClose`
 - CashuTube gained `POST /channel/:id/unilateral-close` endpoint
 - Stores updated to track `receiverSum` / `senderSum` separately (replacing `valueAfterStage1`)
 - Idempotent close responses include `receiver_sum` and `sender_sum`
 - BigInt-to-Number conversion at WASM hook boundary for numeric params
 - Python/Go: Removed redundant store checks from close helpers (bridge handles internally)
+
+### Native Rust Server
+- **Rust ASCII Art** (`crates/cdk-ascii-art/`): Reference implementation using core `cdk` library directly
+- Demonstrates `SpilmanHost` trait implementation in native Rust
+- Pricing: sat=1/char, msat=1000/char, usd=1/char (matching other demo servers)
 
 ### Language Bindings
 - **Python demo** (`examples/python-ascii-art/`): Pay-per-character ASCII art generator

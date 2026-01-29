@@ -8,7 +8,8 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (35 tests)
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference implementation with full test suite (42 tests)
+- **Rust ASCII Art** (`crates/cdk-ascii-art/`) - Native Rust server using core `cdk` library (42 tests via TS suite)
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
 
@@ -24,6 +25,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | Path | Purpose |
 |------|---------|
 | `crates/cdk/src/spilman/` | Core Rust implementation |
+| `crates/cdk-ascii-art/` | Rust ASCII Art server (native, uses core `cdk`) |
 | `crates/cdk-wasm/` | WASM bindings for browser/Node.js |
 | `crates/cdk-spilman-python/` | PyO3 bindings |
 | `crates/cdk-spilman-go/` | CGO bindings |
@@ -52,9 +54,10 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 - `web/blossom-server/public/index.html` - Video player with payment headers
 
 ### Tests
-- `crates/cdk/src/spilman/tests.rs` - Rust integration tests
+- `crates/cdk/src/spilman/tests.rs` - Rust unit/integration tests
 - `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests: blobs, channels, minting, payment, validation, closing)
-- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (35 tests: channels, minting, payment, validation, closing)
+- `examples/ts-ascii-art/tests/*.test.ts` - ASCII Art tests (42 tests: channels, minting, payment, validation, closing)
+  - Also used for cross-server testing of Rust, Python, and Go servers
 
 ## Running Commands
 
@@ -75,7 +78,8 @@ make wasm-dev
 make test-blossom-cdk      # Blossom server tests with CDK mint
 make test-ts-ascii-cdk     # TypeScript ASCII Art tests with CDK mint
 
-# Cross-server tests (TS test suite against Python/Go servers)
+# Cross-server tests (TS test suite against Rust/Python/Go servers)
+make test-rust-via-ts-cdk    # TS tests against Rust server (42 tests)
 make test-python-via-ts-cdk  # TS tests against Python server (35 tests)
 make test-go-via-ts-cdk      # TS tests against Go server (35 tests)
 
@@ -114,8 +118,9 @@ For detailed information, see:
 ## Active TODOs
 
 - scale back the demos, they're not really needed as we now have so many tests
+- switch main tests from TS to Rust
 - split out 'validate_payment' from 'process_payment' (High Priority)
-- Optimize header size: high-capacity msat channels with many small outputs overflow 16KB HTTP headers. Need POST body for funding or better output fragmentation.
+- maybe stop sending funding+params in the header, now that we have the /channel/register endpoint?
 
 ### Protocol
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels (High Priority)
