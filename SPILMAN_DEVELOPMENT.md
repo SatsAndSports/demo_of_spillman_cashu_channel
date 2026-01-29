@@ -89,8 +89,8 @@ make wasm-dev
 Test targets automatically build/copy WASM as needed:
 
 ```bash
-make test-blossom-cdkmintd    # Builds WASM if needed, copies to blossom-server, runs tests
-make test-ts-ascii-cdkmintd   # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
+make test-blossom-cdkmintd   # Builds WASM if needed, copies to blossom-server, runs tests
+make test-ts-cdkmintd        # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
 ```
 
 ### WASM distribution
@@ -124,8 +124,8 @@ cargo test -p cdk
 # Spilman-specific tests (includes mint integration)
 cargo test -p cdk spilman
 
-# Clippy checks
-cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D warnings
+# Clippy checks (must pass)
+cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-spilman-server-integration-tests -- -D warnings
 ```
 
 ### Blossom Server Tests
@@ -151,40 +151,33 @@ Test coverage includes:
 - `minting.test.ts` - Funding token creation, DLEQ verification
 - `payment.test.ts` - Full payment flow, channel closing
 
-### TypeScript ASCII Art Tests
+### Server Integration Tests (Rust)
 
-The ts-ascii-art example has a comprehensive test suite (55 tests) and serves as the **reference implementation** for the ASCII Art demo pattern.
-
-#### Cross-Server Verification
-Since all four servers (TS, Rust, Python, Go) implement the same protocol, we use the TS test suite to validate all of them:
+The `cdk-spilman-server-integration-tests` crate provides a comprehensive Rust test client (52 tests) that validates all four server implementations (TypeScript, Rust, Python, Go).
 
 ```bash
-make test-rust-via-ts-cdkmintd    # Runs TS tests against Rust server (55 tests)
-make test-python-via-ts-cdkmintd  # Runs TS tests against Python server (55 tests)
-make test-go-via-ts-cdkmintd      # Runs TS tests against Go server (55 tests)
+# Test individual servers
+make test-ts-cdkmintd        # Test TypeScript server (52 tests)
+make test-rust-cdkmintd      # Test Rust server (52 tests)
+make test-python-cdkmintd    # Test Python server (52 tests)
+make test-go-cdkmintd        # Test Go server (52 tests)
+
+# Test all servers
+make test-servers-cdkmintd   # Runs all four above sequentially
 ```
 
-From CDK root (recommended - handles mint and WASM automatically):
-
-```bash
-make test-ts-ascii-cdkmintd     # Uses CDK mint
-make test-ts-ascii-nutmix       # Uses NutMix mint (requires Docker)
-```
-
-Or manually with a mint running at `localhost:3338`:
-
-```bash
-cd examples/ts-ascii-art
-npm install
-npm test
-```
+Tests run in parallel by default using `tokio::sync::OnceCell` for thread-safe lazy initialization of the shared mint and server processes.
 
 Test coverage includes:
-- `channel.test.ts` - `/channel/params` and `/channel/:id/status` endpoints
-- `minting.test.ts` - Funding token creation, DLEQ verification
-- `payment.test.ts` - Payment flow, channel policy (minCapacity)
-- `validation.test.ts` - Invalid signatures, balance errors, tampered DLEQ, locktime
-- `closing.test.ts` - Cooperative close, idempotent close, error cases
+- `channel_params` - `/channel/params` endpoint (pricing, keysets, receiver pubkey)
+- `channel_status` - `/channel/:id/status` endpoint
+- `channel_register` - Pre-registration with balance=0
+- `minting` - Funding token creation with deterministic outputs
+- `verification` - DLEQ verification, keyset tampering detection
+- `payment` - Payment flow, sat/msat/usd units
+- `validation` - Invalid signatures, balance errors, tampered DLEQ, locktime
+- `closing` - Cooperative close, idempotent close, error cases
+- `unilateral_closing` - Server-initiated close, overpayment handling
 
 ### Rust ASCII Art Server
 
@@ -194,8 +187,8 @@ The Rust ASCII Art server (`crates/cdk-ascii-art/`) is a native implementation u
 # Build
 cargo build -p cdk-ascii-art
 
-# Run tests (uses TS test suite)
-make test-rust-via-ts-cdk
+# Run tests
+make test-rust-cdkmintd
 
 # Run manually (requires mint at localhost:3338)
 PORT=5003 MINT_URL=http://localhost:3338 cargo run -p cdk-ascii-art
@@ -267,17 +260,17 @@ The server runs on `http://localhost:3000` by default.
 ```
 cdk/
 ├── crates/
-│   ├── cdk/src/spilman/          # Core Spilman implementation
-│   ├── cdk-ascii-art/             # Rust ASCII Art server (native)
-│   ├── cdk-wasm/                  # WASM bindings (browser + Node.js)
-│   ├── cdk-spilman-python/        # PyO3 bindings
-│   └── cdk-spilman-go/            # CGO bindings
+│   ├── cdk/src/spilman/                      # Core Spilman implementation
+│   ├── cdk-ascii-art/                        # Rust ASCII Art server (native)
+│   ├── cdk-spilman-server-integration-tests/ # Rust test client for all servers
+│   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
+│   ├── cdk-spilman-python/                   # PyO3 bindings
+│   └── cdk-spilman-go/                       # CGO bindings
 ├── examples/
-│   ├── ts-ascii-art/              # TypeScript demo (reference impl + test suite)
+│   ├── ts-ascii-art/              # TypeScript demo server + client
 │   ├── python-ascii-art/          # Python demo server + client
 │   └── go-ascii-art/              # Go demo server + client
 ├── web/
-│   ├── Makefile                   # WASM build targets
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output
 │   └── blossom-server/            # CashuTube server + player
@@ -288,12 +281,15 @@ cdk/
 
 For reviewing Spilman-specific changes:
 
-- **CDK repo:** `4a505bae` (origin/main)
-- **Blossom-server repo:** `5d84316`
+- **CDK repo:** `origin/main`
+- **Blossom-server repo:** `origin/master` (in `web/blossom-server/`)
 
 ```bash
-# See all Spilman changes
-git diff 4a505bae --stat
+# See all CDK Spilman changes
+git diff origin/main --stat
+
+# See all blossom-server Spilman changes
+cd web/blossom-server && git diff origin/master --stat
 ```
 
 ## Conventions
@@ -304,6 +300,18 @@ git diff 4a505bae --stat
 - **Test server:** Port 3099
 
 ## Troubleshooting
+
+### Orphaned Test Processes
+
+If tests are interrupted (Ctrl+C, timeout, panic), server and mint processes may be left running:
+
+```bash
+# List orphaned processes
+make list-orphans
+
+# Kill them all
+make kill-orphans
+```
 
 ### HTTP 431 / Request Header Fields Too Large
 This happens when the `X-Cashu-Channel` header exceeds the server's limit (usually 16KB). This is common when funding high-capacity `msat` channels with many small proofs.
