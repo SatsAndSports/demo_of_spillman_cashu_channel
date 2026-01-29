@@ -892,8 +892,31 @@ func runServer() {
 		var headerData map[string]interface{}
 		json.Unmarshal(resp.Header, &headerData)
 
+		// Calculate cost based on message length and unit pricing
+		channelId := headerData["channel_id"].(string)
+		mu.Lock()
+		funding := channelFunding[channelId]
+		mu.Unlock()
+
+		pricePerChar := uint64(1) // default sat
+		if funding != nil {
+			var params struct {
+				Unit string `json:"unit"`
+			}
+			json.Unmarshal([]byte(funding["params"]), &params)
+			if params.Unit != "" {
+				pricePerChar = getPricePerChar(params.Unit)
+			}
+		}
+		cost := uint64(len(req.Message)) * pricePerChar
+
 		w.Header().Set("X-Cashu-Channel", string(resp.Header))
-		json.NewEncoder(w).Encode(map[string]interface{}{"art": art, "payment": headerData})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"art":     art,
+			"message": req.Message,
+			"cost":    cost,
+			"payment": headerData,
+		})
 	})
 
 	http.HandleFunc("/channel/", func(w http.ResponseWriter, r *http.Request) {
