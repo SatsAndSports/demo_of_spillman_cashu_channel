@@ -383,6 +383,67 @@ impl SpilmanBridge {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize response: {}", e)))
     }
 
+    /// Validate a payment without recording it.
+    ///
+    /// Performs all validation (parsing, channel verification, balance checks,
+    /// signature verification) but does NOT call record_payment.
+    ///
+    /// For new channels, funding data IS saved (idempotent).
+    ///
+    /// Args:
+    ///     payment_json: Payment request JSON with channel_id, balance, signature,
+    ///                   and optionally params + funding_proofs for unknown channels
+    ///     context_json: Context JSON describing the request (e.g., {"type": "ascii", "chars": 5})
+    ///
+    /// Returns:
+    ///     JSON string with PaymentValidationResult on success, or error JSON on failure
+    #[pyo3(signature = (payment_json, context_json))]
+    fn validate_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
+        match self.inner.validate_payment(payment_json, context_json) {
+            Ok(result) => serde_json::to_string(&result).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
+            }),
+            Err(e) => {
+                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+                Ok(error_response.to_json())
+            }
+        }
+    }
+
+    /// Register/fund a channel without recording any usage.
+    ///
+    /// Validates the channel (params, funding proofs, signature for balance=0)
+    /// and saves it to the funding store, but does NOT record any payment/usage.
+    ///
+    /// Args:
+    ///     payment_json: Payment request JSON with:
+    ///         - channel_id: The channel ID
+    ///         - balance: Must be 0
+    ///         - signature: Schnorr signature for balance=0
+    ///         - params: Channel parameters
+    ///         - funding_proofs: Funding proofs with DLEQ
+    ///
+    /// Returns:
+    ///     JSON string with FundChannelResult:
+    ///         - success: true
+    ///         - channel_id: The channel ID
+    ///         - capacity: Channel capacity
+    ///         - already_known: true if channel was already registered
+    ///
+    ///     On error, returns JSON with success: false and error details.
+    #[pyo3(signature = (payment_json))]
+    fn fund_channel(&self, payment_json: &str) -> PyResult<String> {
+        match self.inner.fund_channel(payment_json) {
+            Ok(result) => serde_json::to_string(&result).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
+            }),
+            Err(e) => {
+                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
+                Ok(error_response.to_json())
+            }
+        }
+    }
+
     #[pyo3(signature = (payment_json))]
     fn validate_and_prepare_cooperative_close(&self, payment_json: &str) -> PyResult<String> {
         match self

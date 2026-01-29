@@ -5,6 +5,7 @@
  * 
  * Endpoints:
  *   GET  /channel/params              - Get server pubkey and pricing info
+ *   POST /channel/register            - Pre-register a channel (balance=0, no usage)
  *   POST /ascii                       - Generate ASCII art (requires X-Cashu-Channel header)
  *   GET  /channel/:id/status          - Get channel status and amount_due
  *   POST /channel/:id/close           - Close channel cooperatively (client-initiated)
@@ -501,6 +502,47 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
   });
 });
 
+// POST /channel/register - Pre-register a channel (balance=0, no usage recorded)
+app.post("/channel/register", (req, res) => {
+  const { channel_id, balance, signature, params, funding_proofs } = req.body;
+
+  if (!channel_id || signature === undefined || !params || !funding_proofs) {
+    res.status(400).json({
+      error: "Bad request",
+      reason: "missing required fields: channel_id, signature, params, funding_proofs",
+    });
+    return;
+  }
+
+  // balance must be 0 for registration
+  if (balance !== 0) {
+    res.status(400).json({
+      error: "Bad request",
+      reason: `funding requires balance=0, got ${balance}`,
+    });
+    return;
+  }
+
+  console.log(`\n[Register] Request for channel=${channel_id.substring(0, 8)}`);
+
+  // Build request body in the same format as payment
+  const registerBody = { channel_id, balance: 0, signature, params, funding_proofs };
+
+  // Use fundChannel to validate and store the channel
+  const resultJson = bridge.fundChannel(JSON.stringify(registerBody));
+  const result = JSON.parse(resultJson);
+
+  if (!result.success) {
+    const status = result.status || 400;
+    console.log(`  [Register] REJECTED: ${result.reason || result.error}`);
+    res.status(status).json(result);
+    return;
+  }
+
+  console.log(`  [Register] SUCCESS! channel=${result.channel_id.substring(0, 8)} capacity=${result.capacity} already_known=${result.already_known}`);
+  res.json(result);
+});
+
 // ============================================================================
 // Stats Display
 // ============================================================================
@@ -579,6 +621,7 @@ export async function startServer(): Promise<void> {
     console.log();
     console.log("Endpoints:");
     console.log(`  GET  http://localhost:${PORT}/channel/params`);
+    console.log(`  POST http://localhost:${PORT}/channel/register`);
     console.log(`  POST http://localhost:${PORT}/ascii`);
     console.log(`  GET  http://localhost:${PORT}/channel/:id/status`);
     console.log(`  POST http://localhost:${PORT}/channel/:id/close`);
