@@ -193,8 +193,7 @@ impl ServerProcess {
         let server_dir = root.join("examples/ts-ascii-art");
 
         Command::new("npx")
-            .arg("tsx")
-            .arg("src/server.ts")
+            .args(["tsx", "src/index.ts", "server"])
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(&server_dir)
