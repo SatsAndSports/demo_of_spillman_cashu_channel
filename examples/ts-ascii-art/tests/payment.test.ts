@@ -4,9 +4,11 @@ import {
   mintFundedChannel,
   registerChannel,
   createPaymentHeader,
+  encodePaymentHeader,
   fetchAsciiArt,
   fetchChannelStatus,
 } from './helpers.js';
+import { spilman_channel_sender_create_signed_balance_update } from '../src/wasm/cdk_wasm.js';
 
 describe.concurrent('Payment flow', () => {
   test('makes payment and verifies channel status', async ({ server }) => {
@@ -114,5 +116,85 @@ describe.concurrent('Channel policy', () => {
     expect(body.reason).toContain('capacity too small');
     // capacity and min_capacity fields may or may not be present depending on server implementation
     console.log(`Rejected with reason: ${body.reason}`);
+  });
+});
+
+describe.concurrent('Pre-payment and multi-currency', () => {
+  test('response header shows balance higher than amount_due when pre-paying', async ({ server }) => {
+    // Mint and register a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
+
+    // Create a balance update with pre-payment (10 sats, but message only costs 2)
+    const message = 'Hi';  // 2 chars = 2 sats cost
+    const balance = 10;    // Pre-pay 10 sats
+    const expectedCost = message.length * server.getPricePerChar('sat');
+    console.log(`Message: "${message}" (${message.length} chars, cost=${expectedCost}), pre-paying ${balance}`);
+
+    const paymentHeader = createPaymentHeader(channel, balance);
+    const { status, body, channelHeader } = await fetchAsciiArt(server, paymentHeader, message);
+
+    expect(status).toBe(200);
+    expect(body.art).toBeDefined();
+
+    // ts-ascii-art server returns payment info in body.payment, not X-Cashu-Channel header
+    // Check either the header (blossom-style) or body.payment (ts-ascii-art style)
+    const paymentInfo = channelHeader || body.payment;
+    expect(paymentInfo).toBeTruthy();
+    expect(paymentInfo.balance).toBe(balance);  // 10 (what client sent)
+    expect(paymentInfo.amount_due).toBe(expectedCost);  // 2 (what server charged)
+    expect(paymentInfo.balance).toBeGreaterThan(paymentInfo.amount_due);
+
+    console.log(`Pre-payment: balance=${paymentInfo.balance} amount_due=${paymentInfo.amount_due} (credit=${paymentInfo.balance - paymentInfo.amount_due})`);
+  });
+
+  test('accepts valid payment with usd channel', async ({ server }) => {
+    // Mint a funded channel with USD
+    const channel = await mintFundedChannel(server, 'usd', 100);
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    console.log(`Channel unit: ${channel.channelParams.unit}`);
+    await registerChannel(server, channel);
+
+    // Create a message and payment
+    const message = 'Hi';  // 2 chars
+    const expectedCost = message.length * server.getPricePerChar('usd');
+    console.log(`Message: "${message}" (${message.length} chars, cost=${expectedCost} cents)`);
+
+    const paymentHeader = createPaymentHeader(channel, expectedCost);
+    const { status, body } = await fetchAsciiArt(server, paymentHeader, message);
+
+    expect(status).toBe(200);
+    expect(body.art).toBeDefined();
+    if (body.cost !== undefined) expect(body.cost).toBe(expectedCost);
+    console.log('USD channel payment accepted');
+  });
+
+  test('returns 402 without payment, then 200 with valid payment', async ({ server }) => {
+    // Step 1: Request ASCII art WITHOUT payment - should get 402
+    const noPaymentResponse = await fetch(`${server.baseUrl}/ascii`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Hello' }),
+    });
+    expect(noPaymentResponse.status).toBe(402);
+    const errorBody = await noPaymentResponse.json();
+    expect(errorBody.reason).toContain('Missing X-Cashu-Channel');
+    console.log(`Got 402 without payment: ${errorBody.reason}`);
+
+    // Step 2: Mint and register a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
+
+    // Step 3: Retry WITH payment - should get 200
+    const message = 'Hello';
+    const cost = message.length * server.getPricePerChar('sat');
+    const paymentHeader = createPaymentHeader(channel, cost);
+    const { status, body } = await fetchAsciiArt(server, paymentHeader, message);
+
+    expect(status).toBe(200);
+    expect(body.art).toBeDefined();
+    console.log('Got 200 with payment, ASCII art generated');
   });
 });

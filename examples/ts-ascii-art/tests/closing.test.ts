@@ -10,6 +10,8 @@ import {
   generateKeypair,
   fetchKeysetInfo,
   getFirstKeysetId,
+  secretKeyToPubkey,
+  get_sender_blinded_secret_key_for_stage2_output,
 } from './helpers.js';
 import {
   WasmSpilmanBridge,
@@ -265,6 +267,137 @@ describe.concurrent('Channel closing', () => {
     const body = await response.json();
     expect(body.error).toContain('unknown channel');
     console.log(`Close rejected for unknown channel: ${body.error}`);
+  });
+
+  test('closes unused channel and verifies sender can derive secret keys for returned proofs', async ({ server }) => {
+    // Alice mints a funded channel but never uses it
+    // She can close immediately with balance=0
+    // After close, she should be able to derive the secret key for each returned proof
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+    await registerChannel(server, channel);
+
+    // Close the channel with balance=0 (unused)
+    const { httpStatus, body: closeResult } = await closeChannel(server, channel, 0);
+
+    expect(httpStatus).toBe(200);
+    expect(closeResult.success).toBe(true);
+    expect(closeResult.sender_proofs).toBeDefined();
+    expect(Array.isArray(closeResult.sender_proofs)).toBe(true);
+    expect(closeResult.sender_proofs.length).toBeGreaterThan(0);
+
+    const senderSum = closeResult.sender_proofs.reduce((sum: number, p: any) => sum + p.amount, 0);
+    console.log(`Channel closed with total_value=${closeResult.total_value}, sender_proofs=${closeResult.sender_proofs.length} (sum=${senderSum})`);
+
+    // Verify Alice can derive the secret key for each sender_proof
+    // The proofs are sorted smallest-amount-first, then by index within each amount
+    const indexByAmount: Record<number, number> = {};
+    for (const proof of closeResult.sender_proofs) {
+      const amount = proof.amount;
+      const index = indexByAmount[amount] ?? 0;
+      indexByAmount[amount] = index + 1;
+
+      // Get Alice's blinded secret key for this specific output
+      const blindedSecretHex = get_sender_blinded_secret_key_for_stage2_output(
+        channel.channelParamsJson,
+        JSON.stringify(channel.keysetInfo),
+        channel.alice.secretHex,
+        BigInt(amount),
+        index
+      );
+
+      // Derive pubkey from the secret key
+      const derivedPubkey = secretKeyToPubkey(blindedSecretHex);
+
+      // Parse the P2PK secret from the proof to get the locked pubkey
+      // Secret format is: ["P2PK", {"nonce": "...", "data": "pubkey_hex", ...}]
+      const secretArr = JSON.parse(proof.secret);
+      expect(Array.isArray(secretArr)).toBe(true);
+      expect(secretArr[0]).toBe('P2PK');
+      const lockedPubkey = secretArr[1].data;
+
+      // Verify they match
+      expect(derivedPubkey).toBe(lockedPubkey);
+    }
+    console.log(`Alice can derive secret keys for all ${closeResult.sender_proofs.length} sender_proofs`);
+  });
+
+  test('rejects close with balance less than amount_due', async ({ server }) => {
+    // Mint and register a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
+
+    // Make a payment to create usage
+    const message = 'Hello';
+    const cost = message.length * server.getPricePerChar('sat');
+    const paymentHeader = createPaymentHeader(channel, cost);
+    const { status } = await fetchAsciiArt(server, paymentHeader, message);
+    expect(status).toBe(200);
+
+    // Get amount_due
+    const { body: statusBody } = await fetchChannelStatus(server, channel.channelId);
+    const amountDue = statusBody!.amount_due;
+    console.log(`amount_due=${amountDue}`);
+    expect(amountDue).toBeGreaterThan(0);
+
+    // Try to close with balance=0 (less than amount_due)
+    const { httpStatus, body } = await closeChannel(server, channel, 0);
+
+    expect(httpStatus).toBe(402);
+    expect(body.error).toBe('Payment required');
+    expect(body.reason).toContain('balance mismatch');
+    // actual/expected fields are optional - not all servers return them
+    if (body.actual !== undefined) expect(body.actual).toBe(0);
+    if (body.expected !== undefined) expect(body.expected).toBe(amountDue);
+    console.log('rejects close with insufficient balance');
+  });
+
+  test('rejects close with nonzero balance of an unused channel', async ({ server }) => {
+    // Mint and register a funded channel (no usage, so amount_due = 0)
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
+
+    // Try to close with balance=10 (but amount_due is 0 since channel was never used)
+    const { httpStatus, body } = await closeChannel(server, channel, 10);
+
+    expect(httpStatus).toBe(402);
+    expect(body.error).toBe('Payment required');
+    expect(body.reason).toContain('balance mismatch');
+    // actual/expected fields are optional - not all servers return them
+    if (body.actual !== undefined) expect(body.actual).toBe(10);
+    if (body.expected !== undefined) expect(body.expected).toBe(0);
+    console.log('Close rejected with nonzero balance on unused channel');
+  });
+
+  test('rejects close with balance greater than amount_due on used channel', async ({ server }) => {
+    // Mint and register a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    await registerChannel(server, channel);
+
+    // Make a payment to create usage
+    const message = 'X';
+    const cost = message.length * server.getPricePerChar('sat');
+    const paymentHeader = createPaymentHeader(channel, cost);
+    const { status } = await fetchAsciiArt(server, paymentHeader, message);
+    expect(status).toBe(200);
+
+    // Get amount_due (should be cost)
+    const { body: statusBody } = await fetchChannelStatus(server, channel.channelId);
+    const amountDue = statusBody!.amount_due;
+    console.log(`amount_due=${amountDue}`);
+    expect(amountDue).toBeGreaterThan(0);
+
+    // Try to close with balance > amount_due
+    const overpayBalance = amountDue + 5;
+    const { httpStatus, body } = await closeChannel(server, channel, overpayBalance);
+
+    expect(httpStatus).toBe(402);
+    expect(body.error).toBe('Payment required');
+    expect(body.reason).toContain('balance mismatch');
+    // actual/expected fields are optional - not all servers return them
+    if (body.actual !== undefined) expect(body.actual).toBe(overpayBalance);
+    if (body.expected !== undefined) expect(body.expected).toBe(amountDue);
+    console.log('Close rejected with balance > amount_due on used channel');
   });
 });
 
