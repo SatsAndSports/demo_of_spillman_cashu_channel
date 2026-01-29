@@ -62,7 +62,7 @@ case "${1:-help}" in
         build_image
         check_lingering || true
         echo "Running CDK tests..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-python-parallel-cdk test-go-parallel-cdk
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk
         ;;
     nutmix)
         build_image
@@ -74,7 +74,7 @@ case "${1:-help}" in
         build_image
         check_lingering || true
         echo "Running all tests..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-python-parallel-cdk test-go-parallel-cdk \
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk \
                  test-python-parallel-nutmix-native test-go-parallel-nutmix-native
         ;;
     clean)
