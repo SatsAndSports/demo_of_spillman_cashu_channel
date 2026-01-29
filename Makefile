@@ -10,13 +10,12 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 .PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
 	go-build-rust go-demo-server go-demo-client \
 	ts-demo-server ts-demo-client \
-	cdk-mintd \
+	cdk-mintd rust-ascii-build \
 	test-python-parallel-cdkmintd test-python-parallel-nutmix test-python-parallel-nutmix-native \
 	test-go-parallel-cdkmintd test-go-parallel-nutmix test-go-parallel-nutmix-native \
 	test-ts-parallel-cdkmintd test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
 	test-blossom-cdkmintd test-blossom-nutmix \
-	test-ts-ascii-cdkmintd test-ts-ascii-nutmix \
-	test-python-via-ts-cdkmintd test-go-via-ts-cdkmintd test-rust-via-ts-cdkmintd \
+	test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd test-go-cdkmintd test-servers-cdkmintd \
 	wasm-dev blossom-wasm ts-ascii-wasm test-spilman \
 	test-all-cdkmintd test-all-nutmix test-all-nutmix-native test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs \
@@ -136,36 +135,30 @@ test-blossom-cdkmintd: cdk-mintd blossom-wasm
 test-blossom-nutmix: build-nutmix-setup-units blossom-wasm
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
 
-# --- TS ASCII Art Server Tests ---
+# --- Server Integration Tests (Rust test client against all servers) ---
 
-TS_ASCII_DIR := examples/ts-ascii-art
+# Run Rust integration tests against TypeScript server
+test-ts-cdkmintd: cdk-mintd ts-ascii-wasm
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests -- --test-threads=1
 
-# Run ts-ascii-art tests with ephemeral CDK mint
-test-ts-ascii-cdkmintd: cdk-mintd ts-ascii-wasm
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
+# Run Rust integration tests against Rust server
+test-rust-cdkmintd: cdk-mintd rust-ascii-build
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests -- --test-threads=1
 
-# Run ts-ascii-art tests with ephemeral NutMix mint
-test-ts-ascii-nutmix: build-nutmix-setup-units ts-ascii-wasm
-	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(TS_ASCII_DIR) test
+# Run Rust integration tests against Python server
+test-python-cdkmintd: cdk-mintd python-dev
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests -- --test-threads=1
 
-# --- Cross-Server Tests (TS test suite against Python/Go servers) ---
+# Run Rust integration tests against Go server
+test-go-cdkmintd: cdk-mintd go-build-rust
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests -- --test-threads=1
 
-# Run TS tests against the Python ASCII Art server
-test-python-via-ts-cdkmintd: python-dev ts-ascii-wasm cdk-mintd
-	SERVER_CMD="$(shell pwd)/$(PYTHON) $(shell pwd)/examples/python-ascii-art/server.py" \
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
-
-# Run TS tests against the Go ASCII Art server
-test-go-via-ts-cdkmintd: go-build-rust ts-ascii-wasm cdk-mintd
-	SERVER_CMD="go run . server" \
-	SERVER_CWD="$(shell pwd)/$(GO_DEMO_DIR)" \
-	LD_LIBRARY_PATH="$(shell pwd)/target/debug" \
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
-
-# Run TS tests against the Rust ASCII Art server
-test-rust-via-ts-cdkmintd: rust-ascii-build ts-ascii-wasm cdk-mintd
-	SERVER_CMD="$(shell pwd)/target/debug/cdk-ascii-art" \
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(TS_ASCII_DIR) test
+# Run all server integration tests
+test-servers-cdkmintd: test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd test-go-cdkmintd
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
+	@echo "=========================================
 
 # Build the Rust ASCII Art server
 rust-ascii-build:
@@ -204,14 +197,14 @@ ts-ascii-wasm: .wasm-dev-built
 # --- All Tests ---
 
 # Run all CDK test suites
-test-all-cdkmintd: test-spilman test-blossom-cdkmintd test-ts-ascii-cdkmintd test-rust-via-ts-cdkmintd test-python-via-ts-cdkmintd test-go-via-ts-cdkmintd
+test-all-cdkmintd: test-spilman test-blossom-cdkmintd test-servers-cdkmintd
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL CDKMINTD TEST SUITES PASSED"
 	@echo "========================================="
 
 # Run all NutMix test suites (Docker Compose mode)
-test-all-nutmix: test-blossom-nutmix test-ts-ascii-nutmix
+test-all-nutmix: test-blossom-nutmix
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL NUTMIX TEST SUITES PASSED"
