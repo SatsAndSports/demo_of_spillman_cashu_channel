@@ -1,11 +1,21 @@
 import { test, describe, expect } from './fixtures.js';
+import { randomBytes } from 'crypto';
 import {
   mintFundedChannel,
   registerChannel,
   createPaymentHeader,
   encodePaymentHeader,
   fetchAsciiArt,
+  generateKeypair,
+  fetchKeysetInfo,
+  getFirstKeysetId,
 } from './helpers.js';
+import {
+  compute_shared_secret,
+  channel_parameters_get_channel_id,
+  create_funding_outputs,
+  construct_proofs,
+} from '../src/wasm/cdk_wasm.js';
 
 // Import WASM function for manual signature creation
 import {
@@ -205,5 +215,176 @@ describe.concurrent('Payment validation errors', () => {
     const body = await response.json();
     expect(body.reason).toContain('invalid base64');
     console.log(`Invalid base64 rejected: ${body.reason}`);
+  });
+
+  test('returns 402 when proof amount has no mint key', async ({ server }) => {
+    // Mint a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+    console.log(`Channel ID: ${channel.channelId.substring(0, 16)}...`);
+
+    // Tamper with proof amount to a non-existent denomination
+    const tamperedProofs = JSON.parse(JSON.stringify(channel.proofs));
+    const originalAmount = tamperedProofs[0].amount;
+    tamperedProofs[0].amount = 3;  // Not a power of 2, no mint key exists
+    console.log(`Tampered amount: ${originalAmount} -> 3`);
+
+    // Try to register with tampered proofs - should fail on channel validation
+    const response = await fetch(`${server.baseUrl}/channel/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel_id: channel.channelId,
+        balance: 0,
+        signature: 'fake_signature',
+        params: channel.channelParams,
+        funding_proofs: tamperedProofs,
+      }),
+    });
+
+    expect(response.status).toBe(402);
+    const body = await response.json();
+    // The error could be in reason or in validation_errors
+    const hasValidationError = body.validation_errors?.some((e: any) => e.type === 'MissingMintKey');
+    const reasonContainsMissingKey = body.reason?.toLowerCase().includes('missing') && body.reason?.toLowerCase().includes('key');
+    expect(hasValidationError || reasonContainsMissingKey).toBe(true);
+    console.log('MissingMintKey (invalid amount): 402 rejected');
+  });
+
+  test('returns 402 when channel_id does not match params', async ({ server }) => {
+    // Mint a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+
+    // Create a valid balance update
+    const balanceUpdateJson = spilman_channel_sender_create_signed_balance_update(
+      channel.channelParamsJson,
+      JSON.stringify(channel.keysetInfo),
+      channel.alice.secretHex,
+      JSON.stringify(channel.proofs),
+      BigInt(0)
+    );
+    const balanceUpdate = JSON.parse(balanceUpdateJson);
+
+    // Tamper with the channel_id (flip last character)
+    const tamperedChannelId = balanceUpdate.channel_id.slice(0, -1) +
+      (balanceUpdate.channel_id.slice(-1) === 'a' ? 'b' : 'a');
+
+    // Try to register with mismatched channel_id
+    const response = await fetch(`${server.baseUrl}/channel/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel_id: tamperedChannelId,
+        balance: 0,
+        signature: balanceUpdate.signature,
+        params: channel.channelParams,
+        funding_proofs: channel.proofs,
+      }),
+    });
+
+    expect(response.status).toBe(402);
+    const body = await response.json();
+    expect(body.reason).toContain('channel_id mismatch');
+    console.log('channel_id mismatch: 402 rejected');
+  });
+
+  test('returns 402 when keyset is not from approved mint', async ({ server }) => {
+    // Mint a funded channel
+    const channel = await mintFundedChannel(server, 'sat', 100);
+
+    // Tamper with keyset_id in params - use a keyset that's not from an approved mint
+    const tamperedParams = { ...channel.channelParams, keyset_id: '00deadbeef123456' };
+
+    // Try to register with unknown keyset
+    const response = await fetch(`${server.baseUrl}/channel/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel_id: 'aaaa' + channel.channelId.substring(4),  // fake channel_id
+        balance: 0,
+        signature: 'fake_signature',  // Won't get this far anyway
+        params: tamperedParams,
+        funding_proofs: channel.proofs,
+      }),
+    });
+
+    expect(response.status).toBe(402);
+    const body = await response.json();
+    expect(body.reason).toContain('mint or keyset not acceptable');
+    console.log('mint or keyset not acceptable: 402 rejected');
+  });
+
+  // NOTE: max_amount_per_output test removed - this policy is blossom-server specific
+  // and not implemented in the ts-ascii-art reference server. See blossom-server/tests/payment.test.ts
+  // for this test.
+
+  test('returns 4xx for invalid or missing header fields', async ({ server }) => {
+    // Test cases for malformed payment headers
+    // Status codes vary by server implementation (400 for parse errors, 402 for missing fields)
+    const testCases = [
+      {
+        name: 'missing channel_id',
+        header: encodePaymentHeader({ balance: 1, signature: 'def456' }),
+        expectedError: 'channel_id',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'empty channel_id',
+        header: encodePaymentHeader({ channel_id: '', balance: 1, signature: 'def456' }),
+        expectedError: 'missing channel_id',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'non-string channel_id',
+        header: encodePaymentHeader({ channel_id: 12345, balance: 1, signature: 'def456' }),
+        expectedError: 'integer',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'missing balance',
+        header: encodePaymentHeader({ channel_id: 'abc123', signature: 'def456' }),
+        expectedError: 'balance',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'non-integer balance',
+        header: encodePaymentHeader({ channel_id: 'abc123', balance: 1.5, signature: 'def456' }),
+        expectedError: 'u64',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'missing signature',
+        header: encodePaymentHeader({ channel_id: 'abc123', balance: 1 }),
+        expectedError: 'signature',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'empty signature',
+        header: encodePaymentHeader({ channel_id: 'abc123', balance: 1, signature: '' }),
+        expectedError: 'signature',
+        acceptedStatuses: [400, 402],
+      },
+      {
+        name: 'non-string signature',
+        header: encodePaymentHeader({ channel_id: 'abc123', balance: 1, signature: 12345 }),
+        expectedError: 'string',
+        acceptedStatuses: [400, 402],
+      },
+    ];
+
+    for (const tc of testCases) {
+      const response = await fetch(`${server.baseUrl}/ascii`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Cashu-Channel': tc.header,
+        },
+        body: JSON.stringify({ message: 'Hello' }),
+      });
+
+      expect(tc.acceptedStatuses, `${tc.name}: expected 4xx`).toContain(response.status);
+      const body = await response.json();
+      expect(body.reason.toLowerCase(), `${tc.name}: wrong error`).toContain(tc.expectedError.toLowerCase());
+      console.log(`${tc.name}: ${response.status} with reason containing "${tc.expectedError}"`);
+    }
   });
 });

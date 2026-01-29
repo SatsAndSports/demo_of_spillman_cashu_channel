@@ -19,7 +19,11 @@ import {
   create_funding_outputs,
   construct_proofs,
   spilman_channel_sender_create_signed_balance_update,
+  get_sender_blinded_secret_key_for_stage2_output,
 } from '../src/wasm/cdk_wasm.js';
+
+// Re-export WASM functions needed by tests
+export { get_sender_blinded_secret_key_for_stage2_output };
 
 // ============================================================================
 // Types
@@ -78,6 +82,13 @@ export function generateKeypair(): Keypair {
   const pubkeyBytes = secp.getPublicKey(secretBytes, true); // compressed
   const pubkeyHex = Buffer.from(pubkeyBytes).toString('hex');
   return { secretHex, pubkeyHex };
+}
+
+/** Derive compressed pubkey from secret key hex */
+export function secretKeyToPubkey(secretHex: string): string {
+  const secretBytes = Buffer.from(secretHex, 'hex');
+  const pubkeyBytes = secp.getPublicKey(secretBytes, true); // compressed
+  return Buffer.from(pubkeyBytes).toString('hex');
 }
 
 // ============================================================================
