@@ -13,7 +13,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
 
-**Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (~54 tests)
+**Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (52 tests)
 
 ## Baseline Commits (for diffing)
 
@@ -89,6 +89,10 @@ make test-blossom-cdkmintd
 # Run all tests
 make test-all-cdkmintd
 
+# Orphan process management (servers/mints left running after interrupted tests)
+make list-orphans              # Show orphaned processes
+make kill-orphans              # Kill them all
+
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
 
@@ -127,14 +131,10 @@ When we migrated from TS tests to Rust integration tests, 3 tests were skipped:
 These test bridge internals rather than the HTTP API, so they belong as native Rust unit tests in `cdk::spilman::tests`, not integration tests.
 
 ### Other TODOs
-- zombie processes?
-- do we still have nutmix tests for the ascii-art?
-- make to print name of succesful targets?
 - stop using blossom server in the tests
 - maybe stop sending funding+params in the header, now that we have the /channel/register endpoint?
 - video player should stop sending funding+params, and should use the register endpoint after any 4xx
 - scale back the demos, they're not really needed as we now have so many tests
-- why all the go-ascii-art processes still running? any other similar processes?
 - how about maximum_amount? is it still being enforced? we need the policy to include it
 
 ### Protocol

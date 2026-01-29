@@ -160,7 +160,7 @@ test-servers-cdkmintd: test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd 
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
-	@echo "=========================================
+	@echo "========================================="
 
 # Build the Rust ASCII Art server
 rust-ascii-build:

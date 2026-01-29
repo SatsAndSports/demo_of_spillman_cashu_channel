@@ -2,6 +2,34 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Jan 29, 2026)
+
+### Rust Integration Test Suite (`cdk-spilman-server-integration-tests`)
+- **Migrated TS tests to Rust**: Replaced the TypeScript test suite with a comprehensive Rust integration test crate (52 tests).
+- **Tests all four server implementations**: TypeScript, Rust, Python, and Go servers all pass the same test suite.
+- **Parallel test execution**: Tests run in parallel using `tokio::sync::OnceCell` for thread-safe lazy initialization of shared mint/server processes.
+- **New Makefile targets**: `test-ts-cdkmintd`, `test-rust-cdkmintd`, `test-python-cdkmintd`, `test-go-cdkmintd`, `test-servers-cdkmintd`.
+- **Orphan process management**: Added `make list-orphans` and `make kill-orphans` to handle servers/mints left running after interrupted tests.
+- **Clean test output**: Disabled doc-tests and lib unit tests (no tests there) to show only the 52 integration tests.
+
+### Test Coverage (52 tests)
+- `channel_params` (4 tests) - Receiver pubkey, pricing, keysets, min expiry
+- `channel_status` (1 test) - 404 for unknown channel
+- `channel_register` (6 tests) - Registration, idempotency, validation
+- `minting` (1 test) - Funding token with deterministic outputs
+- `verification` (3 tests) - DLEQ and keyset tampering detection
+- `payment` (6 tests) - Payment flow, sat/msat/usd units
+- `validation` (12 tests) - Signatures, balances, DLEQ, locktime, headers
+- `status` (2 tests) - Status before/after payment
+- `closing` (12 tests) - Cooperative close, idempotency, error cases
+- `unilateral_closing` (7 tests) - Server-initiated close, overpayment
+
+### Tests Not Ported (to follow up)
+Three tests require direct bridge access (not HTTP API) and will be added as native Rust unit tests:
+1. Sender key derivation from returned proofs
+2. Cooperative close keyset refresh retry
+3. Unilateral close keyset refresh retry
+
 ## Completed Features (Late Jan 2026)
 
 ### Rust ASCII Art Server (`cdk-ascii-art`)
@@ -10,7 +38,7 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Axum HTTP server**: Endpoints for `/channel/params`, `/channel/register`, `/ascii`, `/channel/:id/status`, `/channel/:id/close`, `/channel/:id/unilateral-close`.
 - **In-memory stores**: Thread-safe (`RwLock<HashMap>`) storage for channel funding, balances, usage, closed channels, and keyset cache.
 - **Async mint interaction**: `call_mint_swap_async()` for swap requests during channel close (avoids `reqwest::blocking` in tokio runtime).
-- **Full test coverage**: Passes all 55 tests from the TypeScript test suite via `make test-rust-via-ts-cdkmintd`.
+- **Full test coverage**: Passes all 52 tests from the Rust integration test suite via `make test-rust-cdkmintd`.
 - **Added to CI**: Included in `make test-all-cdkmintd` and `scripts/docker-test.sh`.
 
 ### Hash Input Normalization
@@ -41,9 +69,9 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Fixed Go server error response format** in `main.go`: Error responses returned `{"error": ...}` instead of the bridge's structured `body` containing `reason`, `capacity`, `balance`, `locktime`, `min_capacity`, `min_expiry_in_seconds`, and `validation_errors` fields. Also added missing-header guard for empty `X-Cashu-Channel`.
 
 ### Cross-Server Testing
-- **TS test suite runs against all four servers**: The 42-test TypeScript suite validates TS, Rust, Python, and Go servers via `SERVER_PORT` / `SERVER_CMD` env vars in `globalSetup.ts`
-- **Makefile targets**: `make test-rust-via-ts-cdkmintd`, `make test-python-via-ts-cdkmintd`, and `make test-go-via-ts-cdkmintd` run the full cross-server test suite with ephemeral mints
-- **All servers pass tests**: TS, Rust, Python, and Go all pass 55/55 tests
+- **Rust test suite validates all four servers**: The 52-test Rust integration suite validates TS, Rust, Python, and Go servers via `SERVER_TYPE` env var
+- **Makefile targets**: `make test-ts-cdkmintd`, `make test-rust-cdkmintd`, `make test-python-cdkmintd`, `make test-go-cdkmintd` run the full test suite with ephemeral mints
+- **All servers pass tests**: TS, Rust, Python, and Go all pass 52/52 tests
 
 ### Core Protocol
 - Channel ID computed and verified (WASM on both client and server)
