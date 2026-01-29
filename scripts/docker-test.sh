@@ -62,20 +62,19 @@ case "${1:-help}" in
         build_image
         check_lingering || true
         echo "Running CDK tests..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-all-cdk
         ;;
     nutmix)
         build_image
         check_lingering || true
         echo "Running NutMix tests (native mode)..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-python-parallel-nutmix-native test-go-parallel-nutmix-native
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-all-nutmix-native
         ;;
     all)
         build_image
         check_lingering || true
         echo "Running all tests..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk \
-                 test-python-parallel-nutmix-native test-go-parallel-nutmix-native
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-all-cdk test-all-nutmix-native
         ;;
     clean)
         LINGERING=$(docker ps -q --filter "label=$LABEL")

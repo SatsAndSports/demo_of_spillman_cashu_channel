@@ -204,14 +204,14 @@ ts-ascii-wasm: .wasm-dev-built
 # --- All Tests ---
 
 # Run all CDK test suites
-test-all-cdk: test-spilman test-rust-via-ts-cdk test-python-parallel-cdk test-go-parallel-cdk test-ts-parallel-cdk test-blossom-cdk
+test-all-cdk: test-spilman test-blossom-cdk test-ts-ascii-cdk test-rust-via-ts-cdk test-python-via-ts-cdk test-go-via-ts-cdk
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL CDK TEST SUITES PASSED"
 	@echo "========================================="
 
 # Run all NutMix test suites (Docker Compose mode)
-test-all-nutmix: test-python-parallel-nutmix test-go-parallel-nutmix test-ts-parallel-nutmix test-blossom-nutmix
+test-all-nutmix: test-blossom-nutmix test-ts-ascii-nutmix
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL NUTMIX TEST SUITES PASSED"
