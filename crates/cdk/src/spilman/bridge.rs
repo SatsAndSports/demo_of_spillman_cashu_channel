@@ -366,6 +366,22 @@ impl ClosePreparationError {
     }
 }
 
+/// Result of validating a payment without recording it
+///
+/// This struct contains all validation results without any side effects.
+/// For new channels, the channel funding is saved, but no usage is recorded.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaymentValidationResult {
+    pub valid: bool,
+    pub channel_id: String,
+    pub balance: u64,
+    pub amount_due: u64,
+    pub capacity: u64,
+    pub sender_signature: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BridgeServerConfig {
     pub min_expiry_in_seconds: u64,
@@ -817,6 +833,49 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         payment_json: &str,
         context_json: &str,
     ) -> Result<PaymentResponse, BridgeError> {
+        // 1. Validate the payment (no side effects except saving funding for new channels)
+        let validation = self.validate_payment(payment_json, context_json)?;
+
+        // 2. Record successful payment (the side effect we're separating out)
+        self.host.record_payment(
+            &validation.channel_id,
+            validation.balance,
+            &validation.sender_signature,
+            context_json,
+        );
+
+        // 3. Return success with confirmation header
+        let header = serde_json::json!({
+            "channel_id": validation.channel_id,
+            "balance": validation.balance,
+            "amount_due": validation.amount_due,
+            "capacity": validation.capacity,
+        });
+
+        Ok(PaymentResponse {
+            success: true,
+            error: None,
+            status: BridgeStatus::OK,
+            header: Some(header),
+            body: None,
+        })
+    }
+
+    /// Validate a payment without recording it
+    ///
+    /// Performs all validation (parsing, channel verification, balance checks,
+    /// signature verification) but does NOT call `record_payment`.
+    ///
+    /// For new channels, funding data IS saved via `save_funding` (idempotent).
+    /// This is necessary because signature verification requires the shared secret
+    /// which is computed and stored during channel setup.
+    ///
+    /// Returns `PaymentValidationResult` with validation outcome on success.
+    fn validate_payment(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> Result<PaymentValidationResult, BridgeError> {
         // 1. Parse payment request
         let payment: PaymentRequest = serde_json::from_str::<PaymentRequest>(payment_json)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
@@ -836,7 +895,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::ChannelClosed);
         }
 
-        // 3. Resolve or verify funding
+        // 3. Resolve or verify funding (saves funding for new channels - idempotent)
         let funding_and_params = match self.host.get_funding_and_params(channel_id) {
             Some(f) => f,
             None => {
@@ -847,7 +906,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                     .as_ref()
                     .ok_or(BridgeError::UnknownChannel)?;
 
-                // Perform full validation
+                // Perform full validation and save funding
                 self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?
             }
         };
@@ -890,28 +949,15 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         )
         .map_err(BridgeError::InvalidSignature)?;
 
-        // 8. Record successful payment
-        self.host.record_payment(
-            channel_id,
-            payment.balance,
-            &payment.signature,
-            context_json,
-        );
-
-        // 9. Return success with confirmation header
-        let header = serde_json::json!({
-            "channel_id": channel_id,
-            "balance": payment.balance,
-            "amount_due": amount_due,
-            "capacity": capacity,
-        });
-
-        Ok(PaymentResponse {
-            success: true,
+        // 8. Return validation result (no record_payment call here)
+        Ok(PaymentValidationResult {
+            valid: true,
+            channel_id: channel_id.to_string(),
+            balance: payment.balance,
+            amount_due,
+            capacity,
+            sender_signature: payment.signature,
             error: None,
-            status: BridgeStatus::OK,
-            header: Some(header),
-            body: None,
         })
     }
 
