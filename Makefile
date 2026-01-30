@@ -11,6 +11,7 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	go-build-rust go-demo-server go-demo-client \
 	ts-demo-server ts-demo-client \
 	cdk-mintd rust-ascii-build \
+	test test-rust-only \
 	test-python-parallel-cdkmintd test-python-parallel-nutmix test-python-parallel-nutmix-native \
 	test-go-parallel-cdkmintd test-go-parallel-nutmix test-go-parallel-nutmix-native \
 	test-ts-parallel-cdkmintd test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
@@ -119,6 +120,17 @@ test-ts-parallel-nutmix-native: wasm-dev
 	@bash scripts/ts-parallel-demo.sh nutmix-native
 
 # --- Rust Tests ---
+
+# Default: run Rust-only channel tests (no Node.js, Python, or Go required)
+test: test-rust-only
+
+# Run all Rust-only channel tests
+# Includes: spilman unit tests + Rust ASCII server integration tests
+test-rust-only: test-spilman test-rust-cdkmintd
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL RUST-ONLY CHANNEL TESTS PASSED"
+	@echo "========================================="
 
 # Run Spilman channel unit tests
 test-spilman:
