@@ -19,15 +19,12 @@ Environment variables:
 
 from flask import Flask, request, jsonify
 from typing import Optional
-from cdk_spilman import SpilmanBridge, secret_key_to_pubkey, unblind_and_verify_dleq
+from cdk_spilman import SpilmanBridge, secret_key_to_pubkey
 import pyfiglet
 import json
 import base64
 import time
 import os
-import signal
-import threading
-import sys
 import requests as http_requests
 import secrets
 
@@ -752,52 +749,6 @@ def unilateral_close_endpoint(channel_id: str):
     })
 
 
-def print_stats_table(sig=None, frame=None):
-    """Print ASCII table of all channel stats. Can be called via Ctrl+\\ (SIGQUIT)."""
-    print()
-    print("=" * 70)
-    print("  Channel Statistics (Press Ctrl+\\ to refresh)")
-    print("=" * 70)
-    
-    if not channel_funding:
-        print("  No channels registered yet.")
-        print("=" * 70)
-        print()
-        return
-    
-    # Table header
-    print(f"  {'ID':<10} {'Status':<8} {'Capacity':>10} {'Balance':>10} {'Usage':>10}")
-    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
-    
-    total_balance = 0
-    total_usage = 0
-    
-    for cid, funding in channel_funding.items():
-        try:
-            params = json.loads(funding["params"])
-            capacity = params.get("capacity", 0)
-            unit = params.get("unit", "sat")
-        except:
-            capacity = 0
-            unit = "?"
-        
-        usage = channel_usage.get(cid, {}).get("chars_served", 0)
-        payment = channel_largest_payment.get(cid, {})
-        balance = payment.get("balance", 0)
-        status = "CLOSED" if cid in channel_closed else "OPEN"
-        
-        short_id = cid[:8]
-        print(f"  {short_id:<10} {status:<8} {capacity:>7} {unit:<3} {balance:>7} {unit:<3} {usage:>7} ch")
-        
-        total_balance += balance
-        total_usage += usage
-    
-    print(f"  {'-'*10} {'-'*8} {'-'*10} {'-'*10} {'-'*10}")
-    print(f"  {'TOTAL':<10} {'':<8} {'':<10} {total_balance:>7} sat {total_usage:>7} ch")
-    print("=" * 70)
-    print()
-
-
 def close_channel(channel_id: str) -> dict:
     """
     Close a channel unilaterally using the bridge.
@@ -809,78 +760,9 @@ def close_channel(channel_id: str) -> dict:
     return json.loads(result_json)
 
 
-def close_all_channels():
-    """Close all open channels that have payments."""
-    print("\n" + "=" * 70)
-    print("  Closing all channels...")
-    print("=" * 70)
-    
-    open_channels = [cid for cid in channel_funding if cid not in channel_closed]
-    
-    if not open_channels:
-        print("  No open channels to close.")
-        print("=" * 70)
-        return
-    
-    total_earned = 0
-    closed_count = 0
-    
-    for cid in open_channels:
-        # Check if we have payments to close with
-        if cid in channel_largest_payment:
-            result = close_channel(cid)
-            if result.get("success"):
-                print(f"  [CLI] Closed {cid[:16]}... earned {result.get('receiver_sum')} sat")
-            else:
-                print(f"  [CLI] Failed to close {cid[:16]}: {result.get('error')}")
-            if result["success"]:
-                total_earned += result["receiver_sum"]
-                closed_count += 1
-        else:
-            print(f"  [Close] Skipping {cid[:16]}: no payment recorded")
-    
-    print()
-    print(f"  Closed {closed_count}/{len(open_channels)} channels")
-    print(f"  Total earned: {total_earned} sat")
-    print("=" * 70)
-    print()
-
-
-def cli_listener():
-    """Background thread that listens for CLI commands."""
-    print("CLI ready. Commands: 's' = stats, 'c' = close all, 'q' = quit")
-    
-    while True:
-        try:
-            cmd = input().strip().lower()
-            
-            if cmd == 's':
-                print_stats_table()
-            elif cmd == 'c':
-                close_all_channels()
-            elif cmd == 'q':
-                print("\n[Shutdown] Closing all channels before exit...")
-                close_all_channels()
-                print("[Shutdown] Exiting...")
-                os._exit(0)
-            elif cmd:
-                print(f"  Unknown command: '{cmd}'. Use 's' (stats), 'c' (close), 'q' (quit)")
-        except EOFError:
-            # stdin closed, exit gracefully
-            break
-        except Exception as e:
-            print(f"  CLI error: {e}")
-
-
 if __name__ == "__main__":
-    print("=" * 60)
-    print("ASCII Art Server - Spilman Payment Channel Demo")
-    print("=" * 60)
-    print()
-    
     # Fetch keysets at startup
     initialize_keysets()
-    print()
     
     print(f"Server pubkey: {host.pubkey}")
     print(f"Mint URL:      {MINT_URL}")
@@ -889,26 +771,5 @@ if __name__ == "__main__":
     pricing_str = ", ".join(f"{u}={p['per_char']}/char" for u, p in active.items())
     print(f"Pricing:       {pricing_str or '(no active units)'}")
     print(f"Listening on:  http://0.0.0.0:{PORT}")
-    print()
-    print("Endpoints:")
-    print(f"  GET  http://localhost:{PORT}/channel/params")
-    print(f"  POST http://localhost:{PORT}/ascii")
-    print()
-    print("Commands (type and press Enter):")
-    print("  s = show channel statistics")
-    print("  c = close all channels (settle with mint)")
-    print("  q = close all and quit")
-    print()
-    print("Press Ctrl+\\ for quick stats (no Enter needed)")
-    print()
-    print("=" * 60)
-    print()
-    
-    # Register SIGQUIT handler (Ctrl+\) to print stats table
-    signal.signal(signal.SIGQUIT, print_stats_table)
-    
-    # Start CLI listener thread
-    cli_thread = threading.Thread(target=cli_listener, daemon=True)
-    cli_thread.start()
     
     app.run(host="0.0.0.0", port=PORT, debug=False)

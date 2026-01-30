@@ -141,19 +141,19 @@ test-blossom-nutmix: build-nutmix-setup-units blossom-wasm
 # Run Rust integration tests against TypeScript server
 # Tests run in parallel (auto-detect thread count) - see context.rs for how this works
 test-ts-cdkmintd: cdk-mintd ts-ascii-wasm
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
 # Run Rust integration tests against Rust server
 test-rust-cdkmintd: cdk-mintd rust-ascii-build
-	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
 # Run Rust integration tests against Python server
 test-python-cdkmintd: cdk-mintd python-dev
-	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
 # Run Rust integration tests against Go server
 test-go-cdkmintd: cdk-mintd go-build-rust
-	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
 # Run all server integration tests
 test-servers-cdkmintd: test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd test-go-cdkmintd

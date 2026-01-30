@@ -9,11 +9,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/SatsAndSports/cdk/spilman"
@@ -589,70 +587,6 @@ func mintFundingToken(mintUrl string, amount uint64, blindedMessages []interface
 // Runners
 // ============================================================================
 
-func printStatsTable() {
-	fmt.Println()
-	fmt.Println(strings.Repeat("=", 70))
-	fmt.Println("  Channel Statistics (Press Ctrl+\\ to refresh)")
-	fmt.Println(strings.Repeat("=", 70))
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(channelFunding) == 0 {
-		fmt.Println("  No channels registered yet.")
-		fmt.Println(strings.Repeat("=", 70))
-		fmt.Println()
-		return
-	}
-
-	// Table header
-	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "ID", "Status", "Capacity", "Balance", "Usage")
-	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "----------", "--------", "----------", "----------", "----------")
-
-	var totalBalance uint64
-	var totalUsage uint64
-
-	// Sort channel IDs for stable display
-	var ids []string
-	for id := range channelFunding {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
-	for _, cid := range ids {
-		funding := channelFunding[cid]
-		var params struct {
-			Capacity uint64 `json:"capacity"`
-			Unit     string `json:"unit"`
-		}
-		json.Unmarshal([]byte(funding["params"]), &params)
-
-		usage := channelUsage[cid]["chars"]
-		payment := channelBalance[cid]
-		balance := uint64(0)
-		if payment != nil {
-			balance = payment["balance"].(uint64)
-		}
-
-		status := "OPEN"
-		if _, closed := channelClosed[cid]; closed {
-			status = "CLOSED"
-		}
-
-		shortId := cid[:8]
-		fmt.Printf("  %-10s %-8s %7d %-3s %7d %-3s %7d ch\n",
-			shortId, status, params.Capacity, params.Unit, balance, params.Unit, usage)
-
-		totalBalance += balance
-		totalUsage += usage
-	}
-
-	fmt.Printf("  %-10s %-8s %10s %10s %10s\n", "----------", "--------", "----------", "----------", "----------")
-	fmt.Printf("  %-10s %-8s %10s %7d sat %7d ch\n", "TOTAL", "", "", totalBalance, totalUsage)
-	fmt.Println(strings.Repeat("=", 70))
-	fmt.Println()
-}
-
 type UnilateralCloseResult struct {
 	Success     bool   `json:"success"`
 	Error       string `json:"error"`
@@ -679,53 +613,6 @@ func closeChannel(id string, bridge *spilman.Bridge) (UnilateralCloseResult, err
 
 	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], result.ReceiverSum)
 	return result, nil
-}
-
-func closeAllChannels(bridge *spilman.Bridge, host *AsciiArtHost) {
-	fmt.Println("\n" + strings.Repeat("=", 70))
-	fmt.Println("  Closing all channels...")
-	fmt.Println(strings.Repeat("=", 70))
-
-	mu.Lock()
-	var openIds []string
-	for id := range channelFunding {
-		if _, closed := channelClosed[id]; !closed {
-			openIds = append(openIds, id)
-		}
-	}
-	mu.Unlock()
-
-	if len(openIds) == 0 {
-		fmt.Println("  No open channels to close.")
-		fmt.Println(strings.Repeat("=", 70))
-		return
-	}
-
-	var totalEarned uint64
-	var closedCount int
-
-	for _, id := range openIds {
-		// Only attempt to close if we have payments
-		mu.Lock()
-		_, hasPayment := channelBalance[id]
-		mu.Unlock()
-
-		if hasPayment {
-			result, err := closeChannel(id, bridge)
-			if err != nil {
-				log.Printf("  [CLI] Failed to close %s: %v\n", id[:8], err)
-			} else {
-				log.Printf("  [CLI] Closed %s... earned %d sat\n", id[:8], result.ReceiverSum)
-				totalEarned += result.ReceiverSum
-				closedCount++
-			}
-		}
-	}
-
-	fmt.Printf("\n  Closed %d/%d channels\n", closedCount, len(openIds))
-	fmt.Printf("  Total earned: %d sat\n", totalEarned)
-	fmt.Println(strings.Repeat("=", 70))
-	fmt.Println()
 }
 
 func runServer() {
@@ -1127,37 +1014,6 @@ func runServer() {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
-
-	// Statistics signal handler (Ctrl+\)
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGQUIT)
-	go func() {
-		for range sigChan {
-			printStatsTable()
-		}
-	}()
-
-	// CLI listener
-	go func() {
-		fmt.Println("CLI ready. Commands: 's' = stats, 'c' = close all, 'q' = quit")
-		var cmd string
-		for {
-			fmt.Scanln(&cmd)
-			cmd = strings.TrimSpace(strings.ToLower(cmd))
-			if cmd == "s" {
-				printStatsTable()
-			} else if cmd == "c" {
-				closeAllChannels(bridge, host)
-			} else if cmd == "q" {
-				fmt.Println("\n[Shutdown] Closing all channels before exit...")
-				closeAllChannels(bridge, host)
-				fmt.Println("[Shutdown] Exiting...")
-				os.Exit(0)
-			} else if cmd != "" {
-				fmt.Printf("  Unknown command: '%s'. Use 's' (stats), 'c' (close), 'q' (quit)\n", cmd)
-			}
-		}
-	}()
 
 	log.Printf("Go ASCII Art Server listening on :%s\n", SERVER_PORT)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", SERVER_PORT), nil))
