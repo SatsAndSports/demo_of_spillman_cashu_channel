@@ -3,15 +3,23 @@
 //! This module handles spawning, monitoring, and cleanup of:
 //! - CDK mint daemon (`cdk-mintd`)
 //! - ASCII art servers (TS, Rust, Python, Go)
+//!
+//! # Process Group Management
+//!
+//! All spawned processes are placed in their own process groups using `setsid`.
+//! This ensures that when we kill a process, we kill the entire tree (including
+//! any child processes spawned by shell scripts or `go run`).
 
 use std::env;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use command_group::{CommandGroup, GroupChild, Signal, UnixChildExt};
+use std::process::Command;
 use tokio::time::sleep;
 
 /// Find an available port by binding to port 0
@@ -70,31 +78,40 @@ impl ServerType {
     }
 }
 
-/// A running mint process
+/// A running mint process (in its own process group)
 pub struct MintProcess {
-    child: Child,
+    child: GroupChild,
     pub port: u16,
     pub url: String,
 }
 
 impl MintProcess {
-    /// Spawn a new CDK mint using the existing shell script
+    /// Spawn a new CDK mint using the existing shell script.
+    /// The process is spawned in its own process group so we can kill all children.
     pub async fn spawn() -> Result<Self> {
         let port = find_available_port()?;
         let root = project_root();
 
+        // Print immediately for debugging (bypasses tracing buffering)
+        eprintln!("[orchestration] Mint port selected: {}", port);
+
         // Use the existing run_temporary_mint.sh script
         let script_path = root.join("scripts/run_temporary_mint.sh");
 
-        tracing::info!("Starting mint on port {} using {}", port, script_path.display());
+        tracing::info!(
+            "Starting mint on port {} using {}",
+            port,
+            script_path.display()
+        );
 
+        // Spawn in a new process group so we can kill all children
         let child = Command::new(&script_path)
             .arg("cdk")
             .arg(port.to_string())
             .current_dir(&root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .context("Failed to spawn mint process")?;
 
         let url = format!("http://localhost:{}", port);
@@ -114,6 +131,7 @@ impl MintProcess {
         for i in 0..60 {
             match client.get(&info_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
+                    eprintln!("[orchestration] Mint ready on port {} after {} attempts", self.port, i + 1);
                     tracing::info!("Mint ready after {} attempts", i + 1);
                     return Ok(());
                 }
@@ -129,37 +147,49 @@ impl MintProcess {
 
 impl Drop for MintProcess {
     fn drop(&mut self) {
-        tracing::info!("Stopping mint on port {}", self.port);
+        eprintln!("[orchestration] Stopping mint process group on port {}", self.port);
+        tracing::info!("Stopping mint process group on port {}", self.port);
 
-        // Try graceful shutdown first
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            let _ = Command::new("kill")
-                .arg("-TERM")
-                .arg(self.child.id().to_string())
-                .exec();
+        // Send SIGTERM to the entire process group for graceful shutdown
+        if let Err(e) = self.child.signal(Signal::SIGTERM) {
+            tracing::warn!("Failed to send SIGTERM to mint process group: {}", e);
         }
 
-        // Force kill if still running
-        let _ = self.child.kill();
+        // Give processes a moment to shut down gracefully
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Force kill the entire process group
+        if let Err(e) = self.child.signal(Signal::SIGKILL) {
+            tracing::warn!("Failed to send SIGKILL to mint process group: {}", e);
+        }
+
+        // Reap the zombie
         let _ = self.child.wait();
     }
 }
 
-/// A running server process
+/// A running server process (in its own process group)
 pub struct ServerProcess {
-    child: Child,
+    child: GroupChild,
     pub port: u16,
     pub base_url: String,
     pub server_type: ServerType,
 }
 
 impl ServerProcess {
-    /// Spawn a server of the specified type
+    /// Spawn a server of the specified type.
+    /// The process is spawned in its own process group so we can kill all children.
     pub async fn spawn(server_type: ServerType, mint_url: &str) -> Result<Self> {
         let port = find_available_port()?;
         let root = project_root();
+
+        // Print immediately for debugging (bypasses tracing buffering)
+        eprintln!(
+            "[orchestration] {} server port selected: {}, mint: {}",
+            server_type.name(),
+            port,
+            mint_url
+        );
 
         tracing::info!(
             "Starting {} server on port {} with mint {}",
@@ -189,7 +219,7 @@ impl ServerProcess {
         Ok(server)
     }
 
-    fn spawn_ts_server(root: &Path, port: u16, mint_url: &str) -> Result<Child> {
+    fn spawn_ts_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
         let server_dir = root.join("examples/ts-ascii-art");
 
         Command::new("npx")
@@ -199,11 +229,11 @@ impl ServerProcess {
             .current_dir(&server_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .context("Failed to spawn TypeScript server")
     }
 
-    fn spawn_rust_server(root: &Path, port: u16, mint_url: &str) -> Result<Child> {
+    fn spawn_rust_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
         let binary = root.join("target/debug/cdk-ascii-art");
 
         Command::new(&binary)
@@ -212,13 +242,13 @@ impl ServerProcess {
             .current_dir(root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .context("Failed to spawn Rust server")
     }
 
-    fn spawn_python_server(root: &Path, port: u16, mint_url: &str) -> Result<Child> {
+    fn spawn_python_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
         let server_dir = root.join("examples/python-ascii-art");
-        let venv_python = root.join("examples/python-ascii-art/.venv/bin/python");
+        let venv_python = root.join(".venv/bin/python");
 
         // Use venv python if available, otherwise system python
         let python = if venv_python.exists() {
@@ -234,11 +264,11 @@ impl ServerProcess {
             .current_dir(&server_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .context("Failed to spawn Python server")
     }
 
-    fn spawn_go_server(root: &Path, port: u16, mint_url: &str) -> Result<Child> {
+    fn spawn_go_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
         let server_dir = root.join("examples/go-ascii-art");
         let ld_library_path = root.join("target/debug");
 
@@ -250,7 +280,7 @@ impl ServerProcess {
             .current_dir(&server_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .context("Failed to spawn Go server")
     }
 
@@ -262,6 +292,12 @@ impl ServerProcess {
         for i in 0..60 {
             match client.get(&params_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
+                    eprintln!(
+                        "[orchestration] {} server ready on port {} after {} attempts",
+                        self.server_type.name(),
+                        self.port,
+                        i + 1
+                    );
                     tracing::info!(
                         "{} server ready after {} attempts",
                         self.server_type.name(),
@@ -286,15 +322,18 @@ impl ServerProcess {
 
     /// Dump stdout/stderr for debugging
     fn dump_output(&mut self) {
-        if let Some(stdout) = self.child.stdout.take() {
+        eprintln!("[orchestration] Dumping {} server output:", self.server_type.name());
+        if let Some(stdout) = self.child.inner().stdout.take() {
             let reader = BufReader::new(stdout);
             for line in reader.lines().take(20).flatten() {
+                eprintln!("[orchestration] stdout: {}", line);
                 tracing::error!("Server stdout: {}", line);
             }
         }
-        if let Some(stderr) = self.child.stderr.take() {
+        if let Some(stderr) = self.child.inner().stderr.take() {
             let reader = BufReader::new(stderr);
             for line in reader.lines().take(20).flatten() {
+                eprintln!("[orchestration] stderr: {}", line);
                 tracing::error!("Server stderr: {}", line);
             }
         }
@@ -303,14 +342,31 @@ impl ServerProcess {
 
 impl Drop for ServerProcess {
     fn drop(&mut self) {
+        eprintln!(
+            "[orchestration] Stopping {} server process group on port {}",
+            self.server_type.name(),
+            self.port
+        );
         tracing::info!(
-            "Stopping {} server on port {}",
+            "Stopping {} server process group on port {}",
             self.server_type.name(),
             self.port
         );
 
-        // Force kill - servers don't need graceful shutdown
-        let _ = self.child.kill();
+        // Send SIGTERM to the entire process group for graceful shutdown
+        if let Err(e) = self.child.signal(Signal::SIGTERM) {
+            tracing::warn!("Failed to send SIGTERM to server process group: {}", e);
+        }
+
+        // Give processes a moment to shut down gracefully
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Force kill the entire process group
+        if let Err(e) = self.child.signal(Signal::SIGKILL) {
+            tracing::warn!("Failed to send SIGKILL to server process group: {}", e);
+        }
+
+        // Reap the zombie
         let _ = self.child.wait();
     }
 }

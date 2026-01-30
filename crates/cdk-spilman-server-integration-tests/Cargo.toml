@@ -27,12 +27,15 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 futures = { workspace = true }
+command-group = { version = "5.0", features = ["tokio"] }
+libc = "0.2"
 
 [dev-dependencies]
 test-log = { version = "0.2", features = ["trace"] }
 
 [lints.rust]
-unsafe_code = "forbid"
+# We need unsafe for libc::atexit to register cleanup handlers
+unsafe_code = "warn"
 
 [lints.clippy]
 unwrap_used = "allow"
