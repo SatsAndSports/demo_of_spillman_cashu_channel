@@ -92,9 +92,6 @@ impl MintProcess {
         let port = find_available_port()?;
         let root = project_root();
 
-        // Print immediately for debugging (bypasses tracing buffering)
-        eprintln!("[orchestration] Mint port selected: {}", port);
-
         // Use the existing run_temporary_mint.sh script
         let script_path = root.join("scripts/run_temporary_mint.sh");
 
@@ -131,7 +128,6 @@ impl MintProcess {
         for i in 0..60 {
             match client.get(&info_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    eprintln!("[orchestration] Mint ready on port {} after {} attempts", self.port, i + 1);
                     tracing::info!("Mint ready after {} attempts", i + 1);
                     return Ok(());
                 }
@@ -147,7 +143,6 @@ impl MintProcess {
 
 impl Drop for MintProcess {
     fn drop(&mut self) {
-        eprintln!("[orchestration] Stopping mint process group on port {}", self.port);
         tracing::info!("Stopping mint process group on port {}", self.port);
 
         // Send SIGTERM to the entire process group for graceful shutdown
@@ -182,14 +177,6 @@ impl ServerProcess {
     pub async fn spawn(server_type: ServerType, mint_url: &str) -> Result<Self> {
         let port = find_available_port()?;
         let root = project_root();
-
-        // Print immediately for debugging (bypasses tracing buffering)
-        eprintln!(
-            "[orchestration] {} server port selected: {}, mint: {}",
-            server_type.name(),
-            port,
-            mint_url
-        );
 
         tracing::info!(
             "Starting {} server on port {} with mint {}",
@@ -292,12 +279,6 @@ impl ServerProcess {
         for i in 0..60 {
             match client.get(&params_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    eprintln!(
-                        "[orchestration] {} server ready on port {} after {} attempts",
-                        self.server_type.name(),
-                        self.port,
-                        i + 1
-                    );
                     tracing::info!(
                         "{} server ready after {} attempts",
                         self.server_type.name(),
@@ -322,18 +303,15 @@ impl ServerProcess {
 
     /// Dump stdout/stderr for debugging
     fn dump_output(&mut self) {
-        eprintln!("[orchestration] Dumping {} server output:", self.server_type.name());
         if let Some(stdout) = self.child.inner().stdout.take() {
             let reader = BufReader::new(stdout);
             for line in reader.lines().take(20).flatten() {
-                eprintln!("[orchestration] stdout: {}", line);
                 tracing::error!("Server stdout: {}", line);
             }
         }
         if let Some(stderr) = self.child.inner().stderr.take() {
             let reader = BufReader::new(stderr);
             for line in reader.lines().take(20).flatten() {
-                eprintln!("[orchestration] stderr: {}", line);
                 tracing::error!("Server stderr: {}", line);
             }
         }
@@ -342,11 +320,6 @@ impl ServerProcess {
 
 impl Drop for ServerProcess {
     fn drop(&mut self) {
-        eprintln!(
-            "[orchestration] Stopping {} server process group on port {}",
-            self.server_type.name(),
-            self.port
-        );
         tracing::info!(
             "Stopping {} server process group on port {}",
             self.server_type.name(),
