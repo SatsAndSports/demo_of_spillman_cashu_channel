@@ -14,6 +14,10 @@ This document tracks the completed features and improvements for the Spilman Cha
 ### User-Only Rust Installation
 - **Documented user-only Rust setup**: Added instructions for installing Rust as a regular user in restricted environments like RaspiBlitz, avoiding conflicts with system-wide Rust installations.
 
+### Multi-Architecture Container Support
+- **Raspberry Pi / ARM support**: Changed base image from `rust:1.92-slim-bookworm` (x86_64 only) to `debian:bookworm-slim` with Rust installed via rustup. Now works on x86_64, ARM64, and ARM (Raspberry Pi).
+- **Devenv image renamed**: `docker-compose.yml` renamed to `docker-compose.spilman.yml` for clarity.
+
 ## Completed Features (Jan 29, 2026)
 
 ### Rust Integration Test Suite (`cdk-spilman-server-integration-tests`)
