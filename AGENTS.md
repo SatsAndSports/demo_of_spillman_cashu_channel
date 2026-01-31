@@ -37,6 +37,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `examples/go-ascii-art/` | Go demo |
 | `examples/ts-ascii-art/` | TypeScript demo |
 | `dev-mint/` | CDK mint development config |
+| `containers/` | Podman dev environment (Dockerfile, mint config) |
 
 ## Key Files by Topic
 
@@ -92,6 +93,11 @@ make test-all-cdkmintd
 # Orphan process management (servers/mints left running after interrupted tests)
 make list-orphans              # Show orphaned processes
 make kill-orphans              # Kill them all
+
+# Containerized testing (no local Rust required - just Podman)
+make build-devenv                  # Build the dev container image
+make test-rust-only-containerized  # Build + run Rust integration tests in containers
+make clean-containers              # Remove containers, volumes, image
 
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit

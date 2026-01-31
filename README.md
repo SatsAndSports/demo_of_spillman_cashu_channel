@@ -126,6 +126,16 @@ cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D wa
 
 See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for full setup instructions.
 
+### Containerized Testing (No Local Rust Required)
+
+If you don't have Rust installed, you can run tests using Podman:
+
+```bash
+make test-rust-only-containerized
+```
+
+This builds a development container with the Rust toolchain and runs the integration tests in isolation. See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for details.
+
 ## Project Structure
 
 ```
@@ -135,6 +145,7 @@ cdk/
 │   ├── cdk-wasm/                   # WASM bindings
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
 │   └── cdk-spilman-go/             # Go bindings (CGO)
+├── containers/                     # Podman/Docker dev environment
 ├── examples/
 │   └── python-ascii-art/           # Python demo
 ├── web/
