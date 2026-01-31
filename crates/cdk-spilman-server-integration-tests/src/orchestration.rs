@@ -344,42 +344,148 @@ impl Drop for ServerProcess {
     }
 }
 
-/// Test environment with mint and server
+/// Test environment with mint and server.
+///
+/// Supports two modes:
+/// - **Spawned**: Spawns mint and server as child processes (default)
+/// - **External**: Connects to externally-running services via URLs (for containerized tests)
+///
+/// Set `MINT_URL` and `SERVER_URL` environment variables to use external mode.
 pub struct TestEnvironment {
-    pub mint: MintProcess,
-    pub server: ServerProcess,
+    // Process handles (None when using external services)
+    // These are held to keep the processes alive; dropped when TestEnvironment drops
+    #[allow(dead_code)]
+    mint_process: Option<MintProcess>,
+    #[allow(dead_code)]
+    server_process: Option<ServerProcess>,
+    // URLs (always set)
+    mint_url: String,
+    server_url: String,
+    server_type: ServerType,
+}
+
+/// Wrapper to provide backwards-compatible access patterns.
+/// This allows context.rs to access `env.mint.url` and `env.server.base_url`.
+pub struct MintRef<'a> {
+    pub url: &'a str,
+}
+
+pub struct ServerRef<'a> {
+    pub base_url: &'a str,
+    pub server_type: ServerType,
 }
 
 impl TestEnvironment {
-    /// Create a new test environment with the specified server type
+    /// Create a new test environment with the specified server type.
+    ///
+    /// If `MINT_URL` and `SERVER_URL` environment variables are set, connects to
+    /// external services. Otherwise, spawns local mint and server processes.
     pub async fn new(server_type: ServerType) -> Result<Self> {
         // Check if we should use external mint/server
-        if let Ok(mint_url) = env::var("MINT_URL") {
-            if let Ok(server_port) = env::var("SERVER_PORT") {
-                tracing::info!(
-                    "Using external mint at {} and server on port {}",
-                    mint_url,
-                    server_port
-                );
-                // TODO: Support external processes for development
-                return Err(anyhow!("External mint/server not yet supported"));
-            }
+        if let (Ok(mint_url), Ok(server_url)) = (env::var("MINT_URL"), env::var("SERVER_URL")) {
+            tracing::info!(
+                "Using external services: mint at {}, server at {}",
+                mint_url,
+                server_url
+            );
+
+            // Wait for external services to be ready
+            Self::wait_for_external_mint(&mint_url).await?;
+            Self::wait_for_external_server(&server_url).await?;
+
+            return Ok(Self {
+                mint_process: None,
+                server_process: None,
+                mint_url,
+                server_url,
+                server_type,
+            });
         }
 
         // Spawn our own mint and server
         let mint = MintProcess::spawn().await?;
         let server = ServerProcess::spawn(server_type, &mint.url).await?;
 
-        Ok(Self { mint, server })
+        let mint_url = mint.url.clone();
+        let server_url = server.base_url.clone();
+
+        Ok(Self {
+            mint_process: Some(mint),
+            server_process: Some(server),
+            mint_url,
+            server_url,
+            server_type,
+        })
+    }
+
+    /// Wait for external mint to be ready
+    async fn wait_for_external_mint(mint_url: &str) -> Result<()> {
+        let client = reqwest::Client::new();
+        let info_url = format!("{}/v1/info", mint_url);
+
+        for i in 0..60 {
+            match client.get(&info_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!("External mint ready after {} attempts", i + 1);
+                    return Ok(());
+                }
+                _ => {
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "External mint at {} failed to become ready within 30 seconds",
+            mint_url
+        ))
+    }
+
+    /// Wait for external server to be ready
+    async fn wait_for_external_server(server_url: &str) -> Result<()> {
+        let client = reqwest::Client::new();
+        let params_url = format!("{}/channel/params", server_url);
+
+        for i in 0..60 {
+            match client.get(&params_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!("External server ready after {} attempts", i + 1);
+                    return Ok(());
+                }
+                _ => {
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "External server at {} failed to become ready within 30 seconds",
+            server_url
+        ))
+    }
+
+    /// Get access to mint URL (backwards-compatible accessor)
+    pub fn mint(&self) -> MintRef<'_> {
+        MintRef {
+            url: &self.mint_url,
+        }
+    }
+
+    /// Get access to server (backwards-compatible accessor)
+    pub fn server(&self) -> ServerRef<'_> {
+        ServerRef {
+            base_url: &self.server_url,
+            server_type: self.server_type,
+        }
     }
 
     /// Get the mint URL
     pub fn mint_url(&self) -> &str {
-        &self.mint.url
+        &self.mint_url
     }
 
     /// Get the server base URL
     pub fn server_url(&self) -> &str {
-        &self.server.base_url
+        &self.server_url
     }
 }

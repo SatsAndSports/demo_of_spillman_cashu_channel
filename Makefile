@@ -21,7 +21,8 @@ PYTHON_CRATE_DIR := crates/cdk-spilman-python
 	test-all-cdkmintd test-all-nutmix test-all-nutmix-native test-all \
 	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs \
 	ensure-nutmix-image \
-	list-orphans kill-orphans
+	list-orphans kill-orphans \
+	build-devenv test-rust-only-containerized clean-containers
 
 # Create virtual environment and install maturin
 $(MATURIN):
@@ -295,3 +296,44 @@ kill-orphans:
 	-@pkill -f "go-ascii-art" 2>/dev/null || true
 	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
 	@echo "Done. Run 'make list-orphans' to verify."
+
+# --- Containerized Tests (requires Podman) ---
+#
+# Uses a devenv image with volume-mounted source code.
+# Fast iteration: source changes are picked up immediately.
+# No local Rust required - just Podman.
+
+# Build the devenv image (one-time setup, or after Dockerfile.devenv/rust-toolchain.toml changes)
+build-devenv:
+	podman build -f containers/Dockerfile.devenv -t cdk-devenv .
+
+# Run Rust-only channel tests in containers
+# This runs: build -> mint -> rust-server -> test-rust
+# Note: We run 'build' separately because podman-compose 1.3.0 has issues with
+# service_completed_successfully condition.
+test-rust-only-containerized: build-devenv
+	@echo "=== Building ===" && \
+	podman-compose run --rm build && \
+	echo "" && \
+	echo "=== Running tests ===" && \
+	podman-compose up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
+	status=$$?; \
+	podman-compose down; \
+	if [ $$status -eq 0 ]; then \
+		echo ""; \
+		echo "========================================="; \
+		echo "  CONTAINERIZED TESTS PASSED"; \
+		echo "========================================="; \
+	else \
+		echo ""; \
+		echo "========================================="; \
+		echo "  CONTAINERIZED TESTS FAILED"; \
+		echo "========================================="; \
+	fi; \
+	exit $$status
+
+# Clean up containers, volumes, and devenv image
+clean-containers:
+	podman-compose down -v
+	podman rmi cdk-devenv 2>/dev/null || true
+	@echo "Containers and devenv image cleaned up."
