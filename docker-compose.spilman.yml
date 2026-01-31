@@ -15,16 +15,16 @@
 #   docker build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
 #
 # Usage (Podman):
-#   podman-compose up test-rust                    # Build + run all tests
-#   podman-compose up --force-recreate test-rust   # Force fresh containers
-#   podman-compose down -v                         # Clean up (including caches)
+#   podman-compose -f docker-compose.spilman.yml up test-rust                    # Build + run all tests
+#   podman-compose -f docker-compose.spilman.yml up --force-recreate test-rust   # Force fresh containers
+#   podman-compose -f docker-compose.spilman.yml down -v                         # Clean up (including caches)
 #
 # Usage (Docker):
-#   docker compose up test-rust                    # Build + run all tests
-#   docker compose up --force-recreate test-rust   # Force fresh containers
-#   docker compose down -v                         # Clean up (including caches)
+#   docker compose -f docker-compose.spilman.yml up test-rust                    # Build + run all tests
+#   docker compose -f docker-compose.spilman.yml up --force-recreate test-rust   # Force fresh containers
+#   docker compose -f docker-compose.spilman.yml down -v                         # Clean up (including caches)
 #
-# Or via Makefile (supports both Podman and Docker):
+# Or via Makefile (recommended - supports both Podman and Docker):
 #   make test-rust-only-containerized              # Default: uses Podman
 #   make test-rust-only-containerized CONTAINER_ENGINE=docker  # Use Docker
 

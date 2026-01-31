@@ -17,6 +17,9 @@ else
     COMPOSE_CMD := docker compose
 endif
 
+# Compose file for Spilman channel tests
+COMPOSE_FILE := -f docker-compose.spilman.yml
+
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
@@ -343,12 +346,12 @@ test-rust-only-containerized: build-devenv
 	@echo "Ports are available."
 	@echo ""
 	@echo "=== Building ===" && \
-	$(COMPOSE_CMD) run --rm build && \
+	$(COMPOSE_CMD) $(COMPOSE_FILE) run --rm build && \
 	echo "" && \
 	echo "=== Running tests ===" && \
-	$(COMPOSE_CMD) up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
+	$(COMPOSE_CMD) $(COMPOSE_FILE) up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
 	status=$$?; \
-	$(COMPOSE_CMD) down; \
+	$(COMPOSE_CMD) $(COMPOSE_FILE) down; \
 	if [ $$status -eq 0 ]; then \
 		echo ""; \
 		echo "========================================="; \
@@ -364,6 +367,6 @@ test-rust-only-containerized: build-devenv
 
 # Clean up containers, volumes, and devenv image
 clean-containers:
-	$(COMPOSE_CMD) down -v
+	$(COMPOSE_CMD) $(COMPOSE_FILE) down -v
 	$(CONTAINER_CMD) rmi cdk-devenv 2>/dev/null || true
 	@echo "Containers and devenv image cleaned up."

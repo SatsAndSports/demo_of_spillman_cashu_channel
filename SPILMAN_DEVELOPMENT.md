@@ -92,7 +92,7 @@ podman volume rm cdk_cargo-cache cdk_target-cache
 |------|---------|
 | `containers/Dockerfile.devenv` | Rust toolchain image |
 | `containers/mint-config.toml` | Mint configuration for containerized tests |
-| `docker-compose.yml` | Service orchestration (build, mint, server, tests) |
+| `docker-compose.spilman.yml` | Service orchestration (build, mint, server, tests) |
 
 ### VPS / Cloud Environments
 
@@ -116,7 +116,7 @@ lsof -i :50080
 # Kill those processes or wait for them to finish
 ```
 
-If you need to use different ports, edit `docker-compose.yml` and update:
+If you need to use different ports, edit `docker-compose.spilman.yml` and update:
 - `CDK_MINTD_LISTEN_PORT` environment variable
 - `PORT` environment variable for the server
 - Health check URLs
