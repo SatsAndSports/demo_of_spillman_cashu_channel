@@ -4,7 +4,7 @@
 # Fast iteration: changes to source are picked up immediately.
 #
 # Prerequisites:
-#   podman build -f containers/Dockerfile.devenv -t cdk-devenv containers/
+#   podman build -f containers/Dockerfile.devenv -t cdk-devenv .
 #
 # Usage:
 #   podman-compose up test-rust                    # Build + run all tests
