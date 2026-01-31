@@ -1,5 +1,22 @@
 # CDK Payment Channels Root Makefile
 
+# --- Container Engine Configuration ---
+# Edit this to switch between container engines (podman or docker)
+# Or override from command line: make test-rust-only-containerized CONTAINER_ENGINE=docker
+CONTAINER_ENGINE := podman
+
+# Container command (same for both podman and docker)
+CONTAINER_CMD := $(CONTAINER_ENGINE)
+
+# Compose command differs between engines:
+# - Podman: podman-compose (standalone command)
+# - Docker: docker compose (subcommand with space)
+ifeq ($(CONTAINER_ENGINE),podman)
+    COMPOSE_CMD := podman-compose
+else
+    COMPOSE_CMD := docker compose
+endif
+
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
@@ -297,16 +314,19 @@ kill-orphans:
 	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
 	@echo "Done. Run 'make list-orphans' to verify."
 
-# --- Containerized Tests (requires Podman) ---
+# --- Containerized Tests (requires Podman or Docker) ---
 #
 # Uses a devenv image with volume-mounted source code.
 # Fast iteration: source changes are picked up immediately.
-# No local Rust required - just Podman.
+# No local Rust required - just a container engine.
+#
+# To use Docker instead of Podman:
+#   make test-rust-only-containerized CONTAINER_ENGINE=docker
 
 # Build the devenv image (one-time setup, or after Dockerfile.devenv/rust-toolchain.toml changes)
 # Uses --network=host to work in VPS/cloud environments where bridge networking may be restricted
 build-devenv:
-	podman build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
+	$(CONTAINER_CMD) build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
 
 # Run Rust-only channel tests in containers
 # This runs: build -> mint -> rust-server -> test-rust
@@ -323,12 +343,12 @@ test-rust-only-containerized: build-devenv
 	@echo "Ports are available."
 	@echo ""
 	@echo "=== Building ===" && \
-	podman-compose run --rm build && \
+	$(COMPOSE_CMD) run --rm build && \
 	echo "" && \
 	echo "=== Running tests ===" && \
-	podman-compose up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
+	$(COMPOSE_CMD) up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
 	status=$$?; \
-	podman-compose down; \
+	$(COMPOSE_CMD) down; \
 	if [ $$status -eq 0 ]; then \
 		echo ""; \
 		echo "========================================="; \
@@ -344,6 +364,6 @@ test-rust-only-containerized: build-devenv
 
 # Clean up containers, volumes, and devenv image
 clean-containers:
-	podman-compose down -v
-	podman rmi cdk-devenv 2>/dev/null || true
+	$(COMPOSE_CMD) down -v
+	$(CONTAINER_CMD) rmi cdk-devenv 2>/dev/null || true
 	@echo "Containers and devenv image cleaned up."
