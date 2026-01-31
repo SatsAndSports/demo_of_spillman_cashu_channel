@@ -83,6 +83,34 @@ podman volume rm cdk_cargo-cache cdk_target-cache
 | `containers/mint-config.toml` | Mint configuration for containerized tests |
 | `docker-compose.yml` | Service orchestration (build, mint, server, tests) |
 
+### VPS / Cloud Environments
+
+The containerized tests use **host networking** (`--network=host`) to work on VPS and cloud environments where bridge networking may be restricted (common with OpenVZ, LXC, or security-hardened providers like Njalla).
+
+**Port assignments:**
+- Mint: **33380**
+- Rust ASCII Art Server: **50080**
+
+The Makefile automatically checks that these ports are available before starting tests. If they're in use, you'll see:
+```
+ERROR: Required ports are already in use. Free ports 33380 and 50080 and try again.
+```
+
+To free the ports:
+```bash
+# Find what's using the ports
+lsof -i :33380
+lsof -i :50080
+
+# Kill those processes or wait for them to finish
+```
+
+If you need to use different ports, edit `docker-compose.yml` and update:
+- `CDK_MINTD_LISTEN_PORT` environment variable
+- `PORT` environment variable for the server
+- Health check URLs
+- Test environment variables (`MINT_URL`, `SERVER_URL`)
+
 ## Running a Mint
 
 The demos and tests require a Cashu mint. Choose one of:
