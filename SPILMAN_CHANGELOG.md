@@ -2,6 +2,18 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Jan 31, 2026)
+
+### Containerized Testing Improvements
+- **VPS/Cloud Environment Support**: Containerized tests now use host networking (`--network=host`) to work on VPS and cloud environments where bridge networking may be restricted (OpenVZ, LXC, Njalla, etc.).
+- **Fixed High Ports**: Services use ports 33380 (mint) and 50080 (server) to avoid conflicts with existing services.
+- **Port Availability Checking**: Makefile checks that required ports are free before starting tests, with clear error messages if ports are in use.
+- **Dual Container Engine Support**: Makefile now supports both Podman and Docker via configurable `CONTAINER_ENGINE` variable (default: Podman).
+- **Docker Support**: Full Docker support added alongside Podman. Use `make test-rust-only-containerized CONTAINER_ENGINE=docker` to run with Docker.
+
+### User-Only Rust Installation
+- **Documented user-only Rust setup**: Added instructions for installing Rust as a regular user in restricted environments like RaspiBlitz, avoiding conflicts with system-wide Rust installations.
+
 ## Completed Features (Jan 29, 2026)
 
 ### Rust Integration Test Suite (`cdk-spilman-server-integration-tests`)

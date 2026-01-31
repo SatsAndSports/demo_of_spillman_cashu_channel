@@ -94,10 +94,13 @@ make test-all-cdkmintd
 make list-orphans              # Show orphaned processes
 make kill-orphans              # Kill them all
 
-# Containerized testing (no local Rust required - just Podman)
-make build-devenv                  # Build the dev container image
-make test-rust-only-containerized  # Build + run Rust integration tests in containers
-make clean-containers              # Remove containers, volumes, image
+# Containerized testing (no local Rust required - Podman or Docker)
+# Default is Podman; use CONTAINER_ENGINE=docker for Docker
+make build-devenv                       # Build the dev container image
+make test-rust-only-containerized       # Build + run Rust integration tests in containers
+make test-rust-only-containerized CONTAINER_ENGINE=docker  # Use Docker instead
+make clean-containers                   # Remove containers, volumes, image
+# Note: Uses host networking on ports 33380 (mint) and 50080 (server)
 
 # TypeScript checks
 cd web/blossom-server && npx tsc --noEmit
@@ -127,6 +130,8 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
+
+- a more basic image, that might run on my raspberry pi?
 
 ### Tests not yet ported from TS to Rust (follow up soon)
 When we migrated from TS tests to Rust integration tests, 3 tests were skipped:

@@ -8,17 +8,25 @@
 #   - Mint: 33380
 #   - Rust ASCII Art Server: 50080
 #
-# Prerequisites:
+# Prerequisites (Podman):
 #   podman build -f containers/Dockerfile.devenv -t cdk-devenv .
 #
-# Usage:
+# Prerequisites (Docker):
+#   docker build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
+#
+# Usage (Podman):
 #   podman-compose up test-rust                    # Build + run all tests
 #   podman-compose up --force-recreate test-rust   # Force fresh containers
 #   podman-compose down -v                         # Clean up (including caches)
 #
-# Or via Makefile:
-#   make test-rust-only-containerized    # Build devenv + run tests
-#   make clean-containers                # Clean up
+# Usage (Docker):
+#   docker compose up test-rust                    # Build + run all tests
+#   docker compose up --force-recreate test-rust   # Force fresh containers
+#   docker compose down -v                         # Clean up (including caches)
+#
+# Or via Makefile (supports both Podman and Docker):
+#   make test-rust-only-containerized              # Default: uses Podman
+#   make test-rust-only-containerized CONTAINER_ENGINE=docker  # Use Docker
 
 services:
   # ============================================================

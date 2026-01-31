@@ -128,13 +128,17 @@ See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for full setup instructions
 
 ### Containerized Testing (No Local Rust Required)
 
-If you don't have Rust installed, you can run tests using Podman:
+If you don't have Rust installed, you can run tests using Podman or Docker:
 
 ```bash
+# Using Podman (default)
 make test-rust-only-containerized
+
+# Using Docker
+make test-rust-only-containerized CONTAINER_ENGINE=docker
 ```
 
-This builds a development container with the Rust toolchain and runs the integration tests in isolation. See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for details.
+This builds a development container with the Rust toolchain and runs the integration tests in isolation. Uses host networking on ports 33380 (mint) and 50080 (server). See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for details.
 
 ## Project Structure
 
