@@ -304,14 +304,24 @@ kill-orphans:
 # No local Rust required - just Podman.
 
 # Build the devenv image (one-time setup, or after Dockerfile.devenv/rust-toolchain.toml changes)
+# Uses --network=host to work in VPS/cloud environments where bridge networking may be restricted
 build-devenv:
-	podman build -f containers/Dockerfile.devenv -t cdk-devenv .
+	podman build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
 
 # Run Rust-only channel tests in containers
 # This runs: build -> mint -> rust-server -> test-rust
 # Note: We run 'build' separately because podman-compose 1.3.0 has issues with
 # service_completed_successfully condition.
 test-rust-only-containerized: build-devenv
+	@echo "Checking that ports 33380 and 50080 are available..."
+	@python3 -c "import socket, sys; ports=[33380, 50080]; \
+		busy = [p for p in ports if not socket.socket().connect_ex(('127.0.0.1', p))]; \
+		[print(f'  Port {p}: OK') for p in ports if p not in busy]; \
+		[print(f'  Port {p}: IN USE - please free this port first', file=sys.stderr) for p in busy]; \
+		sys.exit(1 if busy else 0)" || \
+		(echo ""; echo "ERROR: Required ports are already in use. Free ports 33380 and 50080 and try again."; exit 1)
+	@echo "Ports are available."
+	@echo ""
 	@echo "=== Building ===" && \
 	podman-compose run --rm build && \
 	echo "" && \

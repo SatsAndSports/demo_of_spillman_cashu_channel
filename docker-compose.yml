@@ -3,6 +3,11 @@
 # Uses a single devenv image with volume-mounted source code.
 # Fast iteration: changes to source are picked up immediately.
 #
+# Uses host networking (--network=host) to work on VPS/cloud environments
+# where bridge networking may be restricted. Services use high ports:
+#   - Mint: 33380
+#   - Rust ASCII Art Server: 50080
+#
 # Prerequisites:
 #   podman build -f containers/Dockerfile.devenv -t cdk-devenv .
 #
@@ -21,6 +26,7 @@ services:
   # ============================================================
   build:
     image: cdk-devenv
+    network_mode: host
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
@@ -32,14 +38,17 @@ services:
   # ============================================================
   mint:
     image: cdk-devenv
+    network_mode: host
     volumes:
       - .:/app
       - target-cache:/app/target
+    environment:
+      CDK_MINTD_LISTEN_PORT: "33380"
     command: ./target/debug/cdk-mintd --config containers/mint-config.toml
     # Note: 'build' service is run separately via Makefile because
     # podman-compose 1.3.0 has issues with service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3338/v1/info"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:33380/v1/info"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -51,18 +60,19 @@ services:
   # ============================================================
   rust-server:
     image: cdk-devenv
+    network_mode: host
     volumes:
       - .:/app
       - target-cache:/app/target
     environment:
-      PORT: "5000"
-      MINT_URL: http://mint:3338
+      PORT: "50080"
+      MINT_URL: http://127.0.0.1:33380
     command: ./target/debug/cdk-ascii-art
     depends_on:
       mint:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/channel/params"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:50080/channel/params"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -74,13 +84,14 @@ services:
   # ============================================================
   test-rust:
     image: cdk-devenv
+    network_mode: host
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
     environment:
-      MINT_URL: http://mint:3338
-      SERVER_URL: http://rust-server:5000
+      MINT_URL: http://127.0.0.1:33380
+      SERVER_URL: http://127.0.0.1:50080
       SERVER_TYPE: rust
     command: cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
     depends_on:
