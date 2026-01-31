@@ -16,17 +16,25 @@ cargo test -p cdk spilman
 
 ## Containerized Development (No Local Rust Required)
 
-For developers without a local Rust toolchain, or for reproducible builds, you can run everything in containers using Podman (or Docker).
+For developers without a local Rust toolchain, or for reproducible builds, you can run everything in containers using Podman or Docker.
 
 ### Prerequisites
 
-- Podman 4.0+ and podman-compose (or Docker with docker-compose)
+**Podman:**
+- Podman 4.0+ and podman-compose
+
+**Docker:**
+- Docker 20.10+ with Docker Compose v2 (`docker compose`)
+- User must be in the `docker` group: `sudo usermod -aG docker $USER`
 
 ### Quick Start
 
 ```bash
-# Run the full integration test suite (52 tests)
+# Run the full integration test suite (52 tests) - default: Podman
 make test-rust-only-containerized
+
+# Using Docker instead
+make test-rust-only-containerized CONTAINER_ENGINE=docker
 ```
 
 This single command:
@@ -41,7 +49,7 @@ This single command:
 The setup uses a **devenv** approach:
 - One image (`cdk-devenv`) contains the Rust toolchain
 - Source code is volume-mounted from your host
-- Build artifacts are cached in Podman volumes (`cargo-cache`, `target-cache`)
+- Build artifacts are cached in container volumes (`cargo-cache`, `target-cache`)
 - Incremental compilation works across runs
 
 ### Commands
@@ -49,17 +57,20 @@ The setup uses a **devenv** approach:
 ```bash
 # Build the devenv image (first time, or after rust-toolchain.toml changes)
 make build-devenv
+make build-devenv CONTAINER_ENGINE=docker  # For Docker
 
 # Run integration tests
 make test-rust-only-containerized
+make test-rust-only-containerized CONTAINER_ENGINE=docker  # For Docker
 
 # Clean up everything (containers, volumes, image)
 make clean-containers
+make clean-containers CONTAINER_ENGINE=docker  # For Docker
 
-# Check disk usage
+# Check disk usage (Podman)
 podman system df
 
-# Reclaim space
+# Reclaim space (Podman)
 podman system prune -a --volumes
 ```
 
