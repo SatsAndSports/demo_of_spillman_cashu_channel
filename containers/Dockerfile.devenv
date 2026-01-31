@@ -1,0 +1,28 @@
+# Rust development environment for CDK Spilman channels
+#
+# Contains toolchain only - no project source code.
+# Source code is volume-mounted at runtime.
+#
+# Build (from repo root):
+#   podman build -f containers/Dockerfile.devenv -t cdk-devenv .
+#
+# Usage:
+#   podman run --rm -v .:/app -w /app cdk-devenv cargo build
+#   podman run --rm -v .:/app -w /app cdk-devenv cargo test
+
+FROM rust:1.92-slim-bookworm
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install toolchain and components from rust-toolchain.toml
+# This layer is cached unless rust-toolchain.toml changes
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
+RUN cd /tmp && rustup show && rm rust-toolchain.toml
+
+WORKDIR /app

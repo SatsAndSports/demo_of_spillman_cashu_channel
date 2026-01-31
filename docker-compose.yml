@@ -1,0 +1,92 @@
+# CDK Spilman Channel Development Environment
+#
+# Uses a single devenv image with volume-mounted source code.
+# Fast iteration: changes to source are picked up immediately.
+#
+# Prerequisites:
+#   podman build -f containers/Dockerfile.devenv -t cdk-devenv containers/
+#
+# Usage:
+#   podman-compose up test-rust                    # Build + run all tests
+#   podman-compose up --force-recreate test-rust   # Force fresh containers
+#   podman-compose down -v                         # Clean up (including caches)
+#
+# Or via Makefile:
+#   make test-rust-only-containerized    # Build devenv + run tests
+#   make clean-containers                # Clean up
+
+services:
+  # ============================================================
+  # Build step - compiles all binaries, then exits
+  # ============================================================
+  build:
+    image: cdk-devenv
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    command: ["sh", "-c", "cargo build -p cdk-mintd --features fakewallet -p cdk-ascii-art && cargo test -p cdk-spilman-server-integration-tests --test integration --no-run"]
+
+  # ============================================================
+  # CDK Mint Daemon
+  # ============================================================
+  mint:
+    image: cdk-devenv
+    volumes:
+      - .:/app
+      - target-cache:/app/target
+    command: ./target/debug/cdk-mintd --config containers/mint-config.toml
+    # Note: 'build' service is run separately via Makefile because
+    # podman-compose 1.3.0 has issues with service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3338/v1/info"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    stop_grace_period: 1s
+
+  # ============================================================
+  # Rust ASCII Art Server
+  # ============================================================
+  rust-server:
+    image: cdk-devenv
+    volumes:
+      - .:/app
+      - target-cache:/app/target
+    environment:
+      PORT: "5000"
+      MINT_URL: http://mint:3338
+    command: ./target/debug/cdk-ascii-art
+    depends_on:
+      mint:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/channel/params"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    stop_grace_period: 1s
+
+  # ============================================================
+  # Rust Integration Test Runner
+  # ============================================================
+  test-rust:
+    image: cdk-devenv
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    environment:
+      MINT_URL: http://mint:3338
+      SERVER_URL: http://rust-server:5000
+      SERVER_TYPE: rust
+    command: cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+    depends_on:
+      rust-server:
+        condition: service_healthy
+
+volumes:
+  cargo-cache:
+  target-cache:
