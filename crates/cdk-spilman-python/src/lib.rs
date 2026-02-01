@@ -378,7 +378,9 @@ impl SpilmanBridge {
     ///     JSON string with success/error and header/body
     #[pyo3(signature = (payment_json, context_json))]
     fn process_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
-        let response = self.inner.process_payment(payment_json, context_json);
+        let response = self
+            .inner
+            .process_payment_via_json(payment_json, context_json);
         serde_json::to_string(&response)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize response: {}", e)))
     }
@@ -399,7 +401,10 @@ impl SpilmanBridge {
     ///     JSON string with PaymentValidationResult on success, or error JSON on failure
     #[pyo3(signature = (payment_json, context_json))]
     fn validate_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
-        match self.inner.validate_payment(payment_json, context_json) {
+        match self
+            .inner
+            .validate_payment_via_json(payment_json, context_json)
+        {
             Ok(result) => serde_json::to_string(&result).map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
             }),
@@ -433,7 +438,7 @@ impl SpilmanBridge {
     ///     On error, returns JSON with success: false and error details.
     #[pyo3(signature = (payment_json))]
     fn fund_channel(&self, payment_json: &str) -> PyResult<String> {
-        match self.inner.fund_channel(payment_json) {
+        match self.inner.fund_channel_via_json(payment_json) {
             Ok(result) => serde_json::to_string(&result).map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
             }),

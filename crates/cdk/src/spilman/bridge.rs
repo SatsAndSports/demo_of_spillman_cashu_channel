@@ -4,6 +4,7 @@
 //! in any service provider. It handles the core protocol logic, validation, and
 //! signature verification, while delegating storage and pricing to a host hook.
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -772,9 +773,37 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         &self.host
     }
 
-    /// Process an incoming payment
-    pub fn process_payment(&self, payment_json: &str, context_json: &str) -> PaymentResponse {
-        match self.process_payment_inner(payment_json, context_json) {
+    /// Decode a base64-encoded payment header into a PaymentRequest
+    fn decode_payment_header(base64_header: &str) -> Result<PaymentRequest, BridgeError> {
+        let decoded = BASE64
+            .decode(base64_header)
+            .map_err(|e| BridgeError::InvalidRequest(format!("invalid base64: {}", e)))?;
+        let json = String::from_utf8(decoded)
+            .map_err(|e| BridgeError::InvalidRequest(format!("invalid utf8: {}", e)))?;
+        serde_json::from_str(&json).map_err(|e| BridgeError::InvalidRequest(e.to_string()))
+    }
+
+    /// Process an incoming payment (typed parameters)
+    ///
+    /// This is the core implementation that takes typed parameters.
+    /// For JSON or base64 input, use the `*_via_json` or `*_via_base64_header` variants.
+    pub fn process_payment(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
+        context_json: &str,
+    ) -> PaymentResponse {
+        match self.process_payment_inner(
+            channel_id,
+            balance,
+            signature,
+            params,
+            funding_proofs,
+            context_json,
+        ) {
             Ok(resp) => resp,
             Err(e) => {
                 let mut extra = BTreeMap::new();
@@ -845,11 +874,22 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
     fn process_payment_inner(
         &self,
-        payment_json: &str,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
         context_json: &str,
     ) -> Result<PaymentResponse, BridgeError> {
         // 1. Validate the payment (no side effects except saving funding for new channels)
-        let validation = self.validate_payment(payment_json, context_json)?;
+        let validation = self.validate_payment(
+            channel_id,
+            balance,
+            signature,
+            params,
+            funding_proofs,
+            context_json,
+        )?;
 
         // 2. Record successful payment (the side effect we're separating out)
         self.host.record_payment(
@@ -876,34 +916,94 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         })
     }
 
-    /// Validate a payment without recording it
+    /// Process an incoming payment from a JSON string
     ///
-    /// Performs all validation (parsing, channel verification, balance checks,
+    /// This is a convenience wrapper that parses the JSON and calls `process_payment`.
+    pub fn process_payment_via_json(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> PaymentResponse {
+        let payment: PaymentRequest = match serde_json::from_str(payment_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return self.error_with_extra(
+                    &e.to_string(),
+                    BridgeStatus::BadRequest,
+                    None,
+                    BTreeMap::new(),
+                )
+            }
+        };
+        self.process_payment(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+            context_json,
+        )
+    }
+
+    /// Process an incoming payment from a base64-encoded header
+    ///
+    /// This is a convenience wrapper that decodes the base64 header and calls `process_payment_via_json`.
+    pub fn process_payment_via_base64_header(
+        &self,
+        base64_header: &str,
+        context_json: &str,
+    ) -> PaymentResponse {
+        let payment = match Self::decode_payment_header(base64_header) {
+            Ok(p) => p,
+            Err(e) => {
+                return self.error_with_extra(
+                    &e.to_string(),
+                    BridgeStatus::BadRequest,
+                    None,
+                    BTreeMap::new(),
+                )
+            }
+        };
+        self.process_payment(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+            context_json,
+        )
+    }
+
+    /// Validate a payment without recording it (typed parameters)
+    ///
+    /// Performs all validation (channel verification, balance checks,
     /// signature verification) but does NOT call `record_payment`.
     ///
     /// For new channels, funding data IS saved via `save_funding` (idempotent).
     /// This is necessary because signature verification requires the shared secret
     /// which is computed and stored during channel setup.
     ///
+    /// This is the core implementation that takes typed parameters.
+    /// For JSON or base64 input, use the `*_via_json` or `*_via_base64_header` variants.
+    ///
     /// Returns `PaymentValidationResult` with validation outcome on success.
     pub fn validate_payment(
         &self,
-        payment_json: &str,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
         context_json: &str,
     ) -> Result<PaymentValidationResult, BridgeError> {
-        // 1. Parse payment request
-        let payment: PaymentRequest = serde_json::from_str::<PaymentRequest>(payment_json)
-            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
-
-        if payment.channel_id.is_empty() {
+        // 1. Validate required fields
+        if channel_id.is_empty() {
             return Err(BridgeError::InvalidRequest("missing channel_id".into()));
         }
 
-        if payment.signature.is_empty() {
+        if signature.is_empty() {
             return Err(BridgeError::InvalidRequest("missing signature".into()));
         }
-
-        let channel_id = &payment.channel_id;
 
         // 2. Check if channel is closed
         if self.host.is_closed(channel_id) {
@@ -915,14 +1015,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             Some(f) => f,
             None => {
                 // Unknown channel - must provide params and funding_proofs
-                let params_val = payment.params.as_ref().ok_or(BridgeError::UnknownChannel)?;
-                let funding_proofs = payment
-                    .funding_proofs
-                    .as_ref()
-                    .ok_or(BridgeError::UnknownChannel)?;
+                let params_val = params.ok_or(BridgeError::UnknownChannel)?;
+                let proofs = funding_proofs.ok_or(BridgeError::UnknownChannel)?;
 
                 // Perform full validation and save funding
-                self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?
+                self.validate_and_save_new_channel(channel_id, params_val, proofs)?
             }
         };
 
@@ -930,24 +1027,21 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             funding_and_params;
 
         // 4. Parse params for capacity and unit checks
-        let params: serde_json::Value = serde_json::from_str(&params_json)
+        let params_value: serde_json::Value = serde_json::from_str(&params_json)
             .map_err(|e| BridgeError::Internal(format!("failed to parse cached params: {}", e)))?;
 
-        let capacity = params["capacity"].as_u64().unwrap_or(0);
+        let capacity = params_value["capacity"].as_u64().unwrap_or(0);
 
         // 5. Check balance doesn't exceed capacity
-        if payment.balance > capacity {
-            return Err(BridgeError::BalanceExceedsCapacity {
-                balance: payment.balance,
-                capacity,
-            });
+        if balance > capacity {
+            return Err(BridgeError::BalanceExceedsCapacity { balance, capacity });
         }
 
         // 6. Check balance against amount_due
         let amount_due = self.host.get_amount_due(channel_id, Some(context_json));
-        if payment.balance < amount_due {
+        if balance < amount_due {
             return Err(BridgeError::InsufficientBalance {
-                balance: payment.balance,
+                balance,
                 amount_due,
             });
         }
@@ -959,8 +1053,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             &shared_secret_hex,
             &keyset_info_json,
             channel_id,
-            payment.balance,
-            &payment.signature,
+            balance,
+            signature,
         )
         .map_err(BridgeError::InvalidSignature)?;
 
@@ -968,72 +1062,110 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         Ok(PaymentValidationResult {
             valid: true,
             channel_id: channel_id.to_string(),
-            balance: payment.balance,
+            balance,
             amount_due,
             capacity,
-            sender_signature: payment.signature,
+            sender_signature: signature.to_string(),
             error: None,
         })
     }
 
-    /// Register/fund a channel without recording any usage
+    /// Validate a payment from a JSON string
+    ///
+    /// This is a convenience wrapper that parses the JSON and calls `validate_payment`.
+    pub fn validate_payment_via_json(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> Result<PaymentValidationResult, BridgeError> {
+        let payment: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        self.validate_payment(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+            context_json,
+        )
+    }
+
+    /// Validate a payment from a base64-encoded header
+    ///
+    /// This is a convenience wrapper that decodes the base64 header and calls `validate_payment`.
+    pub fn validate_payment_via_base64_header(
+        &self,
+        base64_header: &str,
+        context_json: &str,
+    ) -> Result<PaymentValidationResult, BridgeError> {
+        let payment = Self::decode_payment_header(base64_header)?;
+        self.validate_payment(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+            context_json,
+        )
+    }
+
+    /// Register/fund a channel without recording any usage (typed parameters)
     ///
     /// This validates the channel (params, funding proofs, signature for balance=0)
     /// and saves it to the funding store, but does NOT record any payment/usage.
     ///
-    /// The request must have `balance: 0` - this is for pre-registering channels
+    /// The `balance` parameter must be 0 - this is for pre-registering channels
     /// before any actual payments are made.
+    ///
+    /// This is the core implementation that takes typed parameters.
+    /// For JSON or base64 input, use the `*_via_json` or `*_via_base64_header` variants.
     ///
     /// Returns `FundChannelResult` with channel info. Idempotent - calling multiple
     /// times with the same data succeeds with `already_known: true`.
-    pub fn fund_channel(&self, payment_json: &str) -> Result<FundChannelResult, BridgeError> {
-        // 1. Parse payment request
-        let payment: PaymentRequest = serde_json::from_str::<PaymentRequest>(payment_json)
-            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
-
-        // 2. Verify balance is 0 (funding requires balance=0)
-        if payment.balance != 0 {
+    pub fn fund_channel(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
+    ) -> Result<FundChannelResult, BridgeError> {
+        // 1. Verify balance is 0 (funding requires balance=0)
+        if balance != 0 {
             return Err(BridgeError::InvalidRequest(format!(
                 "funding requires balance=0, got {}",
-                payment.balance
+                balance
             )));
         }
 
-        if payment.channel_id.is_empty() {
+        if channel_id.is_empty() {
             return Err(BridgeError::InvalidRequest("missing channel_id".into()));
         }
 
-        if payment.signature.is_empty() {
+        if signature.is_empty() {
             return Err(BridgeError::InvalidRequest("missing signature".into()));
         }
 
-        let channel_id = &payment.channel_id;
-
-        // 3. Check if channel is closed
+        // 2. Check if channel is closed
         if self.host.is_closed(channel_id) {
             return Err(BridgeError::ChannelClosed);
         }
 
-        // 4. Resolve or verify funding (saves funding for new channels - idempotent)
+        // 3. Resolve or verify funding (saves funding for new channels - idempotent)
         let (funding_and_params, already_known) = match self.host.get_funding_and_params(channel_id)
         {
             Some(f) => (f, true),
             None => {
                 // Unknown channel - must provide params and funding_proofs
-                let params_val = payment.params.as_ref().ok_or(BridgeError::InvalidRequest(
+                let params_val = params.ok_or(BridgeError::InvalidRequest(
                     "missing params for new channel".into(),
                 ))?;
-                let funding_proofs =
-                    payment
-                        .funding_proofs
-                        .as_ref()
-                        .ok_or(BridgeError::InvalidRequest(
-                            "missing funding_proofs for new channel".into(),
-                        ))?;
+                let proofs = funding_proofs.ok_or(BridgeError::InvalidRequest(
+                    "missing funding_proofs for new channel".into(),
+                ))?;
 
                 // Perform full validation and save funding
-                let f =
-                    self.validate_and_save_new_channel(channel_id, params_val, funding_proofs)?;
+                let f = self.validate_and_save_new_channel(channel_id, params_val, proofs)?;
                 (f, false)
             }
         };
@@ -1041,13 +1173,13 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
             funding_and_params;
 
-        // 6. Parse params for capacity
-        let params: serde_json::Value = serde_json::from_str(&params_json)
+        // 4. Parse params for capacity
+        let params_value: serde_json::Value = serde_json::from_str(&params_json)
             .map_err(|e| BridgeError::Internal(format!("failed to parse cached params: {}", e)))?;
 
-        let capacity = params["capacity"].as_u64().unwrap_or(0);
+        let capacity = params_value["capacity"].as_u64().unwrap_or(0);
 
-        // 7. Verify signature for balance=0
+        // 5. Verify signature for balance=0
         self.verify_signature(
             &params_json,
             &funding_proofs_json,
@@ -1055,11 +1187,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             &keyset_info_json,
             channel_id,
             0, // balance must be 0
-            &payment.signature,
+            signature,
         )
         .map_err(BridgeError::InvalidSignature)?;
 
-        // 8. Return success (no record_payment call)
+        // 6. Return success (no record_payment call)
         Ok(FundChannelResult {
             success: true,
             channel_id: channel_id.to_string(),
@@ -1067,6 +1199,41 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             already_known,
             error: None,
         })
+    }
+
+    /// Register/fund a channel from a JSON string
+    ///
+    /// This is a convenience wrapper that parses the JSON and calls `fund_channel`.
+    pub fn fund_channel_via_json(
+        &self,
+        payment_json: &str,
+    ) -> Result<FundChannelResult, BridgeError> {
+        let payment: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        self.fund_channel(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+        )
+    }
+
+    /// Register/fund a channel from a base64-encoded header
+    ///
+    /// This is a convenience wrapper that decodes the base64 header and calls `fund_channel`.
+    pub fn fund_channel_via_base64_header(
+        &self,
+        base64_header: &str,
+    ) -> Result<FundChannelResult, BridgeError> {
+        let payment = Self::decode_payment_header(base64_header)?;
+        self.fund_channel(
+            &payment.channel_id,
+            payment.balance,
+            &payment.signature,
+            payment.params.as_ref(),
+            payment.funding_proofs.as_deref(),
+        )
     }
 
     fn validate_and_save_new_channel(
@@ -1894,7 +2061,7 @@ mod tests {
             "keys": {}
         });
 
-        let response = bridge.process_payment(&payment.to_string(), "{}");
+        let response = bridge.process_payment_via_json(&payment.to_string(), "{}");
 
         assert!(!response.success);
         assert!(response
@@ -1940,7 +2107,7 @@ mod tests {
             "keys": {}
         });
 
-        let response = bridge.process_payment(&payment.to_string(), "{}");
+        let response = bridge.process_payment_via_json(&payment.to_string(), "{}");
 
         assert!(!response.success);
         assert!(response

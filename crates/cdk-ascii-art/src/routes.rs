@@ -203,7 +203,7 @@ async fn post_channel_register(
     });
 
     // Use fund_channel to validate and store the channel
-    match state.bridge.fund_channel(&register_body.to_string()) {
+    match state.bridge.fund_channel_via_json(&register_body.to_string()) {
         Ok(result) => {
             tracing::info!(
                 "  [Register] SUCCESS! channel={} capacity={} already_known={}",
@@ -315,7 +315,7 @@ async fn post_ascii(
     // Process payment through bridge
     let result = state
         .bridge
-        .process_payment(&payment_json, &context.to_string());
+        .process_payment_via_json(&payment_json, &context.to_string());
 
     if !result.success {
         tracing::info!(

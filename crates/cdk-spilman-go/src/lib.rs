@@ -402,7 +402,7 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
     let context = CStr::from_ptr(context_json).to_str().unwrap();
 
-    let response = instance.bridge.process_payment(payment, context);
+    let response = instance.bridge.process_payment_via_json(payment, context);
     let json = serde_json::to_string(&response).unwrap();
     CResult::success(json)
 }
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn spilman_bridge_validate_payment(
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
     let context = CStr::from_ptr(context_json).to_str().unwrap();
 
-    match instance.bridge.validate_payment(payment, context) {
+    match instance.bridge.validate_payment_via_json(payment, context) {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
@@ -447,7 +447,7 @@ pub unsafe extern "C" fn spilman_bridge_fund_channel(
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
 
-    match instance.bridge.fund_channel(payment) {
+    match instance.bridge.fund_channel_via_json(payment) {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
