@@ -1159,6 +1159,7 @@ dependencies = [
  "arti-client",
  "arti-hyper",
  "async-trait",
+ "base64 0.22.1",
  "bip39",
  "bitcoin 0.32.8",
  "cbor-diag",

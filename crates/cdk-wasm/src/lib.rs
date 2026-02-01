@@ -292,7 +292,7 @@ impl WasmSpilmanBridge {
         payment_json: &str,
         context_json: &str,
     ) -> Result<String, JsValue> {
-        let response = self.bridge.process_payment(payment_json, context_json);
+        let response = self.bridge.process_payment_via_json(payment_json, context_json);
 
         serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
     }
@@ -317,7 +317,7 @@ impl WasmSpilmanBridge {
         payment_json: &str,
         context_json: &str,
     ) -> Result<String, JsValue> {
-        match self.bridge.validate_payment(payment_json, context_json) {
+        match self.bridge.validate_payment_via_json(payment_json, context_json) {
             Ok(result) => {
                 serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
             }
@@ -351,7 +351,7 @@ impl WasmSpilmanBridge {
     /// On error, returns JSON with `success: false` and error details.
     #[wasm_bindgen(js_name = fundChannel)]
     pub fn fund_channel(&self, payment_json: &str) -> Result<String, JsValue> {
-        match self.bridge.fund_channel(payment_json) {
+        match self.bridge.fund_channel_via_json(payment_json) {
             Ok(result) => {
                 serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
             }
