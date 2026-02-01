@@ -131,7 +131,6 @@ For detailed information, see:
 
 ## Active TODOs
 
-- a more basic image, that might run on my raspberry pi?
 
 ### Tests not yet ported from TS to Rust (follow up soon)
 When we migrated from TS tests to Rust integration tests, 3 tests were skipped:
