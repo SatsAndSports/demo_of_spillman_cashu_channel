@@ -128,7 +128,9 @@ See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for full setup instructions
 
 ### Containerized Testing (No Local Rust Required)
 
-If you don't have Rust installed, you can run tests using Podman or Docker:
+If you don't have Rust installed, you can run tests using Podman or Docker (recommended for VPS/Laptop).
+
+**Note for Raspberry Pi/Raspiblitz:** Containerized tests are not supported due to cgroup restrictions. Please use [Native Development](SPILMAN_DEVELOPMENT.md#native-development-recommended-for-pi) instead.
 
 ```bash
 # Using Podman (default)

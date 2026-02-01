@@ -14,6 +14,31 @@ git checkout spilman.channel
 cargo test -p cdk spilman
 ```
 
+## Native Development (Recommended for Pi)
+
+For environments like **Raspiblitz/Raspberry Pi** where containerization is restricted, we recommend a native Rust installation.
+
+### User-Only Rust Installation
+
+If your system has a locked-down system-wide Rust (like `/opt/rust` on Raspiblitz), you can install a private copy for your user:
+
+```bash
+# Set install locations to your home directory
+export RUSTUP_HOME="$HOME/.rustup"
+export CARGO_HOME="$HOME/.cargo"
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# Add to your PATH
+source "$HOME/.cargo/env"
+```
+
+Then run tests as usual:
+```bash
+make test-rust-only
+```
+
 ## Containerized Development (No Local Rust Required)
 
 For developers without a local Rust toolchain, or for reproducible builds, you can run everything in containers using Podman or Docker.
@@ -22,6 +47,7 @@ For developers without a local Rust toolchain, or for reproducible builds, you c
 
 **Podman:**
 - Podman 4.0+ and podman-compose
+- **Note:** Containerized tests are not supported on **Raspiblitz/Raspberry Pi** due to cgroup restrictions. Pi users should use [Native Development](#native-development-recommended-for-pi) instead.
 
 **Docker:**
 - Docker 20.10+ with Docker Compose v2 (`docker compose`)
