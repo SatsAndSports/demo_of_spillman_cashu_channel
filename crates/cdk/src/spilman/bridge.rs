@@ -386,6 +386,189 @@ pub struct FundChannelResult {
     pub already_known: bool,
 }
 
+/// Result of successfully closing a channel
+///
+/// Returned by `execute_cooperative_close` and `execute_unilateral_close`
+/// after the swap is submitted to the mint and proofs are unblinded.
+#[derive(Debug, Clone, Serialize)]
+pub struct CloseSuccess {
+    /// The channel that was closed
+    pub channel_id: String,
+    /// Total value of all output proofs (receiver + sender)
+    pub total_value: u64,
+    /// Sum of receiver proof amounts (server's earnings before stage 2 fees)
+    pub receiver_sum: u64,
+    /// Sum of sender proof amounts (change returned to sender)
+    pub sender_sum: u64,
+    /// JSON string of sender's P2PK proofs (to return to client)
+    pub sender_proofs: String,
+    /// True if this was an idempotent call (channel was already closed)
+    pub already_closed: bool,
+}
+
+/// Error that occurred during channel close execution
+///
+/// This enum captures all the ways a close operation can fail,
+/// with structured data for each error type.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum CloseError {
+    /// Validation failed before mint interaction (signature, balance, etc.)
+    #[serde(rename = "validation_failed")]
+    ValidationFailed {
+        reason: String,
+        status: u16,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_balance: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        actual_balance: Option<u64>,
+    },
+
+    /// Channel not found
+    #[serde(rename = "unknown_channel")]
+    UnknownChannel { status: u16 },
+
+    /// Channel is already closed (only used if bridge handles idempotency)
+    #[serde(rename = "already_closed")]
+    AlreadyClosed {
+        closed_balance: u64,
+        requested_balance: u64,
+        status: u16,
+    },
+
+    /// Mint rejected the swap request
+    #[serde(rename = "mint_rejected")]
+    MintRejected {
+        mint_error: serde_json::Value,
+        status: u16,
+    },
+
+    /// Mint rejected swap, retry also failed
+    #[serde(rename = "mint_rejected_after_retry")]
+    MintRejectedAfterRetry {
+        original_error: serde_json::Value,
+        retry_error: serde_json::Value,
+        status: u16,
+    },
+
+    /// DLEQ verification failed after swap
+    #[serde(rename = "unblind_failed")]
+    UnblindFailed { reason: String, status: u16 },
+
+    /// Failed to mark channel as closed in storage
+    #[serde(rename = "storage_failed")]
+    StorageFailed { reason: String, status: u16 },
+}
+
+impl CloseError {
+    /// Get the HTTP status code for this error
+    pub fn status_code(&self) -> u16 {
+        match self {
+            Self::ValidationFailed { status, .. } => *status,
+            Self::UnknownChannel { status } => *status,
+            Self::AlreadyClosed { status, .. } => *status,
+            Self::MintRejected { status, .. } => *status,
+            Self::MintRejectedAfterRetry { status, .. } => *status,
+            Self::UnblindFailed { status, .. } => *status,
+            Self::StorageFailed { status, .. } => *status,
+        }
+    }
+
+    /// Create a validation failed error from a ClosePreparationError
+    pub fn from_preparation_error(err: ClosePreparationError) -> Self {
+        let (expected_balance, actual_balance) = if let Some(extra) = &err.extra {
+            (
+                extra.get("expected").and_then(|v| v.as_u64()),
+                extra.get("actual").and_then(|v| v.as_u64()),
+            )
+        } else {
+            (None, None)
+        };
+
+        Self::ValidationFailed {
+            reason: err.reason,
+            status: err.status,
+            expected_balance,
+            actual_balance,
+        }
+    }
+
+    /// Create an unknown channel error
+    pub fn unknown_channel() -> Self {
+        Self::UnknownChannel { status: 404 }
+    }
+
+    /// Create a mint rejected error
+    pub fn mint_rejected(mint_error: serde_json::Value) -> Self {
+        Self::MintRejected {
+            mint_error,
+            status: 502,
+        }
+    }
+
+    /// Create a mint rejected after retry error
+    pub fn mint_rejected_after_retry(
+        original_error: serde_json::Value,
+        retry_error: serde_json::Value,
+    ) -> Self {
+        Self::MintRejectedAfterRetry {
+            original_error,
+            retry_error,
+            status: 502,
+        }
+    }
+
+    /// Create an unblind failed error
+    pub fn unblind_failed(reason: impl Into<String>) -> Self {
+        Self::UnblindFailed {
+            reason: reason.into(),
+            status: 500,
+        }
+    }
+
+    /// Create a storage failed error
+    pub fn storage_failed(reason: impl Into<String>) -> Self {
+        Self::StorageFailed {
+            reason: reason.into(),
+            status: 500,
+        }
+    }
+}
+
+impl std::fmt::Display for CloseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValidationFailed { reason, .. } => write!(f, "validation failed: {}", reason),
+            Self::UnknownChannel { .. } => write!(f, "unknown channel"),
+            Self::AlreadyClosed {
+                closed_balance,
+                requested_balance,
+                ..
+            } => write!(
+                f,
+                "channel already closed with balance {} (requested {})",
+                closed_balance, requested_balance
+            ),
+            Self::MintRejected { mint_error, .. } => {
+                write!(f, "mint rejected swap: {}", mint_error)
+            }
+            Self::MintRejectedAfterRetry {
+                original_error,
+                retry_error,
+                ..
+            } => write!(
+                f,
+                "mint rejected swap after retry: original={}, retry={}",
+                original_error, retry_error
+            ),
+            Self::UnblindFailed { reason, .. } => write!(f, "unblind failed: {}", reason),
+            Self::StorageFailed { reason, .. } => write!(f, "storage failed: {}", reason),
+        }
+    }
+}
+
+impl std::error::Error for CloseError {}
+
 #[derive(Debug, Deserialize)]
 pub struct BridgeServerConfig {
     pub min_expiry_in_seconds: u64,

@@ -473,15 +473,17 @@ impl WasmSpilmanBridge {
     ///   and optionally params + funding_proofs for unknown channels
     ///
     /// # Returns
-    /// JSON with:
-    /// - On success: `{success: true, channel_id, total_value, sender_proofs, already_closed: false}`
-    /// - On error: `{success: false, error, status, ...details}`
+    /// CloseSuccess object on success, throws CloseError on failure.
     #[wasm_bindgen(js_name = executeCooperativeClose)]
-    pub async fn execute_cooperative_close(&self, payment_json: &str) -> Result<String, JsValue> {
+    pub async fn execute_cooperative_close(&self, payment_json: &str) -> Result<JsValue, JsValue> {
         // 1. Sync preparation: validate payment, build swap request, get all needed data
         let mut prepared = match self.bridge.prepare_cooperative_close_for_execution(payment_json) {
             Ok(p) => p,
-            Err(e) => return Ok(e.to_json()),
+            Err(e) => {
+                let close_error = cdk::spilman::CloseError::from_preparation_error(e);
+                return Err(serde_wasm_bindgen::to_value(&close_error)
+                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
+            }
         };
 
         // 2. Submit swap to mint
@@ -501,15 +503,12 @@ impl WasmSpilmanBridge {
             let retry_prepared = match self.bridge.prepare_cooperative_close_for_execution(payment_json) {
                 Ok(p) => p,
                 Err(e) => {
-                    let result = serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    });
-                    return Ok(result.to_string());
+                    let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(e.reason),
+                    );
+                    return Err(serde_wasm_bindgen::to_value(&close_error)
+                        .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
                 }
             };
 
@@ -522,14 +521,12 @@ impl WasmSpilmanBridge {
                 .map_err(|e| JsValue::from_str(&format!("Invalid retry swap response: {}", e)))?;
 
             if let Some(retry_error) = retry_swap_response.get("error") {
-                let result = serde_json::json!({
-                    "success": false,
-                    "error": "mint rejected swap after retry",
-                    "status": 502,
-                    "mint_error": swap_response["error"],
-                    "retry_error": retry_error
-                });
-                return Ok(result.to_string());
+                let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    retry_error.clone(),
+                );
+                return Err(serde_wasm_bindgen::to_value(&close_error)
+                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
             }
 
             // Retry succeeded, use retry results
@@ -553,19 +550,10 @@ impl WasmSpilmanBridge {
             Some(&prepared.output_keyset_info.to_string()),
         )
         .map_err(|e| {
-            serde_json::json!({
-                "success": false,
-                "error": "unblind verification failed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string()
-        });
-
-        let unblind_result_json = match unblind_result_json {
-            Ok(json) => json,
-            Err(error_json) => return Ok(error_json),
-        };
+            let close_error = cdk::spilman::CloseError::unblind_failed(e);
+            serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string()))
+        })?;
 
         let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid unblind result: {}", e)))?;
@@ -589,24 +577,22 @@ impl WasmSpilmanBridge {
             receiver_sum,
             sender_sum,
         ) {
-            let result = serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            });
-            return Ok(result.to_string());
+            let close_error = cdk::spilman::CloseError::storage_failed(e);
+            return Err(serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
         }
 
         // 7. Return success response
-        let result = serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "sender_proofs": unblind_result["sender_proofs"],
-            "already_closed": false
-        });
-        Ok(result.to_string())
+        let result = cdk::spilman::CloseSuccess {
+            channel_id: prepared.channel_id,
+            total_value: actual_total,
+            receiver_sum,
+            sender_sum,
+            sender_proofs: unblind_result["sender_proofs"].to_string(),
+            already_closed: false,
+        };
+        serde_wasm_bindgen::to_value(&result)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
     }
 
     /// Execute a unilateral close: retrieve stored payment, submit swap, unblind, and mark closed.
@@ -623,15 +609,17 @@ impl WasmSpilmanBridge {
     /// * `channel_id` - The channel ID to close
     ///
     /// # Returns
-    /// JSON with:
-    /// - On success: `{success: true, channel_id, total_value, receiver_sum, sender_sum, already_closed: false}`
-    /// - On error: `{success: false, error, status, ...details}`
+    /// CloseSuccess object on success, throws CloseError on failure.
     #[wasm_bindgen(js_name = executeUnilateralClose)]
-    pub async fn execute_unilateral_close(&self, channel_id: &str) -> Result<String, JsValue> {
+    pub async fn execute_unilateral_close(&self, channel_id: &str) -> Result<JsValue, JsValue> {
         // 1. Sync preparation: validate, get stored payment, build swap request
         let mut prepared = match self.bridge.prepare_unilateral_close_for_execution(channel_id) {
             Ok(p) => p,
-            Err(e) => return Ok(e.to_json()),
+            Err(e) => {
+                let close_error = cdk::spilman::CloseError::from_preparation_error(e);
+                return Err(serde_wasm_bindgen::to_value(&close_error)
+                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
+            }
         };
 
         // 2. Submit swap to mint
@@ -651,15 +639,12 @@ impl WasmSpilmanBridge {
             let retry_prepared = match self.bridge.prepare_unilateral_close_for_execution(channel_id) {
                 Ok(p) => p,
                 Err(e) => {
-                    let result = serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    });
-                    return Ok(result.to_string());
+                    let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(e.reason),
+                    );
+                    return Err(serde_wasm_bindgen::to_value(&close_error)
+                        .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
                 }
             };
 
@@ -672,14 +657,12 @@ impl WasmSpilmanBridge {
                 .map_err(|e| JsValue::from_str(&format!("Invalid retry swap response: {}", e)))?;
 
             if let Some(retry_error) = retry_swap_response.get("error") {
-                let result = serde_json::json!({
-                    "success": false,
-                    "error": "mint rejected swap after retry",
-                    "status": 502,
-                    "mint_error": swap_response["error"],
-                    "retry_error": retry_error
-                });
-                return Ok(result.to_string());
+                let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    retry_error.clone(),
+                );
+                return Err(serde_wasm_bindgen::to_value(&close_error)
+                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
             }
 
             // Retry succeeded, use retry results
@@ -703,19 +686,10 @@ impl WasmSpilmanBridge {
             Some(&prepared.output_keyset_info.to_string()),
         )
         .map_err(|e| {
-            serde_json::json!({
-                "success": false,
-                "error": "unblind verification failed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string()
-        });
-
-        let unblind_result_json = match unblind_result_json {
-            Ok(json) => json,
-            Err(error_json) => return Ok(error_json),
-        };
+            let close_error = cdk::spilman::CloseError::unblind_failed(e);
+            serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string()))
+        })?;
 
         let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid unblind result: {}", e)))?;
@@ -739,26 +713,22 @@ impl WasmSpilmanBridge {
             receiver_sum,
             sender_sum,
         ) {
-            let result = serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            });
-            return Ok(result.to_string());
+            let close_error = cdk::spilman::CloseError::storage_failed(e);
+            return Err(serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
         }
 
         // 7. Return success response
-        let result = serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "receiver_sum": receiver_sum,
-            "sender_sum": sender_sum,
-            "balance": prepared.balance,
-            "already_closed": false
-        });
-        Ok(result.to_string())
+        let result = cdk::spilman::CloseSuccess {
+            channel_id: prepared.channel_id,
+            total_value: actual_total,
+            receiver_sum,
+            sender_sum,
+            sender_proofs: unblind_result["sender_proofs"].to_string(),
+            already_closed: false,
+        };
+        serde_wasm_bindgen::to_value(&result)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
     }
 }
 

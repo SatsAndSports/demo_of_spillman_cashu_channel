@@ -458,18 +458,47 @@ app.post("/channel/:id/close", async (req, res) => {
   if (funding_proofs) closeBody.funding_proofs = funding_proofs;
 
   // Execute cooperative close via bridge (validates, submits swap, unblinds, marks closed)
-  const resultJson = await bridge.executeCooperativeClose(JSON.stringify(closeBody));
-  const result = JSON.parse(resultJson);
-
-  if (!result.success) {
-    const status = result.status || 402;
-    console.log(`  [Close] Failed: ${result.error} (status=${status})`);
-    res.status(status).json(result);
+  // Returns CloseSuccess on success, throws CloseError on failure
+  let result: { channel_id: string; total_value: number; receiver_sum: number; sender_sum: number; sender_proofs: string; already_closed: boolean };
+  try {
+    result = await bridge.executeCooperativeClose(JSON.stringify(closeBody)) as any;
+  } catch (e: any) {
+    // CloseError is thrown as a JS object (not a string), so access its properties directly
+    // If it's a string or has a message property, try to parse it
+    let closeError: any;
+    if (typeof e === 'object' && e !== null && 'type' in e) {
+      // Already a CloseError object from WASM
+      closeError = e;
+    } else {
+      // Fallback: try to parse as JSON string
+      const errorMsg = (e as Error).message || String(e);
+      try {
+        closeError = JSON.parse(errorMsg);
+      } catch {
+        closeError = { type: "MintRejected", reason: errorMsg, status: 502 };
+      }
+    }
+    const status = closeError.status || 402;
+    const reason = closeError.reason || closeError.mint_error || String(closeError);
+    console.log(`  [Close] Failed: ${reason} (status=${status})`);
+    res.status(status).json({ success: false, error: reason, ...closeError });
     return;
   }
 
   console.log(`  [Close] SUCCESS! total_value=${result.total_value}`);
-  res.json(result);
+  // Parse sender_proofs from JSON string to array
+  const senderProofs = typeof result.sender_proofs === 'string' 
+    ? JSON.parse(result.sender_proofs) 
+    : result.sender_proofs;
+  res.json({ 
+    success: true, 
+    channel_id: result.channel_id,
+    total_value: result.total_value,
+    receiver_sum: result.receiver_sum,
+    sender_sum: result.sender_sum,
+    sender_proofs: senderProofs,
+    already_closed: result.already_closed,
+  });
 });
 
 // POST /channel/:id/unilateral-close - Server-initiated close (uses stored payment)
@@ -498,13 +527,30 @@ app.post("/channel/:id/unilateral-close", async (req, res) => {
   }
 
   // Execute unilateral close via bridge (gets stored balance/sig, submits swap with retry, unblinds, marks closed)
-  const resultJson = await bridge.executeUnilateralClose(channelId);
-  const result = JSON.parse(resultJson);
-
-  if (!result.success) {
-    const status = result.status || 500;
-    console.log(`  [Unilateral Close] Failed: ${result.error} (status=${status})`);
-    res.status(status).json(result);
+  // Returns CloseSuccess on success, throws CloseError on failure
+  let result: { channel_id: string; total_value: number; receiver_sum: number; sender_sum: number; sender_proofs: string; already_closed: boolean };
+  try {
+    result = await bridge.executeUnilateralClose(channelId) as any;
+  } catch (e: any) {
+    // CloseError is thrown as a JS object (not a string), so access its properties directly
+    // If it's a string or has a message property, try to parse it
+    let closeError: any;
+    if (typeof e === 'object' && e !== null && 'type' in e) {
+      // Already a CloseError object from WASM
+      closeError = e;
+    } else {
+      // Fallback: try to parse as JSON string
+      const errorMsg = (e as Error).message || String(e);
+      try {
+        closeError = JSON.parse(errorMsg);
+      } catch {
+        closeError = { type: "MintRejected", reason: errorMsg, status: 502 };
+      }
+    }
+    const status = closeError.status || 500;
+    const reason = closeError.reason || closeError.mint_error || String(closeError);
+    console.log(`  [Unilateral Close] Failed: ${reason} (status=${status})`);
+    res.status(status).json({ success: false, error: reason, ...closeError });
     return;
   }
 
