@@ -2334,4 +2334,466 @@ mod tests {
         assert_eq!(close_data.expected_total, expected_total_b);
         assert!(close_data.expected_total < 1000);
     }
+
+    /// Mock host that simulates keyset refresh behavior
+    ///
+    /// Initially returns `stale_keyset_id` as the active keyset.
+    /// After `refresh_active_keysets()` is called, returns `fresh_keyset_id`.
+    /// This simulates the real-world scenario where a mint deactivates a keyset
+    /// and the server needs to refresh its cache to discover the new active keyset.
+    struct RefreshableMockHost {
+        /// Active keyset IDs (mutable via RefCell to simulate refresh)
+        active_keyset_ids: std::cell::RefCell<Vec<Id>>,
+        /// Count of refresh calls (for verification)
+        refresh_count: std::cell::Cell<u32>,
+        /// The keyset ID to switch to after refresh
+        fresh_keyset_id: Id,
+        /// All known keyset infos (both stale and fresh)
+        keyset_infos: std::collections::HashMap<Id, String>,
+        /// Channel funding data
+        funding_data: std::collections::HashMap<String, (String, String, String, String)>,
+        /// Amount due for closing
+        amount_due: u64,
+        /// Stored payment for unilateral close (balance, signature)
+        stored_payment: Option<(u64, String)>,
+    }
+
+    impl SpilmanHost for RefreshableMockHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+
+        fn get_funding_and_params(
+            &self,
+            channel_id: &str,
+        ) -> Option<(String, String, String, String)> {
+            self.funding_data.get(channel_id).cloned()
+        }
+
+        fn save_funding(
+            &self,
+            _channel_id: &str,
+            _params_json: &str,
+            _funding_proofs_json: &str,
+            _shared_secret_hex: &str,
+            _keyset_info_json: &str,
+        ) {
+        }
+
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+            self.amount_due
+        }
+
+        fn record_payment(
+            &self,
+            _channel_id: &str,
+            _balance: u64,
+            _signature: &str,
+            _context_json: &str,
+        ) {
+        }
+
+        fn is_closed(&self, _channel_id: &str) -> bool {
+            false
+        }
+
+        fn get_channel_policy(&self) -> String {
+            serde_json::json!({
+                "min_expiry_in_seconds": 3600,
+                "pricing": {
+                    "sat": {
+                        "minCapacity": 100
+                    }
+                }
+            })
+            .to_string()
+        }
+
+        fn now_seconds(&self) -> u64 {
+            1700000000
+        }
+
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<(u64, String)> {
+            self.stored_payment.clone()
+        }
+
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+            self.active_keyset_ids.borrow().clone()
+        }
+
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+
+        fn refresh_active_keysets(&self, _mint: &str) -> Result<(), String> {
+            // Simulate fetching from mint and discovering new active keyset
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            // Not used in these tests - we're testing prepare, not execute
+            Err("not implemented".to_string())
+        }
+
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _receiver_proofs_json: &str,
+            _sender_proofs_json: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Test: Cooperative close uses refreshed keysets after refresh_active_keysets()
+    ///
+    /// Simulates the retry scenario where:
+    /// 1. First prepare uses stale keyset (which would fail at mint)
+    /// 2. After refresh_active_keysets(), second prepare uses fresh keyset
+    ///
+    /// This verifies the retry logic works correctly - when a swap fails due to
+    /// stale keyset, refreshing and re-preparing will use the new keyset.
+    ///
+    /// Migrated from planned TypeScript test:
+    /// "retries cooperative close with refreshed keysets when first swap fails"
+    #[test]
+    fn test_cooperative_close_retries_with_refreshed_keysets() {
+        use crate::nuts::Proof;
+        use crate::secret::Secret;
+        use crate::spilman::params::mock_keyset_info;
+        use crate::spilman::{
+            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+        };
+
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        // Create "stale" keyset (the one initially cached, but deactivated at mint)
+        let keyset_stale = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let keyset_stale_id = keyset_stale.keyset_id;
+
+        // Create "fresh" keyset (the new active one after refresh)
+        let mut keyset_fresh = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100); // Different fee
+        let keyset_fresh_id = Id::from_str("00000000000000ff").unwrap();
+        keyset_fresh.keyset_id = keyset_fresh_id;
+
+        // Setup channel params (funded with stale keyset)
+        let params_struct = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "test-refresh-coop".to_string(),
+            keyset_info: keyset_stale.clone(),
+            shared_secret,
+        };
+        let channel_id = params_struct.get_channel_id();
+        let balance = 100;
+
+        // Funding proofs (keyset doesn't matter for this test)
+        let proofs = vec![Proof {
+            amount: 1000.into(),
+            secret: Secret::new("funding".to_string()),
+            c: PublicKey::from_str(
+                "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+            )
+            .unwrap(),
+            keyset_id: keyset_stale_id,
+            dleq: None,
+            witness: None,
+        }];
+
+        // Create refreshable mock host
+        // Initially returns stale keyset as active, switches to fresh after refresh
+        let host = RefreshableMockHost {
+            active_keyset_ids: std::cell::RefCell::new(vec![keyset_stale_id]), // Initially stale
+            refresh_count: std::cell::Cell::new(0),
+            fresh_keyset_id: keyset_fresh_id,
+            keyset_infos: vec![
+                (
+                    keyset_stale_id,
+                    serde_json::to_string(&keyset_stale).unwrap(),
+                ),
+                (
+                    keyset_fresh_id,
+                    serde_json::to_string(&keyset_fresh).unwrap(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            funding_data: vec![(
+                channel_id.clone(),
+                (
+                    params_struct.get_channel_id_params_json(),
+                    serde_json::to_string(&proofs).unwrap(),
+                    hex::encode(shared_secret),
+                    serde_json::to_string(&keyset_stale).unwrap(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+            amount_due: balance,
+            stored_payment: None,
+        };
+
+        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+
+        // Create signed balance update
+        let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
+        let sender = SpilmanChannelSender::new(alice_sk, channel);
+        let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
+
+        let payment_json = serde_json::json!({
+            "channel_id": channel_id,
+            "balance": balance,
+            "signature": balance_update.signature.to_string(),
+        })
+        .to_string();
+
+        // STEP 1: First prepare - should use stale keyset (would fail at mint)
+        let prepared_first = bridge
+            .prepare_cooperative_close_for_execution(&payment_json)
+            .expect("First prepare should succeed");
+
+        // Verify first prepare uses stale keyset for outputs
+        let first_swap: serde_json::Value =
+            serde_json::from_value(prepared_first.swap_request.clone()).unwrap();
+        let first_outputs = first_swap["outputs"].as_array().unwrap();
+        for output in first_outputs {
+            let output_keyset = output["id"].as_str().unwrap();
+            assert_eq!(
+                output_keyset,
+                keyset_stale_id.to_string(),
+                "First prepare should use stale keyset"
+            );
+        }
+        println!("✓ First prepare uses stale keyset: {}", keyset_stale_id);
+
+        // Verify refresh hasn't been called yet
+        assert_eq!(
+            bridge.host().refresh_count.get(),
+            0,
+            "Refresh should not have been called yet"
+        );
+
+        // STEP 2: Simulate mint error - call refresh_active_keysets
+        bridge
+            .host()
+            .refresh_active_keysets("https://mint.host")
+            .expect("Refresh should succeed");
+
+        assert_eq!(
+            bridge.host().refresh_count.get(),
+            1,
+            "Refresh should have been called once"
+        );
+        println!("✓ refresh_active_keysets() called");
+
+        // STEP 3: Second prepare - should now use fresh keyset
+        let prepared_second = bridge
+            .prepare_cooperative_close_for_execution(&payment_json)
+            .expect("Second prepare should succeed");
+
+        // Verify second prepare uses fresh keyset for outputs
+        let second_swap: serde_json::Value =
+            serde_json::from_value(prepared_second.swap_request.clone()).unwrap();
+        let second_outputs = second_swap["outputs"].as_array().unwrap();
+        for output in second_outputs {
+            let output_keyset = output["id"].as_str().unwrap();
+            assert_eq!(
+                output_keyset,
+                keyset_fresh_id.to_string(),
+                "Second prepare should use fresh keyset"
+            );
+        }
+        println!("✓ Second prepare uses fresh keyset: {}", keyset_fresh_id);
+
+        // Verify the swap requests are different (different keyset IDs)
+        assert_ne!(
+            first_outputs[0]["id"], second_outputs[0]["id"],
+            "Swap requests should use different keysets"
+        );
+        println!("✓ Retry would use different keyset after refresh");
+    }
+
+    /// Test: Unilateral close uses refreshed keysets after refresh_active_keysets()
+    ///
+    /// Same pattern as cooperative close test, but for server-initiated close.
+    ///
+    /// Migrated from planned TypeScript test:
+    /// "retries unilateral close with refreshed keysets when first swap fails"
+    #[test]
+    fn test_unilateral_close_retries_with_refreshed_keysets() {
+        use crate::nuts::Proof;
+        use crate::secret::Secret;
+        use crate::spilman::params::mock_keyset_info;
+        use crate::spilman::{
+            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+        };
+
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        // Create "stale" keyset
+        let keyset_stale = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let keyset_stale_id = keyset_stale.keyset_id;
+
+        // Create "fresh" keyset
+        let mut keyset_fresh = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
+        let keyset_fresh_id = Id::from_str("00000000000000fe").unwrap();
+        keyset_fresh.keyset_id = keyset_fresh_id;
+
+        // Setup channel params
+        let params_struct = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "test-refresh-unilateral".to_string(),
+            keyset_info: keyset_stale.clone(),
+            shared_secret,
+        };
+        let channel_id = params_struct.get_channel_id();
+        let balance = 200;
+
+        // Funding proofs
+        let proofs = vec![Proof {
+            amount: 1000.into(),
+            secret: Secret::new("funding".to_string()),
+            c: PublicKey::from_str(
+                "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+            )
+            .unwrap(),
+            keyset_id: keyset_stale_id,
+            dleq: None,
+            witness: None,
+        }];
+
+        // Create signed balance update (for stored payment)
+        let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
+        let sender = SpilmanChannelSender::new(alice_sk, channel);
+        let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
+
+        // Create refreshable mock host with stored payment for unilateral close
+        let host = RefreshableMockHost {
+            active_keyset_ids: std::cell::RefCell::new(vec![keyset_stale_id]),
+            refresh_count: std::cell::Cell::new(0),
+            fresh_keyset_id: keyset_fresh_id,
+            keyset_infos: vec![
+                (
+                    keyset_stale_id,
+                    serde_json::to_string(&keyset_stale).unwrap(),
+                ),
+                (
+                    keyset_fresh_id,
+                    serde_json::to_string(&keyset_fresh).unwrap(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            funding_data: vec![(
+                channel_id.clone(),
+                (
+                    params_struct.get_channel_id_params_json(),
+                    serde_json::to_string(&proofs).unwrap(),
+                    hex::encode(shared_secret),
+                    serde_json::to_string(&keyset_stale).unwrap(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+            amount_due: balance,
+            // Stored payment for unilateral close
+            stored_payment: Some((balance, balance_update.signature.to_string())),
+        };
+
+        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+
+        // STEP 1: First prepare - should use stale keyset
+        let prepared_first = bridge
+            .prepare_unilateral_close_for_execution(&channel_id)
+            .expect("First prepare should succeed");
+
+        // Verify first prepare uses stale keyset
+        let first_swap: serde_json::Value =
+            serde_json::from_value(prepared_first.swap_request.clone()).unwrap();
+        let first_outputs = first_swap["outputs"].as_array().unwrap();
+        for output in first_outputs {
+            let output_keyset = output["id"].as_str().unwrap();
+            assert_eq!(
+                output_keyset,
+                keyset_stale_id.to_string(),
+                "First prepare should use stale keyset"
+            );
+        }
+        println!(
+            "✓ First unilateral prepare uses stale keyset: {}",
+            keyset_stale_id
+        );
+
+        // STEP 2: Simulate mint error - call refresh
+        bridge
+            .host()
+            .refresh_active_keysets("https://mint.host")
+            .expect("Refresh should succeed");
+
+        assert_eq!(bridge.host().refresh_count.get(), 1);
+        println!("✓ refresh_active_keysets() called");
+
+        // STEP 3: Second prepare - should use fresh keyset
+        let prepared_second = bridge
+            .prepare_unilateral_close_for_execution(&channel_id)
+            .expect("Second prepare should succeed");
+
+        // Verify second prepare uses fresh keyset
+        let second_swap: serde_json::Value =
+            serde_json::from_value(prepared_second.swap_request.clone()).unwrap();
+        let second_outputs = second_swap["outputs"].as_array().unwrap();
+        for output in second_outputs {
+            let output_keyset = output["id"].as_str().unwrap();
+            assert_eq!(
+                output_keyset,
+                keyset_fresh_id.to_string(),
+                "Second prepare should use fresh keyset"
+            );
+        }
+        println!(
+            "✓ Second unilateral prepare uses fresh keyset: {}",
+            keyset_fresh_id
+        );
+
+        // Verify different keysets
+        assert_ne!(
+            first_outputs[0]["id"], second_outputs[0]["id"],
+            "Swap requests should use different keysets"
+        );
+        println!("✓ Unilateral retry would use different keyset after refresh");
+    }
 }

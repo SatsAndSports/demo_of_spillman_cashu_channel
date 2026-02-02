@@ -130,17 +130,6 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
-
-
-### Tests not yet ported from TS to Rust (follow up soon)
-When we migrated from TS tests to Rust integration tests, 3 tests were skipped:
-1. **`closes unused channel and verifies sender can derive secret keys for returned proofs`** - Tests client-side key derivation from returned proofs. Requires WASM function `get_sender_blinded_secret_key_for_stage2_output()`. Should be a native Rust test in `cdk::spilman::tests`.
-2. **`retries cooperative close with refreshed keysets when first swap fails`** - Tests keyset refresh retry logic by mocking a `SpilmanHost` that returns stale keysets first. Requires direct `SpilmanBridge` instantiation with custom host.
-3. **`retries unilateral close with refreshed keysets when first swap fails`** - Same as above for unilateral close path.
-
-These test bridge internals rather than the HTTP API, so they belong as native Rust unit tests in `cdk::spilman::tests`, not integration tests.
-
-### Other TODOs
 - stop using blossom server in the tests
 - maybe stop sending funding+params in the header, now that we have the /channel/register endpoint?
 - video player should stop sending funding+params, and should use the register endpoint after any 4xx
