@@ -743,18 +743,32 @@ def cooperative_close(channel_id: str):
         payment_request["funding_proofs"] = funding_proofs
     
     # Execute cooperative close via bridge (handles swap, retry, unblind, mark closed)
-    result_json = bridge.execute_cooperative_close(json.dumps(payment_request))
-    result = json.loads(result_json)
-    
-    if not result.get("success"):
-        error_msg = result.get("error", "close failed")
-        reason = result.get("reason", error_msg)
-        status = result.get("status", 500)
+    # Returns CloseSuccess on success, raises RuntimeError with JSON-encoded CloseError on failure
+    try:
+        result = bridge.execute_cooperative_close(json.dumps(payment_request))
+    except RuntimeError as e:
+        error_msg = str(e)
+        # Try to parse CloseError JSON from error message
+        try:
+            close_error = json.loads(error_msg)
+            reason = close_error.get("reason", error_msg)
+            status = close_error.get("status", 500)
+        except json.JSONDecodeError:
+            reason = error_msg
+            status = 500
         print(f"  [CooperativeClose] Failed: {reason}")
-        return jsonify({"error": error_msg, "reason": reason}), status
+        return jsonify({"success": False, "error": reason, "reason": reason}), status
     
-    print(f"  [CooperativeClose] SUCCESS! total_value={result.get('total_value')}")
-    return jsonify(result)
+    print(f"  [CooperativeClose] SUCCESS! total_value={result.total_value}")
+    return jsonify({
+        "success": True,
+        "channel_id": result.channel_id,
+        "total_value": result.total_value,
+        "receiver_sum": result.receiver_sum,
+        "sender_sum": result.sender_sum,
+        "sender_proofs": json.loads(result.sender_proofs),
+        "already_closed": result.already_closed,
+    })
 
 
 @app.route("/channel/<channel_id>/unilateral-close", methods=["POST"])
@@ -777,31 +791,30 @@ def unilateral_close_endpoint(channel_id: str):
     if channel_id not in channel_funding:
         return jsonify({"error": "unknown channel"}), 404
     
-    # Use existing close_channel function
-    result = close_channel(channel_id)
+    # Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
+    # Returns CloseSuccess on success, raises RuntimeError with JSON-encoded CloseError on failure
+    try:
+        result = bridge.execute_unilateral_close(channel_id)
+    except RuntimeError as e:
+        error_msg = str(e)
+        # Try to parse CloseError JSON from error message
+        try:
+            close_error = json.loads(error_msg)
+            reason = close_error.get("reason", error_msg)
+            status = close_error.get("status", 500)
+        except json.JSONDecodeError:
+            reason = error_msg
+            status = 500
+        print(f"  [UnilateralClose] Failed: {reason}")
+        return jsonify({"success": False, "error": reason}), status
     
-    if not result.get("success"):
-        error = result.get("error", "close failed")
-        status = result.get("status", 400)
-        return jsonify({"error": error}), status
-    
+    print(f"  [UnilateralClose] SUCCESS! Earned {result.receiver_sum} sat")
     return jsonify({
         "success": True,
         "channel_id": channel_id,
         "already_closed": False,
-        "earnedBeforeStage2Fees": result.get("receiver_sum", 0),
+        "earnedBeforeStage2Fees": result.receiver_sum,
     })
-
-
-def close_channel(channel_id: str) -> dict:
-    """
-    Close a channel unilaterally using the bridge.
-    
-    Returns the bridge result dictionary.
-    """
-    # Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
-    result_json = bridge.execute_unilateral_close(channel_id)
-    return json.loads(result_json)
 
 
 if __name__ == "__main__":

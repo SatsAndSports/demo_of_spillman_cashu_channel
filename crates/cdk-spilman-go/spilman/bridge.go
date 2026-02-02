@@ -86,6 +86,16 @@ type FundChannelResult struct {
 	AlreadyKnown bool   `json:"already_known"`
 }
 
+// CloseSuccess is returned by ExecuteCooperativeClose and ExecuteUnilateralClose on success
+type CloseSuccess struct {
+	ChannelID     string `json:"channel_id"`
+	TotalValue    uint64 `json:"total_value"`
+	ReceiverSum   uint64 `json:"receiver_sum"`
+	SenderSum     uint64 `json:"sender_sum"`
+	SenderProofs  string `json:"sender_proofs"`
+	AlreadyClosed bool   `json:"already_closed"`
+}
+
 // SpilmanHost is the interface that the Go application must implement to handle
 // channel persistence and policy.
 type SpilmanHost interface {
@@ -238,7 +248,8 @@ func (b *Bridge) CreateUnilateralCloseData(channelId string) (string, error) {
 
 // ExecuteCooperativeClose orchestrates the full cooperative close flow:
 // validate, submit swap to mint, retry on error, unblind, and mark closed.
-func (b *Bridge) ExecuteCooperativeClose(paymentJson string) (string, error) {
+// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure.
+func (b *Bridge) ExecuteCooperativeClose(paymentJson string) (*CloseSuccess, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 
@@ -246,14 +257,20 @@ func (b *Bridge) ExecuteCooperativeClose(paymentJson string) (string, error) {
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
+		return nil, errors.New(C.GoString(res.error))
 	}
-	return C.GoString(res.data), nil
+
+	var result CloseSuccess
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // ExecuteUnilateralClose orchestrates the full unilateral close flow:
 // retrieve stored payment, submit swap to mint, retry on error, unblind, and mark closed.
-func (b *Bridge) ExecuteUnilateralClose(channelId string) (string, error) {
+// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure.
+func (b *Bridge) ExecuteUnilateralClose(channelId string) (*CloseSuccess, error) {
 	cId := C.CString(channelId)
 	defer C.free(unsafe.Pointer(cId))
 
@@ -261,9 +278,14 @@ func (b *Bridge) ExecuteUnilateralClose(channelId string) (string, error) {
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
+		return nil, errors.New(C.GoString(res.error))
 	}
-	return C.GoString(res.data), nil
+
+	var result CloseSuccess
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Client functions

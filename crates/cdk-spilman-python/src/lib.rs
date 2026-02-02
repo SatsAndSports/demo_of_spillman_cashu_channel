@@ -82,6 +82,31 @@ impl From<cdk::spilman::FundChannelResult> for FundChannelResult {
     }
 }
 
+/// Result of successfully closing a channel
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct CloseSuccess {
+    pub channel_id: String,
+    pub total_value: u64,
+    pub receiver_sum: u64,
+    pub sender_sum: u64,
+    pub sender_proofs: String,
+    pub already_closed: bool,
+}
+
+impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
+    fn from(r: cdk::spilman::CloseSuccess) -> Self {
+        Self {
+            channel_id: r.channel_id,
+            total_value: r.total_value,
+            receiver_sum: r.receiver_sum,
+            sender_sum: r.sender_sum,
+            sender_proofs: r.sender_proofs,
+            already_closed: r.already_closed,
+        }
+    }
+}
+
 // ============================================================================
 // Server-side: SpilmanBridge with Python host callbacks
 // ============================================================================
@@ -561,15 +586,23 @@ impl SpilmanBridge {
     ///                   and optionally params + funding_proofs for unknown channels
     ///
     /// Returns:
-    ///     JSON string with success/error and details
-    fn execute_cooperative_close(&self, payment_json: &str) -> PyResult<String> {
+    ///     CloseSuccess object on success
+    ///
+    /// Raises:
+    ///     RuntimeError: With JSON-encoded CloseError on failure
+    fn execute_cooperative_close(&self, payment_json: &str) -> PyResult<CloseSuccess> {
         // 1. Sync preparation: validate payment, build swap request, get all needed data
         let mut prepared = match self
             .inner
             .prepare_cooperative_close_for_execution(payment_json)
         {
             Ok(p) => p,
-            Err(e) => return Ok(e.to_json()),
+            Err(e) => {
+                let close_error = spilman::CloseError::from_preparation_error(e);
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
+            }
         };
 
         // 2. Submit swap to mint (via host)
@@ -581,21 +614,22 @@ impl SpilmanBridge {
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": format!("Invalid swap response: {}", e),
-                        "status": 502
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected(serde_json::json!(
+                        format!("Invalid swap response: {}", e)
+                    ));
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             },
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("mint swap failed: {}", e),
-                    "status": 502
-                })
-                .to_string());
+                let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                    "mint swap failed: {}",
+                    e
+                )));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
@@ -610,15 +644,13 @@ impl SpilmanBridge {
             {
                 Ok(p) => p,
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(e.reason),
+                    );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             };
 
@@ -630,35 +662,36 @@ impl SpilmanBridge {
                 Ok(resp) => match serde_json::from_str(&resp) {
                     Ok(v) => {
                         let retry_resp: serde_json::Value = v;
-                        if retry_resp.get("error").is_some() {
-                            return Ok(serde_json::json!({
-                                "success": false,
-                                "error": "mint rejected swap after retry",
-                                "status": 502,
-                                "mint_error": swap_response["error"],
-                                "retry_error": retry_resp["error"]
-                            })
-                            .to_string());
+                        if let Some(retry_error) = retry_resp.get("error") {
+                            let close_error = spilman::CloseError::mint_rejected_after_retry(
+                                swap_response["error"].clone(),
+                                retry_error.clone(),
+                            );
+                            let error_json = serde_json::to_string(&close_error)
+                                .unwrap_or_else(|_| close_error.to_string());
+                            return Err(PyRuntimeError::new_err(error_json));
                         }
                         swap_response = retry_resp;
                         prepared = retry_prepared;
                     }
                     Err(e) => {
-                        return Ok(serde_json::json!({
-                            "success": false,
-                            "error": format!("Invalid retry swap response: {}", e),
-                            "status": 502
-                        })
-                        .to_string());
+                        let close_error = spilman::CloseError::mint_rejected_after_retry(
+                            swap_response["error"].clone(),
+                            serde_json::json!(format!("Invalid retry swap response: {}", e)),
+                        );
+                        let error_json = serde_json::to_string(&close_error)
+                            .unwrap_or_else(|_| close_error.to_string());
+                        return Err(PyRuntimeError::new_err(error_json));
                     }
                 },
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": format!("mint swap retry failed: {}", e),
-                        "status": 502
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(format!("mint swap retry failed: {}", e)),
+                    );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             }
         }
@@ -680,25 +713,21 @@ impl SpilmanBridge {
         ) {
             Ok(json) => json,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": "unblind verification failed",
-                    "status": 500,
-                    "reason": e
-                })
-                .to_string());
+                let close_error = spilman::CloseError::unblind_failed(e);
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
         let unblind_result: serde_json::Value = match serde_json::from_str(&unblind_result_json) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid unblind result: {}", e),
-                    "status": 500
-                })
-                .to_string());
+                let close_error =
+                    spilman::CloseError::unblind_failed(format!("Invalid unblind result: {}", e));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
@@ -715,12 +744,11 @@ impl SpilmanBridge {
         let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string());
+                let close_error =
+                    spilman::CloseError::storage_failed(format!("Invalid params: {}", e));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
         let locktime = params["locktime"].as_u64().unwrap_or(0);
@@ -734,23 +762,20 @@ impl SpilmanBridge {
             receiver_sum,
             sender_sum,
         ) {
-            return Ok(serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string());
+            let close_error = spilman::CloseError::storage_failed(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return Err(PyRuntimeError::new_err(error_json));
         }
 
-        Ok(serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "sender_proofs": unblind_result["sender_proofs"],
-            "already_closed": false
+        Ok(CloseSuccess {
+            channel_id: prepared.channel_id,
+            total_value: actual_total,
+            receiver_sum,
+            sender_sum,
+            sender_proofs: unblind_result["sender_proofs"].to_string(),
+            already_closed: false,
         })
-        .to_string())
     }
 
     /// Execute a unilateral close: retrieve stored payment, submit swap, unblind, and mark closed.
@@ -767,15 +792,23 @@ impl SpilmanBridge {
     ///     channel_id: The channel ID to close
     ///
     /// Returns:
-    ///     JSON string with success/error and details
-    fn execute_unilateral_close(&self, channel_id: &str) -> PyResult<String> {
+    ///     CloseSuccess object on success
+    ///
+    /// Raises:
+    ///     RuntimeError: With JSON-encoded CloseError on failure
+    fn execute_unilateral_close(&self, channel_id: &str) -> PyResult<CloseSuccess> {
         // 1. Sync preparation: validate, get stored payment, build swap request
         let mut prepared = match self
             .inner
             .prepare_unilateral_close_for_execution(channel_id)
         {
             Ok(p) => p,
-            Err(e) => return Ok(e.to_json()),
+            Err(e) => {
+                let close_error = spilman::CloseError::from_preparation_error(e);
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
+            }
         };
 
         // 2. Submit swap to mint (via host)
@@ -787,21 +820,22 @@ impl SpilmanBridge {
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": format!("Invalid swap response: {}", e),
-                        "status": 502
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected(serde_json::json!(
+                        format!("Invalid swap response: {}", e)
+                    ));
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             },
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("mint swap failed: {}", e),
-                    "status": 502
-                })
-                .to_string());
+                let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                    "mint swap failed: {}",
+                    e
+                )));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
@@ -816,15 +850,13 @@ impl SpilmanBridge {
             {
                 Ok(p) => p,
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(e.reason),
+                    );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             };
 
@@ -836,35 +868,36 @@ impl SpilmanBridge {
                 Ok(resp) => match serde_json::from_str(&resp) {
                     Ok(v) => {
                         let retry_resp: serde_json::Value = v;
-                        if retry_resp.get("error").is_some() {
-                            return Ok(serde_json::json!({
-                                "success": false,
-                                "error": "mint rejected swap after retry",
-                                "status": 502,
-                                "mint_error": swap_response["error"],
-                                "retry_error": retry_resp["error"]
-                            })
-                            .to_string());
+                        if let Some(retry_error) = retry_resp.get("error") {
+                            let close_error = spilman::CloseError::mint_rejected_after_retry(
+                                swap_response["error"].clone(),
+                                retry_error.clone(),
+                            );
+                            let error_json = serde_json::to_string(&close_error)
+                                .unwrap_or_else(|_| close_error.to_string());
+                            return Err(PyRuntimeError::new_err(error_json));
                         }
                         swap_response = retry_resp;
                         prepared = retry_prepared;
                     }
                     Err(e) => {
-                        return Ok(serde_json::json!({
-                            "success": false,
-                            "error": format!("Invalid retry swap response: {}", e),
-                            "status": 502
-                        })
-                        .to_string());
+                        let close_error = spilman::CloseError::mint_rejected_after_retry(
+                            swap_response["error"].clone(),
+                            serde_json::json!(format!("Invalid retry swap response: {}", e)),
+                        );
+                        let error_json = serde_json::to_string(&close_error)
+                            .unwrap_or_else(|_| close_error.to_string());
+                        return Err(PyRuntimeError::new_err(error_json));
                     }
                 },
                 Err(e) => {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": format!("mint swap retry failed: {}", e),
-                        "status": 502
-                    })
-                    .to_string());
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(format!("mint swap retry failed: {}", e)),
+                    );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return Err(PyRuntimeError::new_err(error_json));
                 }
             }
         }
@@ -886,25 +919,21 @@ impl SpilmanBridge {
         ) {
             Ok(json) => json,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": "unblind verification failed",
-                    "status": 500,
-                    "reason": e
-                })
-                .to_string());
+                let close_error = spilman::CloseError::unblind_failed(e);
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
         let unblind_result: serde_json::Value = match serde_json::from_str(&unblind_result_json) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid unblind result: {}", e),
-                    "status": 500
-                })
-                .to_string());
+                let close_error =
+                    spilman::CloseError::unblind_failed(format!("Invalid unblind result: {}", e));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
 
@@ -921,12 +950,11 @@ impl SpilmanBridge {
         let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
             Ok(v) => v,
             Err(e) => {
-                return Ok(serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string());
+                let close_error =
+                    spilman::CloseError::storage_failed(format!("Invalid params: {}", e));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return Err(PyRuntimeError::new_err(error_json));
             }
         };
         let locktime = params["locktime"].as_u64().unwrap_or(0);
@@ -940,25 +968,20 @@ impl SpilmanBridge {
             receiver_sum,
             sender_sum,
         ) {
-            return Ok(serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string());
+            let close_error = spilman::CloseError::storage_failed(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return Err(PyRuntimeError::new_err(error_json));
         }
 
-        Ok(serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "receiver_sum": receiver_sum,
-            "sender_sum": sender_sum,
-            "balance": prepared.balance,
-            "already_closed": false
+        Ok(CloseSuccess {
+            channel_id: prepared.channel_id,
+            total_value: actual_total,
+            receiver_sum,
+            sender_sum,
+            sender_proofs: unblind_result["sender_proofs"].to_string(),
+            already_closed: false,
         })
-        .to_string())
     }
 }
 

@@ -587,28 +587,15 @@ func mintFundingToken(mintUrl string, amount uint64, blindedMessages []interface
 // Runners
 // ============================================================================
 
-type UnilateralCloseResult struct {
-	Success     bool   `json:"success"`
-	Error       string `json:"error"`
-	Status      int    `json:"status"`
-	ReceiverSum uint64 `json:"receiver_sum"`
-}
-
-func closeChannel(id string, bridge *spilman.Bridge) (UnilateralCloseResult, error) {
+func closeChannel(id string, bridge *spilman.Bridge) (*spilman.CloseSuccess, error) {
 	log.Printf("\n[Close] Attempting to close channel %s...\n", id[:16])
 
 	// Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
-	resultJson, err := bridge.ExecuteUnilateralClose(id)
+	// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure
+	result, err := bridge.ExecuteUnilateralClose(id)
 	if err != nil {
-		return UnilateralCloseResult{}, fmt.Errorf("bridge error: %v", err)
-	}
-
-	var result UnilateralCloseResult
-	json.Unmarshal([]byte(resultJson), &result)
-
-	if !result.Success {
-		log.Printf("  [Close] Failed: %s\n", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
+		log.Printf("  [Close] Failed: %s\n", err.Error())
+		return nil, err
 	}
 
 	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], result.ReceiverSum)
@@ -941,36 +928,43 @@ func runServer() {
 			paymentRequestJson, _ := json.Marshal(paymentRequest)
 
 			// Execute cooperative close via bridge (handles swap, retry, unblind, mark closed)
-			resultJson, err := bridge.ExecuteCooperativeClose(string(paymentRequestJson))
+			// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure
+			result, err := bridge.ExecuteCooperativeClose(string(paymentRequestJson))
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
-				return
-			}
-
-			var result struct {
-				Success bool   `json:"success"`
-				Error   string `json:"error"`
-				Reason  string `json:"reason"`
-				Status  int    `json:"status"`
-			}
-			json.Unmarshal([]byte(resultJson), &result)
-
-			if !result.Success {
-				status := result.Status
-				if status == 0 {
-					status = http.StatusPaymentRequired
+				// Try to parse CloseError from error message
+				var closeError struct {
+					Type   string `json:"type"`
+					Reason string `json:"reason"`
+					Status int    `json:"status"`
 				}
-				w.WriteHeader(status)
-				json.NewEncoder(w).Encode(map[string]interface{}{"error": result.Error, "reason": result.Reason})
+				if json.Unmarshal([]byte(err.Error()), &closeError) == nil {
+					status := closeError.Status
+					if status == 0 {
+						status = http.StatusPaymentRequired
+					}
+					w.WriteHeader(status)
+					json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": closeError.Reason, "reason": closeError.Reason})
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+				}
 				return
 			}
 
 			log.Printf("  [CooperativeClose] SUCCESS!\n")
 
-			// Pass through bridge result directly
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(resultJson))
+			// Return CloseSuccess result
+			var senderProofs interface{}
+			json.Unmarshal([]byte(result.SenderProofs), &senderProofs)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":        true,
+				"channel_id":     result.ChannelID,
+				"total_value":    result.TotalValue,
+				"receiver_sum":   result.ReceiverSum,
+				"sender_sum":     result.SenderSum,
+				"sender_proofs":  senderProofs,
+				"already_closed": result.AlreadyClosed,
+			})
 
 		case "unilateral-close":
 			// POST /channel/{id}/unilateral-close - Server-initiated close
@@ -1007,9 +1001,13 @@ func runServer() {
 
 			result, err := closeChannel(channelId, bridge)
 			if err != nil {
-				status := result.Status
-				if status == 0 {
-					status = http.StatusBadRequest
+				// Try to parse CloseError from error message to get status
+				var closeError struct {
+					Status int `json:"status"`
+				}
+				status := http.StatusBadRequest
+				if json.Unmarshal([]byte(err.Error()), &closeError) == nil && closeError.Status != 0 {
+					status = closeError.Status
 				}
 				w.WriteHeader(status)
 				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})

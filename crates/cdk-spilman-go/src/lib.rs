@@ -496,6 +496,8 @@ pub unsafe extern "C" fn spilman_bridge_create_unilateral_close_data(
 }
 
 /// Execute a cooperative close: validate, submit swap, unblind, and mark closed.
+///
+/// Returns CloseSuccess JSON on success (in data), or CloseError JSON on failure (in error).
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     ptr: *mut BridgeInstance,
@@ -510,7 +512,12 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         .prepare_cooperative_close_for_execution(payment_str)
     {
         Ok(p) => p,
-        Err(e) => return CResult::success(e.to_json()),
+        Err(e) => {
+            let close_error = spilman::CloseError::from_preparation_error(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
+        }
     };
 
     // 2. Submit swap to mint (via host)
@@ -522,25 +529,23 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         Ok(resp) => match serde_json::from_str(&resp) {
             Ok(v) => v,
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("Invalid swap response: {}", e),
-                        "status": 502
-                    })
-                    .to_string(),
-                );
+                let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                    "Invalid swap response: {}",
+                    e
+                )));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         },
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("mint swap failed: {}", e),
-                    "status": 502
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                "mint swap failed: {}",
+                e
+            )));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
@@ -558,17 +563,13 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         {
             Ok(p) => p,
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    })
-                    .to_string(),
+                let close_error = spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    serde_json::json!(e.reason),
                 );
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         };
 
@@ -580,41 +581,36 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => {
                     let retry_resp: serde_json::Value = v;
-                    if retry_resp.get("error").is_some() {
-                        return CResult::success(
-                            serde_json::json!({
-                                "success": false,
-                                "error": "mint rejected swap after retry",
-                                "status": 502,
-                                "mint_error": swap_response["error"],
-                                "retry_error": retry_resp["error"]
-                            })
-                            .to_string(),
+                    if let Some(retry_error) = retry_resp.get("error") {
+                        let close_error = spilman::CloseError::mint_rejected_after_retry(
+                            swap_response["error"].clone(),
+                            retry_error.clone(),
                         );
+                        let error_json = serde_json::to_string(&close_error)
+                            .unwrap_or_else(|_| close_error.to_string());
+                        return CResult::error(error_json);
                     }
                     swap_response = retry_resp;
                     prepared = retry_prepared;
                 }
                 Err(e) => {
-                    return CResult::success(
-                        serde_json::json!({
-                            "success": false,
-                            "error": format!("Invalid retry swap response: {}", e),
-                            "status": 502
-                        })
-                        .to_string(),
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(format!("Invalid retry swap response: {}", e)),
                     );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return CResult::error(error_json);
                 }
             },
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("mint swap retry failed: {}", e),
-                        "status": 502
-                    })
-                    .to_string(),
+                let close_error = spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    serde_json::json!(format!("mint swap retry failed: {}", e)),
                 );
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         }
     }
@@ -636,29 +632,21 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     ) {
         Ok(json) => json,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "unblind verification failed",
-                    "status": 500,
-                    "reason": e
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::unblind_failed(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
     let unblind_result: serde_json::Value = match serde_json::from_str(&unblind_result_json) {
         Ok(v) => v,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid unblind result: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
+            let close_error =
+                spilman::CloseError::unblind_failed(format!("Invalid unblind result: {}", e));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
@@ -675,14 +663,10 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
         Ok(v) => v,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::storage_failed(format!("Invalid params: {}", e));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
     let locktime = params["locktime"].as_u64().unwrap_or(0);
@@ -696,30 +680,28 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
         receiver_sum,
         sender_sum,
     ) {
-        return CResult::success(
-            serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string(),
-        );
+        let close_error = spilman::CloseError::storage_failed(e);
+        let error_json =
+            serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+        return CResult::error(error_json);
     }
 
-    CResult::success(
-        serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "sender_proofs": unblind_result["sender_proofs"],
-            "already_closed": false
-        })
-        .to_string(),
-    )
+    // Return CloseSuccess as JSON
+    let result = spilman::CloseSuccess {
+        channel_id: prepared.channel_id,
+        total_value: actual_total,
+        receiver_sum,
+        sender_sum,
+        sender_proofs: unblind_result["sender_proofs"].to_string(),
+        already_closed: false,
+    };
+    let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+    CResult::success(json)
 }
 
 /// Execute a unilateral close: retrieve stored payment, submit swap, unblind, and mark closed.
+///
+/// Returns CloseSuccess JSON on success (in data), or CloseError JSON on failure (in error).
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     ptr: *mut BridgeInstance,
@@ -734,7 +716,12 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         .prepare_unilateral_close_for_execution(channel_id_str)
     {
         Ok(p) => p,
-        Err(e) => return CResult::success(e.to_json()),
+        Err(e) => {
+            let close_error = spilman::CloseError::from_preparation_error(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
+        }
     };
 
     // 2. Submit swap to mint (via host)
@@ -746,25 +733,23 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         Ok(resp) => match serde_json::from_str(&resp) {
             Ok(v) => v,
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("Invalid swap response: {}", e),
-                        "status": 502
-                    })
-                    .to_string(),
-                );
+                let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                    "Invalid swap response: {}",
+                    e
+                )));
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         },
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("mint swap failed: {}", e),
-                    "status": 502
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::mint_rejected(serde_json::json!(format!(
+                "mint swap failed: {}",
+                e
+            )));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
@@ -782,17 +767,13 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         {
             Ok(p) => p,
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": "mint rejected swap",
-                        "status": 502,
-                        "mint_error": swap_response["error"],
-                        "retry_failed": true,
-                        "retry_error": e.reason
-                    })
-                    .to_string(),
+                let close_error = spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    serde_json::json!(e.reason),
                 );
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         };
 
@@ -804,41 +785,36 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
             Ok(resp) => match serde_json::from_str(&resp) {
                 Ok(v) => {
                     let retry_resp: serde_json::Value = v;
-                    if retry_resp.get("error").is_some() {
-                        return CResult::success(
-                            serde_json::json!({
-                                "success": false,
-                                "error": "mint rejected swap after retry",
-                                "status": 502,
-                                "mint_error": swap_response["error"],
-                                "retry_error": retry_resp["error"]
-                            })
-                            .to_string(),
+                    if let Some(retry_error) = retry_resp.get("error") {
+                        let close_error = spilman::CloseError::mint_rejected_after_retry(
+                            swap_response["error"].clone(),
+                            retry_error.clone(),
                         );
+                        let error_json = serde_json::to_string(&close_error)
+                            .unwrap_or_else(|_| close_error.to_string());
+                        return CResult::error(error_json);
                     }
                     swap_response = retry_resp;
                     prepared = retry_prepared;
                 }
                 Err(e) => {
-                    return CResult::success(
-                        serde_json::json!({
-                            "success": false,
-                            "error": format!("Invalid retry swap response: {}", e),
-                            "status": 502
-                        })
-                        .to_string(),
+                    let close_error = spilman::CloseError::mint_rejected_after_retry(
+                        swap_response["error"].clone(),
+                        serde_json::json!(format!("Invalid retry swap response: {}", e)),
                     );
+                    let error_json = serde_json::to_string(&close_error)
+                        .unwrap_or_else(|_| close_error.to_string());
+                    return CResult::error(error_json);
                 }
             },
             Err(e) => {
-                return CResult::success(
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("mint swap retry failed: {}", e),
-                        "status": 502
-                    })
-                    .to_string(),
+                let close_error = spilman::CloseError::mint_rejected_after_retry(
+                    swap_response["error"].clone(),
+                    serde_json::json!(format!("mint swap retry failed: {}", e)),
                 );
+                let error_json =
+                    serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+                return CResult::error(error_json);
             }
         }
     }
@@ -860,29 +836,21 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     ) {
         Ok(json) => json,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": "unblind verification failed",
-                    "status": 500,
-                    "reason": e
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::unblind_failed(e);
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
     let unblind_result: serde_json::Value = match serde_json::from_str(&unblind_result_json) {
         Ok(v) => v,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid unblind result: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
+            let close_error =
+                spilman::CloseError::unblind_failed(format!("Invalid unblind result: {}", e));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
 
@@ -899,14 +867,10 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
         Ok(v) => v,
         Err(e) => {
-            return CResult::success(
-                serde_json::json!({
-                    "success": false,
-                    "error": format!("Invalid params: {}", e),
-                    "status": 500
-                })
-                .to_string(),
-            );
+            let close_error = spilman::CloseError::storage_failed(format!("Invalid params: {}", e));
+            let error_json =
+                serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+            return CResult::error(error_json);
         }
     };
     let locktime = params["locktime"].as_u64().unwrap_or(0);
@@ -920,29 +884,23 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
         receiver_sum,
         sender_sum,
     ) {
-        return CResult::success(
-            serde_json::json!({
-                "success": false,
-                "error": "failed to mark channel closed",
-                "status": 500,
-                "reason": e
-            })
-            .to_string(),
-        );
+        let close_error = spilman::CloseError::storage_failed(e);
+        let error_json =
+            serde_json::to_string(&close_error).unwrap_or_else(|_| close_error.to_string());
+        return CResult::error(error_json);
     }
 
-    CResult::success(
-        serde_json::json!({
-            "success": true,
-            "channel_id": prepared.channel_id,
-            "total_value": actual_total,
-            "receiver_sum": receiver_sum,
-            "sender_sum": sender_sum,
-            "balance": prepared.balance,
-            "already_closed": false
-        })
-        .to_string(),
-    )
+    // Return CloseSuccess as JSON
+    let result = spilman::CloseSuccess {
+        channel_id: prepared.channel_id,
+        total_value: actual_total,
+        receiver_sum,
+        sender_sum,
+        sender_proofs: unblind_result["sender_proofs"].to_string(),
+        already_closed: false,
+    };
+    let json = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+    CResult::success(json)
 }
 
 #[no_mangle]
