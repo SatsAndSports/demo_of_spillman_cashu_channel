@@ -1,50 +1,82 @@
-# CDK Payment Channels Root Makefile
+# CDK Payment Channels Makefile
+#
+# Naming conventions:
+#   build-*     Build/compile targets
+#   run-*       Run servers/clients
+#   test-*      Test targets
+#   clean-*     Cleanup targets
+#
+# Test target patterns:
+#   test-unit-*           Unit tests
+#   test-server-*         Server integration tests (52-test Rust client suite)
+#   test-demo-*           Demo tests (simple client/server sanity check)
+#   test-blossom*         Blossom server tests
+#   test-all*             Aggregate test suites
+#
+# Mint variants (default is CDK mint):
+#   test-demo-python          Uses CDK mint (default)
+#   test-demo-python-nutmix   Uses NutMix mint
 
-# --- Container Engine Configuration ---
-# Edit this to switch between container engines (podman or docker)
-# Or override from command line: make test-rust-only-containerized CONTAINER_ENGINE=docker
+# ===========================================================================
+# Configuration
+# ===========================================================================
+
+# Container engine: podman (default) or docker
+# Override: make test-containerized CONTAINER_ENGINE=docker
 CONTAINER_ENGINE := podman
 
-# Container command (same for both podman and docker)
-CONTAINER_CMD := $(CONTAINER_ENGINE)
-
-# Compose command differs between engines:
-# - Podman: podman-compose (standalone command)
-# - Docker: docker compose (subcommand with space)
 ifeq ($(CONTAINER_ENGINE),podman)
     COMPOSE_CMD := podman-compose
 else
     COMPOSE_CMD := docker compose
 endif
 
-# Compose file for Spilman channel tests
 COMPOSE_FILE := -f docker-compose.spilman.yml
 
+# Directories
 VENV := .venv
+PYTHON_CRATE_DIR := crates/cdk-spilman-python
+GO_CRATE_DIR := crates/cdk-spilman-go
+GO_DEMO_DIR := examples/go-ascii-art
+TS_DEMO_DIR := examples/ts-ascii-art
+BLOSSOM_DIR := web/blossom-server
+WASM_CRATE := crates/cdk-wasm
+NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
+
+# Python tools
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 MATURIN := $(VENV)/bin/maturin
 
-PYTHON_CRATE_DIR := crates/cdk-spilman-python
+# ===========================================================================
+# .PHONY declarations
+# ===========================================================================
 
-.PHONY: venv python-dev python-build python-install clean python-demo-server python-demo-client \
-	go-build-rust go-demo-server go-demo-client \
-	ts-demo-server ts-demo-client \
-	cdk-mintd rust-ascii-build \
-	test test-rust-only \
-	test-python-parallel-cdkmintd test-python-parallel-nutmix test-python-parallel-nutmix-native \
-	test-go-parallel-cdkmintd test-go-parallel-nutmix test-go-parallel-nutmix-native \
-	test-ts-parallel-cdkmintd test-ts-parallel-nutmix test-ts-parallel-nutmix-native \
-	test-blossom-cdkmintd test-blossom-nutmix \
-	test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd test-go-cdkmintd test-servers-cdkmintd \
-	wasm-dev blossom-wasm ts-ascii-wasm test-spilman \
-	test-all-cdkmintd test-all-nutmix test-all-nutmix-native test-all \
-	build-nutmix-setup-units clean-nutmix-setup-units clean-test-logs \
-	ensure-nutmix-image \
-	list-orphans kill-orphans \
-	build-devenv test-rust-only-containerized clean-containers
+.PHONY: venv \
+	build-python build-python-wheel install-python \
+	build-go build-mintd build-rust-server \
+	build-wasm build-blossom-wasm build-ts-wasm \
+	build-devenv build-nutmix-setup \
+	run-python-server run-python-client \
+	run-go-server run-go-client \
+	run-ts-server run-ts-client \
+	test test-rust-only test-unit-spilman \
+	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
+	test-demo-python test-demo-go test-demo-ts \
+	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
+	test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native \
+	test-blossom test-blossom-nutmix \
+	test-all test-all-no-blossom test-all-nutmix test-all-nutmix-native test-all-with-nutmix \
+	test-containerized \
+	clean clean-logs clean-nutmix-setup clean-containers \
+	list-orphans kill-orphans ensure-nutmix-image
 
-# Create virtual environment and install maturin
+# ===========================================================================
+# Build Targets
+# ===========================================================================
+
+# --- Python Bindings ---
+
 $(MATURIN):
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
@@ -53,170 +85,50 @@ $(MATURIN):
 
 venv: $(MATURIN)
 
-# Development mode: compiles and installs in the venv
-python-dev: venv
+# Build Python bindings (development mode)
+build-python: venv
 	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) develop
 
-# Build: creates a wheel in crates/cdk-spilman-python/target/wheels
-python-build: venv
+# Build Python wheel
+build-python-wheel: venv
 	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) build --release
 
-# Install: builds and installs the wheel into the venv
-python-install: venv
+# Install Python wheel
+install-python: venv
 	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) build --release && ../../$(PIP) install target/wheels/*.whl --force-reinstall
 
-# Run the Python demo server
-python-demo-server: python-dev
-	$(PYTHON) examples/python-ascii-art/server.py
+# --- Go Bindings ---
 
-# Run the Python demo client
-python-demo-client:
-	$(PYTHON) examples/python-ascii-art/client.py
-
-# --- Go Demo ---
-
-GO_CRATE_DIR := crates/cdk-spilman-go
-GO_DEMO_DIR := examples/go-ascii-art
-
-# Build the Rust library for Go
-go-build-rust:
+# Build Go bindings (Rust library)
+build-go:
 	cargo build -p cdk-spilman-go
 
-# Run the Go demo server
-go-demo-server: go-build-rust
-	fuser -k 5001/tcp || true
-	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
+# --- Rust Builds ---
 
-# Run the Go demo client
-go-demo-client:
-	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
-
-# --- TypeScript Demo ---
-
-TS_DEMO_DIR := examples/ts-ascii-art
-
-# Run the TypeScript demo server
-ts-demo-server: wasm-dev
-	cd $(TS_DEMO_DIR) && npm install && npm run server
-
-# Run the TypeScript demo client
-ts-demo-client:
-	cd $(TS_DEMO_DIR) && npm run client -- "Hello TypeScript"
-
-# --- Parallel Demo Tests (CDK) ---
-#
-
-cdk-mintd:
+# Build CDK mint daemon
+build-mintd:
 	cargo build -p cdk-mintd --features fakewallet
 
-test-python-parallel-cdkmintd: python-dev cdk-mintd
-	@bash scripts/python-parallel-demo.sh cdk
-
-test-go-parallel-cdkmintd: go-build-rust cdk-mintd
-	@bash scripts/go-parallel-demo.sh cdk
-
-test-ts-parallel-cdkmintd: wasm-dev cdk-mintd
-	@bash scripts/ts-parallel-demo.sh cdk
-
-# --- Parallel Demo Tests (NutMix via Docker Compose) ---
-
-test-python-parallel-nutmix: python-dev build-nutmix-setup-units ensure-nutmix-image
-	@bash scripts/python-parallel-demo.sh nutmix
-
-test-go-parallel-nutmix: go-build-rust build-nutmix-setup-units ensure-nutmix-image
-	@bash scripts/go-parallel-demo.sh nutmix
-
-test-ts-parallel-nutmix: wasm-dev build-nutmix-setup-units ensure-nutmix-image
-	@bash scripts/ts-parallel-demo.sh nutmix
-
-# --- Parallel Demo Tests (NutMix Native - for Docker test image) ---
-
-test-python-parallel-nutmix-native: python-dev
-	@bash scripts/python-parallel-demo.sh nutmix-native
-
-test-go-parallel-nutmix-native: go-build-rust
-	@bash scripts/go-parallel-demo.sh nutmix-native
-
-test-ts-parallel-nutmix-native: wasm-dev
-	@bash scripts/ts-parallel-demo.sh nutmix-native
-
-# --- Rust Tests ---
-
-# Default: run Rust-only channel tests (no Node.js, Python, or Go required)
-test: test-rust-only
-
-# Run all Rust-only channel tests
-# Includes: spilman unit tests + Rust ASCII server integration tests
-test-rust-only: test-spilman test-rust-cdkmintd
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL RUST-ONLY CHANNEL TESTS PASSED"
-	@echo "========================================="
-
-# Run Spilman channel unit tests
-test-spilman:
-	cargo test -p cdk spilman
-
-# --- Blossom Server ---
-
-BLOSSOM_DIR := web/blossom-server
-
-# Run blossom server tests with ephemeral CDK mint
-test-blossom-cdkmintd: cdk-mintd blossom-wasm
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
-
-# Run blossom server tests with ephemeral NutMix mint
-test-blossom-nutmix: build-nutmix-setup-units blossom-wasm
-	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
-
-# --- Server Integration Tests (Rust test client against all servers) ---
-
-# Run Rust integration tests against TypeScript server
-# Tests run in parallel (auto-detect thread count) - see context.rs for how this works
-test-ts-cdkmintd: cdk-mintd ts-ascii-wasm
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Run Rust integration tests against Rust server
-test-rust-cdkmintd: cdk-mintd rust-ascii-build
-	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Run Rust integration tests against Python server
-test-python-cdkmintd: cdk-mintd python-dev
-	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Run Rust integration tests against Go server
-test-go-cdkmintd: cdk-mintd go-build-rust
-	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Run all server integration tests
-test-servers-cdkmintd: test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd test-go-cdkmintd
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
-	@echo "========================================="
-
-# Build the Rust ASCII Art server
-rust-ascii-build:
+# Build Rust ASCII Art server
+build-rust-server:
 	cargo build -p rust-ascii-art
 
-# --- WASM Build ---
-
-WASM_CRATE := crates/cdk-wasm
+# --- WASM Bindings ---
 
 # Source files that WASM depends on
 WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src -name '*.rs' 2>/dev/null)
 
 # Sentinel file tracks when WASM was last built
-# Only rebuilds if Rust sources, Cargo.toml, or Cargo.lock changed
-.wasm-dev-built: $(WASM_SOURCES) crates/cdk-wasm/Cargo.toml crates/cdk/Cargo.toml Cargo.lock
+.wasm-built: $(WASM_SOURCES) crates/cdk-wasm/Cargo.toml crates/cdk/Cargo.toml Cargo.lock
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target nodejs --out-dir ../../web/wasm-nodejs
-	@touch .wasm-dev-built
-	@echo "WASM dev build complete (web/wasm-web, web/wasm-nodejs)"
+	@touch .wasm-built
+	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
 
-wasm-dev: .wasm-dev-built
+# Build WASM bindings
+build-wasm: .wasm-built
 
-# Blossom server needs WASM copied (separate git repo)
+# Build WASM and copy to blossom-server
 BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
 $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	@mkdir -p web/blossom-server/src/wasm web/blossom-server/public/wasm
@@ -224,118 +136,192 @@ $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	cp web/wasm-web/cdk_wasm* web/blossom-server/public/wasm/
 	@echo "WASM copied to blossom-server"
 
-blossom-wasm: .wasm-dev-built $(BLOSSOM_WASM)
+build-blossom-wasm: .wasm-built $(BLOSSOM_WASM)
 
-# TS ASCII Art uses symlink to web/wasm-nodejs, just needs WASM built
-ts-ascii-wasm: .wasm-dev-built
+# Build WASM for TS ASCII Art (uses symlink, just needs WASM built)
+build-ts-wasm: .wasm-built
 
-# --- All Tests ---
+# --- Container/NutMix Builds ---
 
-# Run all CDK test suites
-test-all-cdkmintd: test-spilman test-blossom-cdkmintd test-servers-cdkmintd
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL CDKMINTD TEST SUITES PASSED"
-	@echo "========================================="
+# Build container dev environment image
+build-devenv:
+	$(CONTAINER_ENGINE) build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
 
-# Run all NutMix test suites (Docker Compose mode)
-test-all-nutmix: test-blossom-nutmix
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL NUTMIX TEST SUITES PASSED"
-	@echo "========================================="
+# Build NutMix setup tool
+build-nutmix-setup:
+	cd $(NUTMIX_SETUP_DIR) && go build -o nutmix-setup-units .
 
-# Run all NutMix test suites (native mode - for Docker test image)
-test-all-nutmix-native: test-python-parallel-nutmix-native test-go-parallel-nutmix-native test-ts-parallel-nutmix-native
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL NUTMIX-NATIVE TEST SUITES PASSED"
-	@echo "========================================="
-
-# Run all test suites (CDK + NutMix)
-test-all: test-all-cdkmintd test-all-nutmix
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL TEST SUITES PASSED"
-	@echo "========================================="
-
-# --- NutMix Setup Units ---
-
-NUTMIX_SETUP_UNITS_DIR := scripts/nutmix-setup-units
-
-# Build the nutmix-setup-units tool
-build-nutmix-setup-units:
-	cd $(NUTMIX_SETUP_UNITS_DIR) && go build -o nutmix-setup-units .
-
-# Clean the nutmix-setup-units binary
-clean-nutmix-setup-units:
-	rm -f $(NUTMIX_SETUP_UNITS_DIR)/nutmix-setup-units
-
-# Ensure nutmix-mint Docker image exists, build if needed
+# Ensure NutMix Docker image exists
 ensure-nutmix-image:
 	@if ! docker image inspect nutmix-mint:latest > /dev/null 2>&1; then \
 		echo "Building nutmix-mint Docker image..."; \
 		cd /home/aaron/MyCode/Cashu/NutMix/nutmix && docker compose -f docker-compose-dev.yml build; \
 	fi
 
-# --- Cleanup ---
+# ===========================================================================
+# Run Targets (Demo Servers/Clients)
+# ===========================================================================
 
-# Clean test logs
-clean-test-logs:
-	rm -rf testing/
+# --- Python Demo ---
 
-clean: clean-nutmix-setup-units clean-test-logs
-	cargo clean
-	rm -rf $(PYTHON_CRATE_DIR)/target
-	rm -rf $(GO_CRATE_DIR)/target
-	rm -rf $(VENV)
-	rm -f .wasm-dev-built
+run-python-server: build-python
+	$(PYTHON) examples/python-ascii-art/server.py
 
-# --- Orphan Process Management ---
+run-python-client:
+	$(PYTHON) examples/python-ascii-art/client.py
 
-# List orphaned test processes (servers and mints left running after tests)
-list-orphans:
-	@echo "=== Orphaned test processes ==="
-	@echo "cdk-mintd:"
-	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
-	@echo "rust-ascii-art:"
-	@pgrep -af "rust-ascii-art" | grep -v pgrep || echo "  (none)"
-	@echo "python server.py:"
-	@pgrep -af "python.*server\.py" | grep -v pgrep || echo "  (none)"
-	@echo "tsx server:"
-	@pgrep -af "tsx.*server" | grep -v pgrep || echo "  (none)"
-	@echo "go-ascii-art:"
-	@pgrep -af "go-ascii-art" | grep -v pgrep || echo "  (none)"
+# --- Go Demo ---
 
-# Kill orphaned test processes
-kill-orphans:
-	@echo "Killing orphaned test processes..."
-	-@pkill -f "rust-ascii-art" 2>/dev/null || true
-	-@pkill -f "python.*server\.py" 2>/dev/null || true
-	-@pkill -f "tsx.*server" 2>/dev/null || true
-	-@pkill -f "go-ascii-art" 2>/dev/null || true
-	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
-	@echo "Done. Run 'make list-orphans' to verify."
+run-go-server: build-go
+	fuser -k 5001/tcp || true
+	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
 
-# --- Containerized Tests (requires Podman or Docker) ---
-#
-# Uses a devenv image with volume-mounted source code.
-# Fast iteration: source changes are picked up immediately.
-# No local Rust required - just a container engine.
-#
-# To use Docker instead of Podman:
-#   make test-rust-only-containerized CONTAINER_ENGINE=docker
+run-go-client:
+	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
 
-# Build the devenv image (one-time setup, or after Dockerfile.devenv/rust-toolchain.toml changes)
-# Uses --network=host to work in VPS/cloud environments where bridge networking may be restricted
-build-devenv:
-	$(CONTAINER_CMD) build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
+# --- TypeScript Demo ---
 
-# Run Rust-only channel tests in containers
-# This runs: build -> mint -> rust-server -> test-rust
-# Note: We run 'build' separately because podman-compose 1.3.0 has issues with
-# service_completed_successfully condition.
-test-rust-only-containerized: build-devenv
+run-ts-server: build-wasm
+	cd $(TS_DEMO_DIR) && npm install && npm run server
+
+run-ts-client:
+	cd $(TS_DEMO_DIR) && npm run client -- "Hello TypeScript"
+
+# ===========================================================================
+# Test Targets - Unit Tests
+# ===========================================================================
+
+# Run Spilman unit tests
+test-unit-spilman:
+	cargo test -p cdk spilman
+
+# ===========================================================================
+# Test Targets - Server Integration Tests (52-test Rust client suite)
+# ===========================================================================
+
+# Test TypeScript server
+test-server-ts: build-mintd build-ts-wasm
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Rust server
+test-server-rust: build-mintd build-rust-server
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Python server
+test-server-python: build-mintd build-python
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Go server
+test-server-go: build-mintd build-go
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test all servers
+test-server-all: test-server-ts test-server-rust test-server-python test-server-go
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
+	@echo "========================================="
+
+# ===========================================================================
+# Test Targets - Demo Tests (simple client/server sanity check)
+# ===========================================================================
+
+# --- Demo Tests with CDK Mint (default) ---
+
+test-demo-python: build-python build-mintd
+	@bash scripts/python-parallel-demo.sh cdk
+
+test-demo-go: build-go build-mintd
+	@bash scripts/go-parallel-demo.sh cdk
+
+test-demo-ts: build-wasm build-mintd
+	@bash scripts/ts-parallel-demo.sh cdk
+
+# --- Demo Tests with NutMix (Docker Compose) ---
+
+test-demo-python-nutmix: build-python build-nutmix-setup ensure-nutmix-image
+	@bash scripts/python-parallel-demo.sh nutmix
+
+test-demo-go-nutmix: build-go build-nutmix-setup ensure-nutmix-image
+	@bash scripts/go-parallel-demo.sh nutmix
+
+test-demo-ts-nutmix: build-wasm build-nutmix-setup ensure-nutmix-image
+	@bash scripts/ts-parallel-demo.sh nutmix
+
+# --- Demo Tests with NutMix (Native - for Docker test image) ---
+
+test-demo-python-nutmix-native: build-python
+	@bash scripts/python-parallel-demo.sh nutmix-native
+
+test-demo-go-nutmix-native: build-go
+	@bash scripts/go-parallel-demo.sh nutmix-native
+
+test-demo-ts-nutmix-native: build-wasm
+	@bash scripts/ts-parallel-demo.sh nutmix-native
+
+# ===========================================================================
+# Test Targets - Blossom Server Tests
+# ===========================================================================
+
+# Test blossom server with CDK mint
+test-blossom: build-mintd build-blossom-wasm
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
+
+# Test blossom server with NutMix
+test-blossom-nutmix: build-nutmix-setup build-blossom-wasm
+	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
+
+# ===========================================================================
+# Test Targets - Aggregate Suites
+# ===========================================================================
+
+# Default test target: Rust-only tests (no Node.js, Python, or Go required)
+test: test-rust-only
+
+# Rust-only tests: unit tests + Rust server integration tests
+test-rust-only: test-unit-spilman test-server-rust
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL RUST-ONLY TESTS PASSED"
+	@echo "========================================="
+
+# All tests with CDK mint
+test-all: test-unit-spilman test-blossom test-server-all
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TESTS PASSED (CDK mint)"
+	@echo "========================================="
+
+# All tests with CDK mint, excluding blossom (for Docker image where blossom isn't set up)
+test-all-no-blossom: test-unit-spilman test-server-all
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TESTS PASSED (CDK mint, no blossom)"
+	@echo "========================================="
+
+# All tests with NutMix
+test-all-nutmix: test-blossom-nutmix
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TESTS PASSED (NutMix)"
+	@echo "========================================="
+
+# All tests with NutMix (native mode - for Docker test image)
+test-all-nutmix-native: test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TESTS PASSED (NutMix native)"
+	@echo "========================================="
+
+# All tests with both CDK mint and NutMix
+test-all-with-nutmix: test-all test-all-nutmix
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL TESTS PASSED (CDK + NutMix)"
+	@echo "========================================="
+
+# Containerized tests (Rust-only, no local Rust required)
+test-containerized: build-devenv
 	@echo "Checking that ports 33380 and 50080 are available..."
 	@python3 -c "import socket, sys; ports=[33380, 50080]; \
 		busy = [p for p in ports if not socket.socket().connect_ex(('127.0.0.1', p))]; \
@@ -365,8 +351,56 @@ test-rust-only-containerized: build-devenv
 	fi; \
 	exit $$status
 
-# Clean up containers, volumes, and devenv image
+# ===========================================================================
+# Cleanup Targets
+# ===========================================================================
+
+# Clean test logs
+clean-logs:
+	rm -rf testing/
+
+# Clean NutMix setup tool
+clean-nutmix-setup:
+	rm -f $(NUTMIX_SETUP_DIR)/nutmix-setup-units
+
+# Clean containers and devenv image
 clean-containers:
 	$(COMPOSE_CMD) $(COMPOSE_FILE) down -v
-	$(CONTAINER_CMD) rmi cdk-devenv 2>/dev/null || true
+	$(CONTAINER_ENGINE) rmi cdk-devenv 2>/dev/null || true
 	@echo "Containers and devenv image cleaned up."
+
+# Full clean
+clean: clean-nutmix-setup clean-logs
+	cargo clean
+	rm -rf $(PYTHON_CRATE_DIR)/target
+	rm -rf $(GO_CRATE_DIR)/target
+	rm -rf $(VENV)
+	rm -f .wasm-built
+
+# ===========================================================================
+# Utility Targets
+# ===========================================================================
+
+# List orphaned test processes
+list-orphans:
+	@echo "=== Orphaned test processes ==="
+	@echo "cdk-mintd:"
+	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
+	@echo "rust-ascii-art:"
+	@pgrep -af "rust-ascii-art" | grep -v pgrep || echo "  (none)"
+	@echo "python server.py:"
+	@pgrep -af "python.*server\.py" | grep -v pgrep || echo "  (none)"
+	@echo "tsx server:"
+	@pgrep -af "tsx.*server" | grep -v pgrep || echo "  (none)"
+	@echo "go-ascii-art:"
+	@pgrep -af "go-ascii-art" | grep -v pgrep || echo "  (none)"
+
+# Kill orphaned test processes
+kill-orphans:
+	@echo "Killing orphaned test processes..."
+	-@pkill -f "rust-ascii-art" 2>/dev/null || true
+	-@pkill -f "python.*server\.py" 2>/dev/null || true
+	-@pkill -f "tsx.*server" 2>/dev/null || true
+	-@pkill -f "go-ascii-art" 2>/dev/null || true
+	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
+	@echo "Done. Run 'make list-orphans' to verify."

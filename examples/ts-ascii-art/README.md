@@ -11,7 +11,7 @@ This example demonstrates Spilman unidirectional payment channels using TypeScri
 
 1. Build the WASM bindings (from repo root):
    ```bash
-   cd web/blossom-server && make wasm-dev
+   make build-wasm
    ```
 
 2. Have a Cashu mint running (default: `http://localhost:3338`):
@@ -142,11 +142,11 @@ ts-ascii-art/
 
 ## Testing
 
-Run the automated parallel test:
+Run the automated demo test:
 
 ```bash
 # From repo root
-make test-ts-parallel-cdk
+make test-demo-ts
 ```
 
 This starts a temporary mint, runs the server, and executes 3 parallel clients.

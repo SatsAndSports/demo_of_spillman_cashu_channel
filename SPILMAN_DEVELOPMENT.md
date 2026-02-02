@@ -211,9 +211,9 @@ The root Makefile uses **sentinel-based dependency tracking** for fast increment
 
 ```bash
 # Build WASM - instant if nothing changed, ~3-6s if rebuild needed
-make wasm-dev
+make build-wasm
 
-# The sentinel file .wasm-dev-built tracks when WASM was last built
+# The sentinel file .wasm-built tracks when WASM was last built
 # Only rebuilds if these change:
 #   - crates/cdk/src/**/*.rs
 #   - crates/cdk-wasm/src/**/*.rs  
@@ -223,8 +223,8 @@ make wasm-dev
 Test targets automatically build/copy WASM as needed:
 
 ```bash
-make test-blossom-cdkmintd   # Builds WASM if needed, copies to blossom-server, runs tests
-make test-ts-cdkmintd        # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
+make test-blossom      # Builds WASM if needed, copies to blossom-server, runs tests
+make test-server-ts    # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
 ```
 
 ### WASM distribution
@@ -267,8 +267,8 @@ cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-s
 From CDK root (recommended - handles mint and WASM automatically):
 
 ```bash
-make test-blossom-cdkmintd     # Uses CDK mint
-make test-blossom-nutmix       # Uses NutMix mint (requires Docker)
+make test-blossom          # Uses CDK mint (default)
+make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
 ```
 
 Or manually with a mint running at `localhost:3338`:
@@ -291,13 +291,13 @@ The `cdk-spilman-server-integration-tests` crate provides a comprehensive Rust t
 
 ```bash
 # Test individual servers
-make test-ts-cdkmintd        # Test TypeScript server (52 tests)
-make test-rust-cdkmintd      # Test Rust server (52 tests)
-make test-python-cdkmintd    # Test Python server (52 tests)
-make test-go-cdkmintd        # Test Go server (52 tests)
+make test-server-ts        # Test TypeScript server (52 tests)
+make test-server-rust      # Test Rust server (52 tests)
+make test-server-python    # Test Python server (52 tests)
+make test-server-go        # Test Go server (52 tests)
 
 # Test all servers
-make test-servers-cdkmintd   # Runs all four above sequentially
+make test-server-all       # Runs all four above sequentially
 ```
 
 Tests run in parallel by default using `tokio::sync::OnceCell` for thread-safe lazy initialization of the shared mint and server processes.
@@ -322,7 +322,7 @@ The Rust ASCII Art server (`examples/rust-ascii-art/`) is a native implementatio
 cargo build -p rust-ascii-art
 
 # Run tests
-make test-rust-cdkmintd
+make test-server-rust
 
 # Run manually (requires mint at localhost:3338)
 PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art

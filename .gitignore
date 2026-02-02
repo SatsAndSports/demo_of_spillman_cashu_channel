@@ -36,4 +36,4 @@ AGENTS.md
 testing/
 
 # WASM build sentinel
-.wasm-dev-built
+.wasm-built

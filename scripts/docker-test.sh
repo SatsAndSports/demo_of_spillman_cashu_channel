@@ -74,7 +74,7 @@ case "${1:-help}" in
         build_image
         check_lingering || true
         echo "Running all tests..."
-        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-all-cdkmintd test-all-nutmix-native
+        docker run --rm --label "$LABEL" "$IMAGE_NAME" make test-all-no-blossom test-all-nutmix-native
         ;;
     clean)
         LINGERING=$(docker ps -q --filter "label=$LABEL")

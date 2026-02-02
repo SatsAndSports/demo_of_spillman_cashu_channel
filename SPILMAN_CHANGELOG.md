@@ -36,7 +36,7 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Migrated TS tests to Rust**: Replaced the TypeScript test suite with a comprehensive Rust integration test crate (52 tests).
 - **Tests all four server implementations**: TypeScript, Rust, Python, and Go servers all pass the same test suite.
 - **Parallel test execution**: Tests run in parallel using `tokio::sync::OnceCell` for thread-safe lazy initialization of shared mint/server processes.
-- **New Makefile targets**: `test-ts-cdkmintd`, `test-rust-cdkmintd`, `test-python-cdkmintd`, `test-go-cdkmintd`, `test-servers-cdkmintd`.
+- **New Makefile targets**: `test-server-ts`, `test-server-rust`, `test-server-python`, `test-server-go`, `test-server-all`.
 - **Orphan process management**: Added `make list-orphans` and `make kill-orphans` to handle servers/mints left running after interrupted tests.
 - **Clean test output**: Disabled doc-tests and lib unit tests (no tests there) to show only the 52 integration tests.
 
@@ -66,8 +66,8 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - **Axum HTTP server**: Endpoints for `/channel/params`, `/channel/register`, `/ascii`, `/channel/:id/status`, `/channel/:id/close`, `/channel/:id/unilateral-close`.
 - **In-memory stores**: Thread-safe (`RwLock<HashMap>`) storage for channel funding, balances, usage, closed channels, and keyset cache.
 - **Async mint interaction**: `call_mint_swap_async()` for swap requests during channel close (avoids `reqwest::blocking` in tokio runtime).
-- **Full test coverage**: Passes all 52 tests from the Rust integration test suite via `make test-rust-cdkmintd`.
-- **Added to CI**: Included in `make test-all-cdkmintd` and `scripts/docker-test.sh`.
+- **Full test coverage**: Passes all 52 tests from the Rust integration test suite via `make test-server-rust`.
+- **Added to CI**: Included in `make test-all` and `scripts/docker-test.sh`.
 
 ### Hash Input Normalization
 - **Normalized all hash-based derivations to pipe-delimited text**: All 5 protocol-critical derivations now use consistent string interpolation instead of raw integer bytes or platform-dependent `usize`.
@@ -98,7 +98,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 
 ### Cross-Server Testing
 - **Rust test suite validates all four servers**: The 52-test Rust integration suite validates TS, Rust, Python, and Go servers via `SERVER_TYPE` env var
-- **Makefile targets**: `make test-ts-cdkmintd`, `make test-rust-cdkmintd`, `make test-python-cdkmintd`, `make test-go-cdkmintd` run the full test suite with ephemeral mints
+- **Makefile targets**: `make test-server-ts`, `make test-server-rust`, `make test-server-python`, `make test-server-go` run the full test suite with ephemeral mints
 - **All servers pass tests**: TS, Rust, Python, and Go all pass 52/52 tests
 
 ### Core Protocol
