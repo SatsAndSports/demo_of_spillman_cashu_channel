@@ -136,8 +136,10 @@ To make Spilman channels adoptable across different tech stacks, we use a **"Pur
 The Spilman logic is implemented as a structured **Protocol Bridge** (`SpilmanBridge`):
 
 - **Input**: Payment Request JSON + Context JSON
-- **Output**: `PaymentResponse` (200 OK or 402 Error with metadata)
+- **Output**: `Result<PaymentSuccess, BridgeError>` (typed success or error)
 - **Portability**: Compiles to WASM (JS/TS) and FFI (Python/Go)
+
+Core methods (`process_payment`, `fund_channel`, `validate_payment`) return typed results and signal errors via the language's native mechanism (WASM throws, Python raises, Go returns error). Close methods (`execute_cooperative_close`, `execute_unilateral_close`) return JSON strings.
 
 ### The SpilmanHost Trait
 
