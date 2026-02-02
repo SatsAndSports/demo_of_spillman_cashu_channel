@@ -503,3 +503,165 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
 
     println!("✓ All stage2 blinded pubkeys are unique");
 }
+
+/// Test: Sender can derive secret keys for stage 2 outputs
+///
+/// After a channel closes, Alice receives "sender" proofs locked to her blinded pubkeys.
+/// This test verifies that Alice can derive the correct blinded secret key for each
+/// returned proof using `get_sender_blinded_secret_key_for_stage2_output()`.
+///
+/// The derived secret key's public key must match the pubkey locked in the P2PK secret.
+/// This is essential for Alice to be able to spend her returned proofs.
+///
+/// Migrated from TypeScript test:
+/// "closes unused channel and verifies sender can derive secret keys for returned proofs"
+#[test]
+fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
+    use std::collections::HashMap;
+
+    // 1. Setup: Generate keypairs for Alice and Charlie
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey = alice_secret.public_key();
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    println!("Alice pubkey: {}", alice_pubkey.to_hex());
+    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+
+    // 2. Create minimal keyset info for the test
+    // Generate valid public keys by deriving them from secret keys
+    let mut keys = std::collections::BTreeMap::new();
+    for amount in [1u64, 2, 4, 8, 16, 32, 64] {
+        // Generate a deterministic but valid public key for each denomination
+        let mint_secret = SecretKey::generate();
+        keys.insert(cdk_common::Amount::from(amount), mint_secret.public_key());
+    }
+
+    let keyset_keys = cdk_common::nuts::Keys::new(keys);
+    let keyset_id = cdk_common::nuts::Id::v1_from_keys(&keyset_keys);
+    let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
+    println!("Keyset ID: {}", keyset_id);
+
+    // 3. Create channel parameters with a reasonable capacity
+    let capacity = 100u64;
+    let params = ChannelParameters::new_with_secret_key(
+        alice_pubkey,
+        charlie_pubkey,
+        "http://localhost:3338".to_string(),
+        CurrencyUnit::Sat,
+        capacity,
+        crate::util::unix_time() + 3600, // 1 hour in future
+        crate::util::unix_time(),
+        format!("test-sender-keys-{}", crate::util::unix_time()),
+        keyset_info,
+        64, // max amount per output
+        &alice_secret,
+    )
+    .expect("Failed to create channel params");
+
+    println!("Channel ID: {}", params.get_channel_id());
+    println!("Capacity: {} sats", capacity);
+
+    // 4. Create sender outputs for the full capacity
+    // This simulates what Alice receives when closing a channel with balance=0
+    let sender_outputs = DeterministicOutputsForOneContext::new(
+        "sender".to_string(),
+        capacity,
+        params.clone(),
+    )
+    .expect("Failed to create sender outputs");
+
+    let secrets_with_blinding = sender_outputs
+        .get_secrets_with_blinding()
+        .expect("Failed to get secrets with blinding");
+
+    println!(
+        "Created {} sender outputs for {} sats",
+        secrets_with_blinding.len(),
+        capacity
+    );
+
+    // 5. Verify Alice can derive the secret key for each output
+    // Track index per amount (outputs are sorted smallest-amount-first)
+    let mut index_by_amount: HashMap<u64, usize> = HashMap::new();
+    let mut verified_count = 0;
+
+    for output in &secrets_with_blinding {
+        let amount = output.amount;
+        let index = *index_by_amount.get(&amount).unwrap_or(&0);
+        index_by_amount.insert(amount, index + 1);
+
+        // Get Alice's blinded secret key for this specific (amount, index)
+        let blinded_secret = params
+            .get_sender_blinded_secret_key_for_stage2_output(&alice_secret, amount, index)
+            .expect("Failed to derive blinded secret key");
+
+        // Derive the public key from the secret key
+        let derived_pubkey = blinded_secret.public_key();
+
+        // Parse the P2PK secret to extract the locked pubkey
+        // Secret format: ["P2PK", {"nonce": "...", "data": "pubkey_hex", ...}]
+        let secret_str = output.secret.to_string();
+        let secret_json: serde_json::Value =
+            serde_json::from_str(&secret_str).expect("Failed to parse secret JSON");
+
+        assert!(
+            secret_json.is_array(),
+            "Secret should be a JSON array, got: {}",
+            secret_str
+        );
+        assert_eq!(
+            secret_json[0].as_str(),
+            Some("P2PK"),
+            "Secret should start with 'P2PK'"
+        );
+
+        let locked_pubkey_hex = secret_json[1]["data"]
+            .as_str()
+            .expect("Secret should have 'data' field with pubkey");
+
+        // Verify the derived pubkey matches the locked pubkey
+        assert_eq!(
+            derived_pubkey.to_hex(),
+            locked_pubkey_hex,
+            "Derived pubkey should match locked pubkey for amount={} index={}",
+            amount,
+            index
+        );
+
+        verified_count += 1;
+    }
+
+    println!(
+        "✓ Alice can derive secret keys for all {} sender outputs",
+        verified_count
+    );
+
+    // 6. Also verify different amounts produce different keys (sanity check)
+    // Get keys for two different amounts
+    let key_64_0 = params
+        .get_sender_blinded_secret_key_for_stage2_output(&alice_secret, 64, 0)
+        .unwrap()
+        .public_key()
+        .to_hex();
+    let key_32_0 = params
+        .get_sender_blinded_secret_key_for_stage2_output(&alice_secret, 32, 0)
+        .unwrap()
+        .public_key()
+        .to_hex();
+    let key_64_1 = params
+        .get_sender_blinded_secret_key_for_stage2_output(&alice_secret, 64, 1)
+        .unwrap()
+        .public_key()
+        .to_hex();
+
+    assert_ne!(
+        key_64_0, key_32_0,
+        "Different amounts should produce different keys"
+    );
+    assert_ne!(
+        key_64_0, key_64_1,
+        "Different indices should produce different keys"
+    );
+    println!("✓ Per-proof keys are unique for different (amount, index) pairs");
+}
