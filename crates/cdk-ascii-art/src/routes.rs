@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use cdk::spilman::{unblind_and_verify_dleq, BridgeStatus, ClosePreparationError, SpilmanBridge, SpilmanHost};
+use cdk::spilman::{unblind_and_verify_dleq, ClosePreparationError, SpilmanBridge, SpilmanHost};
 
 use crate::host::AsciiArtHost;
 use crate::stores::{get_channel_status, Stores, UnitPricing};
@@ -56,6 +56,7 @@ pub struct AsciiRequest {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
 pub struct AsciiResponse {
     pub art: String,
     pub message: String,
@@ -317,78 +318,73 @@ async fn post_ascii(
         .bridge
         .process_payment_via_json(&payment_json, &context.to_string());
 
-    if !result.success {
-        tracing::info!(
-            "  [Payment] REJECTED: {}",
-            result.error.as_deref().unwrap_or("unknown")
-        );
+    match result {
+        Ok(success) => {
+            // Look up unit from stored channel params to calculate cost
+            let unit = state
+                .stores
+                .get_funding(&success.channel_id)
+                .and_then(|f| {
+                    serde_json::from_str::<serde_json::Value>(&f.params_json)
+                        .ok()?
+                        .get("unit")?
+                        .as_str()
+                        .map(String::from)
+                })
+                .unwrap_or_else(|| "sat".to_string());
 
-        let mut resp_headers = HeaderMap::new();
-        if let Some(ref header) = result.header {
-            if let Ok(header_val) = header.to_string().parse() {
-                resp_headers.insert("X-Cashu-Channel", header_val);
-            }
+            let cost = message_length * state.pricing.get(&unit).map(|p| p.per_char).unwrap_or(1);
+
+            tracing::info!(
+                "  [Payment] ACCEPTED: cost={} balance={}/{}",
+                cost,
+                success.balance,
+                success.capacity
+            );
+
+            // Generate ASCII art
+            let art = state
+                .figlet_font
+                .convert(message)
+                .map(|f| f.to_string())
+                .unwrap_or_else(|| message.to_string());
+
+            Json(serde_json::json!({
+                "art": art,
+                "message": message,
+                "cost": cost,
+                "payment": {
+                    "channel_id": success.channel_id,
+                    "balance": success.balance,
+                    "amount_due": success.amount_due,
+                    "capacity": success.capacity,
+                },
+            }))
+            .into_response()
         }
+        Err(e) => {
+            tracing::info!("  [Payment] REJECTED: {}", e);
 
-        let status = match result.status {
-            BridgeStatus::BadRequest => StatusCode::BAD_REQUEST,
-            BridgeStatus::PaymentRequired => StatusCode::PAYMENT_REQUIRED,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+            // Use ClosePreparationError to get proper status code mapping
+            let error_response = ClosePreparationError::from_bridge_error(e);
 
-        return (
-            status,
-            resp_headers,
-            Json(result.body.unwrap_or_else(|| {
-                serde_json::json!({ "error": result.error.unwrap_or_else(|| "unknown".into()) })
-            })),
-        )
-            .into_response();
+            let status = match error_response.status {
+                400 => StatusCode::BAD_REQUEST,
+                402 => StatusCode::PAYMENT_REQUIRED,
+                404 => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": error_response.error,
+                    "reason": error_response.reason,
+                })),
+            )
+                .into_response()
+        }
     }
-
-    // Payment accepted - generate ASCII art
-    let payment_info = result.header.unwrap_or(serde_json::json!({}));
-
-    // Look up unit from stored channel params to calculate cost
-    let channel_id = payment_info
-        .get("channel_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let unit = state
-        .stores
-        .get_funding(channel_id)
-        .and_then(|f| {
-            serde_json::from_str::<serde_json::Value>(&f.params_json)
-                .ok()?
-                .get("unit")?
-                .as_str()
-                .map(String::from)
-        })
-        .unwrap_or_else(|| "sat".to_string());
-
-    let cost = message_length * state.pricing.get(&unit).map(|p| p.per_char).unwrap_or(1);
-
-    tracing::info!(
-        "  [Payment] ACCEPTED: cost={} balance={}/{}",
-        cost,
-        payment_info.get("balance").and_then(|v| v.as_u64()).unwrap_or(0),
-        payment_info.get("capacity").and_then(|v| v.as_u64()).unwrap_or(0)
-    );
-
-    // Generate ASCII art
-    let art = state
-        .figlet_font
-        .convert(message)
-        .map(|f| f.to_string())
-        .unwrap_or_else(|| message.to_string());
-
-    Json(serde_json::json!({
-        "art": art,
-        "message": message,
-        "cost": cost,
-        "payment": payment_info,
-    }))
-    .into_response()
 }
 
 // ============================================================================
@@ -401,7 +397,7 @@ async fn get_channel_status_handler(
 ) -> Response {
     match get_channel_status(&state.stores, &channel_id, &state.pricing) {
         Ok(status) => Json(status).into_response(),
-        Err(e) if e == "unknown channel" => (
+        Err("unknown channel") => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "unknown channel" })),
         )

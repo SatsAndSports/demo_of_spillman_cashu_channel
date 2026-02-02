@@ -553,17 +553,41 @@ def register_channel():
     }
     
     # Use fund_channel to validate and store the channel
-    result_json = bridge.fund_channel(json.dumps(register_body))
-    result = json.loads(result_json)
+    # fund_channel now returns FundChannelResult object and raises RuntimeError on error
+    try:
+        result = bridge.fund_channel(json.dumps(register_body))
+    except RuntimeError as e:
+        error_msg = str(e)
+        print(f"  [Register] REJECTED: {error_msg}")
+        
+        # Determine HTTP status from error type
+        status = 402  # Payment Required (default)
+        lower_msg = error_msg.lower()
+        if ("invalid base64" in lower_msg or
+            "invalid utf8" in lower_msg or
+            "invalid json" in lower_msg or
+            "missing field" in lower_msg or
+            "missing channel_id" in lower_msg or
+            "missing signature" in lower_msg or
+            ("expected" in lower_msg and ("string" in lower_msg or "integer" in lower_msg or "u64" in lower_msg))):
+            status = 400
+        elif "internal" in lower_msg or "misconfigured" in lower_msg:
+            status = 500
+        
+        return jsonify({
+            "success": False,
+            "error": "Registration failed",
+            "reason": error_msg,
+            "status": status,
+        }), status
     
-    if not result.get("success"):
-        status = result.get("status", 400)
-        reason = result.get("reason", result.get("error", "unknown"))
-        print(f"  [Register] REJECTED: {reason}")
-        return jsonify(result), status
-    
-    print(f"  [Register] SUCCESS! channel={result['channel_id'][:16]} capacity={result['capacity']} already_known={result['already_known']}")
-    return jsonify(result)
+    print(f"  [Register] SUCCESS! channel={result.channel_id[:16]} capacity={result.capacity} already_known={result.already_known}")
+    return jsonify({
+        "success": True,
+        "channel_id": result.channel_id,
+        "capacity": result.capacity,
+        "already_known": result.already_known,
+    })
 
 
 @app.route("/ascii", methods=["POST"])
@@ -599,18 +623,38 @@ def ascii_art():
     context = json.dumps({"message_length": len(message)})
     
     # Process payment through bridge
-    result_json = bridge.process_payment(payment_header, context)
-    result = json.loads(result_json)
-    
-    if not result["success"]:
-        print(f"  [Payment] REJECTED: {result.get('error', 'unknown')}")
-        response = jsonify(result.get("body", {"error": result.get("error")}))
-        if result.get("header"):
-            response.headers["X-Cashu-Channel"] = json.dumps(result["header"])
-        return response, 402
+    # process_payment now returns PaymentSuccess object and raises RuntimeError on error
+    try:
+        result = bridge.process_payment(payment_header, context)
+    except RuntimeError as e:
+        error_msg = str(e)
+        print(f"  [Payment] REJECTED: {error_msg}")
+        
+        # Determine HTTP status from error type
+        status = 402  # Payment Required (default)
+        lower_msg = error_msg.lower()
+        if ("invalid base64" in lower_msg or
+            "invalid utf8" in lower_msg or
+            "invalid json" in lower_msg or
+            "missing field" in lower_msg or
+            "missing channel_id" in lower_msg or
+            "missing signature" in lower_msg or
+            ("expected" in lower_msg and ("string" in lower_msg or "integer" in lower_msg or "u64" in lower_msg))):
+            status = 400
+        elif "internal" in lower_msg or "misconfigured" in lower_msg:
+            status = 500
+        
+        response = jsonify({"error": "Payment failed", "reason": error_msg})
+        response.headers["X-Cashu-Channel"] = json.dumps({"error": error_msg})
+        return response, status
     
     # Payment accepted - generate ASCII art
-    payment_info = result.get("header", {})
+    payment_info = {
+        "channel_id": result.channel_id,
+        "balance": result.balance,
+        "amount_due": result.amount_due,
+        "capacity": result.capacity,
+    }
     # Look up unit-specific pricing from channel params
     funding = channel_funding.get(payment_info.get("channel_id", ""))
     unit_pricing = ALL_PRICING["sat"]  # default

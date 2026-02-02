@@ -142,21 +142,15 @@ pub struct PaymentRequest {
     pub funding_proofs: Option<Vec<Proof>>,
 }
 
-#[derive(Debug, Serialize, Copy, Clone)]
-pub enum BridgeStatus {
-    OK,
-    PaymentRequired,
-    BadRequest,
-    ServerError,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PaymentResponse {
-    pub success: bool,
-    pub error: Option<String>,
-    pub status: BridgeStatus,
-    pub header: Option<serde_json::Value>,
-    pub body: Option<serde_json::Value>,
+/// Result of a successful payment
+///
+/// Returned by `process_payment` after validation and recording.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaymentSuccess {
+    pub channel_id: String,
+    pub balance: u64,
+    pub amount_due: u64,
+    pub capacity: u64,
 }
 
 /// Data needed to close a channel
@@ -347,7 +341,7 @@ impl ClosePreparationError {
         let reason = err.to_string();
 
         match &err {
-            BridgeError::ChannelClosed => Self::bad_request(reason),
+            BridgeError::ChannelClosed => Self::payment_required(reason),
             BridgeError::UnknownChannel => Self::not_found(reason),
             BridgeError::InvalidRequest(msg) if msg.contains("no payment proof") => {
                 Self::bad_request(reason)
@@ -373,14 +367,11 @@ impl ClosePreparationError {
 /// For new channels, the channel funding is saved, but no usage is recorded.
 #[derive(Debug, Clone, Serialize)]
 pub struct PaymentValidationResult {
-    pub valid: bool,
     pub channel_id: String,
     pub balance: u64,
     pub amount_due: u64,
     pub capacity: u64,
     pub sender_signature: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 /// Result of registering/funding a channel
@@ -389,13 +380,10 @@ pub struct PaymentValidationResult {
 /// without recording any usage.
 #[derive(Debug, Clone, Serialize)]
 pub struct FundChannelResult {
-    pub success: bool,
     pub channel_id: String,
     pub capacity: u64,
     /// True if the channel was already known (idempotent call)
     pub already_known: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -787,6 +775,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     ///
     /// This is the core implementation that takes typed parameters.
     /// For JSON or base64 input, use the `*_via_json` or `*_via_base64_header` variants.
+    ///
+    /// Returns `PaymentSuccess` on success, `BridgeError` on failure.
     pub fn process_payment(
         &self,
         channel_id: &str,
@@ -795,92 +785,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         params: Option<&serde_json::Value>,
         funding_proofs: Option<&[Proof]>,
         context_json: &str,
-    ) -> PaymentResponse {
-        match self.process_payment_inner(
-            channel_id,
-            balance,
-            signature,
-            params,
-            funding_proofs,
-            context_json,
-        ) {
-            Ok(resp) => resp,
-            Err(e) => {
-                let mut extra = BTreeMap::new();
-                let msg = e.to_string();
-                let status = match e {
-                    BridgeError::InvalidRequest(_) => BridgeStatus::BadRequest,
-                    BridgeError::ServerMisconfigured(_) => BridgeStatus::ServerError,
-                    BridgeError::Internal(_) => BridgeStatus::ServerError,
-                    _ => BridgeStatus::PaymentRequired,
-                };
-
-                match e {
-                    BridgeError::CapacityTooSmall {
-                        capacity,
-                        min_capacity,
-                    } => {
-                        extra.insert("capacity".into(), serde_json::json!(capacity));
-                        extra.insert("min_capacity".into(), serde_json::json!(min_capacity));
-                    }
-                    BridgeError::LocktimeTooSoon {
-                        locktime,
-                        min_locktime,
-                        now,
-                    } => {
-                        extra.insert("locktime".into(), serde_json::json!(locktime));
-                        extra.insert(
-                            "min_expiry_in_seconds".into(),
-                            serde_json::json!(min_locktime - now),
-                        );
-                        extra.insert(
-                            "seconds_remaining".into(),
-                            serde_json::json!(locktime.saturating_sub(now)),
-                        );
-                    }
-                    BridgeError::MaxAmountExceeded {
-                        amount,
-                        max_allowed,
-                    } => {
-                        extra.insert("maximum_amount".into(), serde_json::json!(amount));
-                        extra.insert("max_allowed".into(), serde_json::json!(max_allowed));
-                    }
-                    BridgeError::BalanceExceedsCapacity { balance, capacity } => {
-                        extra.insert("balance".into(), serde_json::json!(balance));
-                        extra.insert("capacity".into(), serde_json::json!(capacity));
-                    }
-                    BridgeError::InsufficientBalance {
-                        balance,
-                        amount_due,
-                    } => {
-                        extra.insert("balance".into(), serde_json::json!(balance));
-                        extra.insert("amount_due".into(), serde_json::json!(amount_due));
-                    }
-                    BridgeError::BalanceMismatch { expected, actual } => {
-                        extra.insert("expected".into(), serde_json::json!(expected));
-                        extra.insert("actual".into(), serde_json::json!(actual));
-                    }
-                    BridgeError::ValidationFailed(ref s) => {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(s) {
-                            extra.insert("validation_errors".into(), val);
-                        }
-                    }
-                    _ => {}
-                }
-                self.error_with_extra(&msg, status, None, extra)
-            }
-        }
-    }
-
-    fn process_payment_inner(
-        &self,
-        channel_id: &str,
-        balance: u64,
-        signature: &str,
-        params: Option<&serde_json::Value>,
-        funding_proofs: Option<&[Proof]>,
-        context_json: &str,
-    ) -> Result<PaymentResponse, BridgeError> {
+    ) -> Result<PaymentSuccess, BridgeError> {
         // 1. Validate the payment (no side effects except saving funding for new channels)
         let validation = self.validate_payment(
             channel_id,
@@ -899,20 +804,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             context_json,
         );
 
-        // 3. Return success with confirmation header
-        let header = serde_json::json!({
-            "channel_id": validation.channel_id,
-            "balance": validation.balance,
-            "amount_due": validation.amount_due,
-            "capacity": validation.capacity,
-        });
-
-        Ok(PaymentResponse {
-            success: true,
-            error: None,
-            status: BridgeStatus::OK,
-            header: Some(header),
-            body: None,
+        // 3. Return success
+        Ok(PaymentSuccess {
+            channel_id: validation.channel_id,
+            balance: validation.balance,
+            amount_due: validation.amount_due,
+            capacity: validation.capacity,
         })
     }
 
@@ -923,18 +820,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         &self,
         payment_json: &str,
         context_json: &str,
-    ) -> PaymentResponse {
-        let payment: PaymentRequest = match serde_json::from_str(payment_json) {
-            Ok(p) => p,
-            Err(e) => {
-                return self.error_with_extra(
-                    &e.to_string(),
-                    BridgeStatus::BadRequest,
-                    None,
-                    BTreeMap::new(),
-                )
-            }
-        };
+    ) -> Result<PaymentSuccess, BridgeError> {
+        let payment: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
         self.process_payment(
             &payment.channel_id,
             payment.balance,
@@ -947,23 +835,13 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
     /// Process an incoming payment from a base64-encoded header
     ///
-    /// This is a convenience wrapper that decodes the base64 header and calls `process_payment_via_json`.
+    /// This is a convenience wrapper that decodes the base64 header and calls `process_payment`.
     pub fn process_payment_via_base64_header(
         &self,
         base64_header: &str,
         context_json: &str,
-    ) -> PaymentResponse {
-        let payment = match Self::decode_payment_header(base64_header) {
-            Ok(p) => p,
-            Err(e) => {
-                return self.error_with_extra(
-                    &e.to_string(),
-                    BridgeStatus::BadRequest,
-                    None,
-                    BTreeMap::new(),
-                )
-            }
-        };
+    ) -> Result<PaymentSuccess, BridgeError> {
+        let payment = Self::decode_payment_header(base64_header)?;
         self.process_payment(
             &payment.channel_id,
             payment.balance,
@@ -1060,13 +938,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         // 8. Return validation result (no record_payment call here)
         Ok(PaymentValidationResult {
-            valid: true,
             channel_id: channel_id.to_string(),
             balance,
             amount_due,
             capacity,
             sender_signature: signature.to_string(),
-            error: None,
         })
     }
 
@@ -1193,11 +1069,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         // 6. Return success (no record_payment call)
         Ok(FundChannelResult {
-            success: true,
             channel_id: channel_id.to_string(),
             capacity,
             already_known,
-            error: None,
         })
     }
 
@@ -1429,42 +1303,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         Ok(())
     }
-
-    fn error_with_extra(
-        &self,
-        msg: &str,
-        status: BridgeStatus,
-        reason: Option<String>,
-        extra: BTreeMap<String, serde_json::Value>,
-    ) -> PaymentResponse {
-        let mut header = extra.clone();
-        header.insert("error".into(), serde_json::json!(msg));
-
-        let mut body = extra;
-        let error_title = match status {
-            BridgeStatus::PaymentRequired => "Payment required",
-            BridgeStatus::BadRequest => "Bad Request",
-            BridgeStatus::ServerError => "Server Error",
-            _ => "Error",
-        };
-        body.insert("error".into(), serde_json::json!(error_title));
-        body.insert(
-            "reason".into(),
-            serde_json::json!(match reason {
-                Some(r) => format!("{} - {}", msg, r),
-                None => msg.to_string(),
-            }),
-        );
-
-        PaymentResponse {
-            success: false,
-            error: Some(msg.to_string()),
-            status,
-            header: Some(serde_json::json!(header)),
-            body: Some(serde_json::json!(body)),
-        }
-    }
-
     /// Implementation helper for prepare_close_data.
     ///
     /// This contains the shared logic between cooperative and unilateral close:
@@ -2061,13 +1899,11 @@ mod tests {
             "keys": {}
         });
 
-        let response = bridge.process_payment_via_json(&payment.to_string(), "{}");
+        let result = bridge.process_payment_via_json(&payment.to_string(), "{}");
 
-        assert!(!response.success);
-        assert!(response
-            .error
-            .unwrap()
-            .contains("receiver key not acceptable"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("receiver key not acceptable"));
     }
 
     #[test]
@@ -2107,13 +1943,11 @@ mod tests {
             "keys": {}
         });
 
-        let response = bridge.process_payment_via_json(&payment.to_string(), "{}");
+        let result = bridge.process_payment_via_json(&payment.to_string(), "{}");
 
-        assert!(!response.success);
-        assert!(response
-            .error
-            .unwrap()
-            .contains("mint or keyset not acceptable"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("mint or keyset not acceptable"));
     }
 
     struct FlexibleMockHost {
