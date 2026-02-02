@@ -286,15 +286,27 @@ impl WasmSpilmanBridge {
         })
     }
 
+    /// Process a payment and record usage
+    ///
+    /// Validates the payment and records the usage if valid.
+    ///
+    /// # Arguments
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
+    ///   and optionally params + funding_proofs for unknown channels
+    /// * `context_json` - Context JSON describing the request
+    ///
+    /// # Returns
+    /// PaymentSuccess object on success, throws on error
     #[wasm_bindgen(js_name = processPayment)]
     pub fn process_payment(
         &self,
         payment_json: &str,
         context_json: &str,
-    ) -> Result<String, JsValue> {
-        let response = self.bridge.process_payment_via_json(payment_json, context_json);
-
-        serde_json::to_string(&response).map_err(|e| JsValue::from_str(&e.to_string()))
+    ) -> Result<JsValue, JsValue> {
+        self.bridge
+            .process_payment_via_json(payment_json, context_json)
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Validate a payment without recording it
@@ -307,25 +319,20 @@ impl WasmSpilmanBridge {
     /// # Arguments
     /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
     ///   and optionally params + funding_proofs for unknown channels
-    /// * `context_json` - Context JSON describing the request (e.g., `{"type": "blob", "size": 1024}`)
+    /// * `context_json` - Context JSON describing the request
     ///
     /// # Returns
-    /// JSON with PaymentValidationResult on success, or error JSON on failure
+    /// PaymentValidationResult object on success, throws on error
     #[wasm_bindgen(js_name = validatePayment)]
     pub fn validate_payment(
         &self,
         payment_json: &str,
         context_json: &str,
-    ) -> Result<String, JsValue> {
-        match self.bridge.validate_payment_via_json(payment_json, context_json) {
-            Ok(result) => {
-                serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-            }
-            Err(e) => {
-                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-                Ok(error_response.to_json())
-            }
-        }
+    ) -> Result<JsValue, JsValue> {
+        self.bridge
+            .validate_payment_via_json(payment_json, context_json)
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Register/fund a channel without recording any usage
@@ -334,32 +341,17 @@ impl WasmSpilmanBridge {
     /// and saves it to the funding store, but does NOT record any payment/usage.
     ///
     /// # Arguments
-    /// * `payment_json` - Payment request JSON with:
-    ///   - `channel_id`: The channel ID
-    ///   - `balance`: Must be 0
-    ///   - `signature`: Schnorr signature for balance=0
-    ///   - `params`: Channel parameters
-    ///   - `funding_proofs`: Funding proofs with DLEQ
+    /// * `payment_json` - Payment request JSON with channel_id, balance, signature=0,
+    ///   params, and funding_proofs
     ///
     /// # Returns
-    /// JSON with FundChannelResult:
-    /// - `success`: true
-    /// - `channel_id`: The channel ID
-    /// - `capacity`: Channel capacity
-    /// - `already_known`: true if channel was already registered
-    ///
-    /// On error, returns JSON with `success: false` and error details.
+    /// FundChannelResult object on success, throws on error
     #[wasm_bindgen(js_name = fundChannel)]
-    pub fn fund_channel(&self, payment_json: &str) -> Result<String, JsValue> {
-        match self.bridge.fund_channel_via_json(payment_json) {
-            Ok(result) => {
-                serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-            }
-            Err(e) => {
-                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-                Ok(error_response.to_json())
-            }
-        }
+    pub fn fund_channel(&self, payment_json: &str) -> Result<JsValue, JsValue> {
+        self.bridge
+            .fund_channel_via_json(payment_json)
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Create data needed to close a channel

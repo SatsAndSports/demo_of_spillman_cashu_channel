@@ -60,6 +60,32 @@ import (
 	"unsafe"
 )
 
+// Result types for payment operations
+
+// PaymentSuccess is returned by ProcessPayment on success
+type PaymentSuccess struct {
+	ChannelID string `json:"channel_id"`
+	Balance   uint64 `json:"balance"`
+	AmountDue uint64 `json:"amount_due"`
+	Capacity  uint64 `json:"capacity"`
+}
+
+// PaymentValidationResult is returned by ValidatePayment on success
+type PaymentValidationResult struct {
+	ChannelID       string `json:"channel_id"`
+	Balance         uint64 `json:"balance"`
+	AmountDue       uint64 `json:"amount_due"`
+	Capacity        uint64 `json:"capacity"`
+	SenderSignature string `json:"sender_signature"`
+}
+
+// FundChannelResult is returned by FundChannel on success
+type FundChannelResult struct {
+	ChannelID    string `json:"channel_id"`
+	Capacity     uint64 `json:"capacity"`
+	AlreadyKnown bool   `json:"already_known"`
+}
+
 // SpilmanHost is the interface that the Go application must implement to handle
 // channel persistence and policy.
 type SpilmanHost interface {
@@ -115,7 +141,9 @@ func (b *Bridge) Free() {
 	b.handle.Delete()
 }
 
-func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (string, error) {
+// ProcessPayment validates a payment and records usage.
+// Returns PaymentSuccess on success, error on failure.
+func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (*PaymentSuccess, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 	cContext := C.CString(contextJson)
@@ -125,16 +153,22 @@ func (b *Bridge) ProcessPayment(paymentJson, contextJson string) (string, error)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
+		return nil, errors.New(C.GoString(res.error))
 	}
-	return C.GoString(res.data), nil
+
+	var result PaymentSuccess
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // ValidatePayment validates a payment without recording it.
 // Performs all validation (parsing, channel verification, balance checks,
 // signature verification) but does NOT call RecordPayment.
 // For new channels, funding data IS saved (idempotent).
-func (b *Bridge) ValidatePayment(paymentJson, contextJson string) (string, error) {
+// Returns PaymentValidationResult on success, error on failure.
+func (b *Bridge) ValidatePayment(paymentJson, contextJson string) (*PaymentValidationResult, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 	cContext := C.CString(contextJson)
@@ -144,15 +178,21 @@ func (b *Bridge) ValidatePayment(paymentJson, contextJson string) (string, error
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
+		return nil, errors.New(C.GoString(res.error))
 	}
-	return C.GoString(res.data), nil
+
+	var result PaymentValidationResult
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // FundChannel registers/funds a channel without recording any usage.
 // Validates the channel (params, funding proofs, signature for balance=0)
 // and saves it to the funding store, but does NOT record any payment/usage.
-func (b *Bridge) FundChannel(paymentJson string) (string, error) {
+// Returns FundChannelResult on success, error on failure.
+func (b *Bridge) FundChannel(paymentJson string) (*FundChannelResult, error) {
 	cPayment := C.CString(paymentJson)
 	defer C.free(unsafe.Pointer(cPayment))
 
@@ -160,9 +200,14 @@ func (b *Bridge) FundChannel(paymentJson string) (string, error) {
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
+		return nil, errors.New(C.GoString(res.error))
 	}
-	return C.GoString(res.data), nil
+
+	var result FundChannelResult
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (b *Bridge) ValidateAndPrepareCooperativeClose(paymentJson string) (string, error) {

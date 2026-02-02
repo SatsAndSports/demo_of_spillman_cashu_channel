@@ -686,40 +686,45 @@ func runServer() {
 		registerJson, _ := json.Marshal(registerBody)
 
 		// Use FundChannel to validate and store the channel
-		resultJson, err := bridge.FundChannel(string(registerJson))
+		// FundChannel now returns (*FundChannelResult, error)
+		result, err := bridge.FundChannel(string(registerJson))
 		if err != nil {
-			log.Printf("  [Register] Error: %v\n", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
+			errorMsg := err.Error()
+			log.Printf("  [Register] REJECTED: %s\n", errorMsg)
 
-		var result map[string]interface{}
-		json.Unmarshal([]byte(resultJson), &result)
+			// Determine HTTP status from error type
+			status := http.StatusPaymentRequired // 402 default
+			lowerMsg := strings.ToLower(errorMsg)
+			if strings.Contains(lowerMsg, "invalid base64") ||
+				strings.Contains(lowerMsg, "invalid utf8") ||
+				strings.Contains(lowerMsg, "invalid json") ||
+				strings.Contains(lowerMsg, "missing field") ||
+				strings.Contains(lowerMsg, "missing channel_id") ||
+				strings.Contains(lowerMsg, "missing signature") ||
+				(strings.Contains(lowerMsg, "expected") && (strings.Contains(lowerMsg, "string") || strings.Contains(lowerMsg, "integer") || strings.Contains(lowerMsg, "u64"))) {
+				status = http.StatusBadRequest
+			} else if strings.Contains(lowerMsg, "internal") || strings.Contains(lowerMsg, "misconfigured") {
+				status = http.StatusInternalServerError
+			}
 
-		if success, ok := result["success"].(bool); !ok || !success {
-			status := http.StatusBadRequest
-			if statusNum, ok := result["status"].(float64); ok {
-				status = int(statusNum)
-			}
-			reason := "unknown"
-			if r, ok := result["reason"].(string); ok {
-				reason = r
-			} else if e, ok := result["error"].(string); ok {
-				reason = e
-			}
-			log.Printf("  [Register] REJECTED: %s\n", reason)
 			w.WriteHeader(status)
-			json.NewEncoder(w).Encode(result)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Registration failed",
+				"reason":  errorMsg,
+				"status":  status,
+			})
 			return
 		}
 
-		channelId := result["channel_id"].(string)
-		capacity := result["capacity"]
-		alreadyKnown := result["already_known"]
-		log.Printf("  [Register] SUCCESS! channel=%s capacity=%v already_known=%v\n",
-			channelId[:16], capacity, alreadyKnown)
-		json.NewEncoder(w).Encode(result)
+		log.Printf("  [Register] SUCCESS! channel=%s capacity=%d already_known=%v\n",
+			result.ChannelID[:16], result.Capacity, result.AlreadyKnown)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":       true,
+			"channel_id":    result.ChannelID,
+			"capacity":      result.Capacity,
+			"already_known": result.AlreadyKnown,
+		})
 	})
 
 	http.HandleFunc("/ascii", func(w http.ResponseWriter, r *http.Request) {
@@ -750,37 +755,37 @@ func runServer() {
 
 		ctxJson, _ := json.Marshal(map[string]interface{}{"message_length": len(req.Message)})
 
-		respJson, err := bridge.ProcessPayment(paymentHeader, string(ctxJson))
+		// ProcessPayment now returns (*PaymentSuccess, error)
+		result, err := bridge.ProcessPayment(paymentHeader, string(ctxJson))
 		if err != nil {
-			log.Printf("  [Error] ProcessPayment bridge error: %v", err)
-		}
-		var resp struct {
-			Success bool
-			Error   string
-			Header  json.RawMessage
-			Body    json.RawMessage
-		}
-		json.Unmarshal([]byte(respJson), &resp)
+			errorMsg := err.Error()
+			log.Printf("  [Error] ProcessPayment failed: %s", errorMsg)
 
-		if !resp.Success {
-			log.Printf("  [Error] ProcessPayment failed: %s", resp.Error)
-			w.Header().Set("X-Cashu-Channel", string(resp.Header))
-			w.WriteHeader(http.StatusPaymentRequired)
-			// Forward the structured body from the bridge (includes reason, capacity, balance, etc.)
-			if len(resp.Body) > 0 {
-				w.Write(resp.Body)
-			} else {
-				json.NewEncoder(w).Encode(map[string]string{"error": resp.Error})
+			// Determine HTTP status from error type
+			status := http.StatusPaymentRequired // 402 default
+			lowerMsg := strings.ToLower(errorMsg)
+			if strings.Contains(lowerMsg, "invalid base64") ||
+				strings.Contains(lowerMsg, "invalid utf8") ||
+				strings.Contains(lowerMsg, "invalid json") ||
+				strings.Contains(lowerMsg, "missing field") ||
+				strings.Contains(lowerMsg, "missing channel_id") ||
+				strings.Contains(lowerMsg, "missing signature") ||
+				(strings.Contains(lowerMsg, "expected") && (strings.Contains(lowerMsg, "string") || strings.Contains(lowerMsg, "integer") || strings.Contains(lowerMsg, "u64"))) {
+				status = http.StatusBadRequest
+			} else if strings.Contains(lowerMsg, "internal") || strings.Contains(lowerMsg, "misconfigured") {
+				status = http.StatusInternalServerError
 			}
+
+			w.Header().Set("X-Cashu-Channel", fmt.Sprintf(`{"error":"%s"}`, errorMsg))
+			w.WriteHeader(status)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Payment failed", "reason": errorMsg})
 			return
 		}
 
 		art := figure.NewFigure(req.Message, "", true).String()
-		var headerData map[string]interface{}
-		json.Unmarshal(resp.Header, &headerData)
 
 		// Calculate cost based on message length and unit pricing
-		channelId := headerData["channel_id"].(string)
+		channelId := result.ChannelID
 		mu.Lock()
 		funding := channelFunding[channelId]
 		mu.Unlock()
@@ -797,7 +802,15 @@ func runServer() {
 		}
 		cost := uint64(len(req.Message)) * pricePerChar
 
-		w.Header().Set("X-Cashu-Channel", string(resp.Header))
+		// Build header data from result
+		headerData := map[string]interface{}{
+			"channel_id": result.ChannelID,
+			"balance":    result.Balance,
+			"amount_due": result.AmountDue,
+			"capacity":   result.Capacity,
+		}
+		headerJson, _ := json.Marshal(headerData)
+		w.Header().Set("X-Cashu-Channel", string(headerJson))
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"art":     art,
 			"message": req.Message,

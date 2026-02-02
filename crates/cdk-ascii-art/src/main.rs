@@ -113,7 +113,7 @@ async fn main() {
     let host = Arc::new(AsciiArtHost::new(
         stores.clone(),
         &mint_url,
-        server_pubkey.clone(),
+        server_pubkey,
         pricing.clone(),
         MIN_EXPIRY_SECONDS,
     ));

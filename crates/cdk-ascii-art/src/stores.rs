@@ -30,6 +30,7 @@ pub struct ChannelUsage {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct ClosedChannelData {
     pub locktime: u64,
     pub closed_amount: u64,
@@ -100,6 +101,7 @@ impl Stores {
         }
     }
 
+    #[allow(dead_code)]
     pub fn all_funding(&self) -> HashMap<String, ChannelFundingData> {
         self.funding.read().expect("funding lock poisoned").clone()
     }
@@ -154,9 +156,7 @@ impl Stores {
 
     pub fn record_chars_served(&self, channel_id: &str, chars: u64) {
         let mut store = self.usage.write().expect("usage lock poisoned");
-        let usage = store
-            .entry(channel_id.to_string())
-            .or_insert_with(ChannelUsage::default);
+        let usage = store.entry(channel_id.to_string()).or_default();
         usage.chars_served += chars;
         tracing::info!(
             "  [Store] Usage: channel={} chars={}",
@@ -266,6 +266,7 @@ impl Stores {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn clear_keysets_for_mint(&self, mint: &str) {
         let prefix = format!("{}|", mint);
         let mut store = self.keysets.write().expect("keysets lock poisoned");

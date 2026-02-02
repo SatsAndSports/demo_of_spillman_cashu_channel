@@ -392,6 +392,9 @@ pub unsafe extern "C" fn spilman_bridge_free(ptr: *mut BridgeInstance) {
     }
 }
 
+/// Process a payment and record usage.
+///
+/// Returns JSON-serialized PaymentSuccess on success, or error string on failure.
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_process_payment(
     ptr: *mut BridgeInstance,
@@ -402,9 +405,13 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
     let context = CStr::from_ptr(context_json).to_str().unwrap();
 
-    let response = instance.bridge.process_payment_via_json(payment, context);
-    let json = serde_json::to_string(&response).unwrap();
-    CResult::success(json)
+    match instance.bridge.process_payment_via_json(payment, context) {
+        Ok(result) => {
+            let json = serde_json::to_string(&result).unwrap();
+            CResult::success(json)
+        }
+        Err(e) => CResult::error(e.to_string()),
+    }
 }
 
 /// Validate a payment without recording it.
@@ -413,6 +420,8 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
 /// signature verification) but does NOT call record_payment.
 ///
 /// For new channels, funding data IS saved (idempotent).
+///
+/// Returns JSON-serialized PaymentValidationResult on success, or error string on failure.
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_validate_payment(
     ptr: *mut BridgeInstance,
@@ -428,10 +437,7 @@ pub unsafe extern "C" fn spilman_bridge_validate_payment(
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
         }
-        Err(e) => {
-            let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-            CResult::success(error_response.to_json())
-        }
+        Err(e) => CResult::error(e.to_string()),
     }
 }
 
@@ -439,6 +445,8 @@ pub unsafe extern "C" fn spilman_bridge_validate_payment(
 ///
 /// Validates the channel (params, funding proofs, signature for balance=0)
 /// and saves it to the funding store, but does NOT record any payment/usage.
+///
+/// Returns JSON-serialized FundChannelResult on success, or error string on failure.
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_fund_channel(
     ptr: *mut BridgeInstance,
@@ -452,10 +460,7 @@ pub unsafe extern "C" fn spilman_bridge_fund_channel(
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
         }
-        Err(e) => {
-            let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-            CResult::success(error_response.to_json())
-        }
+        Err(e) => CResult::error(e.to_string()),
     }
 }
 

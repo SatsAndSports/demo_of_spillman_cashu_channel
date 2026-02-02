@@ -348,20 +348,35 @@ app.post("/ascii", (req, res) => {
   const context = JSON.stringify({ message_length: message.length });
 
   // Process payment through bridge
-  const resultJson = bridge.processPayment(paymentJson, context);
-  const result = JSON.parse(resultJson);
-
-  if (!result.success) {
-    console.log(`  [Payment] REJECTED: ${result.error || "unknown"}`);
-    if (result.header) {
-      res.setHeader("X-Cashu-Channel", JSON.stringify(result.header));
+  let paymentInfo: { channel_id: string; balance: number; amount_due: number; capacity: number };
+  try {
+    // processPayment now returns PaymentSuccess directly and throws on error
+    paymentInfo = bridge.processPayment(paymentJson, context) as any;
+  } catch (e) {
+    const errorMsg = (e as Error).message || String(e);
+    console.log(`  [Payment] REJECTED: ${errorMsg}`);
+    
+    // Determine HTTP status from error type
+    let status = 402;
+    const lowerMsg = errorMsg.toLowerCase();
+    if (lowerMsg.includes("invalid base64") ||
+        lowerMsg.includes("invalid utf8") ||
+        lowerMsg.includes("invalid json") ||
+        lowerMsg.includes("missing field") ||
+        lowerMsg.includes("missing channel_id") ||
+        lowerMsg.includes("missing signature") ||
+        (lowerMsg.includes("expected") && (lowerMsg.includes("string") || lowerMsg.includes("integer") || lowerMsg.includes("u64")))) {
+      status = 400;
+    } else if (lowerMsg.includes("internal") || lowerMsg.includes("misconfigured")) {
+      status = 500;
     }
-    res.status(402).json(result.body || { error: result.error });
+    
+    res.setHeader("X-Cashu-Channel", JSON.stringify({ error: errorMsg }));
+    res.status(status).json({ error: "Payment failed", reason: errorMsg });
     return;
   }
 
   // Payment accepted - generate ASCII art
-  const paymentInfo = result.header || {};
   
   // Look up unit from stored channel params to calculate cost
   const funding = channelFunding.get(paymentInfo.channel_id);
@@ -529,18 +544,40 @@ app.post("/channel/register", (req, res) => {
   const registerBody = { channel_id, balance: 0, signature, params, funding_proofs };
 
   // Use fundChannel to validate and store the channel
-  const resultJson = bridge.fundChannel(JSON.stringify(registerBody));
-  const result = JSON.parse(resultJson);
-
-  if (!result.success) {
-    const status = result.status || 400;
-    console.log(`  [Register] REJECTED: ${result.reason || result.error}`);
-    res.status(status).json(result);
+  let result: { channel_id: string; capacity: number; already_known: boolean };
+  try {
+    // fundChannel now returns FundChannelResult directly and throws on error
+    result = bridge.fundChannel(JSON.stringify(registerBody)) as any;
+  } catch (e) {
+    const errorMsg = (e as Error).message || String(e);
+    console.log(`  [Register] REJECTED: ${errorMsg}`);
+    
+    // Determine HTTP status from error type
+    let status = 402;
+    const lowerMsg = errorMsg.toLowerCase();
+    if (lowerMsg.includes("invalid base64") ||
+        lowerMsg.includes("invalid utf8") ||
+        lowerMsg.includes("invalid json") ||
+        lowerMsg.includes("missing field") ||
+        lowerMsg.includes("missing channel_id") ||
+        lowerMsg.includes("missing signature") ||
+        (lowerMsg.includes("expected") && (lowerMsg.includes("string") || lowerMsg.includes("integer") || lowerMsg.includes("u64")))) {
+      status = 400;
+    } else if (lowerMsg.includes("internal") || lowerMsg.includes("misconfigured")) {
+      status = 500;
+    }
+    
+    res.status(status).json({ success: false, error: "Registration failed", reason: errorMsg, status });
     return;
   }
 
   console.log(`  [Register] SUCCESS! channel=${result.channel_id.substring(0, 8)} capacity=${result.capacity} already_known=${result.already_known}`);
-  res.json(result);
+  res.json({
+    success: true,
+    channel_id: result.channel_id,
+    capacity: result.capacity,
+    already_known: result.already_known,
+  });
 });
 
 // ============================================================================

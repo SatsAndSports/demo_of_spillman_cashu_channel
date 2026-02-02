@@ -16,6 +16,73 @@ use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{self, SpilmanBridge as RustSpilmanBridge, SpilmanHost};
 
 // ============================================================================
+// Result types for Python
+// ============================================================================
+
+/// Result of a successful payment
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct PaymentSuccess {
+    pub channel_id: String,
+    pub balance: u64,
+    pub amount_due: u64,
+    pub capacity: u64,
+}
+
+impl From<cdk::spilman::PaymentSuccess> for PaymentSuccess {
+    fn from(r: cdk::spilman::PaymentSuccess) -> Self {
+        Self {
+            channel_id: r.channel_id,
+            balance: r.balance,
+            amount_due: r.amount_due,
+            capacity: r.capacity,
+        }
+    }
+}
+
+/// Result of validating a payment without recording it
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct PaymentValidationResult {
+    pub channel_id: String,
+    pub balance: u64,
+    pub amount_due: u64,
+    pub capacity: u64,
+    pub sender_signature: String,
+}
+
+impl From<cdk::spilman::PaymentValidationResult> for PaymentValidationResult {
+    fn from(r: cdk::spilman::PaymentValidationResult) -> Self {
+        Self {
+            channel_id: r.channel_id,
+            balance: r.balance,
+            amount_due: r.amount_due,
+            capacity: r.capacity,
+            sender_signature: r.sender_signature,
+        }
+    }
+}
+
+/// Result of registering/funding a channel
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct FundChannelResult {
+    pub channel_id: String,
+    pub capacity: u64,
+    pub already_known: bool,
+}
+
+impl From<cdk::spilman::FundChannelResult> for FundChannelResult {
+    fn from(r: cdk::spilman::FundChannelResult) -> Self {
+        Self {
+            channel_id: r.channel_id,
+            capacity: r.capacity,
+            already_known: r.already_known,
+        }
+    }
+}
+
+// ============================================================================
 // Server-side: SpilmanBridge with Python host callbacks
 // ============================================================================
 
@@ -369,20 +436,23 @@ impl SpilmanBridge {
 
     /// Process an incoming payment request.
     ///
+    /// Validates the payment and records usage if valid.
+    ///
     /// Args:
     ///     payment_json: JSON string with channel_id, balance, signature, and optionally params/funding_proofs
     ///     context_json: JSON string with request context (for pricing)
-    ///     keyset_info_json: Optional keyset info JSON (required for unknown channels)
     ///
     /// Returns:
-    ///     JSON string with success/error and header/body
+    ///     PaymentSuccess object with channel_id, balance, amount_due, capacity
+    ///
+    /// Raises:
+    ///     RuntimeError: If validation fails
     #[pyo3(signature = (payment_json, context_json))]
-    fn process_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
-        let response = self
-            .inner
-            .process_payment_via_json(payment_json, context_json);
-        serde_json::to_string(&response)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize response: {}", e)))
+    fn process_payment(&self, payment_json: &str, context_json: &str) -> PyResult<PaymentSuccess> {
+        self.inner
+            .process_payment_via_json(payment_json, context_json)
+            .map(PaymentSuccess::from)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Validate a payment without recording it.
@@ -398,21 +468,20 @@ impl SpilmanBridge {
     ///     context_json: Context JSON describing the request (e.g., {"type": "ascii", "chars": 5})
     ///
     /// Returns:
-    ///     JSON string with PaymentValidationResult on success, or error JSON on failure
+    ///     PaymentValidationResult object
+    ///
+    /// Raises:
+    ///     RuntimeError: If validation fails
     #[pyo3(signature = (payment_json, context_json))]
-    fn validate_payment(&self, payment_json: &str, context_json: &str) -> PyResult<String> {
-        match self
-            .inner
+    fn validate_payment(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> PyResult<PaymentValidationResult> {
+        self.inner
             .validate_payment_via_json(payment_json, context_json)
-        {
-            Ok(result) => serde_json::to_string(&result).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
-            }),
-            Err(e) => {
-                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-                Ok(error_response.to_json())
-            }
-        }
+            .map(PaymentValidationResult::from)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Register/fund a channel without recording any usage.
@@ -421,32 +490,20 @@ impl SpilmanBridge {
     /// and saves it to the funding store, but does NOT record any payment/usage.
     ///
     /// Args:
-    ///     payment_json: Payment request JSON with:
-    ///         - channel_id: The channel ID
-    ///         - balance: Must be 0
-    ///         - signature: Schnorr signature for balance=0
-    ///         - params: Channel parameters
-    ///         - funding_proofs: Funding proofs with DLEQ
+    ///     payment_json: Payment request JSON with channel_id, balance=0, signature,
+    ///                   params, and funding_proofs
     ///
     /// Returns:
-    ///     JSON string with FundChannelResult:
-    ///         - success: true
-    ///         - channel_id: The channel ID
-    ///         - capacity: Channel capacity
-    ///         - already_known: true if channel was already registered
+    ///     FundChannelResult object with channel_id, capacity, already_known
     ///
-    ///     On error, returns JSON with success: false and error details.
+    /// Raises:
+    ///     RuntimeError: If validation fails
     #[pyo3(signature = (payment_json))]
-    fn fund_channel(&self, payment_json: &str) -> PyResult<String> {
-        match self.inner.fund_channel_via_json(payment_json) {
-            Ok(result) => serde_json::to_string(&result).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to serialize response: {}", e))
-            }),
-            Err(e) => {
-                let error_response = cdk::spilman::ClosePreparationError::from_bridge_error(e);
-                Ok(error_response.to_json())
-            }
-        }
+    fn fund_channel(&self, payment_json: &str) -> PyResult<FundChannelResult> {
+        self.inner
+            .fund_channel_via_json(payment_json)
+            .map(FundChannelResult::from)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     #[pyo3(signature = (payment_json))]
@@ -1086,6 +1143,11 @@ fn unblind_and_verify_dleq(
 fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Server-side
     m.add_class::<SpilmanBridge>()?;
+
+    // Result types
+    m.add_class::<PaymentSuccess>()?;
+    m.add_class::<PaymentValidationResult>()?;
+    m.add_class::<FundChannelResult>()?;
 
     // Client-side functions
     m.add_function(wrap_pyfunction!(generate_keypair, m)?)?;
