@@ -315,17 +315,17 @@ Test coverage includes:
 
 ### Rust ASCII Art Server
 
-The Rust ASCII Art server (`crates/cdk-ascii-art/`) is a native implementation using the core `cdk` Spilman library directly (no WASM or FFI).
+The Rust ASCII Art server (`examples/rust-ascii-art/`) is a native implementation using the core `cdk` Spilman library directly (no WASM or FFI).
 
 ```bash
 # Build
-cargo build -p cdk-ascii-art
+cargo build -p rust-ascii-art
 
 # Run tests
 make test-rust-cdkmintd
 
 # Run manually (requires mint at localhost:3338)
-PORT=5003 MINT_URL=http://localhost:3338 cargo run -p cdk-ascii-art
+PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art
 ```
 
 The server implements:
@@ -395,12 +395,12 @@ The server runs on `http://localhost:3000` by default.
 cdk/
 ├── crates/
 │   ├── cdk/src/spilman/                      # Core Spilman implementation
-│   ├── cdk-ascii-art/                        # Rust ASCII Art server (native)
 │   ├── cdk-spilman-server-integration-tests/ # Rust test client for all servers
 │   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
 │   ├── cdk-spilman-python/                   # PyO3 bindings
 │   └── cdk-spilman-go/                       # CGO bindings
 ├── examples/
+│   ├── rust-ascii-art/            # Rust ASCII Art server (native)
 │   ├── ts-ascii-art/              # TypeScript demo server + client
 │   ├── python-ascii-art/          # Python demo server + client
 │   └── go-ascii-art/              # Go demo server + client

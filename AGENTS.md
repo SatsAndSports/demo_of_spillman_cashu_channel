@@ -8,7 +8,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
-- **Rust ASCII Art** (`crates/cdk-ascii-art/`) - Native Rust server using core `cdk` library
+- **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using core `cdk` library
 - **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
@@ -27,7 +27,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | Path | Purpose |
 |------|---------|
 | `crates/cdk/src/spilman/` | Core Rust implementation |
-| `crates/cdk-ascii-art/` | Rust ASCII Art server (native, uses core `cdk`) |
+| `examples/rust-ascii-art/` | Rust ASCII Art server (native, uses core `cdk`) |
 | `crates/cdk-spilman-server-integration-tests/` | Rust test client for all servers |
 | `crates/cdk-wasm/` | WASM bindings for browser/Node.js |
 | `crates/cdk-spilman-python/` | PyO3 bindings |

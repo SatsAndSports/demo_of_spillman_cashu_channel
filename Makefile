@@ -197,7 +197,7 @@ test-servers-cdkmintd: test-ts-cdkmintd test-rust-cdkmintd test-python-cdkmintd 
 
 # Build the Rust ASCII Art server
 rust-ascii-build:
-	cargo build -p cdk-ascii-art
+	cargo build -p rust-ascii-art
 
 # --- WASM Build ---
 
@@ -298,8 +298,8 @@ list-orphans:
 	@echo "=== Orphaned test processes ==="
 	@echo "cdk-mintd:"
 	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
-	@echo "cdk-ascii-art:"
-	@pgrep -af "cdk-ascii-art" | grep -v pgrep || echo "  (none)"
+	@echo "rust-ascii-art:"
+	@pgrep -af "rust-ascii-art" | grep -v pgrep || echo "  (none)"
 	@echo "python server.py:"
 	@pgrep -af "python.*server\.py" | grep -v pgrep || echo "  (none)"
 	@echo "tsx server:"
@@ -310,7 +310,7 @@ list-orphans:
 # Kill orphaned test processes
 kill-orphans:
 	@echo "Killing orphaned test processes..."
-	-@pkill -f "cdk-ascii-art" 2>/dev/null || true
+	-@pkill -f "rust-ascii-art" 2>/dev/null || true
 	-@pkill -f "python.*server\.py" 2>/dev/null || true
 	-@pkill -f "tsx.*server" 2>/dev/null || true
 	-@pkill -f "go-ascii-art" 2>/dev/null || true
