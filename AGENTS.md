@@ -75,31 +75,31 @@ cargo test -p cdk spilman
 cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-spilman-server-integration-tests -- -D warnings
 
 # Build WASM (uses sentinel-based dependency tracking - instant when nothing changed)
-make wasm-dev
+make build-wasm
 
-# Run server integration tests
-make test-ts-cdkmintd        # Test TypeScript server
-make test-rust-cdkmintd      # Test Rust server
-make test-python-cdkmintd    # Test Python server
-make test-go-cdkmintd        # Test Go server
-make test-servers-cdkmintd   # Test all servers
+# Run server integration tests (52-test Rust client suite)
+make test-server-ts          # Test TypeScript server
+make test-server-rust        # Test Rust server
+make test-server-python      # Test Python server
+make test-server-go          # Test Go server
+make test-server-all         # Test all servers
 
 # Run blossom tests
-make test-blossom-cdkmintd
+make test-blossom
 
 # Run all tests
-make test-all-cdkmintd
+make test-all
 
 # Orphan process management (servers/mints left running after interrupted tests)
-make list-orphans              # Show orphaned processes
-make kill-orphans              # Kill them all
+make list-orphans            # Show orphaned processes
+make kill-orphans            # Kill them all
 
 # Containerized testing (no local Rust required - Podman or Docker)
 # Default is Podman; use CONTAINER_ENGINE=docker for Docker
-make build-devenv                       # Build the dev container image
-make test-rust-only-containerized       # Build + run Rust integration tests in containers
-make test-rust-only-containerized CONTAINER_ENGINE=docker  # Use Docker instead
-make clean-containers                   # Remove containers, volumes, image
+make build-devenv            # Build the dev container image
+make test-containerized      # Build + run Rust integration tests in containers
+make test-containerized CONTAINER_ENGINE=docker  # Use Docker instead
+make clean-containers        # Remove containers, volumes, image
 # Note: Uses host networking on ports 33380 (mint) and 50080 (server)
 
 # TypeScript checks
@@ -112,7 +112,7 @@ cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 
 ### WASM Build Details
 
-The `make wasm-dev` target uses **sentinel-based dependency tracking**:
+The `make build-wasm` target uses **sentinel-based dependency tracking**:
 - Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
 - Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
 - Blossom server gets WASM copied (separate git repo); ts-ascii-art uses symlink

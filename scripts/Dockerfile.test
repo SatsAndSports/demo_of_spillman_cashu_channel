@@ -113,13 +113,13 @@ RUN cargo build -p cdk-mintd --features fakewallet
 RUN cargo build -p cdk-spilman-go
 
 # Set up Python environment
-RUN make venv && make python-dev
+RUN make venv && make build-python
 
 # Build Go tools
-RUN make build-nutmix-setup-units
+RUN make build-nutmix-setup
 
 # Build WASM for TypeScript demo
-RUN make wasm-dev
+RUN make build-wasm
 
 # Install TypeScript demo dependencies
 RUN cd examples/ts-ascii-art && npm install
@@ -138,5 +138,5 @@ RUN just install-deps && just build
 WORKDIR /cdk
 ENV PATH="/usr/local/go/bin:/root/.bun/bin:/root/.cargo/bin:${PATH}"
 
-# Default: run CDK tests
-CMD ["make", "test-python-parallel-cdkmintd", "test-go-parallel-cdkmintd", "test-ts-parallel-cdkmintd"]
+# Default: run CDK demo tests
+CMD ["make", "test-demo-python", "test-demo-go", "test-demo-ts"]
