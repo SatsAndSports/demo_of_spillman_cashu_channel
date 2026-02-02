@@ -1,12 +1,12 @@
 [package]
-name = "cdk-ascii-art"
+name = "rust-ascii-art"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Rust ASCII Art demo server for Spilman payment channels"
 
 [[bin]]
-name = "cdk-ascii-art"
+name = "rust-ascii-art"
 path = "src/main.rs"
 
 [dependencies]

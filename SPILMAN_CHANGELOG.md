@@ -60,7 +60,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 
 ## Completed Features (Late Jan 2026)
 
-### Rust ASCII Art Server (`cdk-ascii-art`)
+### Rust ASCII Art Server (`rust-ascii-art`)
 - **Native Rust implementation**: New crate implementing a Spilman channel payment server using the core `cdk` library directly (no WASM or FFI).
 - **Full SpilmanHost implementation**: `AsciiArtHost` struct with all required callbacks for pricing, storage, keyset caching, and mint interaction.
 - **Axum HTTP server**: Endpoints for `/channel/params`, `/channel/register`, `/ascii`, `/channel/:id/status`, `/channel/:id/close`, `/channel/:id/unilateral-close`.
@@ -142,7 +142,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Python/Go: Removed redundant store checks from close helpers (bridge handles internally)
 
 ### Native Rust Server
-- **Rust ASCII Art** (`crates/cdk-ascii-art/`): Reference implementation using core `cdk` library directly
+- **Rust ASCII Art** (`examples/rust-ascii-art/`): Reference implementation using core `cdk` library directly
 - Demonstrates `SpilmanHost` trait implementation in native Rust
 - Pricing: sat=1/char, msat=1000/char, usd=1/char (matching other demo servers)
 

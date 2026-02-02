@@ -221,7 +221,7 @@ impl ServerProcess {
     }
 
     fn spawn_rust_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let binary = root.join("target/debug/cdk-ascii-art");
+        let binary = root.join("target/debug/rust-ascii-art");
 
         Command::new(&binary)
             .env("PORT", port.to_string())
