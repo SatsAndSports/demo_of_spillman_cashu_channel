@@ -2,6 +2,17 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 2, 2026)
+
+### Bridge API Refactoring
+- **Typed return values**: Core bridge methods (`process_payment`, `fund_channel`, `validate_payment`) now return typed result structs instead of JSON strings with `{success: true/false}` format.
+- **Exception-based errors**: Errors are returned as exceptions/error returns in each language binding (WASM throws, Python raises `RuntimeError`, Go returns `error`).
+- **New types**: `PaymentSuccess`, `PaymentValidationResult`, `FundChannelResult` (all without redundant `success` field).
+- **Removed types**: `PaymentResponse`, `BridgeStatus`, `error_with_extra` helper.
+- **Hybrid API**: Close methods (`executeCooperativeClose`, `executeUnilateralClose`) still return JSON strings with `{success: true/false}` for backward compatibility.
+- **All servers updated**: TypeScript, Python, Go ASCII Art servers updated to use new API pattern.
+- **All tests pass**: 52 integration tests pass for all four server implementations (Rust, TS, Python, Go), plus 47 Blossom tests.
+
 ## Completed Features (Jan 31, 2026)
 
 ### Containerized Testing Improvements

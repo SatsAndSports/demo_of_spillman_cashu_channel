@@ -7,7 +7,7 @@ This document provides context for AI coding assistants working on this codebase
 This is an extension of CDK that adds **Spilman-style unidirectional payment channels** for Cashu ecash. The core protocol is in Rust with bindings for WASM (TypeScript), Python, and Go.
 
 **Primary demos:**
-- **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (41 tests)
+- **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
 - **Rust ASCII Art** (`crates/cdk-ascii-art/`) - Native Rust server using core `cdk` library
 - **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
@@ -60,7 +60,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 ### Tests
 - `crates/cdk/src/spilman/tests.rs` - Rust unit/integration tests
 - `crates/cdk-spilman-server-integration-tests/tests/integration.rs` - Server integration tests (Rust client testing all servers)
-- `web/blossom-server/tests/*.test.ts` - CashuTube tests (41 tests)
+- `web/blossom-server/tests/*.test.ts` - CashuTube tests (47 tests)
 
 ## Running Commands
 
