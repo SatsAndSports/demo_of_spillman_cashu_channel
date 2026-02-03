@@ -147,27 +147,31 @@ The bridge delegates policy decisions to the host application:
 
 ```rust
 trait SpilmanHost {
-    // Is this pubkey our server's key?
+    // Policy
     fn receiver_key_is_acceptable(&self, pubkey: &str) -> bool;
-    
-    // Is this mint/keyset allowed?
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset: &str) -> bool;
-    
-    // How much does this request cost?
     fn get_amount_due(&self, channel_id: &str, context: Option<&str>) -> u64;
-    
-    // Atomically record payment and update usage
-    fn record_payment(&self, channel_id: &str, balance: u64, sig: &str, context: &str);
-    
-    // Storage hooks
-    fn get_funding(&self, channel_id: &str) -> Option<FundingData>;
-    fn save_funding(&self, channel_id: &str, data: FundingData, balance: u64, sig: &str);
-    
-    // Channel state
-    fn is_closed(&self, channel_id: &str) -> bool;
     fn get_channel_policy(&self) -> ChannelPolicy;
     fn now_seconds(&self) -> u64;
+    
+    // Storage: funding and payments
+    fn get_funding(&self, channel_id: &str) -> Option<FundingData>;
+    fn save_funding(&self, channel_id: &str, data: FundingData, balance: u64, sig: &str);
+    fn record_payment(&self, channel_id: &str, balance: u64, sig: &str, context: &str);
+    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<(u64, String)>;
+    
+    // Channel state transitions
+    fn get_channel_state(&self, channel_id: &str) -> ChannelState;
+    fn mark_channel_closing(&self, ...) -> Result<(), String>;
+    fn mark_channel_closed(&self, ...) -> Result<(), String>;
+    
+    // Keyset cache and mint communication
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
+    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
 }
+// See INTEGRATION.md for full method signatures and documentation.
 ```
 
 ### Language Bridges
