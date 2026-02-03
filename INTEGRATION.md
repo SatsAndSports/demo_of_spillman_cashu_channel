@@ -85,24 +85,21 @@ After closing, both parties receive standard Cashu proofs they can spend normall
 ## Channel Lifecycle
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │                                         │
-                    ▼                                         │
-┌────────┐    ┌─────────┐    ┌─────────┐    ┌────────┐       │
-│  NEW   │───►│  OPEN   │───►│ CLOSING │───►│ CLOSED │       │
-└────────┘    └─────────┘    └─────────┘    └────────┘       │
-                  │  ▲                                        │
-                  │  │ payments                               │
-                  └──┘                                        │
-                                                              │
-              (reject payments if CLOSING or CLOSED) ─────────┘
+ (unknown)     ┌─────────┐    ┌─────────┐    ┌────────┐
+ ── funding ──►│  OPEN   │───►│ CLOSING │───►│ CLOSED │
+               └─────────┘    └─────────┘    └────────┘
+                   │  ▲
+                   │  │ payments
+                   └──┘
+
+Note: Payments are rejected if channel is CLOSING or CLOSED.
 ```
 
 **State transitions:**
 
 | From | To | Trigger |
 |------|-----|---------|
-| NEW | OPEN | First valid payment or explicit registration |
+|      | OPEN | First valid payment or explicit registration |
 | OPEN | OPEN | Each valid payment (balance increases) |
 | OPEN | CLOSING | Close request received, swap prepared |
 | CLOSING | CLOSED | Mint swap succeeds, proofs stored |
@@ -115,20 +112,24 @@ After closing, both parties receive standard Cashu proofs they can spend normall
 The Spilman implementation uses a **Bridge + Host** architecture:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Your Server                          │
-│  ┌─────────────┐      ┌─────────────┐                   │
-│  │  Transport  │      │    Host     │                   │
-│  │  (HTTP,     │      │  (Policy +  │                   │
-│  │  WebSocket, │      │   Storage)  │                   │
-│  │  gRPC, ...) │      │             │                   │
-│  └──────┬──────┘      └──────┬──────┘                   │
-│         │                    │                          │
-│         │    ┌───────────────┴───────────────┐          │
-│         └───►│         SpilmanBridge         │◄─────────┘
-│              │  (Cryptography + Validation)  │
-│              └───────────────────────────────┘
-└─────────────────────────────────────────────────────────┘
+                         Your Server
+┌───────────────────────────────────────────────────────────┐
+│                                                           │
+│   ┌─────────────┐      ┌───────────────────────────────┐  │
+│   │  Transport  │      │        SpilmanBridge          │  │
+│   │  (HTTP,     │      │  (Cryptography + Validation)  │  │
+│   │  WebSocket, │─────►│                               │  │
+│   │  gRPC, ...) │      │  delegates to:                │  │
+│   └─────────────┘      │         │                     │  │
+│                        │         ▼                     │  │
+│                        │  ┌─────────────┐              │  │
+│                        │  │    Host     │ (you write)  │  │
+│                        │  │  - Pricing  │              │  │
+│                        │  │  - Storage  │              │  │
+│                        │  └─────────────┘              │  │
+│                        └───────────────────────────────┘  │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **The Bridge** (provided by the library):
@@ -174,6 +175,8 @@ trait SpilmanHost {
     fn receiver_key_is_acceptable(&self, pubkey: &PublicKey) -> bool;
     
     /// Is this mint and keyset allowed?
+    /// You *may* accept inactive keysets; any active keyset maybe
+    /// become inactive during the lifetime of the channel.
     /// Check against your allowlist of trusted mints.
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
     
@@ -189,16 +192,15 @@ trait SpilmanHost {
     /// 
     /// `context_json` describes the current request (e.g., file size, action type).
     /// Return the cumulative amount due based on all usage so far plus this request.
+    /// If no context_json is passed, just return based on all usage so far.
     fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
 
     // ==================== Storage: Funding ====================
     
-    /// Retrieve stored funding data for a channel.
-    /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
-    fn get_funding_and_params(&self, channel_id: &str) 
-        -> Option<(String, String, String, String)>;
-    
     /// Store funding data for a new channel.
+    /// If the bridge verifies that the data for a (proposed) new channel is
+    /// valid, then it will call this method to arrange for it be stored.
+    /// The channel is considered OPEN after this is called.
     fn save_funding(
         &self,
         channel_id: &str,
@@ -207,6 +209,11 @@ trait SpilmanHost {
         shared_secret_hex: &str,
         keyset_info_json: &str,
     );
+    
+    /// Retrieve stored funding data for a channel.
+    /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
+    fn get_funding_and_params(&self, channel_id: &str) 
+        -> Option<(String, String, String, String)>;
 
     // ==================== Storage: Payments ====================
     
