@@ -7,7 +7,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
-use cdk::spilman::{ChannelParameters, SpilmanBridge, SpilmanHost};
+use cdk::spilman::{ChannelParameters, ChannelState, ClosingData, SpilmanBridge, SpilmanHost};
 use cdk::util::hex;
 
 /// Initialize panic hook for better error messages in browser console
@@ -51,8 +51,25 @@ extern "C" {
         context_json: &str,
     );
 
-    #[wasm_bindgen(method, js_name = isClosed)]
-    fn is_closed(this: &JsSpilmanHost, channel_id: &str) -> bool;
+    /// Get channel state: "open", "closing", or "closed"
+    #[wasm_bindgen(method, js_name = getChannelState)]
+    fn get_channel_state(this: &JsSpilmanHost, channel_id: &str) -> String;
+
+    /// Mark a channel as closing (pre-swap state)
+    /// Returns undefined on success, or {error: string} on failure
+    #[wasm_bindgen(method, js_name = markChannelClosing)]
+    fn mark_channel_closing(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> JsValue;
+
+    /// Get closing data for a channel in CLOSING state
+    /// Returns null/undefined if not in CLOSING state, or {locktime, balance, signature}
+    #[wasm_bindgen(method, js_name = getClosingData)]
+    fn get_closing_data(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
 
     #[wasm_bindgen(method, js_name = getChannelPolicy)]
     fn get_channel_policy(this: &JsSpilmanHost) -> String;
@@ -160,8 +177,57 @@ impl SpilmanHost for WasmSpilmanHostProxy {
             .record_payment(channel_id, balance, signature, context_json);
     }
 
-    fn is_closed(&self, channel_id: &str) -> bool {
-        self.js_host.is_closed(channel_id)
+    fn get_channel_state(&self, channel_id: &str) -> ChannelState {
+        let state_str = self.js_host.get_channel_state(channel_id);
+        match state_str.as_str() {
+            "closed" => ChannelState::Closed,
+            "closing" => ChannelState::Closing,
+            _ => ChannelState::Open,
+        }
+    }
+
+    fn mark_channel_closing(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), String> {
+        let val = self.js_host.mark_channel_closing(channel_id, locktime, balance, signature);
+        // Check for error return
+        if let Some(obj) = js_sys::Object::try_from(&val) {
+            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
+                if let Some(err_str) = err_val.as_string() {
+                    return Err(err_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
+        let val = self.js_host.get_closing_data(channel_id);
+        if val.is_null() || val.is_undefined() {
+            return None;
+        }
+
+        // Expecting an object {locktime, balance, signature}
+        let obj = js_sys::Object::try_from(&val)?;
+        let locktime = js_sys::Reflect::get(obj, &JsValue::from_str("locktime"))
+            .ok()?
+            .as_f64()? as u64;
+        let balance = js_sys::Reflect::get(obj, &JsValue::from_str("balance"))
+            .ok()?
+            .as_f64()? as u64;
+        let signature = js_sys::Reflect::get(obj, &JsValue::from_str("signature"))
+            .ok()?
+            .as_string()?;
+
+        Some(ClosingData {
+            locktime,
+            balance,
+            signature,
+        })
     }
 
     fn get_channel_policy(&self) -> String {
@@ -486,6 +552,28 @@ impl WasmSpilmanBridge {
             }
         };
 
+        // 1.5 Mark channel as CLOSING before attempting swap
+        let params_val: serde_json::Value = serde_json::from_str(&prepared.params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
+        let locktime = params_val["locktime"].as_u64().unwrap_or(0);
+
+        let payment_val: serde_json::Value = serde_json::from_str(payment_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid payment JSON: {}", e)))?;
+        let signature = payment_val["signature"]
+            .as_str()
+            .ok_or_else(|| JsValue::from_str("missing signature"))?;
+
+        if let Err(e) = self.bridge.host().mark_channel_closing(
+            &prepared.channel_id,
+            locktime,
+            prepared.balance,
+            signature,
+        ) {
+            let close_error = cdk::spilman::CloseError::storage_failed(e);
+            return Err(serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
+        }
+
         // 2. Submit swap to mint
         let swap_response_str = self
             .call_mint_swap_via_host(&prepared.mint_url, &prepared.swap_request.to_string())
@@ -621,6 +709,28 @@ impl WasmSpilmanBridge {
                     .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
             }
         };
+
+        // 1.5 Mark channel as CLOSING before attempting swap
+        let params_val: serde_json::Value = serde_json::from_str(&prepared.params_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
+        let locktime = params_val["locktime"].as_u64().unwrap_or(0);
+
+        let (_, signature) = self
+            .bridge
+            .host()
+            .get_balance_and_signature_for_unilateral_exit(channel_id)
+            .ok_or_else(|| JsValue::from_str("no payment proof stored"))?;
+
+        if let Err(e) = self.bridge.host().mark_channel_closing(
+            &prepared.channel_id,
+            locktime,
+            prepared.balance,
+            &signature,
+        ) {
+            let close_error = cdk::spilman::CloseError::storage_failed(e);
+            return Err(serde_wasm_bindgen::to_value(&close_error)
+                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
+        }
 
         // 2. Submit swap to mint
         let swap_response_str = self

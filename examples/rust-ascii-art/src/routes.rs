@@ -485,6 +485,30 @@ async fn post_channel_close(
         }
     };
 
+    // Get locktime from params for marking CLOSING
+    let locktime = {
+        let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
+            Ok(p) => p,
+            Err(_) => serde_json::json!({}),
+        };
+        params.get("locktime").and_then(|v| v.as_u64()).unwrap_or(0)
+    };
+
+    // Mark channel as CLOSING before attempting swap
+    // If swap fails, channel stays in CLOSING state and can be retried
+    if let Err(e) = state.host.mark_channel_closing(&channel_id, locktime, body.balance, &body.signature) {
+        tracing::info!("  [Close] Failed to mark CLOSING: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "failed to mark channel closing",
+                "reason": e,
+            })),
+        )
+            .into_response();
+    }
+
     // Submit swap to mint (async)
     let swap_response = match state
         .host
@@ -647,6 +671,41 @@ async fn post_unilateral_close(
                 .into_response();
         }
     };
+
+    // Get locktime and signature for marking CLOSING
+    let locktime = {
+        let params: serde_json::Value = match serde_json::from_str(&prepared.params_json) {
+            Ok(p) => p,
+            Err(_) => serde_json::json!({}),
+        };
+        params.get("locktime").and_then(|v| v.as_u64()).unwrap_or(0)
+    };
+    let (_, signature) = match state.host.get_balance_and_signature_for_unilateral_exit(&channel_id) {
+        Some(data) => data,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "no payment proof stored for channel",
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // Mark channel as CLOSING before attempting swap
+    if let Err(e) = state.host.mark_channel_closing(&channel_id, locktime, prepared.balance, &signature) {
+        tracing::info!("  [Unilateral Close] Failed to mark CLOSING: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": "failed to mark channel closing",
+                "reason": e,
+            })),
+        )
+            .into_response();
+    }
 
     // Submit swap to mint (async)
     let swap_response = match state

@@ -18,7 +18,9 @@ typedef struct {
     void (*save_funding)(void*, const char*, const char*, const char*, const char*, const char*);
     uint64_t (*get_amount_due)(void*, const char*, const char*);
     void (*record_payment)(void*, const char*, uint64_t, const char*, const char*);
-    int (*is_closed)(void*, const char*);
+    char* (*get_channel_state)(void*, const char*);
+    int (*mark_channel_closing)(void*, const char*, uint64_t, uint64_t, const char*);
+    int (*get_closing_data)(void*, const char*, uint64_t*, uint64_t*, char**);
     char* (*get_channel_policy)(void*);
     uint64_t (*now_seconds)(void*);
     int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
@@ -96,6 +98,13 @@ type CloseSuccess struct {
 	AlreadyClosed bool   `json:"already_closed"`
 }
 
+// ClosingData holds the pre-swap state for a channel in CLOSING state
+type ClosingData struct {
+	Locktime  uint64
+	Balance   uint64
+	Signature string
+}
+
 // SpilmanHost is the interface that the Go application must implement to handle
 // channel persistence and policy.
 type SpilmanHost interface {
@@ -105,7 +114,12 @@ type SpilmanHost interface {
 	SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string)
 	GetAmountDue(channelId string, contextJson *string) uint64
 	RecordPayment(channelId string, balance uint64, signature, contextJson string)
-	IsClosed(channelId string) bool
+	// GetChannelState returns: "open", "closing", or "closed"
+	GetChannelState(channelId string) string
+	// MarkChannelClosing marks a channel as CLOSING (pre-swap state)
+	MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error
+	// GetClosingData returns the closing data for a channel in CLOSING state, or nil if not closing
+	GetClosingData(channelId string) *ClosingData
 	GetChannelPolicy() string
 	NowSeconds() uint64
 	GetBalanceAndSignatureForUnilateralExit(channelId string) (balance uint64, signature string, ok bool)
@@ -496,14 +510,36 @@ func go_record_payment(userData unsafe.Pointer, channelId *C.char, balance C.uin
 	host.RecordPayment(C.GoString(channelId), uint64(balance), C.GoString(signature), C.GoString(contextJson))
 }
 
-//export go_is_closed
-func go_is_closed(userData unsafe.Pointer, channelId *C.char) C.int {
+//export go_get_channel_state
+func go_get_channel_state(userData unsafe.Pointer, channelId *C.char) *C.char {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	if host.IsClosed(C.GoString(channelId)) {
-		return 1
+	return C.CString(host.GetChannelState(C.GoString(channelId)))
+}
+
+//export go_mark_channel_closing
+func go_mark_channel_closing(userData unsafe.Pointer, channelId *C.char, locktime C.uint64_t, balance C.uint64_t, signature *C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	err := host.MarkChannelClosing(C.GoString(channelId), uint64(locktime), uint64(balance), C.GoString(signature))
+	if err != nil {
+		return 0
 	}
-	return 0
+	return 1
+}
+
+//export go_get_closing_data
+func go_get_closing_data(userData unsafe.Pointer, channelId *C.char, locktimeOut *C.uint64_t, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	data := host.GetClosingData(C.GoString(channelId))
+	if data == nil {
+		return 0
+	}
+	*locktimeOut = C.uint64_t(data.Locktime)
+	*balanceOut = C.uint64_t(data.Balance)
+	*signatureOut = C.CString(data.Signature)
+	return 1
 }
 
 //export go_get_channel_policy

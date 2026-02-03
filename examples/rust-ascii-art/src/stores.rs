@@ -29,6 +29,15 @@ pub struct ChannelUsage {
     pub chars_served: u64,
 }
 
+/// Data stored when a channel enters CLOSING state (pre-swap).
+#[derive(Clone)]
+pub struct ClosingChannelData {
+    pub locktime: u64,
+    pub balance: u64,
+    pub signature: String,
+}
+
+/// Data stored when a channel is fully CLOSED (post-swap).
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct ClosedChannelData {
@@ -57,6 +66,7 @@ pub struct Stores {
     funding: RwLock<HashMap<String, ChannelFundingData>>,
     balance: RwLock<HashMap<String, ChannelBalance>>,
     usage: RwLock<HashMap<String, ChannelUsage>>,
+    closing: RwLock<HashMap<String, ClosingChannelData>>,
     closed: RwLock<HashMap<String, ClosedChannelData>>,
     keysets: RwLock<HashMap<String, KeysetCacheEntry>>,
 }
@@ -73,6 +83,7 @@ impl Stores {
             funding: RwLock::new(HashMap::new()),
             balance: RwLock::new(HashMap::new()),
             usage: RwLock::new(HashMap::new()),
+            closing: RwLock::new(HashMap::new()),
             closed: RwLock::new(HashMap::new()),
             keysets: RwLock::new(HashMap::new()),
         }
@@ -166,7 +177,51 @@ impl Stores {
     }
 
     // ========================================================================
-    // Channel Closed
+    // Channel Closing (pre-swap state)
+    // ========================================================================
+
+    pub fn is_closing(&self, channel_id: &str) -> bool {
+        self.closing
+            .read()
+            .expect("closing lock poisoned")
+            .contains_key(channel_id)
+    }
+
+    pub fn get_closing(&self, channel_id: &str) -> Option<ClosingChannelData> {
+        self.closing
+            .read()
+            .expect("closing lock poisoned")
+            .get(channel_id)
+            .cloned()
+    }
+
+    pub fn mark_closing(&self, channel_id: &str, locktime: u64, balance: u64, signature: &str) {
+        let mut store = self.closing.write().expect("closing lock poisoned");
+        store.insert(
+            channel_id.to_string(),
+            ClosingChannelData {
+                locktime,
+                balance,
+                signature: signature.to_string(),
+            },
+        );
+        tracing::info!(
+            "  [Store] Channel marked CLOSING: {} balance={}",
+            &channel_id[..8.min(channel_id.len())],
+            balance
+        );
+    }
+
+    /// Remove from closing when transitioning to closed.
+    fn remove_closing(&self, channel_id: &str) {
+        self.closing
+            .write()
+            .expect("closing lock poisoned")
+            .remove(channel_id);
+    }
+
+    // ========================================================================
+    // Channel Closed (post-swap state)
     // ========================================================================
 
     pub fn is_closed(&self, channel_id: &str) -> bool {
@@ -196,6 +251,9 @@ impl Stores {
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
     ) {
+        // Remove from closing state (if present)
+        self.remove_closing(channel_id);
+
         let mut store = self.closed.write().expect("closed lock poisoned");
         store.insert(
             channel_id.to_string(),
