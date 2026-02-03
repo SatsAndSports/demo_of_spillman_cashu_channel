@@ -175,9 +175,13 @@ trait SpilmanHost {
     fn receiver_key_is_acceptable(&self, pubkey: &PublicKey) -> bool;
     
     /// Is this mint and keyset allowed?
-    /// You *may* accept inactive keysets; any active keyset maybe
-    /// become inactive during the lifetime of the channel.
     /// Check against your allowlist of trusted mints.
+    /// This may include inactive keysets, but it's advised to reject
+    /// keysets that are close to expiry. When the bridge requires
+    /// and active keyset for swapping, it will call 'get_active_keyset_ids'.
+    /// For efficiency and DOS protection, this function should *not* call
+    /// the mint, instead it should use a cache of acceptable keysets for
+    /// each mint.
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
     
     /// Return your channel policy (pricing, limits) as JSON.
@@ -193,6 +197,8 @@ trait SpilmanHost {
     /// `context_json` describes the current request (e.g., file size, action type).
     /// Return the cumulative amount due based on all usage so far plus this request.
     /// If no context_json is passed, just return based on all usage so far.
+    /// There is no schema requirement on the `context_json`, in fact it
+    /// does not need to be JSON. You provide it when calling 'process_payment'.
     fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
 
     // ==================== Storage: Funding ====================
@@ -330,7 +336,9 @@ trait SpilmanHost {
 
 You need to persist several pieces of data per channel. Here's what each store contains:
 
-### Required Stores
+You are free to decide how to store this. Perhaps you will have a single complex
+`State` type and store a mapping of `channel_id` to `State`.
+The four examples servers users four separate in-memory stores like this:
 
 | Store | Key | Data | Purpose |
 |-------|-----|------|---------|
@@ -434,7 +442,8 @@ bridge = SpilmanBridge(hooks, server_secret_key_hex)
 
 #### `process_payment` - Validate and Record
 
-The most common method. Validates the payment and calls `record_payment` on success:
+The most common method for you to call from your server.
+Validates the payment and calls `record_payment` on success:
 
 ```rust
 let result = bridge.process_payment(
@@ -709,6 +718,8 @@ Each demo implements a simple service: pay per character of ASCII art. Study the
 ### CashuTube
 
 A more complete example: pay-per-segment video streaming.
+
+Note that this is in a seperate repository.
 
 | Component | Location |
 |-----------|----------|
