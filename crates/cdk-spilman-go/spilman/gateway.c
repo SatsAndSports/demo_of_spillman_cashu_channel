@@ -11,7 +11,7 @@ typedef struct {
     int (*receiver_key_is_acceptable)(void*, const char*);
     int (*mint_and_keyset_is_acceptable)(void*, const char*, const char*);
     int (*get_funding_and_params)(void*, const char*, char**, char**, char**, char**);
-    void (*save_funding)(void*, const char*, const char*, const char*, const char*, const char*);
+    void (*save_funding)(void*, const char*, const char*, const char*, const char*, const char*, uint64_t, const char*);
     uint64_t (*get_amount_due)(void*, const char*, const char*);
     void (*record_payment)(void*, const char*, uint64_t, const char*, const char*);
     char* (*get_channel_state)(void*, const char*);
@@ -31,7 +31,7 @@ typedef struct {
 extern int go_receiver_key_is_acceptable(void*, const char*);
 extern int go_mint_and_keyset_is_acceptable(void*, const char*, const char*);
 extern int go_get_funding_and_params(void*, const char*, char**, char**, char**, char**);
-extern void go_save_funding(void*, const char*, const char*, const char*, const char*, const char*);
+extern void go_save_funding(void*, const char*, const char*, const char*, const char*, const char*, uint64_t, const char*);
 extern uint64_t go_get_amount_due(void*, const char*, const char*);
 extern void go_record_payment(void*, const char*, uint64_t, const char*, const char*);
 extern char* go_get_channel_state(void*, const char*);

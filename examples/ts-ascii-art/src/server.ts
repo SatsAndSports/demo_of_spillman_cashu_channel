@@ -101,7 +101,9 @@ export const spilmanHooks = {
     paramsJson: string,
     fundingProofsJson: string,
     sharedSecret: string,
-    keysetInfoJson: string
+    keysetInfoJson: string,
+    initialBalance: number,
+    initialSignature: string
   ): void => {
     channelFunding.insert(channelId, {
       paramsJson,
@@ -109,6 +111,9 @@ export const spilmanHooks = {
       sharedSecret,
       keysetInfoJson,
     });
+    // Store the initial balance/signature for closing
+    // Note: WASM passes u64 as BigInt, convert to number for JSON serialization
+    channelBalance.update(channelId, Number(initialBalance), initialSignature);
   },
 
   getAmountDue: (channelId: string, contextJson: string | null): bigint => {

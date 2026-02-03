@@ -37,6 +37,8 @@ extern "C" {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     );
 
     #[wasm_bindgen(method, js_name = getAmountDue)]
@@ -154,6 +156,8 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     ) {
         self.js_host.save_funding(
             channel_id,
@@ -161,6 +165,8 @@ impl SpilmanHost for WasmSpilmanHostProxy {
             funding_proofs_json,
             shared_secret_hex,
             keyset_info_json,
+            initial_balance,
+            initial_signature,
         );
     }
 

@@ -52,7 +52,12 @@ pub trait SpilmanHost {
     /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
     fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
 
-    /// Save funding data for a channel
+    /// Save funding data for a channel, including the initial payment proof
+    ///
+    /// The initial_balance and initial_signature represent the first valid payment
+    /// for this channel. Even if balance is 0, the signature is valid and can be
+    /// used for closing. The host should store these alongside the funding data.
+    #[allow(clippy::too_many_arguments)]
     fn save_funding(
         &self,
         channel_id: &str,
@@ -60,6 +65,8 @@ pub trait SpilmanHost {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     );
 
     /// Get the current amount due for a channel
@@ -1128,17 +1135,21 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         }
 
         // 3. Resolve or verify funding (saves funding for new channels - idempotent)
-        let funding_and_params = match self.host.get_funding_and_params(channel_id) {
-            Some(f) => f,
-            None => {
-                // Unknown channel - must provide params and funding_proofs
-                let params_val = params.ok_or(BridgeError::UnknownChannel)?;
-                let proofs = funding_proofs.ok_or(BridgeError::UnknownChannel)?;
+        let (funding_and_params, is_new_channel) =
+            match self.host.get_funding_and_params(channel_id) {
+                Some(f) => (f, false),
+                None => {
+                    // Unknown channel - must provide params and funding_proofs
+                    let params_val = params.ok_or(BridgeError::UnknownChannel)?;
+                    let proofs = funding_proofs.ok_or(BridgeError::UnknownChannel)?;
 
-                // Perform full validation and save funding
-                self.validate_and_save_new_channel(channel_id, params_val, proofs)?
-            }
-        };
+                    // Perform full validation, signature verification, and save funding
+                    let f = self.validate_and_save_new_channel(
+                        channel_id, params_val, proofs, balance, signature,
+                    )?;
+                    (f, true)
+                }
+            };
 
         let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
             funding_and_params;
@@ -1149,12 +1160,28 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         let capacity = params_value["capacity"].as_u64().unwrap_or(0);
 
-        // 5. Check balance doesn't exceed capacity
-        if balance > capacity {
-            return Err(BridgeError::BalanceExceedsCapacity { balance, capacity });
+        // For known channels, we still need to check balance and verify signature
+        // (for new channels, validate_and_save_new_channel already did this)
+        if !is_new_channel {
+            // 5. Check balance doesn't exceed capacity
+            if balance > capacity {
+                return Err(BridgeError::BalanceExceedsCapacity { balance, capacity });
+            }
+
+            // 6. Verify signature
+            self.verify_signature(
+                &params_json,
+                &funding_proofs_json,
+                &shared_secret_hex,
+                &keyset_info_json,
+                channel_id,
+                balance,
+                signature,
+            )
+            .map_err(BridgeError::InvalidSignature)?;
         }
 
-        // 6. Check balance against amount_due
+        // 7. Check balance against amount_due (always, for both new and known channels)
         let amount_due = self.host.get_amount_due(channel_id, Some(context_json));
         if balance < amount_due {
             return Err(BridgeError::InsufficientBalance {
@@ -1162,18 +1189,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 amount_due,
             });
         }
-
-        // 7. Verify signature
-        self.verify_signature(
-            &params_json,
-            &funding_proofs_json,
-            &shared_secret_hex,
-            &keyset_info_json,
-            channel_id,
-            balance,
-            signature,
-        )
-        .map_err(BridgeError::InvalidSignature)?;
 
         // 8. Return validation result (no record_payment call here)
         Ok(PaymentValidationResult {
@@ -1273,8 +1288,10 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                     "missing funding_proofs for new channel".into(),
                 ))?;
 
-                // Perform full validation and save funding
-                let f = self.validate_and_save_new_channel(channel_id, params_val, proofs)?;
+                // Perform full validation, signature verification, and save funding
+                let f = self.validate_and_save_new_channel(
+                    channel_id, params_val, proofs, balance, signature,
+                )?;
                 (f, false)
             }
         };
@@ -1288,17 +1305,20 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         let capacity = params_value["capacity"].as_u64().unwrap_or(0);
 
-        // 5. Verify signature for the provided balance
-        self.verify_signature(
-            &params_json,
-            &funding_proofs_json,
-            &shared_secret_hex,
-            &keyset_info_json,
-            channel_id,
-            balance,
-            signature,
-        )
-        .map_err(BridgeError::InvalidSignature)?;
+        // 5. For already-known channels, verify signature
+        // (for new channels, validate_and_save_new_channel already did this)
+        if already_known {
+            self.verify_signature(
+                &params_json,
+                &funding_proofs_json,
+                &shared_secret_hex,
+                &keyset_info_json,
+                channel_id,
+                balance,
+                signature,
+            )
+            .map_err(BridgeError::InvalidSignature)?;
+        }
 
         // 6. Return success (no record_payment call)
         Ok(FundChannelResult {
@@ -1343,11 +1363,14 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn validate_and_save_new_channel(
         &self,
         channel_id: &str,
         params_val: &serde_json::Value,
         funding_proofs: &[Proof],
+        balance: u64,
+        signature: &str,
     ) -> Result<(String, String, String, String), BridgeError> {
         let server_secret_key = self
             .server_secret_key
@@ -1435,24 +1458,29 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             });
         }
 
+        // 4. Check balance doesn't exceed capacity
+        if balance > capacity {
+            return Err(BridgeError::BalanceExceedsCapacity { balance, capacity });
+        }
+
         let alice_pubkey_hex = params_val["alice_pubkey"]
             .as_str()
             .ok_or(BridgeError::InvalidRequest("missing alice_pubkey".into()))?;
         let alice_pubkey = PublicKey::from_hex(alice_pubkey_hex)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
 
-        // 4. Compute shared secret
+        // 5. Compute shared secret
         let shared_secret = super::compute_shared_secret(server_secret_key, &alice_pubkey);
         let shared_secret_hex = hex::encode(shared_secret);
 
-        // 5. Parse keyset info
+        // 6. Parse keyset info
         let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(BridgeError::InvalidRequest)?;
 
-        // 6. Verify channel_id matches
+        // 7. Verify channel_id matches
         let params = ChannelParameters::from_json_with_shared_secret(
             &params_json,
-            keyset_info,
+            keyset_info.clone(),
             shared_secret,
         )
         .map_err(|e| BridgeError::Internal(e.to_string()))?;
@@ -1461,7 +1489,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::ChannelIdMismatch);
         }
 
-        // 7. Verify DLEQ proofs
+        // 8. Verify DLEQ proofs
         let verification = verify_valid_channel(funding_proofs, &params);
         if !verification.valid {
             return Err(BridgeError::ValidationFailed(
@@ -1470,15 +1498,29 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             ));
         }
 
-        // 8. Save to host
+        // 9. Verify signature for the initial balance
         let funding_proofs_json =
             serde_json::to_string(funding_proofs).expect("Vec<Proof> should always serialize");
+        self.verify_signature(
+            &params_json,
+            &funding_proofs_json,
+            &shared_secret_hex,
+            &keyset_info_json,
+            channel_id,
+            balance,
+            signature,
+        )
+        .map_err(BridgeError::InvalidSignature)?;
+
+        // 10. Save to host (including initial balance and signature)
         self.host.save_funding(
             channel_id,
             &params_json,
             &funding_proofs_json,
             &shared_secret_hex,
             &keyset_info_json,
+            balance,
+            signature,
         );
 
         Ok((
@@ -1746,7 +1788,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 // Unknown channel - must provide params and funding_proofs
                 let p = params.ok_or(BridgeError::UnknownChannel)?;
                 let fp = funding_proofs.ok_or(BridgeError::UnknownChannel)?;
-                self.validate_and_save_new_channel(channel_id, p, fp)?
+                self.validate_and_save_new_channel(channel_id, p, fp, balance, signature)?
             }
         };
 
@@ -2411,6 +2453,8 @@ mod tests {
             _funding_proofs_json: &str,
             _shared_secret_hex: &str,
             _keyset_info_json: &str,
+            _initial_balance: u64,
+            _initial_signature: &str,
         ) {
         }
 
@@ -2613,6 +2657,8 @@ mod tests {
             _funding_proofs_json: &str,
             _shared_secret_hex: &str,
             _keyset_info_json: &str,
+            _initial_balance: u64,
+            _initial_signature: &str,
         ) {
         }
         fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
@@ -2846,6 +2892,8 @@ mod tests {
             _funding_proofs_json: &str,
             _shared_secret_hex: &str,
             _keyset_info_json: &str,
+            _initial_balance: u64,
+            _initial_signature: &str,
         ) {
         }
 

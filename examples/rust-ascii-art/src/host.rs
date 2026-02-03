@@ -179,6 +179,8 @@ impl SpilmanHost for AsciiArtHost {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     ) {
         self.stores.insert_funding(
             channel_id,
@@ -189,6 +191,8 @@ impl SpilmanHost for AsciiArtHost {
                 keyset_info_json: keyset_info_json.to_string(),
             },
         );
+        // Store the initial balance/signature for closing
+        self.stores.update_balance(channel_id, initial_balance, initial_signature);
     }
 
     fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {

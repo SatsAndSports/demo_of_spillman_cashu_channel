@@ -168,7 +168,7 @@ func (h *AsciiArtHost) GetFundingAndParams(channelId string) (string, string, st
 	return data["params"], data["proofs"], data["secret"], data["keyset"], true
 }
 
-func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string) {
+func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
 	log.Printf("  [Host] SaveFunding for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
@@ -177,6 +177,14 @@ func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecr
 		"proofs": proofsJson,
 		"secret": sharedSecretHex,
 		"keyset": keysetInfoJson,
+	}
+	// Store the initial balance/signature for closing
+	current := channelBalance[channelId]
+	if current == nil || initialBalance > current["balance"].(uint64) {
+		channelBalance[channelId] = map[string]interface{}{
+			"balance":   initialBalance,
+			"signature": initialSignature,
+		}
 	}
 	log.Printf("  [Host] Saved funding for channel %s\n", channelId[:8])
 }
