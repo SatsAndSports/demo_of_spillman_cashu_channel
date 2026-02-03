@@ -119,7 +119,7 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - receiver_key_is_acceptable(pubkey_hex: str) -> bool
 /// - mint_and_keyset_is_acceptable(mint: str, keyset_id: str) -> bool
 /// - get_funding_and_params(channel_id: str) -> Optional[Tuple[str, str, str, str]]
-/// - save_funding(channel_id: str, params: str, proofs: str, secret: str, keyset: str)
+/// - save_funding(channel_id: str, params: str, proofs: str, secret: str, keyset: str, initial_balance: int, initial_signature: str)
 /// - get_amount_due(channel_id: str, context_json: str) -> int
 /// - record_payment(channel_id: str, balance: int, signature: str, context_json: str)
 /// - get_channel_state(channel_id: str) -> str  # Returns "open", "closing", or "closed"
@@ -274,6 +274,8 @@ impl SpilmanHost for PySpilmanHost {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     ) {
         Python::with_gil(|py| {
             let _ = self.py_host.call_method1(
@@ -285,6 +287,8 @@ impl SpilmanHost for PySpilmanHost {
                     funding_proofs_json,
                     shared_secret_hex,
                     keyset_info_json,
+                    initial_balance,
+                    initial_signature,
                 ),
             );
         });

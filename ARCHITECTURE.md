@@ -161,7 +161,7 @@ trait SpilmanHost {
     
     // Storage hooks
     fn get_funding(&self, channel_id: &str) -> Option<FundingData>;
-    fn save_funding(&self, channel_id: &str, data: FundingData);
+    fn save_funding(&self, channel_id: &str, data: FundingData, balance: u64, sig: &str);
     
     // Channel state
     fn is_closed(&self, channel_id: &str) -> bool;

@@ -197,10 +197,11 @@ trait SpilmanHost {
 
     // ==================== Storage: Funding ====================
     
-    /// Store funding data for a new channel.
-    /// If the bridge verifies that the data for a (proposed) new channel is
-    /// valid, then it will call this method to arrange for it be stored.
-    /// The channel is considered OPEN after this is called.
+    /// Store funding data for a new channel, including the initial payment proof.
+    /// 
+    /// Called after the bridge validates a new channel's params, proofs, and signature.
+    /// The initial_balance/initial_signature should be stored for closing the channel.
+    /// Even if initial_balance is 0, the signature is valid and can be used for closing.
     fn save_funding(
         &self,
         channel_id: &str,
@@ -208,6 +209,8 @@ trait SpilmanHost {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     );
     
     /// Retrieve stored funding data for a channel.

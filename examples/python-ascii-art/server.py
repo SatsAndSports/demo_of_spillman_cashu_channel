@@ -263,7 +263,9 @@ class AsciiArtHost:
         params: str,
         proofs: str,
         shared_secret: str,
-        keyset_info: str
+        keyset_info: str,
+        initial_balance: int,
+        initial_signature: str
     ):
         """
         Persists funding data for a newly discovered channel.
@@ -274,6 +276,8 @@ class AsciiArtHost:
             proofs: The funding proofs as a JSON string.
             shared_secret: The ECDH shared secret as a hex string.
             keyset_info: The keyset information as a JSON string.
+            initial_balance: The initial balance (can be 0 or non-zero).
+            initial_signature: The signature for the initial balance.
         """
         channel_funding[channel_id] = {
             "params": params,
@@ -281,6 +285,13 @@ class AsciiArtHost:
             "shared_secret": shared_secret,
             "keyset_info": keyset_info
         }
+        # Store the initial balance/signature for closing
+        current = channel_largest_payment.get(channel_id)
+        if not current or initial_balance > current.get("balance", 0):
+            channel_largest_payment[channel_id] = {
+                "balance": initial_balance,
+                "signature": initial_signature
+            }
         print(f"  [Bridge] Saved funding for channel {channel_id[:16]}...")
     
     def get_amount_due(self, channel_id: str, context_json: Optional[str]) -> int:

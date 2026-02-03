@@ -63,6 +63,8 @@ pub struct SpilmanHostCallbacks {
         funding_proofs_json: *const c_char,
         shared_secret_hex: *const c_char,
         keyset_info_json: *const c_char,
+        initial_balance: u64,
+        initial_signature: *const c_char,
     ),
     pub get_amount_due: extern "C" fn(
         user_data: *mut libc::c_void,
@@ -193,12 +195,15 @@ impl SpilmanHost for CGoSpilmanHost {
         funding_proofs_json: &str,
         shared_secret_hex: &str,
         keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
     ) {
         let id_c = CString::new(channel_id).unwrap();
         let p_c = CString::new(params_json).unwrap();
         let pr_c = CString::new(funding_proofs_json).unwrap();
         let s_c = CString::new(shared_secret_hex).unwrap();
         let k_c = CString::new(keyset_info_json).unwrap();
+        let sig_c = CString::new(initial_signature).unwrap();
 
         (self.callbacks.save_funding)(
             self.callbacks.user_data,
@@ -207,6 +212,8 @@ impl SpilmanHost for CGoSpilmanHost {
             pr_c.as_ptr(),
             s_c.as_ptr(),
             k_c.as_ptr(),
+            initial_balance,
+            sig_c.as_ptr(),
         );
     }
 
