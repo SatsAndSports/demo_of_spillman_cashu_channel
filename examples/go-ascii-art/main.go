@@ -270,6 +270,10 @@ func (h *AsciiArtHost) MarkChannelClosing(channelId string, locktime, balance ui
 	log.Printf("  [Host] MarkChannelClosing: channel=%s balance=%d\n", channelId[:8], balance)
 	mu.Lock()
 	defer mu.Unlock()
+	// Check if channel is already closed
+	if _, ok := channelClosed[channelId]; ok {
+		return fmt.Errorf("channel already closed")
+	}
 	channelClosing[channelId] = &ClosingChannelData{
 		Locktime:  locktime,
 		Balance:   balance,
@@ -369,6 +373,10 @@ func (h *AsciiArtHost) MarkChannelClosed(channelId string, locktime, balance uin
 	log.Printf("  [Host] MarkChannelClosed: channel=%s receiver=%d sender=%d\n", channelId[:8], receiverSum, senderSum)
 	mu.Lock()
 	defer mu.Unlock()
+	// Check if channel is already closed
+	if _, ok := channelClosed[channelId]; ok {
+		return fmt.Errorf("channel already closed")
+	}
 	channelClosed[channelId] = map[string]interface{}{
 		"locktime":        locktime,
 		"balance":         balance,
