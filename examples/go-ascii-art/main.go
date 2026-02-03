@@ -116,11 +116,19 @@ type KeysetCacheEntry struct {
 	Unit     string
 }
 
+// ClosingChannelData holds the pre-swap state for a channel in CLOSING state
+type ClosingChannelData struct {
+	Locktime  uint64
+	Balance   uint64
+	Signature string
+}
+
 var (
 	// In-memory data stores
 	channelFunding = make(map[string]map[string]string)
 	channelBalance = make(map[string]map[string]interface{})
 	channelUsage   = make(map[string]map[string]uint64)
+	channelClosing = make(map[string]*ClosingChannelData)
 	channelClosed  = make(map[string]interface{})
 	keysetCache    = make(map[string]KeysetCacheEntry)
 	keysetCacheMu  sync.RWMutex
@@ -236,11 +244,45 @@ func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature
 	log.Printf("  [Host] Recorded payment: %d sats for %s\n", balance, channelId[:8])
 }
 
-func (h *AsciiArtHost) IsClosed(channelId string) bool {
+// GetChannelState returns: "open", "closing", or "closed"
+func (h *AsciiArtHost) GetChannelState(channelId string) string {
 	mu.Lock()
 	defer mu.Unlock()
-	_, ok := channelClosed[channelId]
-	return ok
+	if _, ok := channelClosed[channelId]; ok {
+		return "closed"
+	}
+	if _, ok := channelClosing[channelId]; ok {
+		return "closing"
+	}
+	return "open"
+}
+
+// MarkChannelClosing marks a channel as CLOSING (pre-swap state)
+func (h *AsciiArtHost) MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error {
+	log.Printf("  [Host] MarkChannelClosing: channel=%s balance=%d\n", channelId[:8], balance)
+	mu.Lock()
+	defer mu.Unlock()
+	channelClosing[channelId] = &ClosingChannelData{
+		Locktime:  locktime,
+		Balance:   balance,
+		Signature: signature,
+	}
+	return nil
+}
+
+// GetClosingData returns the closing data for a channel in CLOSING state, or nil if not closing
+func (h *AsciiArtHost) GetClosingData(channelId string) *spilman.ClosingData {
+	mu.Lock()
+	defer mu.Unlock()
+	data, ok := channelClosing[channelId]
+	if !ok {
+		return nil
+	}
+	return &spilman.ClosingData{
+		Locktime:  data.Locktime,
+		Balance:   data.Balance,
+		Signature: data.Signature,
+	}
 }
 
 func (h *AsciiArtHost) GetChannelPolicy() string {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cdk::nuts::{CurrencyUnit, Id, PublicKey};
-use cdk::spilman::SpilmanHost;
+use cdk::spilman::{ChannelState, ClosingData, SpilmanHost};
 
 use crate::stores::{ChannelFundingData, KeysetCacheEntry, Stores, UnitPricing};
 
@@ -227,8 +227,33 @@ impl SpilmanHost for AsciiArtHost {
         }
     }
 
-    fn is_closed(&self, channel_id: &str) -> bool {
-        self.stores.is_closed(channel_id)
+    fn get_channel_state(&self, channel_id: &str) -> ChannelState {
+        if self.stores.is_closed(channel_id) {
+            ChannelState::Closed
+        } else if self.stores.is_closing(channel_id) {
+            ChannelState::Closing
+        } else {
+            ChannelState::Open
+        }
+    }
+
+    fn mark_channel_closing(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), String> {
+        self.stores.mark_closing(channel_id, locktime, balance, signature);
+        Ok(())
+    }
+
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
+        self.stores.get_closing(channel_id).map(|data| ClosingData {
+            locktime: data.locktime,
+            balance: data.balance,
+            signature: data.signature,
+        })
     }
 
     fn get_channel_policy(&self) -> String {

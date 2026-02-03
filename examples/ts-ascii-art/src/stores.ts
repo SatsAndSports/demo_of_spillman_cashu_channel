@@ -25,6 +25,14 @@ export interface ChannelUsage {
   charsServed: number;
 }
 
+/** Data stored when a channel enters CLOSING state (pre-swap). */
+export interface ClosingChannelData {
+  locktime: number;
+  balance: number;
+  signature: string;
+}
+
+/** Data stored when a channel is fully CLOSED (post-swap). */
 export interface ClosedChannelData {
   locktime: number;
   closedAmount: number;
@@ -107,7 +115,33 @@ export const channelUsage = {
 };
 
 // ============================================================================
-// Channel Closed Store
+// Channel Closing Store (pre-swap state)
+// ============================================================================
+
+const channelClosingStore = new Map<string, ClosingChannelData>();
+
+export const channelClosing = {
+  isClosing(channelId: string): boolean {
+    return channelClosingStore.has(channelId);
+  },
+
+  markClosing(channelId: string, locktime: number, balance: number, signature: string): void {
+    channelClosingStore.set(channelId, { locktime, balance, signature });
+    console.log(`  [Store] Channel marked CLOSING: ${channelId.substring(0, 8)} balance=${balance}`);
+  },
+
+  get(channelId: string): ClosingChannelData | null {
+    return channelClosingStore.get(channelId) ?? null;
+  },
+
+  /** Remove from closing store when transitioning to closed. */
+  remove(channelId: string): void {
+    channelClosingStore.delete(channelId);
+  },
+};
+
+// ============================================================================
+// Channel Closed Store (post-swap state)
 // ============================================================================
 
 const channelClosedStore = new Map<string, ClosedChannelData>();
@@ -127,6 +161,9 @@ export const channelClosed = {
     receiverProofsJson: string,
     senderProofsJson: string
   ): void {
+    // Remove from closing state (if present)
+    channelClosing.remove(channelId);
+
     channelClosedStore.set(channelId, {
       locktime,
       closedAmount,

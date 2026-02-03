@@ -16,6 +16,28 @@ use crate::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SecretKey,
 use crate::util::hex;
 use std::str::FromStr;
 
+/// Channel lifecycle states
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChannelState {
+    /// Channel is open and accepting payments
+    Open,
+    /// Channel is closing (swap pending, no more payments accepted)
+    Closing,
+    /// Channel is closed (swap completed, proofs stored)
+    Closed,
+}
+
+/// Data stored when a channel enters CLOSING state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClosingData {
+    /// The channel's locktime
+    pub locktime: u64,
+    /// The balance at close
+    pub balance: u64,
+    /// The client's Schnorr signature authorizing this balance
+    pub signature: String,
+}
+
 /// Host hooks for the Spilman bridge
 ///
 /// Implement this trait to provide storage and pricing logic for your service.
@@ -50,8 +72,38 @@ pub trait SpilmanHost {
     /// Record a successful payment and update usage
     fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
 
-    /// Check if a channel has been closed
-    fn is_closed(&self, channel_id: &str) -> bool;
+    /// Get the current state of a channel.
+    ///
+    /// Returns `Open` for unknown channels (they're implicitly open until funded).
+    fn get_channel_state(&self, channel_id: &str) -> ChannelState;
+
+    /// Mark a channel as closing (pre-swap state).
+    ///
+    /// Called before attempting the mint swap. The host should:
+    /// - Store the closing parameters (enough to reconstruct swap request later)
+    /// - Return `ChannelState::Closing` from `get_channel_state()` for this channel
+    /// - Reject further payments to this channel
+    ///
+    /// Can be called multiple times to update the closing parameters (server policy decision).
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID
+    /// * `locktime` - The channel's locktime
+    /// * `balance` - The balance at close
+    /// * `signature` - The client's Schnorr signature authorizing this balance
+    fn mark_channel_closing(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), String>;
+
+    /// Get the stored closing data for a channel in CLOSING state.
+    ///
+    /// Returns the data needed to reconstruct a swap request for retry.
+    /// Returns None if channel is not in CLOSING state.
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
 
     /// Get channel policy (pricing, limits, etc.)
     fn get_channel_policy(&self) -> String;
@@ -588,6 +640,7 @@ pub struct UnitPricing {
 pub enum BridgeError {
     InvalidRequest(String),
     ChannelClosed,
+    ChannelClosing,
     ServerMisconfigured(String),
     CapacityTooSmall {
         capacity: u64,
@@ -629,6 +682,7 @@ impl std::fmt::Display for BridgeError {
         match self {
             Self::InvalidRequest(s) => write!(f, "{}", s),
             Self::ChannelClosed => write!(f, "channel closed"),
+            Self::ChannelClosing => write!(f, "channel closing, swap pending"),
             Self::ServerMisconfigured(s) => write!(f, "server misconfigured: {}", s),
             Self::CapacityTooSmall {
                 capacity,
@@ -1066,9 +1120,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::InvalidRequest("missing signature".into()));
         }
 
-        // 2. Check if channel is closed
-        if self.host.is_closed(channel_id) {
-            return Err(BridgeError::ChannelClosed);
+        // 2. Check channel state
+        match self.host.get_channel_state(channel_id) {
+            ChannelState::Closed => return Err(BridgeError::ChannelClosed),
+            ChannelState::Closing => return Err(BridgeError::ChannelClosing),
+            ChannelState::Open => {}
         }
 
         // 3. Resolve or verify funding (saves funding for new channels - idempotent)
@@ -1205,9 +1261,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             return Err(BridgeError::InvalidRequest("missing signature".into()));
         }
 
-        // 2. Check if channel is closed
-        if self.host.is_closed(channel_id) {
-            return Err(BridgeError::ChannelClosed);
+        // 2. Check channel state
+        match self.host.get_channel_state(channel_id) {
+            ChannelState::Closed => return Err(BridgeError::ChannelClosed),
+            ChannelState::Closing => return Err(BridgeError::ChannelClosing),
+            ChannelState::Open => {}
         }
 
         // 3. Resolve or verify funding (saves funding for new channels - idempotent)
@@ -1683,8 +1741,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         funding_proofs: Option<&[Proof]>,
         validate_balance_equals_amount_due: bool,
     ) -> Result<CloseData, BridgeError> {
-        // 1. Check if channel is closed
-        if self.host.is_closed(channel_id) {
+        // 1. Check channel state - only reject if already fully closed
+        // Note: We allow preparing close for channels in Closing state (for retry)
+        if self.host.get_channel_state(channel_id) == ChannelState::Closed {
             return Err(BridgeError::ChannelClosed);
         }
 
@@ -1937,6 +1996,394 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             shared_secret,
         })
     }
+
+    /// Execute close for a channel that is already in CLOSING state.
+    ///
+    /// This is the unified method for completing a close operation. It can be called:
+    /// 1. Immediately after `mark_channel_closing()` (initial attempt)
+    /// 2. Later as a retry if the initial swap failed
+    ///
+    /// The method:
+    /// 1. Retrieves closing data from the host (locktime, balance, signature)
+    /// 2. Rebuilds the swap request from closing data + funding data
+    /// 3. Submits swap to the mint
+    /// 4. On mint error: refreshes keysets, rebuilds swap, retries once
+    /// 5. Unblinds and verifies DLEQ proofs
+    /// 6. Calls `mark_channel_closed()` with the final proofs
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID (must be in CLOSING state)
+    ///
+    /// # Returns
+    /// * `Ok(CloseSuccess)` - Channel successfully closed, contains proofs
+    /// * `Err(CloseError)` - Close failed (validation, mint rejection, etc.)
+    pub fn execute_close_for_closing_channel(
+        &self,
+        channel_id: &str,
+    ) -> Result<CloseSuccess, CloseError> {
+        // 1. Verify channel is in CLOSING state
+        match self.host.get_channel_state(channel_id) {
+            ChannelState::Open => {
+                return Err(CloseError::ValidationFailed {
+                    reason: "channel is OPEN, not CLOSING".to_string(),
+                    status: 400,
+                    expected_balance: None,
+                    actual_balance: None,
+                });
+            }
+            ChannelState::Closed => {
+                // Already closed - this is idempotent
+                // We need to return the stored proofs if we have them
+                // For now, return an error indicating it's already closed
+                return Err(CloseError::ValidationFailed {
+                    reason: "channel is already CLOSED".to_string(),
+                    status: 400,
+                    expected_balance: None,
+                    actual_balance: None,
+                });
+            }
+            ChannelState::Closing => {
+                // Expected state, continue
+            }
+        }
+
+        // 2. Get closing data from host
+        let closing_data =
+            self.host
+                .get_closing_data(channel_id)
+                .ok_or_else(|| CloseError::ValidationFailed {
+                    reason: "channel in CLOSING state but no closing data found".to_string(),
+                    status: 500,
+                    expected_balance: None,
+                    actual_balance: None,
+                })?;
+
+        // 3. Get funding data
+        let (params_json, _funding_proofs_json, shared_secret_hex, keyset_info_json) = self
+            .host
+            .get_funding_and_params(channel_id)
+            .ok_or_else(|| CloseError::ValidationFailed {
+                reason: "channel in CLOSING state but no funding data found".to_string(),
+                status: 500,
+                expected_balance: None,
+                actual_balance: None,
+            })?;
+
+        // 4. Extract mint URL from params
+        let params: serde_json::Value =
+            serde_json::from_str(&params_json).map_err(|e| CloseError::ValidationFailed {
+                reason: format!("invalid params JSON: {}", e),
+                status: 500,
+                expected_balance: None,
+                actual_balance: None,
+            })?;
+
+        let mint_url = params["mint"]
+            .as_str()
+            .ok_or_else(|| CloseError::ValidationFailed {
+                reason: "missing mint in params".to_string(),
+                status: 500,
+                expected_balance: None,
+                actual_balance: None,
+            })?
+            .to_string();
+
+        // 5. Prepare the close data (same as cooperative close, but with stored signature)
+        let prepared = self
+            .prepare_close_data(
+                channel_id,
+                closing_data.balance,
+                &closing_data.signature,
+                None,  // no params - channel already exists
+                None,  // no funding_proofs - channel already exists
+                false, // don't validate balance == amount_due (that was done when marking CLOSING)
+            )
+            .map_err(|e| {
+                CloseError::from_preparation_error(ClosePreparationError::from_bridge_error(e))
+            })?;
+
+        // 6. Helper function to execute swap and unblind
+        let execute_swap = |close_data: &CloseData,
+                            output_keyset_info_json: &str|
+         -> Result<CloseSuccess, CloseError> {
+            // Submit swap to mint
+            let swap_request_json =
+                serde_json::to_string(&close_data.swap_request).map_err(|e| {
+                    CloseError::ValidationFailed {
+                        reason: format!("failed to serialize swap request: {}", e),
+                        status: 500,
+                        expected_balance: None,
+                        actual_balance: None,
+                    }
+                })?;
+
+            let swap_response_json = self
+                .host
+                .call_mint_swap(&mint_url, &swap_request_json)
+                .map_err(|e| {
+                    // Try to parse as JSON for structured error
+                    let mint_error = serde_json::from_str(&e)
+                        .unwrap_or_else(|_| serde_json::json!({"error": e}));
+                    CloseError::mint_rejected(mint_error)
+                })?;
+
+            // Parse response to get blind signatures
+            let swap_response: serde_json::Value = serde_json::from_str(&swap_response_json)
+                .map_err(|e| CloseError::UnblindFailed {
+                    reason: format!("invalid swap response JSON: {}", e),
+                    status: 500,
+                })?;
+
+            let blind_signatures_json = swap_response["signatures"].to_string();
+
+            // Prepare secrets_with_blinding for unblind function
+            let secrets_with_blinding_json: String = serde_json::to_string(
+                &close_data
+                    .secrets_with_blinding
+                    .iter()
+                    .map(|(s, is_receiver)| {
+                        serde_json::json!({
+                            "secret": s.secret.to_string(),
+                            "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()),
+                            "amount": s.amount,
+                            "index": s.index,
+                            "is_receiver": is_receiver
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|e| CloseError::UnblindFailed {
+                reason: format!("failed to serialize secrets: {}", e),
+                status: 500,
+            })?;
+
+            // Unblind and verify
+            let unblind_result_json = unblind_and_verify_dleq(
+                &blind_signatures_json,
+                &secrets_with_blinding_json,
+                &params_json,
+                &keyset_info_json,
+                &shared_secret_hex,
+                closing_data.balance,
+                Some(output_keyset_info_json),
+            )
+            .map_err(CloseError::unblind_failed)?;
+
+            let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
+                .map_err(|e| CloseError::UnblindFailed {
+                    reason: format!("invalid unblind result JSON: {}", e),
+                    status: 500,
+                })?;
+
+            let receiver_proofs_json = unblind_result["receiver_proofs"].to_string();
+            let sender_proofs_json = unblind_result["sender_proofs"].to_string();
+            let receiver_sum = unblind_result["receiver_sum_after_stage1"]
+                .as_u64()
+                .unwrap_or(0);
+            let sender_sum = unblind_result["sender_sum_after_stage1"]
+                .as_u64()
+                .unwrap_or(0);
+
+            // Mark channel as closed
+            self.host
+                .mark_channel_closed(
+                    channel_id,
+                    closing_data.locktime,
+                    closing_data.balance,
+                    &receiver_proofs_json,
+                    &sender_proofs_json,
+                    receiver_sum,
+                    sender_sum,
+                )
+                .map_err(CloseError::storage_failed)?;
+
+            Ok(CloseSuccess {
+                channel_id: channel_id.to_string(),
+                total_value: receiver_sum + sender_sum,
+                receiver_sum,
+                sender_sum,
+                sender_proofs: sender_proofs_json,
+                already_closed: false,
+            })
+        };
+
+        // Serialize output keyset info for unblinding
+        let output_keyset_info_json =
+            serde_json::to_string(&prepared.output_keyset_info).map_err(|e| {
+                CloseError::ValidationFailed {
+                    reason: format!("failed to serialize output keyset info: {}", e),
+                    status: 500,
+                    expected_balance: None,
+                    actual_balance: None,
+                }
+            })?;
+
+        // 7. First attempt
+        match execute_swap(&prepared, &output_keyset_info_json) {
+            Ok(success) => Ok(success),
+            Err(CloseError::MintRejected { mint_error, .. }) => {
+                // 8. Refresh keysets and retry
+                if self.host.refresh_active_keysets(&mint_url).is_err() {
+                    // Refresh failed, return original error
+                    return Err(CloseError::mint_rejected(mint_error));
+                }
+
+                // Re-prepare with potentially new keyset
+                let prepared_retry = self
+                    .prepare_close_data(
+                        channel_id,
+                        closing_data.balance,
+                        &closing_data.signature,
+                        None,
+                        None,
+                        false,
+                    )
+                    .map_err(|e| {
+                        CloseError::from_preparation_error(
+                            ClosePreparationError::from_bridge_error(e),
+                        )
+                    })?;
+
+                let output_keyset_info_json_retry =
+                    serde_json::to_string(&prepared_retry.output_keyset_info).map_err(|e| {
+                        CloseError::ValidationFailed {
+                            reason: format!("failed to serialize output keyset info: {}", e),
+                            status: 500,
+                            expected_balance: None,
+                            actual_balance: None,
+                        }
+                    })?;
+
+                // Retry
+                match execute_swap(&prepared_retry, &output_keyset_info_json_retry) {
+                    Ok(success) => Ok(success),
+                    Err(CloseError::MintRejected {
+                        mint_error: retry_error,
+                        ..
+                    }) => Err(CloseError::mint_rejected_after_retry(
+                        mint_error,
+                        retry_error,
+                    )),
+                    Err(other) => Err(other),
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Execute a cooperative close: mark as CLOSING then execute the swap.
+    ///
+    /// This is the high-level method that combines:
+    /// 1. Validating the close request
+    /// 2. Marking the channel as CLOSING
+    /// 3. Executing the swap via `execute_close_for_closing_channel`
+    ///
+    /// If the swap fails, the channel remains in CLOSING state and can be
+    /// retried by calling `execute_close_for_closing_channel` directly.
+    ///
+    /// # Arguments
+    /// * `payment_json` - JSON with channel_id, balance, signature
+    ///
+    /// # Returns
+    /// * `Ok(CloseSuccess)` - Channel successfully closed
+    /// * `Err(CloseError)` - Close failed
+    pub fn execute_cooperative_close(
+        &self,
+        payment_json: &str,
+    ) -> Result<CloseSuccess, CloseError> {
+        // 1. Parse and validate the close request
+        let prepared = self
+            .prepare_cooperative_close_for_execution(payment_json)
+            .map_err(CloseError::from_preparation_error)?;
+
+        // 2. Get locktime from params
+        let params: serde_json::Value =
+            serde_json::from_str(&prepared.params_json).map_err(|e| {
+                CloseError::ValidationFailed {
+                    reason: format!("invalid params JSON: {}", e),
+                    status: 500,
+                    expected_balance: None,
+                    actual_balance: None,
+                }
+            })?;
+        let locktime = params["locktime"].as_u64().unwrap_or(0);
+
+        // 3. Extract signature from payment_json
+        let payment: serde_json::Value =
+            serde_json::from_str(payment_json).map_err(|e| CloseError::ValidationFailed {
+                reason: format!("invalid payment JSON: {}", e),
+                status: 400,
+                expected_balance: None,
+                actual_balance: None,
+            })?;
+        let signature =
+            payment["signature"]
+                .as_str()
+                .ok_or_else(|| CloseError::ValidationFailed {
+                    reason: "missing signature".to_string(),
+                    status: 400,
+                    expected_balance: None,
+                    actual_balance: None,
+                })?;
+
+        // 4. Mark channel as CLOSING
+        self.host
+            .mark_channel_closing(&prepared.channel_id, locktime, prepared.balance, signature)
+            .map_err(CloseError::storage_failed)?;
+
+        // 5. Execute the close
+        self.execute_close_for_closing_channel(&prepared.channel_id)
+    }
+
+    /// Execute a unilateral close: mark as CLOSING then execute the swap.
+    ///
+    /// This is the high-level method for server-initiated close that combines:
+    /// 1. Getting the stored payment proof
+    /// 2. Marking the channel as CLOSING
+    /// 3. Executing the swap via `execute_close_for_closing_channel`
+    ///
+    /// # Arguments
+    /// * `channel_id` - The channel ID to close
+    ///
+    /// # Returns
+    /// * `Ok(CloseSuccess)` - Channel successfully closed
+    /// * `Err(CloseError)` - Close failed
+    pub fn execute_unilateral_close(&self, channel_id: &str) -> Result<CloseSuccess, CloseError> {
+        // 1. Prepare the close to validate and get balance/signature
+        let prepared = self
+            .prepare_unilateral_close_for_execution(channel_id)
+            .map_err(CloseError::from_preparation_error)?;
+
+        // 2. Get locktime and signature from stored data
+        let params: serde_json::Value =
+            serde_json::from_str(&prepared.params_json).map_err(|e| {
+                CloseError::ValidationFailed {
+                    reason: format!("invalid params JSON: {}", e),
+                    status: 500,
+                    expected_balance: None,
+                    actual_balance: None,
+                }
+            })?;
+        let locktime = params["locktime"].as_u64().unwrap_or(0);
+
+        let (_, signature) = self
+            .host
+            .get_balance_and_signature_for_unilateral_exit(channel_id)
+            .ok_or_else(|| CloseError::ValidationFailed {
+                reason: "no payment proof stored".to_string(),
+                status: 400,
+                expected_balance: None,
+                actual_balance: None,
+            })?;
+
+        // 3. Mark channel as CLOSING
+        self.host
+            .mark_channel_closing(channel_id, locktime, prepared.balance, &signature)
+            .map_err(CloseError::storage_failed)?;
+
+        // 4. Execute the close
+        self.execute_close_for_closing_channel(channel_id)
+    }
 }
 
 #[cfg(test)]
@@ -1988,8 +2435,22 @@ mod tests {
         ) {
         }
 
-        fn is_closed(&self, _channel_id: &str) -> bool {
-            false
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            ChannelState::Open
+        }
+
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _signature: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            None
         }
 
         fn get_channel_policy(&self) -> String {
@@ -2173,8 +2634,20 @@ mod tests {
             _context_json: &str,
         ) {
         }
-        fn is_closed(&self, _channel_id: &str) -> bool {
-            false
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            ChannelState::Open
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _signature: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            None
         }
         fn get_channel_policy(&self) -> String {
             serde_json::json!({
@@ -2397,8 +2870,22 @@ mod tests {
         ) {
         }
 
-        fn is_closed(&self, _channel_id: &str) -> bool {
-            false
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            ChannelState::Open
+        }
+
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _signature: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            None
         }
 
         fn get_channel_policy(&self) -> String {

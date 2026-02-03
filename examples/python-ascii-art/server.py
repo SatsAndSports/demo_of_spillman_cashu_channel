@@ -66,6 +66,7 @@ def get_mints_units_keysets():
 channel_funding = {}   # channel_id -> {params, proofs, shared_secret, keyset_info}
 channel_usage = {}     # channel_id -> {chars_served: int}
 channel_largest_payment = {}  # channel_id -> {balance: int, signature: str}
+channel_closing = {}   # channel_id -> {locktime, balance, signature}  (pre-swap state)
 channel_closed = {}    # channel_id -> {balance, receiver_proofs, sender_proofs}
 
 # Keyset cache: (mint, keyset_id) -> {info_json: str, active: bool}
@@ -358,17 +359,60 @@ class AsciiArtHost:
         print(f"  [Bridge] Payment recorded: channel={channel_id[:16]}... "
               f"balance={balance} chars_served={channel_usage[channel_id]['chars_served']}")
     
-    def is_closed(self, channel_id: str) -> bool:
+    def get_channel_state(self, channel_id: str) -> str:
         """
-        Checks if a channel has already been closed and settled.
+        Get the current state of a channel.
 
         Args:
             channel_id: The unique ID of the payment channel.
 
         Returns:
-            True if the channel is closed, False otherwise.
+            "open", "closing", or "closed"
         """
-        return channel_id in channel_closed  # Works with dict too
+        if channel_id in channel_closed:
+            return "closed"
+        elif channel_id in channel_closing:
+            return "closing"
+        else:
+            return "open"
+
+    def mark_channel_closing(
+        self,
+        channel_id: str,
+        locktime: int,
+        balance: int,
+        signature: str
+    ):
+        """
+        Mark a channel as closing (pre-swap state).
+
+        Called before attempting the mint swap. The host should store the closing
+        parameters (enough to reconstruct swap request later).
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+            locktime: The channel's locktime.
+            balance: The balance at close.
+            signature: The client's Schnorr signature authorizing this balance.
+        """
+        channel_closing[channel_id] = {
+            "locktime": locktime,
+            "balance": balance,
+            "signature": signature
+        }
+        print(f"  [Bridge] Channel {channel_id[:16]}... marked CLOSING balance={balance}")
+
+    def get_closing_data(self, channel_id: str):
+        """
+        Get the stored closing data for a channel in CLOSING state.
+
+        Args:
+            channel_id: The unique ID of the payment channel.
+
+        Returns:
+            A dict with {locktime, balance, signature} if channel is closing, None otherwise.
+        """
+        return channel_closing.get(channel_id)
     
     def get_channel_policy(self) -> str:
         """

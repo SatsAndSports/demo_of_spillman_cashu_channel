@@ -14,7 +14,9 @@ typedef struct {
     void (*save_funding)(void*, const char*, const char*, const char*, const char*, const char*);
     uint64_t (*get_amount_due)(void*, const char*, const char*);
     void (*record_payment)(void*, const char*, uint64_t, const char*, const char*);
-    int (*is_closed)(void*, const char*);
+    char* (*get_channel_state)(void*, const char*);
+    int (*mark_channel_closing)(void*, const char*, uint64_t, uint64_t, const char*);
+    int (*get_closing_data)(void*, const char*, uint64_t*, uint64_t*, char**);
     char* (*get_channel_policy)(void*);
     uint64_t (*now_seconds)(void*);
     int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
@@ -32,7 +34,9 @@ extern int go_get_funding_and_params(void*, const char*, char**, char**, char**,
 extern void go_save_funding(void*, const char*, const char*, const char*, const char*, const char*);
 extern uint64_t go_get_amount_due(void*, const char*, const char*);
 extern void go_record_payment(void*, const char*, uint64_t, const char*, const char*);
-extern int go_is_closed(void*, const char*);
+extern char* go_get_channel_state(void*, const char*);
+extern int go_mark_channel_closing(void*, const char*, uint64_t, uint64_t, const char*);
+extern int go_get_closing_data(void*, const char*, uint64_t*, uint64_t*, char**);
 extern char* go_get_channel_policy(void*);
 extern uint64_t go_now_seconds(void*);
 extern int go_get_balance_and_signature_for_unilateral_exit(void*, const char*, uint64_t*, char**);
@@ -54,7 +58,9 @@ SpilmanHostCallbacks fill_callbacks(void* user_data) {
     cb.save_funding = go_save_funding;
     cb.get_amount_due = go_get_amount_due;
     cb.record_payment = go_record_payment;
-    cb.is_closed = go_is_closed;
+    cb.get_channel_state = go_get_channel_state;
+    cb.mark_channel_closing = go_mark_channel_closing;
+    cb.get_closing_data = go_get_closing_data;
     cb.get_channel_policy = go_get_channel_policy;
     cb.now_seconds = go_now_seconds;
     cb.get_balance_and_signature_for_unilateral_exit = go_get_balance_and_signature_for_unilateral_exit;

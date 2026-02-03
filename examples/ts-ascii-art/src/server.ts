@@ -21,6 +21,7 @@ import {
   channelFunding,
   channelBalance,
   channelUsage,
+  channelClosing,
   channelClosed,
   keysetCache,
   getChannelStatus,
@@ -147,8 +148,27 @@ export const spilmanHooks = {
     console.log(`  [Host] Payment recorded: channel=${channelId.substring(0, 8)} balance=${balance}`);
   },
 
-  isClosed: (channelId: string): boolean => {
-    return channelClosed.isClosed(channelId);
+  getChannelState: (channelId: string): string => {
+    if (channelClosed.isClosed(channelId)) {
+      return "closed";
+    } else if (channelClosing.isClosing(channelId)) {
+      return "closing";
+    } else {
+      return "open";
+    }
+  },
+
+  markChannelClosing: (
+    channelId: string,
+    locktime: number,
+    balance: number,
+    signature: string
+  ): void => {
+    channelClosing.markClosing(channelId, Number(locktime), Number(balance), signature);
+  },
+
+  getClosingData: (channelId: string): { locktime: number; balance: number; signature: string } | null => {
+    return channelClosing.get(channelId);
   },
 
   getChannelPolicy: (): string => {
