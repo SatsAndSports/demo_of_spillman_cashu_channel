@@ -130,6 +130,7 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
+- do we need a host method for refreshing keysets?
 - stop using blossom server in the tests
 - maybe stop sending funding+params in the header, now that we have the /channel/register endpoint?
 - video player should stop sending funding+params, and should use the register endpoint after any 4xx
