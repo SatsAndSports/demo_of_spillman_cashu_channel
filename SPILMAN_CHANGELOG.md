@@ -2,6 +2,22 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 3, 2026)
+
+### Atomic Funding with Initial Payment Proof
+- **`save_funding` now includes initial balance/signature**: Extended the `SpilmanHost::save_funding` method across all language bindings (Rust, WASM, Python, Go) to accept `initial_balance: u64` and `initial_signature: &str` parameters. This enables servers to atomically store the first payment proof together with funding data, ensuring no payment is lost if the server restarts between funding and the first payment.
+
+### Idiomatic Error Handling for Channel Close Methods
+- **`mark_channel_closing` and `mark_channel_closed` now use native error handling**: Changed from returning `{error: string} | undefined` objects to language-native error mechanisms:
+  - **TypeScript/WASM**: Now throws `Error` on failure (uses wasm-bindgen `catch` attribute)
+  - **Python**: Raises exception on failure (already idiomatic, documented)
+  - **Go**: Returns non-nil `error` on failure (already idiomatic)
+  - **Rust**: Returns `Result<(), String>` (already idiomatic)
+- **Defensive "already closed" checks**: All five server implementations (CashuTube, TS ASCII Art, Rust ASCII Art, Python ASCII Art, Go ASCII Art) now check channel state before marking closing/closed and return appropriate errors if the channel is already closed.
+
+### Bug Fixes
+- **BigInt serialization fix**: Fixed WASM BigInt → JSON serialization issue in TypeScript servers. WASM passes `u64` values as JavaScript `BigInt`, but `JSON.stringify()` cannot serialize BigInt. Added explicit `Number()` conversions at the WASM boundary in `bridge-hooks.ts` and `ts-ascii-art/server.ts`.
+
 ## Completed Features (Feb 2, 2026)
 
 ### Bridge API Refactoring
