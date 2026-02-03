@@ -1226,11 +1226,11 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
     /// Register/fund a channel without recording any usage (typed parameters)
     ///
-    /// This validates the channel (params, funding proofs, signature for balance=0)
-    /// and saves it to the funding store, but does NOT record any payment/usage.
+    /// This validates the channel (params, funding proofs, signature) and saves it
+    /// to the funding store, but does NOT record any payment/usage.
     ///
-    /// The `balance` parameter must be 0 - this is for pre-registering channels
-    /// before any actual payments are made.
+    /// The bridge accepts any balance value. Servers that want to enforce balance=0
+    /// for registration should check this at the application layer before calling.
     ///
     /// This is the core implementation that takes typed parameters.
     /// For JSON or base64 input, use the `*_via_json` or `*_via_base64_header` variants.
@@ -1245,14 +1245,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         params: Option<&serde_json::Value>,
         funding_proofs: Option<&[Proof]>,
     ) -> Result<FundChannelResult, BridgeError> {
-        // 1. Verify balance is 0 (funding requires balance=0)
-        if balance != 0 {
-            return Err(BridgeError::InvalidRequest(format!(
-                "funding requires balance=0, got {}",
-                balance
-            )));
-        }
-
         if channel_id.is_empty() {
             return Err(BridgeError::InvalidRequest("missing channel_id".into()));
         }
@@ -1296,14 +1288,14 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 
         let capacity = params_value["capacity"].as_u64().unwrap_or(0);
 
-        // 5. Verify signature for balance=0
+        // 5. Verify signature for the provided balance
         self.verify_signature(
             &params_json,
             &funding_proofs_json,
             &shared_secret_hex,
             &keyset_info_json,
             channel_id,
-            0, // balance must be 0
+            balance,
             signature,
         )
         .map_err(BridgeError::InvalidSignature)?;
@@ -3282,5 +3274,210 @@ mod tests {
             "Swap requests should use different keysets"
         );
         println!("✓ Unilateral retry would use different keyset after refresh");
+    }
+
+    /// Test: fund_channel accepts non-zero initial balance
+    ///
+    /// The bridge should accept any balance value for fund_channel.
+    /// Servers that want to enforce balance=0 should do so at the application layer.
+    #[test]
+    fn test_fund_channel_accepts_nonzero_balance() {
+        use crate::nuts::Proof;
+        use crate::secret::Secret;
+        use crate::spilman::params::mock_keyset_info;
+        use crate::spilman::{
+            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+        };
+
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let keyset_id = keyset_info.keyset_id;
+
+        // Setup channel params
+        let params_struct = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "test-nonzero-funding".to_string(),
+            keyset_info: keyset_info.clone(),
+            shared_secret,
+        };
+        let channel_id = params_struct.get_channel_id();
+
+        // Non-zero balance for initial funding
+        let initial_balance = 50u64;
+
+        // Funding proofs
+        let proofs = vec![Proof {
+            amount: 1000.into(),
+            secret: Secret::new("funding".to_string()),
+            c: PublicKey::from_str(
+                "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+            )
+            .unwrap(),
+            keyset_id,
+            dleq: None,
+            witness: None,
+        }];
+
+        // Pre-populate funding data (simulates a channel that was just validated)
+        let host = FlexibleMockHost {
+            active_keyset_ids: vec![keyset_id],
+            keyset_infos: vec![(keyset_id, serde_json::to_string(&keyset_info).unwrap())]
+                .into_iter()
+                .collect(),
+            funding_data: vec![(
+                channel_id.clone(),
+                (
+                    params_struct.get_channel_id_params_json(),
+                    serde_json::to_string(&proofs).unwrap(),
+                    hex::encode(shared_secret),
+                    serde_json::to_string(&keyset_info).unwrap(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+            amount_due: 0, // Not relevant for fund_channel
+        };
+
+        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+
+        // Create a valid signature for the non-zero balance
+        let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
+        let sender = SpilmanChannelSender::new(alice_sk, channel);
+        let (balance_update, _) = sender
+            .create_signed_balance_update(initial_balance)
+            .unwrap();
+
+        // EXECUTE: fund_channel with non-zero balance
+        let result = bridge.fund_channel(
+            &channel_id,
+            initial_balance,
+            &balance_update.signature.to_string(),
+            None, // params not needed - channel already known
+            None, // funding_proofs not needed - channel already known
+        );
+
+        // VERIFY: Should succeed
+        assert!(
+            result.is_ok(),
+            "fund_channel should accept non-zero balance"
+        );
+        let fund_result = result.unwrap();
+        assert_eq!(fund_result.channel_id, channel_id);
+        assert_eq!(fund_result.capacity, 1000);
+        assert!(
+            fund_result.already_known,
+            "Channel should be marked as already known"
+        );
+
+        println!(
+            "✓ fund_channel accepts non-zero initial balance ({})",
+            initial_balance
+        );
+    }
+
+    /// Test: fund_channel rejects invalid signature for non-zero balance
+    ///
+    /// Ensures the signature verification uses the actual balance value, not hardcoded 0.
+    #[test]
+    fn test_fund_channel_rejects_wrong_signature_for_nonzero_balance() {
+        use crate::nuts::Proof;
+        use crate::secret::Secret;
+        use crate::spilman::params::mock_keyset_info;
+        use crate::spilman::{
+            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+        };
+
+        let alice_sk = SecretKey::generate();
+        let charlie_sk = SecretKey::generate();
+        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
+        let keyset_id = keyset_info.keyset_id;
+
+        let params_struct = ChannelParameters {
+            alice_pubkey: alice_sk.public_key(),
+            charlie_pubkey: charlie_sk.public_key(),
+            mint: "https://mint.host".to_string(),
+            unit: CurrencyUnit::Sat,
+            capacity: 1000,
+            maximum_amount_for_one_output: 64,
+            setup_timestamp: 1700000000,
+            locktime: 1700003600,
+            sender_nonce: "test-wrong-sig".to_string(),
+            keyset_info: keyset_info.clone(),
+            shared_secret,
+        };
+        let channel_id = params_struct.get_channel_id();
+
+        let proofs = vec![Proof {
+            amount: 1000.into(),
+            secret: Secret::new("funding".to_string()),
+            c: PublicKey::from_str(
+                "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+            )
+            .unwrap(),
+            keyset_id,
+            dleq: None,
+            witness: None,
+        }];
+
+        let host = FlexibleMockHost {
+            active_keyset_ids: vec![keyset_id],
+            keyset_infos: vec![(keyset_id, serde_json::to_string(&keyset_info).unwrap())]
+                .into_iter()
+                .collect(),
+            funding_data: vec![(
+                channel_id.clone(),
+                (
+                    params_struct.get_channel_id_params_json(),
+                    serde_json::to_string(&proofs).unwrap(),
+                    hex::encode(shared_secret),
+                    serde_json::to_string(&keyset_info).unwrap(),
+                ),
+            )]
+            .into_iter()
+            .collect(),
+            amount_due: 0,
+        };
+
+        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+
+        // Create signature for balance=0
+        let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
+        let sender = SpilmanChannelSender::new(alice_sk, channel);
+        let (balance_update_zero, _) = sender.create_signed_balance_update(0).unwrap();
+
+        // EXECUTE: Try to fund with balance=50 but signature for balance=0
+        let result = bridge.fund_channel(
+            &channel_id,
+            50,                                         // Claiming balance=50
+            &balance_update_zero.signature.to_string(), // But signature is for balance=0
+            None,
+            None,
+        );
+
+        // VERIFY: Should fail with invalid signature
+        assert!(
+            result.is_err(),
+            "Should reject mismatched balance/signature"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, BridgeError::InvalidSignature(_)),
+            "Error should be InvalidSignature, got: {:?}",
+            err
+        );
+
+        println!("✓ fund_channel rejects signature mismatch (sig for 0, claimed 50)");
     }
 }
