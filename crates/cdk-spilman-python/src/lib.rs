@@ -123,7 +123,7 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - get_amount_due(channel_id: str, context_json: str) -> int
 /// - record_payment(channel_id: str, balance: int, signature: str, context_json: str)
 /// - get_channel_state(channel_id: str) -> str  # Returns "open", "closing", or "closed"
-/// - mark_channel_closing(channel_id: str, locktime: int, balance: int, signature: str) -> None
+/// - mark_channel_closing(channel_id: str, locktime: int, balance: int, signature: str) -> None  # Raises on error
 /// - get_closing_data(channel_id: str) -> Optional[dict]  # Returns {locktime, balance, signature} or None
 /// - get_channel_policy() -> str
 /// - now_seconds() -> int
@@ -131,7 +131,7 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - get_active_keyset_ids(mint: str, unit: str) -> List[str]
 /// - get_keyset_info(mint: str, keyset_id: str) -> Optional[str]
 /// - call_mint_swap(mint_url: str, swap_request_json: str) -> str  # Returns response JSON or raises
-/// - mark_channel_closed(channel_id: str, locktime: int, balance: int, receiver_proofs_json: str, sender_proofs_json: str, receiver_sum: int, sender_sum: int)
+/// - mark_channel_closed(channel_id: str, ...) -> None  # Raises on error
 ///
 /// Optional methods (default implementations exist):
 /// - refresh_active_keysets(mint: str) -> None  # Re-fetch keysets from mint (for retry logic)

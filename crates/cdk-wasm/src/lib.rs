@@ -58,15 +58,15 @@ extern "C" {
     fn get_channel_state(this: &JsSpilmanHost, channel_id: &str) -> String;
 
     /// Mark a channel as closing (pre-swap state)
-    /// Returns undefined on success, or {error: string} on failure
-    #[wasm_bindgen(method, js_name = markChannelClosing)]
+    /// Throws on error, returns nothing on success
+    #[wasm_bindgen(method, catch, js_name = markChannelClosing)]
     fn mark_channel_closing(
         this: &JsSpilmanHost,
         channel_id: &str,
         locktime: u64,
         balance: u64,
         signature: &str,
-    ) -> JsValue;
+    ) -> Result<(), JsValue>;
 
     /// Get closing data for a channel in CLOSING state
     /// Returns null/undefined if not in CLOSING state, or {locktime, balance, signature}
@@ -98,7 +98,9 @@ extern "C" {
         swap_request_json: &str,
     ) -> js_sys::Promise;
 
-    #[wasm_bindgen(method, js_name = markChannelClosed)]
+    /// Mark a channel as closed (after successful swap)
+    /// Throws on error, returns nothing on success
+    #[wasm_bindgen(method, catch, js_name = markChannelClosed)]
     fn mark_channel_closed(
         this: &JsSpilmanHost,
         channel_id: &str,
@@ -108,7 +110,7 @@ extern "C" {
         sender_proofs_json: &str,
         receiver_sum: u64,
         sender_sum: u64,
-    ) -> JsValue;
+    ) -> Result<(), JsValue>;
 
     #[wasm_bindgen(method, js_name = refreshActiveKeysets)]
     fn refresh_active_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
@@ -199,16 +201,9 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         balance: u64,
         signature: &str,
     ) -> Result<(), String> {
-        let val = self.js_host.mark_channel_closing(channel_id, locktime, balance, signature);
-        // Check for error return
-        if let Some(obj) = js_sys::Object::try_from(&val) {
-            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
-                if let Some(err_str) = err_val.as_string() {
-                    return Err(err_str);
-                }
-            }
-        }
-        Ok(())
+        self.js_host
+            .mark_channel_closing(channel_id, locktime, balance, signature)
+            .map_err(|e| e.as_string().unwrap_or_else(|| "unknown error".to_string()))
     }
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
@@ -306,24 +301,17 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> Result<(), String> {
-        let val = self.js_host.mark_channel_closed(
-            channel_id,
-            locktime,
-            balance,
-            receiver_proofs_json,
-            sender_proofs_json,
-            receiver_sum,
-            sender_sum,
-        );
-        // Check for error return
-        if let Some(obj) = js_sys::Object::try_from(&val) {
-            if let Ok(err_val) = js_sys::Reflect::get(obj, &JsValue::from_str("error")) {
-                if let Some(err_str) = err_val.as_string() {
-                    return Err(err_str);
-                }
-            }
-        }
-        Ok(())
+        self.js_host
+            .mark_channel_closed(
+                channel_id,
+                locktime,
+                balance,
+                receiver_proofs_json,
+                sender_proofs_json,
+                receiver_sum,
+                sender_sum,
+            )
+            .map_err(|e| e.as_string().unwrap_or_else(|| "unknown error".to_string()))
     }
 }
 

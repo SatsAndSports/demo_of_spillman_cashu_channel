@@ -239,9 +239,33 @@ trait SpilmanHost {
     // ==================== Storage: Channel State ====================
     
     /// Get current channel state: Open, Closing, or Closed.
+    /// Returns `Open` for unknown channels (they're implicitly open until funded).
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
     
     /// Mark channel as CLOSING (before swap attempt).
+    ///
+    /// Called before attempting the mint swap. The host should:
+    /// - Store the closing parameters (locktime, balance, signature)
+    /// - Return `Closing` from `get_channel_state()` for this channel
+    /// - Reject further payments to this channel
+    ///
+    /// # Behavior by channel state:
+    /// - **Open**: Transition to Closing, store the data
+    /// - **Closing**: Update the stored data (supports retry with different balance)
+    /// - **Closed**: Return error (bridge checks state first, but host should also reject)
+    ///
+    /// # Returns
+    /// - `Ok(())` on success
+    /// - `Err(message)` if the operation fails (e.g., channel already closed)
+    ///
+    /// # Language-specific error handling
+    /// - **Rust**: Return `Err(message)` on failure
+    /// - **TypeScript/WASM**: Throw an Error on failure
+    /// - **Python**: Raise an exception on failure
+    /// - **Go**: Return a non-nil error on failure
+    ///
+    /// Note: The bridge checks `get_channel_state()` before calling this and will
+    /// reject attempts to close already-closed channels with `BridgeError::ChannelClosed`.
     fn mark_channel_closing(
         &self,
         channel_id: &str,
@@ -254,6 +278,21 @@ trait SpilmanHost {
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
     
     /// Mark channel as CLOSED (after successful swap).
+    ///
+    /// Called after the mint has accepted the swap. The host should:
+    /// - Store the final proofs for record-keeping
+    /// - Return `Closed` from `get_channel_state()` for this channel
+    /// - Remove any CLOSING state data (channel is now finalized)
+    ///
+    /// # Returns
+    /// - `Ok(())` on success
+    /// - `Err(message)` if the operation fails (e.g., channel already closed)
+    ///
+    /// # Language-specific error handling
+    /// - **Rust**: Return `Err(message)` on failure
+    /// - **TypeScript/WASM**: Throw an Error on failure
+    /// - **Python**: Raise an exception on failure
+    /// - **Go**: Return a non-nil error on failure
     fn mark_channel_closed(
         &self,
         channel_id: &str,

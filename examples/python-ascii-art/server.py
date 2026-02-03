@@ -405,7 +405,13 @@ class AsciiArtHost:
             locktime: The channel's locktime.
             balance: The balance at close.
             signature: The client's Schnorr signature authorizing this balance.
+
+        Raises:
+            ValueError: If the channel is already closed.
         """
+        # Check if channel is already closed
+        if channel_id in channel_closed:
+            raise ValueError("channel already closed")
         channel_closing[channel_id] = {
             "locktime": locktime,
             "balance": balance,
@@ -542,7 +548,13 @@ class AsciiArtHost:
             sender_proofs_json: JSON array of sender's P2PK proofs (change).
             receiver_sum: Sum of receiver proof amounts.
             sender_sum: Sum of sender proof amounts.
+
+        Raises:
+            ValueError: If the channel is already closed.
         """
+        # Check if channel is already closed
+        if channel_id in channel_closed:
+            raise ValueError("channel already closed")
         channel_closed[channel_id] = {
             "locktime": locktime,
             "balance": balance,

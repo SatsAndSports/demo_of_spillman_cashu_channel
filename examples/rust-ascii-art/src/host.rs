@@ -248,6 +248,10 @@ impl SpilmanHost for AsciiArtHost {
         balance: u64,
         signature: &str,
     ) -> Result<(), String> {
+        // Check if channel is already closed
+        if self.stores.is_closed(channel_id) {
+            return Err("channel already closed".to_string());
+        }
         self.stores.mark_closing(channel_id, locktime, balance, signature);
         Ok(())
     }
@@ -335,6 +339,10 @@ impl SpilmanHost for AsciiArtHost {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> Result<(), String> {
+        // Check if channel is already closed
+        if self.stores.is_closed(channel_id) {
+            return Err("channel already closed".to_string());
+        }
         let value_after_stage1 = receiver_sum + sender_sum;
         self.stores.mark_closed(
             channel_id,

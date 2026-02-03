@@ -163,12 +163,18 @@ export const spilmanHooks = {
     }
   },
 
+  // Throws on error, returns nothing on success
   markChannelClosing: (
     channelId: string,
     locktime: number,
     balance: number,
     signature: string
   ): void => {
+    // Check if already closed - reject with error
+    if (channelClosed.isClosed(channelId)) {
+      throw new Error("channel already closed");
+    }
+    // Open or Closing channels can be marked as closing
     channelClosing.markClosing(channelId, Number(locktime), Number(balance), signature);
   },
 
@@ -216,6 +222,7 @@ export const spilmanHooks = {
     return await response.text();
   },
 
+  // Throws on error, returns nothing on success
   markChannelClosed: (
     channelId: string,
     locktime: number,
@@ -225,6 +232,10 @@ export const spilmanHooks = {
     receiverSum: number,
     senderSum: number
   ): void => {
+    // Check if channel is already closed (shouldn't happen, but be defensive)
+    if (channelClosed.isClosed(channelId)) {
+      throw new Error("channel already closed");
+    }
     const locktimeNum = Number(locktime);
     const balanceNum = Number(balance);
     const receiverSumNum = Number(receiverSum);
