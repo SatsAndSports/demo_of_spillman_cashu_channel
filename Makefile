@@ -37,7 +37,7 @@ COMPOSE_FILE := -f docker-compose.spilman.yml
 VENV := .venv
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 GO_CRATE_DIR := crates/cdk-spilman-go
-GO_DEMO_DIR := examples/go-ascii-art
+GO_DEMO_DIR := crates/cdk-spilman-go/examples/ascii-art
 TS_DEMO_DIR := examples/ts-ascii-art
 BLOSSOM_DIR := web/blossom-server
 WASM_CRATE := crates/cdk-wasm
@@ -60,7 +60,7 @@ MATURIN := $(VENV)/bin/maturin
 	run-python-server run-python-client \
 	run-go-server run-go-client \
 	run-ts-server run-ts-client \
-	test test-rust-only test-unit-spilman \
+	test test-rust-only test-unit-spilman test-unit-go test-integration-go \
 	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
 	test-demo-python test-demo-go test-demo-ts \
 	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
@@ -99,9 +99,31 @@ install-python: venv
 
 # --- Go Bindings ---
 
-# Build Go bindings (Rust library)
+# Build Go bindings (Rust library, debug)
 build-go:
 	cargo build -p cdk-spilman-go
+
+# Build Go distribution libraries (optimized, stripped)
+build-go-dist:
+	./scripts/build-go-libs.sh
+
+build-go-dist-linux-amd64:
+	./scripts/build-go-libs.sh linux-amd64
+
+build-go-dist-linux-arm64:
+	./scripts/build-go-libs.sh linux-arm64
+
+build-go-dist-darwin-amd64:
+	./scripts/build-go-libs.sh darwin-amd64
+
+build-go-dist-darwin-arm64:
+	./scripts/build-go-libs.sh darwin-arm64
+
+build-go-dist-windows-amd64:
+	./scripts/build-go-libs.sh windows-amd64
+
+build-go-dist-all:
+	./scripts/build-go-libs.sh all
 
 # --- Rust Builds ---
 
@@ -171,13 +193,14 @@ run-python-client:
 	$(PYTHON) examples/python-ascii-art/client.py
 
 # --- Go Demo ---
+# Note: Uses -tags spilman_dev to link against target/debug instead of packaged libs
 
 run-go-server: build-go
 	fuser -k 5001/tcp || true
-	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . server
+	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run -tags spilman_dev . server
 
 run-go-client:
-	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run . client "Hello Go"
+	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run -tags spilman_dev . client "Hello Go"
 
 # --- TypeScript Demo ---
 
@@ -191,9 +214,17 @@ run-ts-client:
 # Test Targets - Unit Tests
 # ===========================================================================
 
-# Run Spilman unit tests
+# Run Spilman unit tests (Rust)
 test-unit-spilman:
 	cargo test -p cdk spilman
+
+# Run Go unit tests (delegates to Go Makefile)
+test-unit-go: build-go
+	$(MAKE) -C $(GO_CRATE_DIR) test-dev
+
+# Run Go integration tests (basic tests, requires mint)
+test-integration-go: build-go build-mintd
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(GO_CRATE_DIR) test-integration-dev
 
 # ===========================================================================
 # Test Targets - Server Integration Tests (52-test Rust client suite)
@@ -385,8 +416,8 @@ list-orphans:
 	@pgrep -af "python.*server\.py" | grep -v pgrep || echo "  (none)"
 	@echo "tsx server:"
 	@pgrep -af "tsx.*server" | grep -v pgrep || echo "  (none)"
-	@echo "go-ascii-art:"
-	@pgrep -af "go-ascii-art" | grep -v pgrep || echo "  (none)"
+	@echo "ascii-art:"
+	@pgrep -af "ascii-art" | grep -v pgrep || echo "  (none)"
 
 # Kill orphaned test processes
 kill-orphans:
@@ -394,6 +425,6 @@ kill-orphans:
 	-@pkill -f "rust-ascii-art" 2>/dev/null || true
 	-@pkill -f "python.*server\.py" 2>/dev/null || true
 	-@pkill -f "tsx.*server" 2>/dev/null || true
-	-@pkill -f "go-ascii-art" 2>/dev/null || true
+	-@pkill -f "ascii-art" 2>/dev/null || true
 	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
 	@echo "Done. Run 'make list-orphans' to verify."

@@ -16,7 +16,7 @@ SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
 REPO_ROOT=$(pwd)
-GO_DEMO_DIR="examples/go-ascii-art"
+GO_DEMO_DIR="crates/cdk-spilman-go/examples/ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 # 3. Build Go demo
 echo "--- Building Go demo ---"
-(cd "$GO_DEMO_DIR" && go build -o main .)
+(cd "$GO_DEMO_DIR" && go build -tags spilman_dev -o main .)
 
 # 4. Find two distinct free ports
 echo "--- Finding free ports ---"

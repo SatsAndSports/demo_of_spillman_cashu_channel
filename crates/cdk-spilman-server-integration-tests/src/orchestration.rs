@@ -256,11 +256,11 @@ impl ServerProcess {
     }
 
     fn spawn_go_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("examples/go-ascii-art");
+        let server_dir = root.join("crates/cdk-spilman-go/examples/ascii-art");
         let ld_library_path = root.join("target/debug");
 
         Command::new("go")
-            .args(["run", ".", "server"])
+            .args(["run", "-tags", "spilman_dev", ".", "server"])
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .env("LD_LIBRARY_PATH", &ld_library_path)

@@ -11,7 +11,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 - **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using core `cdk` library
 - **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
-- **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
+- **Go ASCII Art** (`crates/cdk-spilman-go/examples/ascii-art/`) - Multi-language proof-of-concept
 
 **Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (52 tests)
 
@@ -34,7 +34,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `crates/cdk-spilman-go/` | CGO bindings |
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
 | `examples/python-ascii-art/` | Python demo |
-| `examples/go-ascii-art/` | Go demo |
+| `crates/cdk-spilman-go/examples/ascii-art/` | Go demo |
 | `examples/ts-ascii-art/` | TypeScript demo |
 | `dev-mint/` | CDK mint development config |
 | `containers/` | Podman dev environment (Dockerfile, mint config) |

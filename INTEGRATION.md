@@ -711,7 +711,7 @@ Four implementations showing the same pattern in different languages:
 | TypeScript | `examples/ts-ascii-art/` | Reference implementation |
 | Rust | `examples/rust-ascii-art/` | Native Rust server |
 | Python | `examples/python-ascii-art/` | PyO3 bindings |
-| Go | `examples/go-ascii-art/` | CGO bindings |
+| Go | `crates/cdk-spilman-go/examples/ascii-art/` | CGO bindings |
 
 Each demo implements a simple service: pay per character of ASCII art. Study the `SpilmanHost` implementation in each.
 

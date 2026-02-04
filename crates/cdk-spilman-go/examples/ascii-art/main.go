@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SatsAndSports/cdk/spilman"
+	"github.com/cashubtc/spilman-go/spilman"
 	"github.com/common-nighthawk/go-figure"
 	"github.com/skip2/go-qrcode"
 )
