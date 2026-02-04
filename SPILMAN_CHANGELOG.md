@@ -18,6 +18,11 @@ This document tracks the completed features and improvements for the Spilman Cha
 ### Bug Fixes
 - **BigInt serialization fix**: Fixed WASM BigInt → JSON serialization issue in TypeScript servers. WASM passes `u64` values as JavaScript `BigInt`, but `JSON.stringify()` cannot serialize BigInt. Added explicit `Number()` conversions at the WASM boundary in `bridge-hooks.ts` and `ts-ascii-art/server.ts`.
 
+### Video Player: Register-Only Channel Setup
+- **Removed header fallback for channel params/funding**: The video player no longer sends `params` and `funding_proofs` in the `X-Cashu-Channel` header. This avoids HTTP header size limits (~16KB) that could be exceeded with large funding tokens.
+- **Re-register on 4xx**: On any 4xx response (including 402), the player now calls `POST /channel/register` to re-register the channel with the server (fire-and-forget). HLS.js's built-in retry handles segment recovery.
+- **Removed `confirmedChannels` tracking**: The Set tracking server-confirmed channels is no longer needed since params are never sent in headers.
+
 ## Completed Features (Feb 2, 2026)
 
 ### Bridge API Refactoring
