@@ -131,7 +131,6 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
-- video player should stop sending funding+params, and should use the register endpoint after any 4xx
 - scale back the demos, they're not really needed as we now have so many tests
 - how about maximum_amount? is it still being enforced? we need the policy to include it
 
