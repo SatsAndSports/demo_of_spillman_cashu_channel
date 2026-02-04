@@ -84,11 +84,12 @@ make test-server-python      # Test Python server
 make test-server-go          # Test Go server
 make test-server-all         # Test all servers
 
-# Run blossom tests
+# Run blossom tests (requires web/blossom-server repo)
 make test-blossom
 
 # Run all tests
-make test-all
+make test-all                # Does NOT require blossom-server repo
+make test-all-with-blossom   # Includes blossom tests (requires blossom-server repo)
 
 # Orphan process management (servers/mints left running after interrupted tests)
 make list-orphans            # Show orphaned processes
@@ -130,9 +131,6 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
-- do we need a host method for refreshing keysets?
-- stop using blossom server in the tests
-- maybe stop sending funding+params in the header, now that we have the /channel/register endpoint?
 - video player should stop sending funding+params, and should use the register endpoint after any 4xx
 - scale back the demos, they're not really needed as we now have so many tests
 - how about maximum_amount? is it still being enforced? we need the policy to include it

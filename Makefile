@@ -66,7 +66,7 @@ MATURIN := $(VENV)/bin/maturin
 	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
 	test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native \
 	test-blossom test-blossom-nutmix \
-	test-all test-all-no-blossom test-all-nutmix test-all-nutmix-native test-all-with-nutmix \
+	test-all test-all-with-blossom test-all-nutmix-native test-all-with-nutmix \
 	test-containerized \
 	clean clean-logs clean-nutmix-setup clean-containers \
 	list-orphans kill-orphans ensure-nutmix-image
@@ -285,25 +285,18 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "  ALL RUST-ONLY TESTS PASSED"
 	@echo "========================================="
 
-# All tests with CDK mint
-test-all: test-unit-spilman test-blossom test-server-all
+# All tests with CDK mint (does not require blossom-server repo)
+test-all: test-unit-spilman test-server-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint)"
 	@echo "========================================="
 
-# All tests with CDK mint, excluding blossom (for Docker image where blossom isn't set up)
-test-all-no-blossom: test-unit-spilman test-server-all
+# All tests including blossom (requires web/blossom-server repo)
+test-all-with-blossom: test-unit-spilman test-blossom test-server-all
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL TESTS PASSED (CDK mint, no blossom)"
-	@echo "========================================="
-
-# All tests with NutMix
-test-all-nutmix: test-blossom-nutmix
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL TESTS PASSED (NutMix)"
+	@echo "  ALL TESTS PASSED (CDK mint + blossom)"
 	@echo "========================================="
 
 # All tests with NutMix (native mode - for Docker test image)
@@ -313,8 +306,8 @@ test-all-nutmix-native: test-demo-python-nutmix-native test-demo-go-nutmix-nativ
 	@echo "  ALL TESTS PASSED (NutMix native)"
 	@echo "========================================="
 
-# All tests with both CDK mint and NutMix
-test-all-with-nutmix: test-all test-all-nutmix
+# All tests with both CDK mint and NutMix (requires blossom-server repo)
+test-all-with-nutmix: test-all-with-blossom test-blossom-nutmix
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK + NutMix)"
