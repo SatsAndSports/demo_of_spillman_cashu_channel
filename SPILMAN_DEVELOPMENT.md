@@ -399,11 +399,11 @@ cdk/
 │   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
 │   ├── cdk-spilman-python/                   # PyO3 bindings
 │   └── cdk-spilman-go/                       # CGO bindings
+│       └── examples/ascii-art/               # Go demo server + client
 ├── examples/
 │   ├── rust-ascii-art/            # Rust ASCII Art server (native)
 │   ├── ts-ascii-art/              # TypeScript demo server + client
-│   ├── python-ascii-art/          # Python demo server + client
-│   └── go-ascii-art/              # Go demo server + client
+│   └── python-ascii-art/          # Python demo server + client
 ├── web/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output
