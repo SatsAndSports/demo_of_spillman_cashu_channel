@@ -60,7 +60,8 @@ MATURIN := $(VENV)/bin/maturin
 	run-python-server run-python-client \
 	run-go-server run-go-client \
 	run-ts-server run-ts-client \
-	test test-rust-only test-unit-spilman test-unit-go test-integration-go \
+	test test-rust-only test-unit-spilman test-integration-rust \
+	test-unit-go test-integration-go \
 	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
 	test-demo-python test-demo-go test-demo-ts \
 	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
@@ -217,6 +218,10 @@ run-ts-client:
 # Run Spilman unit tests (Rust)
 test-unit-spilman:
 	cargo test -p cdk spilman
+
+# Run Rust ASCII Art integration tests (requires mint)
+test-integration-rust: build-mintd
+	./scripts/run_with_mint.sh cdk cargo test -p rust-ascii-art --test integration -- --nocapture
 
 # Run Go unit tests (delegates to Go Makefile)
 test-unit-go: build-go

@@ -53,7 +53,7 @@ test:
 # ============================================================================
 
 test-integration:
-	cd $(SPILMAN_PKG) && MINT_URL=$(MINT_URL) go test -v -tags integration ./...
+	cd $(SPILMAN_PKG) && MINT_URL=$(MINT_URL) go test -v -tags integration -count=1 ./...
 
 # ============================================================================
 # Development (for CDK contributors)
@@ -76,7 +76,7 @@ test-dev: build-lib
 # Run integration tests with local debug build
 test-integration-dev: build-lib
 	cd $(SPILMAN_PKG) && LD_LIBRARY_PATH=../../../target/debug MINT_URL=$(MINT_URL) \
-		go test -v -tags 'spilman_dev integration' ./...
+		go test -v -tags 'spilman_dev integration' -count=1 ./...
 
 # ============================================================================
 # Example

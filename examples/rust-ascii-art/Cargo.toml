@@ -10,7 +10,7 @@ name = "rust-ascii-art"
 path = "src/main.rs"
 
 [dependencies]
-cdk = { workspace = true, features = ["mint"] }
+cdk = { workspace = true, default-features = false }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
@@ -20,3 +20,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 figlet-rs = "0.1"
 base64 = "0.22"
+hex = "0.4"
+
+[dev-dependencies]
+# reqwest with blocking for tests (already in deps, but explicit for clarity)
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
