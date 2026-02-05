@@ -43,11 +43,11 @@ See [CASHUTUBE.md](CASHUTUBE.md) for full documentation.
 A minimal demo showing how to integrate Spilman payments into a Python service.
 
 ```bash
-cd examples/python-ascii-art
+cd crates/cdk-spilman-python/examples/ascii-art
 
 # Install dependencies
 pip install -r requirements.txt
-cd ../../crates/cdk-spilman-python && maturin develop && cd -
+cd ../.. && maturin develop && cd examples/ascii-art
 
 # Run server (in one terminal)
 python server.py
@@ -149,11 +149,14 @@ cdk/
 ├── crates/
 │   ├── cdk/src/spilman/           # Core protocol implementation
 │   ├── cdk-wasm/                   # WASM bindings
+│   │   └── examples/ascii-art/    # TypeScript demo server + client
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
+│   │   └── examples/ascii-art/    # Python demo server + client
 │   └── cdk-spilman-go/             # Go bindings (CGO)
+│       └── examples/ascii-art/    # Go demo server + client
 ├── containers/                     # Podman/Docker dev environment
 ├── examples/
-│   └── python-ascii-art/           # Python demo
+│   └── rust-ascii-art/             # Rust demo (native, uses core cdk)
 ├── web/
 │   └── blossom-server/             # CashuTube demo
 └── dev-mint/                       # Mint dev config

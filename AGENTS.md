@@ -116,7 +116,7 @@ cd crates/cdk-wasm/examples/ascii-art && npm run client -- Hello World  # In ano
 The `make build-wasm` target uses **sentinel-based dependency tracking**:
 - Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
 - Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
-- Blossom server gets WASM copied (separate git repo); ts-ascii-art uses symlink
+- Blossom server gets WASM copied (separate git repo); cdk-wasm/examples/ascii-art uses symlink
 
 ## Documentation Index
 

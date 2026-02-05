@@ -45,26 +45,30 @@ console.log(`Payment accepted: balance=${result.balance}`);
 ### Client-Side (Sender)
 
 ```typescript
+import { randomBytes } from "crypto";
+import * as secp from "@noble/secp256k1";
 import * as wasm from "./wasm/cdk_wasm.js";
 
-// Generate keypair
-const keypairJson = wasm.generate_keypair();
-const { secret, pubkey } = JSON.parse(keypairJson);
+// Generate keypair (use @noble/secp256k1, not WASM)
+const secretBytes = randomBytes(32);
+const pubkeyBytes = secp.getPublicKey(secretBytes, true);
+const secret = secretBytes.toString("hex");
+const pubkey = Buffer.from(pubkeyBytes).toString("hex");
 
-// Compute shared secret with receiver
+// Compute shared secret with receiver (WASM)
 const sharedSecret = wasm.compute_shared_secret(secret, receiverPubkey);
 
-// Get channel ID
+// Get channel ID (WASM)
 const channelId = wasm.channel_parameters_get_channel_id(
   paramsJson,
   sharedSecret,
   keysetJson
 );
 
-// Create funding outputs for minting
+// Create funding outputs for minting (WASM)
 const fundingJson = wasm.create_funding_outputs(paramsJson, secret, keysetJson);
 
-// Create signed payment
+// Create signed payment (WASM)
 const paymentJson = wasm.spilman_channel_sender_create_signed_balance_update(
   paramsJson,
   keysetJson,

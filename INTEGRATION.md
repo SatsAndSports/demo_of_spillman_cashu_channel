@@ -708,9 +708,9 @@ Four implementations showing the same pattern in different languages:
 
 | Language | Location | Notes |
 |----------|----------|-------|
-| TypeScript | `examples/ts-ascii-art/` | Reference implementation |
+| TypeScript | `crates/cdk-wasm/examples/ascii-art/` | Reference implementation |
 | Rust | `examples/rust-ascii-art/` | Native Rust server |
-| Python | `examples/python-ascii-art/` | PyO3 bindings |
+| Python | `crates/cdk-spilman-python/examples/ascii-art/` | PyO3 bindings |
 | Go | `crates/cdk-spilman-go/examples/ascii-art/` | CGO bindings |
 
 Each demo implements a simple service: pay per character of ASCII art. Study the `SpilmanHost` implementation in each.
@@ -731,7 +731,7 @@ Note that this is in a seperate repository.
 
 ```
 # TypeScript host implementation
-examples/ts-ascii-art/src/server.ts      # Hooks inline in server
+crates/cdk-wasm/examples/ascii-art/src/server.ts  # Hooks inline in server
 web/blossom-server/src/api/bridge-hooks.ts
 
 # Rust host implementation  
