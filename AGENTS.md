@@ -9,8 +9,8 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
 - **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using core `cdk` library
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
-- **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
+- **TypeScript ASCII Art** (`crates/cdk-wasm/examples/ascii-art/`) - Reference TypeScript server
+- **Python ASCII Art** (`crates/cdk-spilman-python/examples/ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`crates/cdk-spilman-go/examples/ascii-art/`) - Multi-language proof-of-concept
 
 **Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (52 tests)
@@ -33,9 +33,9 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `crates/cdk-spilman-python/` | PyO3 bindings |
 | `crates/cdk-spilman-go/` | CGO bindings |
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
-| `examples/python-ascii-art/` | Python demo |
+| `crates/cdk-spilman-python/examples/ascii-art/` | Python demo |
 | `crates/cdk-spilman-go/examples/ascii-art/` | Go demo |
-| `examples/ts-ascii-art/` | TypeScript demo |
+| `crates/cdk-wasm/examples/ascii-art/` | TypeScript demo |
 | `dev-mint/` | CDK mint development config |
 | `containers/` | Podman dev environment (Dockerfile, mint config) |
 
@@ -107,8 +107,8 @@ make clean-containers        # Remove containers, volumes, image
 cd web/blossom-server && npx tsc --noEmit
 
 # Run TypeScript ASCII demo (requires mint at localhost:3338)
-cd examples/ts-ascii-art && npm install && npm run server  # In one terminal
-cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
+cd crates/cdk-wasm/examples/ascii-art && npm install && npm run server  # In one terminal
+cd crates/cdk-wasm/examples/ascii-art && npm run client -- Hello World  # In another terminal
 ```
 
 ### WASM Build Details
