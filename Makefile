@@ -38,7 +38,8 @@ VENV := .venv
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 GO_CRATE_DIR := crates/cdk-spilman-go
 GO_DEMO_DIR := crates/cdk-spilman-go/examples/ascii-art
-TS_DEMO_DIR := examples/ts-ascii-art
+TS_DEMO_DIR := crates/cdk-wasm/examples/ascii-art
+PYTHON_DEMO_DIR := crates/cdk-spilman-python/examples/ascii-art
 BLOSSOM_DIR := web/blossom-server
 WASM_CRATE := crates/cdk-wasm
 NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
@@ -61,7 +62,7 @@ MATURIN := $(VENV)/bin/maturin
 	run-go-server run-go-client \
 	run-ts-server run-ts-client \
 	test test-rust-only test-unit-spilman test-integration-rust \
-	test-unit-go test-integration-go \
+	test-unit-go test-integration-go test-integration-python test-integration-ts \
 	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
 	test-demo-python test-demo-go test-demo-ts \
 	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
@@ -82,7 +83,7 @@ $(MATURIN):
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install maturin patchelf
-	$(PIP) install -r examples/python-ascii-art/requirements.txt
+	$(PIP) install -r $(PYTHON_DEMO_DIR)/requirements.txt
 
 venv: $(MATURIN)
 
@@ -188,10 +189,10 @@ ensure-nutmix-image:
 # --- Python Demo ---
 
 run-python-server: build-python
-	$(PYTHON) examples/python-ascii-art/server.py
+	$(PYTHON) $(PYTHON_DEMO_DIR)/server.py
 
 run-python-client:
-	$(PYTHON) examples/python-ascii-art/client.py
+	$(PYTHON) $(PYTHON_DEMO_DIR)/client.py
 
 # --- Go Demo ---
 # Note: Uses -tags spilman_dev to link against target/debug instead of packaged libs
@@ -230,6 +231,14 @@ test-unit-go: build-go
 # Run Go integration tests (basic tests, requires mint)
 test-integration-go: build-go build-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(GO_CRATE_DIR) test-integration-dev
+
+# Run Python integration tests (basic tests, requires mint)
+test-integration-python: build-python build-mintd
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(PYTHON_CRATE_DIR) test-integration
+
+# Run TypeScript integration tests (basic tests, requires mint)
+test-integration-ts: build-wasm build-mintd
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(WASM_CRATE) test-integration
 
 # ===========================================================================
 # Test Targets - Server Integration Tests (52-test Rust client suite)
