@@ -30,15 +30,18 @@ const (
 )
 
 // Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
+// usd has MaxAmountPerOutput to test enforcement of maximum_amount policy
 type UnitPricing struct {
-	PerChar     int `json:"per_char"`
-	MinCapacity int `json:"minCapacity"`
+	PerChar            int  `json:"per_char"`
+	MinCapacity        int  `json:"minCapacity"`
+	MaxAmountPerOutput *int `json:"maxAmountPerOutput,omitempty"`
 }
 
+var maxAmountPerOutputUsd = 64
 var allPricing = map[string]UnitPricing{
 	"sat":  {PerChar: 1, MinCapacity: 10},
-	"msat": {PerChar: 1000, MinCapacity: 10000}, // 1 sat = 1000 msat
-	"usd":  {PerChar: 1, MinCapacity: 10},       // 1 cent per char
+	"msat": {PerChar: 1000, MinCapacity: 10000},                                       // 1 sat = 1000 msat
+	"usd":  {PerChar: 1, MinCapacity: 10, MaxAmountPerOutput: &maxAmountPerOutputUsd}, // 1 cent per char, max 64 per output
 }
 
 // getActivePricing returns pricing filtered to only units with active keysets

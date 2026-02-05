@@ -93,13 +93,14 @@ async fn get_channel_params(State(state): State<AppState>) -> Json<serde_json::V
         .iter()
         .filter(|(unit, _)| active_units.contains(*unit))
         .map(|(unit, p)| {
-            (
-                unit.clone(),
-                serde_json::json!({
-                    "per_char": p.per_char,
-                    "minCapacity": p.min_capacity,
-                }),
-            )
+            let mut pricing_obj = serde_json::json!({
+                "per_char": p.per_char,
+                "minCapacity": p.min_capacity,
+            });
+            if let Some(max_amount) = p.max_amount_per_output {
+                pricing_obj["maxAmountPerOutput"] = serde_json::json!(max_amount);
+            }
+            (unit.clone(), pricing_obj)
         })
         .collect();
 

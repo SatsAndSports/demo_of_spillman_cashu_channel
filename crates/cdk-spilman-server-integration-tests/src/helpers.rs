@@ -44,6 +44,7 @@ pub struct Channel {
     pub keyset_info: KeysetInfo,
     pub keyset_info_json: String,
     pub capacity: u64,
+    pub output_count: usize,
 }
 
 /// Server channel parameters from /channel/params
@@ -61,6 +62,8 @@ pub struct UnitPricing {
     pub per_char: u64,
     #[serde(rename = "minCapacity")]
     pub min_capacity: u64,
+    #[serde(rename = "maxAmountPerOutput")]
+    pub max_amount_per_output: Option<u64>,
 }
 
 /// Response from fetchAsciiArt
@@ -675,6 +678,9 @@ pub async fn mint_funded_channel(
         channel_parameters_get_channel_id(&channel_params_json, &shared_secret, &keyset_info_json)
             .map_err(|e| anyhow!("Failed to get channel ID: {}", e))?;
 
+    // Get output count from blinded_messages
+    let output_count = blinded_messages.len();
+
     Ok(Channel {
         alice,
         channel_params,
@@ -685,6 +691,7 @@ pub async fn mint_funded_channel(
         keyset_info,
         keyset_info_json,
         capacity,
+        output_count,
     })
 }
 

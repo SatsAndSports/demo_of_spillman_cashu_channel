@@ -83,12 +83,14 @@ async fn main() {
     let stores = Arc::new(Stores::new());
 
     // Configure pricing (matching other servers)
+    // usd has max_amount_per_output to test enforcement of maximum_amount policy
     let pricing: HashMap<String, UnitPricing> = [
         (
             "sat".to_string(),
             UnitPricing {
                 per_char: 1,
                 min_capacity: 10,
+                max_amount_per_output: None,
             },
         ),
         (
@@ -96,6 +98,7 @@ async fn main() {
             UnitPricing {
                 per_char: 1000,
                 min_capacity: 10000,
+                max_amount_per_output: None,
             },
         ),
         (
@@ -103,6 +106,7 @@ async fn main() {
             UnitPricing {
                 per_char: 1,
                 min_capacity: 10,
+                max_amount_per_output: Some(64),
             },
         ),
     ]

@@ -35,10 +35,11 @@ SECRET_KEY = os.environ.get("SERVER_SECRET_KEY") or secrets.token_hex(32)
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 PORT = int(os.environ.get("PORT", "5000"))
 # Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
+# usd has maxAmountPerOutput to test enforcement of maximum_amount policy
 ALL_PRICING = {
     "sat":  {"per_char": 1,    "minCapacity": 10},
     "msat": {"per_char": 1000, "minCapacity": 10000},  # 1 sat = 1000 msat
-    "usd":  {"per_char": 1,    "minCapacity": 10},     # 1 cent per char
+    "usd":  {"per_char": 1,    "minCapacity": 10, "maxAmountPerOutput": 64},  # 1 cent per char, max 64 per output
 }
 
 
