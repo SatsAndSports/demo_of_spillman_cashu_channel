@@ -935,6 +935,94 @@ mod validation {
         }
         Ok(())
     }
+
+    #[tokio::test]
+    async fn rejects_maximum_amount_exceeding_policy() -> Result<()> {
+        let ctx = TestContext::new().await?;
+
+        // Get the max_amount_per_output for usd from server params
+        let server_params = ctx.client.fetch_channel_params().await?;
+        let usd_pricing = server_params.pricing.get("usd")
+            .expect("usd pricing should exist");
+        let max_allowed = usd_pricing.max_amount_per_output
+            .expect("usd should have maxAmountPerOutput set");
+
+        println!("usd maxAmountPerOutput policy: {}", max_allowed);
+
+        // Try to create channel with maximum_amount exceeding limit
+        let exceeding_amount = max_allowed + 1;
+        let options = MintFundedChannelOptions {
+            maximum_amount: Some(exceeding_amount),
+            ..Default::default()
+        };
+        let channel = ctx.mint_channel_with_options("usd", 100, options).await?;
+
+        // Register should fail with MaxAmountExceeded error
+        let body = json!({
+            "channel_id": channel.channel_id,
+            "balance": 0,
+            "signature": "any",
+            "params": channel.channel_params,
+            "funding_proofs": channel.proofs,
+        });
+
+        let (status, result) = ctx.client.register_channel_raw(&body).await?;
+
+        assert_eq!(status, 402);
+        let reason = result["reason"].as_str().unwrap_or("");
+        assert!(
+            reason.contains("max_amount") || reason.contains("MaxAmount"),
+            "Expected error about max_amount, got: {}",
+            reason
+        );
+        println!("Correctly rejected channel with maximum_amount={} (policy max={}): {}", 
+            exceeding_amount, max_allowed, reason);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn large_channel_produces_many_outputs() -> Result<()> {
+        let ctx = TestContext::new().await?;
+
+        // Get max_amount_per_output for usd (should be 64)
+        let server_params = ctx.client.fetch_channel_params().await?;
+        let usd_pricing = server_params.pricing.get("usd")
+            .expect("usd pricing should exist");
+        let max_amount = usd_pricing.max_amount_per_output
+            .expect("usd should have maxAmountPerOutput set");
+
+        // Create large 1000 usd channel with the policy's max_amount
+        let capacity = 1000u64;
+        let options = MintFundedChannelOptions {
+            maximum_amount: Some(max_amount),  // Use the policy limit (64)
+            ..Default::default()
+        };
+        let channel = ctx.mint_channel_with_options("usd", capacity, options).await?;
+
+        // With capacity=1000 and max_amount=64, we need at least ceil(1000/64) = 16 outputs
+        // (actual count may be higher due to fee structure and amount decomposition)
+        let min_expected_outputs = (capacity / max_amount) as usize;
+
+        println!(
+            "Large usd channel: capacity={}, max_amount={}, output_count={}, min_expected={}",
+            capacity, max_amount, channel.output_count, min_expected_outputs
+        );
+
+        assert!(
+            channel.output_count >= min_expected_outputs,
+            "Expected at least {} outputs, got {}",
+            min_expected_outputs, channel.output_count
+        );
+
+        // Verify channel is functional by registering
+        ctx.client.register_channel(&channel).await?;
+        let status_resp = ctx.client.fetch_channel_status(&channel.channel_id).await?;
+        let status_body = status_resp.body.expect("Status body should exist");
+        assert_eq!(status_body.capacity, capacity);
+
+        println!("Large channel registered successfully with {} outputs", channel.output_count);
+        Ok(())
+    }
 }
 
 // ============================================================================

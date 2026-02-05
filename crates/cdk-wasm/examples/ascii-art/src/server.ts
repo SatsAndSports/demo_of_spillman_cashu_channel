@@ -36,16 +36,17 @@ export const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
 const PORT = parseInt(process.env.PORT || "5002", 10);
 // Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
 // Note: msat has higher per_char to stay above mint's minimum denomination
-const ALL_PRICING: Record<string, { per_char: number; minCapacity: number }> = {
+// usd has maxAmountPerOutput to test enforcement of maximum_amount policy
+const ALL_PRICING: Record<string, { per_char: number; minCapacity: number; maxAmountPerOutput?: number }> = {
   sat: { per_char: 1, minCapacity: 10 },
   msat: { per_char: 1000, minCapacity: 10000 },  // 1 sat = 1000 msat
-  usd: { per_char: 1, minCapacity: 10 },         // 1 cent per char
+  usd: { per_char: 1, minCapacity: 10, maxAmountPerOutput: 64 },  // 1 cent per char, max 64 per output
 };
 
 /** Returns pricing filtered to only units that have active keysets in the mint. */
-function getActivePricing(): Record<string, { per_char: number; minCapacity: number }> {
+function getActivePricing(): Record<string, { per_char: number; minCapacity: number; maxAmountPerOutput?: number }> {
   const activeUnits = keysetCache.getActiveUnits();
-  const result: Record<string, { per_char: number; minCapacity: number }> = {};
+  const result: Record<string, { per_char: number; minCapacity: number; maxAmountPerOutput?: number }> = {};
   for (const unit of activeUnits) {
     if (unit in ALL_PRICING) {
       result[unit] = ALL_PRICING[unit];

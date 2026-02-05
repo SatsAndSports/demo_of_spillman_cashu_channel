@@ -265,18 +265,19 @@ impl SpilmanHost for AsciiArtHost {
     }
 
     fn get_channel_policy(&self) -> String {
-        // Build pricing with minCapacity (matching TS server format)
+        // Build pricing with minCapacity and optional maxAmountPerOutput (matching TS server format)
         let pricing_json: serde_json::Value = self
             .pricing
             .iter()
             .map(|(unit, p)| {
-                (
-                    unit.clone(),
-                    serde_json::json!({
-                        "per_char": p.per_char,
-                        "minCapacity": p.min_capacity,
-                    }),
-                )
+                let mut pricing_obj = serde_json::json!({
+                    "per_char": p.per_char,
+                    "minCapacity": p.min_capacity,
+                });
+                if let Some(max_amount) = p.max_amount_per_output {
+                    pricing_obj["maxAmountPerOutput"] = serde_json::json!(max_amount);
+                }
+                (unit.clone(), pricing_obj)
             })
             .collect();
 

@@ -387,6 +387,7 @@ pub struct ChannelStatus {
 pub struct UnitPricing {
     pub per_char: u64,
     pub min_capacity: u64,
+    pub max_amount_per_output: Option<u64>,
 }
 
 pub fn get_channel_status(
