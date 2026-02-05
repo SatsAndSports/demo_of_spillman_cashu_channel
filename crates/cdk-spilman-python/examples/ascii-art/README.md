@@ -44,7 +44,7 @@ maturin develop
 ### 3. Install Demo Dependencies
 
 ```bash
-cd examples/python-ascii-art
+cd crates/cdk-spilman-python/examples/ascii-art
 pip install -r requirements.txt
 ```
 
@@ -53,7 +53,7 @@ pip install -r requirements.txt
 ### Terminal 1: Start the Server
 
 ```bash
-cd examples/python-ascii-art
+cd crates/cdk-spilman-python/examples/ascii-art
 python server.py
 ```
 
@@ -78,7 +78,7 @@ Endpoints:
 ### Terminal 2: Run the Client
 
 ```bash
-cd examples/python-ascii-art
+cd crates/cdk-spilman-python/examples/ascii-art
 python client.py Hello World Cashu
 ```
 

@@ -224,12 +224,12 @@ Test targets automatically build/copy WASM as needed:
 
 ```bash
 make test-blossom      # Builds WASM if needed, copies to blossom-server, runs tests
-make test-server-ts    # Builds WASM if needed (ts-ascii-art uses symlink), runs tests
+make test-server-ts    # Builds WASM if needed (cdk-wasm/examples/ascii-art uses symlink), runs tests
 ```
 
 ### WASM distribution
 
-- **ts-ascii-art**: Uses symlink (`src/wasm` → `../../../web/wasm-nodejs`) - always uses latest
+- **cdk-wasm/examples/ascii-art**: Uses symlink (`src/wasm` → `../../../../web/wasm-nodejs`) - always uses latest
 - **blossom-server**: Gets WASM copied (separate git repo, can't use symlinks)
 
 ### From blossom-server directory
@@ -338,18 +338,18 @@ The server implements:
 **Note:** This is a proof-of-concept demonstrating Python bindings. For comprehensive test coverage, see the TypeScript ASCII Art tests above.
 
 ```bash
-cd examples/python-ascii-art
+cd crates/cdk-spilman-python/examples/ascii-art
 
 # Install dependencies
 pip install -r requirements.txt
 pip install maturin
 
 # Build Python bindings
-cd ../../crates/cdk-spilman-python
+cd ../..
 maturin develop
 
 # Run demo (requires mint at localhost:3338)
-cd ../../examples/python-ascii-art
+cd examples/ascii-art
 python server.py &
 python client.py
 ```
@@ -397,13 +397,13 @@ cdk/
 │   ├── cdk/src/spilman/                      # Core Spilman implementation
 │   ├── cdk-spilman-server-integration-tests/ # Rust test client for all servers
 │   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
+│   │   └── examples/ascii-art/               # TypeScript demo server + client
 │   ├── cdk-spilman-python/                   # PyO3 bindings
+│   │   └── examples/ascii-art/               # Python demo server + client
 │   └── cdk-spilman-go/                       # CGO bindings
 │       └── examples/ascii-art/               # Go demo server + client
 ├── examples/
-│   ├── rust-ascii-art/            # Rust ASCII Art server (native)
-│   ├── ts-ascii-art/              # TypeScript demo server + client
-│   └── python-ascii-art/          # Python demo server + client
+│   └── rust-ascii-art/                       # Rust ASCII Art server (native)
 ├── web/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output

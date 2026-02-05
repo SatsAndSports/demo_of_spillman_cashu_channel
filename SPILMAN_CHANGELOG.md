@@ -16,7 +16,7 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Defensive "already closed" checks**: All five server implementations (CashuTube, TS ASCII Art, Rust ASCII Art, Python ASCII Art, Go ASCII Art) now check channel state before marking closing/closed and return appropriate errors if the channel is already closed.
 
 ### Bug Fixes
-- **BigInt serialization fix**: Fixed WASM BigInt → JSON serialization issue in TypeScript servers. WASM passes `u64` values as JavaScript `BigInt`, but `JSON.stringify()` cannot serialize BigInt. Added explicit `Number()` conversions at the WASM boundary in `bridge-hooks.ts` and `ts-ascii-art/server.ts`.
+- **BigInt serialization fix**: Fixed WASM BigInt → JSON serialization issue in TypeScript servers. WASM passes `u64` values as JavaScript `BigInt`, but `JSON.stringify()` cannot serialize BigInt. Added explicit `Number()` conversions at the WASM boundary in `bridge-hooks.ts` and `crates/cdk-wasm/examples/ascii-art/src/server.ts`.
 
 ### Video Player: Register-Only Channel Setup
 - **Removed header fallback for channel params/funding**: The video player no longer sends `params` and `funding_proofs` in the `X-Cashu-Channel` header. This avoids HTTP header size limits (~16KB) that could be exceeded with large funding tokens.
@@ -168,7 +168,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Pricing: sat=1/char, msat=1000/char, usd=1/char (matching other demo servers)
 
 ### Language Bindings
-- **Python demo** (`examples/python-ascii-art/`): Pay-per-character ASCII art generator
+- **Python demo** (`crates/cdk-spilman-python/examples/ascii-art/`): Pay-per-character ASCII art generator
 - **PyO3 bindings** (`crates/cdk-spilman-python/`): SpilmanBridge + client functions for Python
 - Python SpilmanHost implementation with all required callbacks
 - Python server with keyset caching from mint at startup
