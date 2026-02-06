@@ -559,17 +559,24 @@ mod tests {
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
         let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
 
+        let capacity = 1000;
+        let maximum_amount = 100_000;
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(capacity, &keyset_info, maximum_amount)
+                .unwrap();
+
         ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
-            1000, // capacity
-            0,    // locktime
-            0,    // setup_timestamp
+            capacity,
+            funding_token_amount,
+            0, // locktime
+            0, // setup_timestamp
             "test".to_string(),
             keyset_info,
-            100_000, // maximum_amount_for_one_output
+            maximum_amount,
             &alice_secret,
         )
         .unwrap()
@@ -646,17 +653,24 @@ mod tests {
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
         let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
 
+        let capacity = 1000;
+        let maximum_amount = 100_000;
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(capacity, &keyset_info, maximum_amount)
+                .unwrap();
+
         ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
-            1000,     // capacity
+            capacity,
+            funding_token_amount,
             locktime, // locktime (configurable)
             0,        // setup_timestamp
             "test".to_string(),
             keyset_info,
-            100_000, // maximum_amount_for_one_output
+            maximum_amount,
             &alice_secret,
         )
         .unwrap()

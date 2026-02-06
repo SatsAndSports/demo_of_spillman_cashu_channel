@@ -61,12 +61,21 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
     let capacity = 10u64;
     let future_locktime = unix_time() + 3600; // 1 hour in future
 
+    // With real fees from the mint, compute the minimum funding_token_amount
+    let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+        capacity,
+        &keyset_info,
+        64,
+    )
+    .expect("Failed to compute funding token amount");
+
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         "http://localhost:3338".to_string(), // mint URL (not actually used for swap)
         CurrencyUnit::Sat,
         capacity,
+        funding_token_amount,
         future_locktime,
         unix_time(),
         format!("test-{}", unix_time()),
@@ -273,12 +282,20 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     let capacity = 10u64;
     let future_locktime = unix_time() + 3600; // 1 hour in future
 
+    let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+        capacity,
+        &keyset_info,
+        64,
+    )
+    .expect("Failed to compute funding token amount");
+
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
+        funding_token_amount,
         future_locktime,
         unix_time(),
         format!("test-refund-{}", unix_time()),
@@ -436,13 +453,14 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
     let keyset_id = cdk_common::nuts::Id::v1_from_keys(&keyset_keys);
     let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
 
-    // Create channel params
+    // Create channel params (fees=0, so funding_token_amount == capacity)
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
-        100,
+        100, // capacity
+        100, // funding_token_amount
         crate::util::unix_time() + 3600,
         crate::util::unix_time(),
         "test-stage2-keys".to_string(),
@@ -581,7 +599,7 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
     let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
     println!("Keyset ID: {}", keyset_id);
 
-    // 3. Create channel parameters with a reasonable capacity
+    // 3. Create channel parameters with a reasonable capacity (fees=0, so funding_token_amount == capacity)
     let capacity = 100u64;
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
@@ -589,6 +607,7 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
+        capacity, // funding_token_amount == capacity when fees are 0
         crate::util::unix_time() + 3600, // 1 hour in future
         crate::util::unix_time(),
         format!("test-sender-keys-{}", crate::util::unix_time()),
@@ -803,9 +822,9 @@ async fn test_swap_to_funding() {
         serde_json::from_str(&compute_result).expect("Should parse compute result");
 
     let capacity = compute_json["capacity"].as_u64().expect("Should have capacity");
-    let funding_token_nominal = compute_json["funding_token_nominal"]
+    let funding_token_amount = compute_json["funding_token_amount"]
         .as_u64()
-        .expect("Should have funding_token_nominal");
+        .expect("Should have funding_token_amount");
     let change_amount = compute_json["change_amount"]
         .as_u64()
         .expect("Should have change_amount");
@@ -818,7 +837,7 @@ async fn test_swap_to_funding() {
 
     println!("Input value: {} sats", input_value);
     println!("Capacity: {} sats", capacity);
-    println!("Funding token nominal: {} sats", funding_token_nominal);
+    println!("Funding token amount: {} sats", funding_token_amount);
     println!("Change amount: {} sats", change_amount);
 
     // Verify the math makes sense
@@ -828,9 +847,10 @@ async fn test_swap_to_funding() {
         "Capacity should not exceed input value"
     );
     assert!(
-        funding_token_nominal <= input_value,
-        "Funding nominal should not exceed input value"
+        funding_token_amount <= input_value,
+        "Funding amount should not exceed input value"
     );
+    assert_eq!(change_amount, 0, "Change should be 0 with explicit funding_token_amount");
     println!("✓ compute_channel_from_token values are reasonable");
 
     // Step 5: Call create_funding_swap
@@ -940,8 +960,8 @@ async fn test_swap_to_funding() {
     // Verify funding proofs have expected total
     let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
     assert_eq!(
-        funding_total, funding_token_nominal,
-        "Funding proofs should sum to funding_token_nominal"
+        funding_total, funding_token_amount,
+        "Funding proofs should sum to funding_token_amount"
     );
 
     // Verify change proofs have expected total

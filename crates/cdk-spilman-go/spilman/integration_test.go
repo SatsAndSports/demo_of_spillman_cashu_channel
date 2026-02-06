@@ -76,18 +76,23 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 	t.Logf("Computed shared secret: %s...", sharedSecret[:16])
 
 	// 5. Build channel parameters
+	fundingTokenAmount, err := ComputeFundingTokenAmount(uint64(100), string(keysetJson), uint64(64))
+	if err != nil {
+		t.Fatalf("ComputeFundingTokenAmount failed: %v", err)
+	}
 	params := map[string]interface{}{
-		"alice_pubkey":    alicePubkey,
-		"charlie_pubkey":  receiverPubkey,
-		"mint":            mintURL,
-		"unit":            "sat",
-		"capacity":        uint64(100),
-		"maximum_amount":  uint64(64),
-		"locktime":        time.Now().Unix() + 7200,
-		"setup_timestamp": time.Now().Unix(),
-		"sender_nonce":    fmt.Sprintf("test-%d", time.Now().UnixNano()),
-		"keyset_id":       keysetInfo["keysetId"],
-		"input_fee_ppk":   keysetInfo["inputFeePpk"],
+		"alice_pubkey":         alicePubkey,
+		"charlie_pubkey":       receiverPubkey,
+		"mint":                 mintURL,
+		"unit":                 "sat",
+		"capacity":             uint64(100),
+		"funding_token_amount": fundingTokenAmount,
+		"maximum_amount":       uint64(64),
+		"locktime":             time.Now().Unix() + 7200,
+		"setup_timestamp":      time.Now().Unix(),
+		"sender_nonce":         fmt.Sprintf("test-%d", time.Now().UnixNano()),
+		"keyset_id":            keysetInfo["keysetId"],
+		"input_fee_ppk":        keysetInfo["inputFeePpk"],
 	}
 	paramsJson, _ := json.Marshal(params)
 

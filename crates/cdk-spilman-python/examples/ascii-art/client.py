@@ -31,6 +31,7 @@ except ImportError:
 from cdk_spilman import (
     generate_keypair,
     compute_shared_secret,
+    compute_funding_token_amount,
     channel_parameters_get_channel_id,
     create_funding_outputs,
     construct_proofs,
@@ -233,12 +234,18 @@ def main():
     total_chars = sum(len(m) for m in messages)
     capacity = max(total_chars + 20, 50)  # Some headroom
     
+    # Compute the minimum funding_token_amount for the desired capacity
+    funding_token_amount = compute_funding_token_amount(
+        capacity, json.dumps(keyset_info), 64
+    )
+    
     channel_params = {
         "alice_pubkey": alice_pubkey,
         "charlie_pubkey": charlie_pubkey,
         "mint": MINT_URL,
         "unit": "sat",
         "capacity": capacity,
+        "funding_token_amount": funding_token_amount,
         "maximum_amount": 64,
         "locktime": int(time.time()) + 7200,  # 2 hours
         "setup_timestamp": int(time.time()),

@@ -127,12 +127,14 @@ class TestChannelSetup:
 
         # Build channel parameters
         now = int(time.time())
+        funding_token_amount = cdk_spilman.compute_funding_token_amount(100, keyset_json, 64)
         params = {
             "alice_pubkey": alice_pubkey,
             "charlie_pubkey": receiver_pubkey,
             "mint": mint_url,
             "unit": "sat",
             "capacity": 100,
+            "funding_token_amount": funding_token_amount,
             "maximum_amount": 64,
             "locktime": now + 7200,
             "setup_timestamp": now,
@@ -174,12 +176,14 @@ class TestChannelSetup:
         shared_secret = cdk_spilman.compute_shared_secret(alice_secret, receiver_pubkey)
 
         now = int(time.time())
+        funding_token_amount = cdk_spilman.compute_funding_token_amount(100, keyset_json, 64)
         params = {
             "alice_pubkey": alice_pubkey,
             "charlie_pubkey": receiver_pubkey,
             "mint": mint_url,
             "unit": "sat",
             "capacity": 100,
+            "funding_token_amount": funding_token_amount,
             "maximum_amount": 64,
             "locktime": now + 7200,
             "setup_timestamp": now,

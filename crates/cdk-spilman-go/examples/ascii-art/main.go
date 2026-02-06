@@ -1135,9 +1135,12 @@ func runClient(messages []string) {
 		total += len(m)
 	}
 	cap := uint64(total + 50)
+	// Compute the minimum funding_token_amount for the desired capacity
+	fta, _ := spilman.ComputeFundingTokenAmount(cap, string(kiJson), 64)
 	params := map[string]interface{}{
 		"alice_pubkey": alice.Pubkey, "charlie_pubkey": sp.Receiver_pubkey,
-		"mint": clientMintUrl, "unit": "sat", "capacity": cap, "maximum_amount": 64,
+		"mint": clientMintUrl, "unit": "sat", "capacity": cap,
+		"funding_token_amount": fta, "maximum_amount": 64,
 		"locktime": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
 		"sender_nonce": fmt.Sprintf("demo-go-%d", time.Now().Unix()),
 		"keyset_id":    ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],

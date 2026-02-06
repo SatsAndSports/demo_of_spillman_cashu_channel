@@ -16,6 +16,7 @@ import * as secp from "@noble/secp256k1";
 import qrcode from "qrcode-terminal";
 import {
   compute_shared_secret,
+  compute_funding_token_amount,
   channel_parameters_get_channel_id,
   create_funding_outputs,
   construct_proofs,
@@ -239,20 +240,6 @@ export async function runClient(messages: string[]): Promise<void> {
   const totalChars = messages.reduce((sum, m) => sum + m.length, 0);
   const capacity = Math.max(totalChars + 20, 50); // Some headroom
 
-  const channelParams = {
-    alice_pubkey: alice.pubkey,
-    charlie_pubkey: charliePubkey,
-    mint: mintUrl,
-    unit: "sat",
-    capacity,
-    maximum_amount: 64,
-    locktime: Math.floor(Date.now() / 1000) + 7200, // 2 hours
-    setup_timestamp: Math.floor(Date.now() / 1000),
-    sender_nonce: `ts-demo-${Date.now()}`,
-    keyset_id: keysetInfo.keysetId,
-    input_fee_ppk: keysetInfo.inputFeePpk,
-  };
-
   const keysetInfoJson = JSON.stringify({
     keysetId: keysetInfo.keysetId,
     unit: keysetInfo.unit,
@@ -260,6 +247,28 @@ export async function runClient(messages: string[]): Promise<void> {
     inputFeePpk: keysetInfo.inputFeePpk,
     amounts: Object.keys(keysetInfo.keys).map(Number).sort((a, b) => b - a),
   });
+
+  // Compute the minimum funding_token_amount for the desired capacity
+  const fundingTokenAmount = Number(compute_funding_token_amount(
+    BigInt(capacity),
+    keysetInfoJson,
+    BigInt(64),
+  ));
+
+  const channelParams = {
+    alice_pubkey: alice.pubkey,
+    charlie_pubkey: charliePubkey,
+    mint: mintUrl,
+    unit: "sat",
+    capacity,
+    funding_token_amount: fundingTokenAmount,
+    maximum_amount: 64,
+    locktime: Math.floor(Date.now() / 1000) + 7200, // 2 hours
+    setup_timestamp: Math.floor(Date.now() / 1000),
+    sender_nonce: `ts-demo-${Date.now()}`,
+    keyset_id: keysetInfo.keysetId,
+    input_fee_ppk: keysetInfo.inputFeePpk,
+  };
 
   const channelId = channel_parameters_get_channel_id(
     JSON.stringify(channelParams),

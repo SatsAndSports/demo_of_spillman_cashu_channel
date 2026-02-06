@@ -11,6 +11,7 @@ import { randomBytes } from "crypto";
 import * as secp from "@noble/secp256k1";
 import {
   compute_shared_secret,
+  compute_funding_token_amount,
   channel_parameters_get_channel_id,
   create_funding_outputs,
 } from "../src/wasm/cdk_wasm.js";
@@ -148,12 +149,18 @@ describe("Channel Setup", () => {
 
     // Build channel parameters
     const now = Math.floor(Date.now() / 1000);
+    const fundingTokenAmount = Number(compute_funding_token_amount(
+      BigInt(100),
+      keysetJson,
+      BigInt(64),
+    ));
     const params = {
       alice_pubkey: alice.pubkey,
       charlie_pubkey: receiver.pubkey,
       mint: MINT_URL,
       unit: "sat",
       capacity: 100,
+      funding_token_amount: fundingTokenAmount,
       maximum_amount: 64,
       locktime: now + 7200,
       setup_timestamp: now,
@@ -203,12 +210,18 @@ describe("Channel Setup", () => {
     const sharedSecret = compute_shared_secret(alice.secret, receiver.pubkey);
 
     const now = Math.floor(Date.now() / 1000);
+    const fundingTokenAmount = Number(compute_funding_token_amount(
+      BigInt(100),
+      keysetJson,
+      BigInt(64),
+    ));
     const params = {
       alice_pubkey: alice.pubkey,
       charlie_pubkey: receiver.pubkey,
       mint: MINT_URL,
       unit: "sat",
       capacity: 100,
+      funding_token_amount: fundingTokenAmount,
       maximum_amount: 64,
       locktime: now + 7200,
       setup_timestamp: now,

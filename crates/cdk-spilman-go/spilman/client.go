@@ -20,6 +20,7 @@ typedef struct {
 CResult spilman_generate_keypair();
 CResult spilman_secret_key_to_pubkey(const char* secret_hex);
 CResult spilman_compute_shared_secret(const char* my_secret_hex, const char* their_pubkey_hex);
+CResult spilman_compute_funding_token_amount(uint64_t capacity, const char* keyset_info_json, uint64_t maximum_amount);
 CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* shared_secret, uint64_t balance, const char* output_keyset);
 CResult spilman_create_signed_balance_update(const char* params, const char* keyset, const char* secret, const char* proofs, uint64_t balance);
 CResult spilman_channel_parameters_get_channel_id(const char* params, const char* shared_secret, const char* keyset);
@@ -84,6 +85,27 @@ func ComputeSharedSecret(mySecretHex, theirPubkeyHex string) (string, error) {
 		return "", errors.New(C.GoString(res.error))
 	}
 	return C.GoString(res.data), nil
+}
+
+// ComputeFundingTokenAmount computes the minimum funding_token_amount needed for a given capacity.
+// Uses the double-inverse computation to determine the minimum funding token
+// nominal value that will yield at least `capacity` after both fee stages.
+func ComputeFundingTokenAmount(capacity uint64, keysetInfoJson string, maximumAmount uint64) (uint64, error) {
+	cKeyset := C.CString(keysetInfoJson)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_compute_funding_token_amount(C.uint64_t(capacity), cKeyset, C.uint64_t(maximumAmount))
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return 0, errors.New(C.GoString(res.error))
+	}
+
+	var amount uint64
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &amount); err != nil {
+		return 0, err
+	}
+	return amount, nil
 }
 
 // UnblindAndVerifyDleq unblinds mint signatures and verifies DLEQ proofs.
