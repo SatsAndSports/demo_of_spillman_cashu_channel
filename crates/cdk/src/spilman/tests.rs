@@ -665,3 +665,272 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
     );
     println!("✓ Per-proof keys are unique for different (amount, index) pairs");
 }
+
+/// Test: Swap-to-funding flow
+///
+/// Verifies the full flow of creating channel funding from an existing token:
+/// 1. Mint some proofs and wrap them in a token
+/// 2. compute_channel_from_token() - parse token, compute capacity/change
+/// 3. create_funding_swap() - create swap request with funding + change outputs
+/// 4. Execute swap with mint
+/// 5. complete_funding_swap() - unblind signatures with DLEQ verification
+/// 6. Verify we got valid funding and change proofs
+#[tokio::test]
+async fn test_swap_to_funding() {
+    use super::bindings::{
+        complete_funding_swap, compute_channel_from_token, create_funding_swap,
+        parse_keyset_info_from_json,
+    };
+    use cdk_common::nuts::{Proof, Token};
+
+    let test_mint = TestMintHelper::new().await.unwrap();
+    let mint = test_mint.mint();
+
+    // Generate keypairs for Alice and Charlie
+    let alice_secret = SecretKey::generate();
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    println!("Alice pubkey: {}", alice_secret.public_key().to_hex());
+    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+
+    // Step 1: Get keyset info from the test mint
+    let keyset_id = test_mint.active_sat_keyset_id;
+    let keys = test_mint.public_keys_of_the_active_sat_keyset.clone();
+
+    let keysets_response = mint.keysets();
+    let keyset_info_response = keysets_response
+        .keysets
+        .iter()
+        .find(|k| k.id == keyset_id)
+        .expect("Should find keyset");
+    let input_fee_ppk = keyset_info_response.input_fee_ppk;
+
+    // We use keyset_info_json (string) for bindings, so we don't need the struct here
+    println!("Keyset: {} (fee: {} ppk)", keyset_id, input_fee_ppk);
+
+    // Build keyset_info_json for the bindings functions
+    let keyset_info_json = serde_json::json!({
+        "keysetId": keyset_id.to_string(),
+        "unit": "sat",
+        "inputFeePpk": input_fee_ppk,
+        "keys": keys.iter().map(|(amt, pk)| {
+            (u64::from(*amt).to_string(), pk.to_hex())
+        }).collect::<std::collections::HashMap<_, _>>()
+    })
+    .to_string();
+
+    // Verify keyset_info_json parses correctly
+    let parsed_info = parse_keyset_info_from_json(&keyset_info_json)
+        .expect("Should parse keyset_info_json");
+    assert_eq!(parsed_info.keyset_id, keyset_id);
+    println!("✓ Keyset info JSON parses correctly");
+
+    // Step 2: Mint some proofs as input (100 sats)
+    let input_amount = Amount::from(100u64);
+    let input_proofs = test_mint
+        .mint_proofs(input_amount)
+        .await
+        .expect("Failed to mint input proofs");
+
+    let input_value: u64 = input_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    println!("Minted {} sats in {} proofs", input_value, input_proofs.len());
+
+    // Step 3: Create token from proofs
+    let token = Token::new(
+        "http://localhost:3338".parse().unwrap(),
+        input_proofs.clone(),
+        None,
+        CurrencyUnit::Sat,
+    );
+    let token_string = token.to_string();
+    println!("Token: {}...", &token_string[..50]);
+
+    // Step 4: Call compute_channel_from_token
+    let locktime = unix_time() + 3600; // 1 hour in future
+    let max_amount = 64u64;
+
+    let compute_result = compute_channel_from_token(
+        &token_string,
+        &charlie_pubkey.to_hex(),
+        &alice_secret.to_secret_hex(),
+        locktime,
+        &keyset_info_json,
+        max_amount,
+    )
+    .expect("compute_channel_from_token should succeed");
+
+    let compute_json: serde_json::Value =
+        serde_json::from_str(&compute_result).expect("Should parse compute result");
+
+    let capacity = compute_json["capacity"].as_u64().expect("Should have capacity");
+    let funding_token_nominal = compute_json["funding_token_nominal"]
+        .as_u64()
+        .expect("Should have funding_token_nominal");
+    let change_amount = compute_json["change_amount"]
+        .as_u64()
+        .expect("Should have change_amount");
+    let params_json = compute_json["params_json"]
+        .as_str()
+        .expect("Should have params_json");
+    let proofs_json = compute_json["proofs_json"]
+        .as_str()
+        .expect("Should have proofs_json");
+
+    println!("Input value: {} sats", input_value);
+    println!("Capacity: {} sats", capacity);
+    println!("Funding token nominal: {} sats", funding_token_nominal);
+    println!("Change amount: {} sats", change_amount);
+
+    // Verify the math makes sense
+    assert!(capacity > 0, "Capacity should be positive");
+    assert!(
+        capacity <= input_value,
+        "Capacity should not exceed input value"
+    );
+    assert!(
+        funding_token_nominal <= input_value,
+        "Funding nominal should not exceed input value"
+    );
+    println!("✓ compute_channel_from_token values are reasonable");
+
+    // Step 5: Call create_funding_swap
+    let swap_result = create_funding_swap(
+        params_json,
+        &alice_secret.to_secret_hex(),
+        &keyset_info_json,
+        proofs_json,
+        change_amount,
+    )
+    .expect("create_funding_swap should succeed");
+
+    let swap_json: serde_json::Value =
+        serde_json::from_str(&swap_result).expect("Should parse swap result");
+
+    let swap_request_json = swap_json["swap_request_json"]
+        .as_str()
+        .expect("Should have swap_request_json");
+    let funding_secrets_json = swap_json["funding_secrets_json"]
+        .as_str()
+        .expect("Should have funding_secrets_json");
+    let change_secrets_json = swap_json["change_secrets_json"]
+        .as_str()
+        .expect("Should have change_secrets_json");
+    let funding_count = swap_json["funding_count"]
+        .as_u64()
+        .expect("Should have funding_count");
+    let change_count = swap_json["change_count"]
+        .as_u64()
+        .expect("Should have change_count");
+
+    println!(
+        "Created swap request with {} funding + {} change outputs",
+        funding_count, change_count
+    );
+    println!("✓ create_funding_swap succeeded");
+
+    // Step 6: Execute swap with mint
+    let swap_request: cdk_common::nuts::SwapRequest =
+        serde_json::from_str(swap_request_json).expect("Should parse swap request");
+
+    let swap_response = mint
+        .process_swap_request(swap_request)
+        .await
+        .expect("Mint swap should succeed");
+
+    println!(
+        "Mint returned {} signatures",
+        swap_response.signatures.len()
+    );
+
+    // Verify DLEQ proofs are present
+    for (i, sig) in swap_response.signatures.iter().enumerate() {
+        assert!(
+            sig.dleq.is_some(),
+            "Signature {} should have DLEQ proof",
+            i
+        );
+    }
+    println!("✓ All signatures have DLEQ proofs");
+
+    // Step 7: Call complete_funding_swap
+    let swap_response_json =
+        serde_json::to_string(&swap_response).expect("Should serialize swap response");
+
+    let complete_result = complete_funding_swap(
+        &swap_response_json,
+        funding_secrets_json,
+        change_secrets_json,
+        &keyset_info_json,
+    )
+    .expect("complete_funding_swap should succeed");
+
+    let complete_json: serde_json::Value =
+        serde_json::from_str(&complete_result).expect("Should parse complete result");
+
+    let funding_proofs_json = complete_json["funding_proofs_json"]
+        .as_str()
+        .expect("Should have funding_proofs_json");
+    let change_proofs_json = complete_json["change_proofs_json"]
+        .as_str()
+        .expect("Should have change_proofs_json");
+
+    let funding_proofs: Vec<Proof> =
+        serde_json::from_str(funding_proofs_json).expect("Should parse funding proofs");
+    let change_proofs: Vec<Proof> =
+        serde_json::from_str(change_proofs_json).expect("Should parse change proofs");
+
+    println!(
+        "Got {} funding proofs, {} change proofs",
+        funding_proofs.len(),
+        change_proofs.len()
+    );
+
+    // Verify counts match
+    assert_eq!(
+        funding_proofs.len(),
+        funding_count as usize,
+        "Funding proof count should match"
+    );
+    assert_eq!(
+        change_proofs.len(),
+        change_count as usize,
+        "Change proof count should match"
+    );
+
+    // Verify funding proofs have expected total
+    let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    assert_eq!(
+        funding_total, funding_token_nominal,
+        "Funding proofs should sum to funding_token_nominal"
+    );
+
+    // Verify change proofs have expected total
+    let change_total: u64 = change_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    assert_eq!(
+        change_total, change_amount,
+        "Change proofs should sum to change_amount"
+    );
+
+    // Verify all proofs have DLEQ
+    for (i, proof) in funding_proofs.iter().enumerate() {
+        assert!(
+            proof.dleq.is_some(),
+            "Funding proof {} should have DLEQ",
+            i
+        );
+    }
+    for (i, proof) in change_proofs.iter().enumerate() {
+        assert!(
+            proof.dleq.is_some(),
+            "Change proof {} should have DLEQ",
+            i
+        );
+    }
+    println!("✓ All proofs have DLEQ proofs (verified during unblinding)");
+
+    println!(
+        "✓ Swap-to-funding complete: {} sats → {} capacity + {} change",
+        input_value, capacity, change_amount
+    );
+}
