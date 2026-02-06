@@ -53,11 +53,9 @@ impl Info {
             }
         }
 
-        if let Ok(fee_str) = env::var(ENV_INPUT_FEE_PPK) {
-            if let Ok(fee) = fee_str.parse() {
-                self.input_fee_ppk = Some(fee);
-            }
-        }
+        // Note: per-unit input fee env vars (CDK_MINTD_INPUT_FEE_PPK_SAT, etc.)
+        // are read in configure_backend_for_unit() in lib.rs, not here, because
+        // we need the unit context which isn't available at config load time.
 
         if let Ok(swagger_str) = env::var(ENV_ENABLE_SWAGGER) {
             if let Ok(enable) = swagger_str.parse() {

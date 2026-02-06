@@ -25,7 +25,8 @@ use serde_json::json;
 
 use cdk_spilman_server_integration_tests::context::TestContext;
 use cdk_spilman_server_integration_tests::helpers::{
-    create_payment_header, encode_payment_header, now_seconds, MintFundedChannelOptions,
+    create_payment_header, encode_payment_header, fetch_keyset_info, now_seconds,
+    MintFundedChannelOptions,
 };
 
 // ============================================================================
@@ -99,7 +100,13 @@ mod channel_params {
 
         println!("Mint URL: {}", ctx.mint_url());
         for (unit, ids) in mint_keysets {
-            println!("  {}: {:?}", unit, ids);
+            for id in ids {
+                let fee_str = match fetch_keyset_info(ctx.mint_url(), id).await {
+                    Ok((keyset_info, _)) => format!(" (fee: {} ppk)", keyset_info.input_fee_ppk),
+                    Err(_) => String::new(),
+                };
+                println!("  {}: {}{}", unit, id, fee_str);
+            }
         }
         Ok(())
     }

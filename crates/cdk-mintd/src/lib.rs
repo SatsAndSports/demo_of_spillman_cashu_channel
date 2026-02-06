@@ -658,8 +658,24 @@ async fn configure_backend_for_unit(
         mint_builder = mint_builder.with_supported_websockets(nut17_supported);
     }
 
-    if let Some(input_fee) = settings.info.input_fee_ppk {
-        mint_builder.set_unit_fee(&unit, input_fee)?;
+    // Per-unit input fee: check CDK_MINTD_INPUT_FEE_PPK_{UNIT} env var first,
+    // then fall back to config file's input_fee_ppk value.
+    let unit_str = unit.to_string().to_uppercase();
+    let env_var_name = format!("{}{}", env_vars::ENV_INPUT_FEE_PPK_PREFIX, unit_str);
+    let input_fee = match std::env::var(&env_var_name) {
+        Ok(fee_str) => fee_str.parse::<u64>().ok().or_else(|| {
+            tracing::warn!(
+                "Invalid value for {}: '{}', ignoring",
+                env_var_name,
+                fee_str
+            );
+            settings.info.input_fee_ppk
+        }),
+        Err(_) => settings.info.input_fee_ppk,
+    };
+
+    if let Some(fee) = input_fee {
+        mint_builder.set_unit_fee(&unit, fee)?;
     }
 
     Ok(mint_builder)
