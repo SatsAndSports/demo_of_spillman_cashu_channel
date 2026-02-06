@@ -100,6 +100,9 @@ pub async fn create_test_mint() -> Result<Mint, Error> {
         )
         .await?;
 
+    // Add 400 ppk input fee (0.04% per proof) to test fee calculations
+    mint_builder.set_unit_fee(&CurrencyUnit::Sat, 400)?;
+
     let mnemonic = Mnemonic::generate(12).map_err(|e| Error::Custom(e.to_string()))?;
 
     mint_builder = mint_builder
