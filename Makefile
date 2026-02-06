@@ -331,14 +331,14 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "========================================="
 
 # All tests with CDK mint (does not require blossom-server repo)
-test-all: test-unit-spilman test-server-all
+test-all: test-unit-spilman test-integration-go test-server-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint)"
 	@echo "========================================="
 
 # All tests including blossom (requires web/blossom-server repo)
-test-all-with-blossom: test-unit-spilman test-blossom test-server-all
+test-all-with-blossom: test-unit-spilman test-integration-go test-blossom test-server-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint + blossom)"

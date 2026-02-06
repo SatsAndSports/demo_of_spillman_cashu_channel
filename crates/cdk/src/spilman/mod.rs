@@ -13,6 +13,7 @@
 mod balance_update;
 mod bindings;
 mod bridge;
+mod client_bridge;
 mod deterministic;
 mod established_channel;
 mod keysets_and_amounts;
@@ -23,8 +24,11 @@ pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage}
 pub use bindings::{
     channel_parameters_get_channel_id, complete_funding_swap, compute_channel_from_token,
     compute_funding_token_amount, compute_shared_secret_from_hex, construct_proofs,
-    create_funding_outputs, create_funding_swap, create_signed_balance_update,
-    parse_keyset_info_from_json,
+    create_funding_outputs, create_funding_swap, create_plain_blinded_messages,
+    create_signed_balance_update, parse_keyset_info_from_json,
+};
+pub use client_bridge::{
+    base64_decode, ClientChannelInfo, OpenChannelResult, SpilmanClientBridge, SpilmanClientHost,
 };
 pub use bridge::{
     unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelState,

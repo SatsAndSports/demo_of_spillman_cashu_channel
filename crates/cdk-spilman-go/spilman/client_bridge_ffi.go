@@ -1,0 +1,121 @@
+package spilman
+
+// This file provides Go wrappers for client bridge FFI functions that return CResult.
+// CResult is defined in bridge.go's CGO preamble, so we declare the function prototypes
+// here alongside the CResult type to avoid duplicate type definitions across files.
+
+/*
+#include <stdlib.h>
+#include <stdint.h>
+
+typedef struct {
+    char* data;
+    char* error;
+} CResult;
+
+// Client bridge FFI functions that return CResult
+CResult spilman_client_bridge_open_channel_from_token(void* ptr, const char* token, const char* charlie_pubkey, uint64_t locktime, const char* keyset_info, uint64_t max_amount);
+CResult spilman_client_bridge_sign_balance_update(void* ptr, const char* channel_id, uint64_t balance);
+CResult spilman_client_bridge_build_payment_header(void* ptr, const char* channel_id, uint64_t balance, int include_funding);
+CResult spilman_client_bridge_get_channel_info(void* ptr, const char* channel_id);
+CResult spilman_client_bridge_list_channels(void* ptr);
+void spilman_free_cresult(CResult res);
+*/
+import "C"
+import (
+	"encoding/json"
+	"errors"
+	"unsafe"
+)
+
+// clientBridgeOpenChannel calls the Rust FFI and returns the parsed result.
+func clientBridgeOpenChannel(ptr unsafe.Pointer, token, charliePubkeyHex string, locktime uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
+	cToken := C.CString(token)
+	defer C.free(unsafe.Pointer(cToken))
+	cCharlie := C.CString(charliePubkeyHex)
+	defer C.free(unsafe.Pointer(cCharlie))
+	cKeyset := C.CString(keysetInfoJSON)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_client_bridge_open_channel_from_token(
+		ptr, cToken, cCharlie, C.uint64_t(locktime), cKeyset, C.uint64_t(maxAmount))
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return nil, errors.New(C.GoString(res.error))
+	}
+
+	var result OpenChannelResult
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// clientBridgeSignBalanceUpdate calls the Rust FFI and returns the JSON result.
+func clientBridgeSignBalanceUpdate(ptr unsafe.Pointer, channelID string, balance uint64) (string, error) {
+	cID := C.CString(channelID)
+	defer C.free(unsafe.Pointer(cID))
+
+	res := C.spilman_client_bridge_sign_balance_update(ptr, cID, C.uint64_t(balance))
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// clientBridgeBuildPaymentHeader calls the Rust FFI and returns the base64 header.
+func clientBridgeBuildPaymentHeader(ptr unsafe.Pointer, channelID string, balance uint64, includeFunding bool) (string, error) {
+	cID := C.CString(channelID)
+	defer C.free(unsafe.Pointer(cID))
+
+	var cInclude C.int
+	if includeFunding {
+		cInclude = 1
+	}
+
+	res := C.spilman_client_bridge_build_payment_header(ptr, cID, C.uint64_t(balance), cInclude)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// clientBridgeGetChannelInfo calls the Rust FFI and returns parsed channel info.
+func clientBridgeGetChannelInfo(ptr unsafe.Pointer, channelID string) *ClientChannelInfo {
+	cID := C.CString(channelID)
+	defer C.free(unsafe.Pointer(cID))
+
+	res := C.spilman_client_bridge_get_channel_info(ptr, cID)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return nil
+	}
+
+	var info ClientChannelInfo
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &info); err != nil {
+		return nil
+	}
+	return &info
+}
+
+// clientBridgeListChannels calls the Rust FFI and returns the channel ID list.
+func clientBridgeListChannels(ptr unsafe.Pointer) []string {
+	res := C.spilman_client_bridge_list_channels(ptr)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return nil
+	}
+
+	var channels []string
+	if err := json.Unmarshal([]byte(C.GoString(res.data)), &channels); err != nil {
+		return nil
+	}
+	return channels
+}

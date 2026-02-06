@@ -949,3 +949,431 @@ async fn test_swap_to_funding() {
         input_value, capacity
     );
 }
+
+/// Test: SpilmanClientBridge end-to-end
+///
+/// Creates a client bridge, opens a channel from a token, signs balance
+/// updates, builds payment headers, and verifies them against the server bridge.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_bridge() {
+    use super::bridge::{ChannelState, SpilmanBridge, SpilmanHost};
+    use super::client_bridge::{base64_decode, SpilmanClientBridge, SpilmanClientHost};
+    use cdk_common::nuts::{CurrencyUnit as CU, Id, PublicKey, Token};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    // ====================================================================
+    // Test Client Host: wraps an in-process mint
+    // ====================================================================
+
+    struct TestClientHost {
+        mint: Arc<crate::mint::Mint>,
+        channels: Mutex<HashMap<String, String>>,
+    }
+
+    impl SpilmanClientHost for TestClientHost {
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            let swap_request: cdk_common::nuts::SwapRequest =
+                serde_json::from_str(swap_request_json)
+                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| format!("Mint swap failed: {}", e))?;
+
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+
+        fn save_channel(&self, channel_id: &str, channel_json: &str) {
+            self.channels
+                .lock()
+                .unwrap()
+                .insert(channel_id.to_string(), channel_json.to_string());
+        }
+
+        fn get_channel(&self, channel_id: &str) -> Option<String> {
+            self.channels
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+        }
+
+        fn list_channel_ids(&self) -> Vec<String> {
+            self.channels.lock().unwrap().keys().cloned().collect()
+        }
+
+        fn delete_channel(&self, channel_id: &str) {
+            self.channels.lock().unwrap().remove(channel_id);
+        }
+    }
+
+    // ====================================================================
+    // Test Server Host: wraps an in-process mint + stores channels
+    // ====================================================================
+
+    struct TestServerHost {
+        keyset_ids: Vec<Id>,
+        keyset_infos: HashMap<Id, String>,
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        payments: Mutex<HashMap<String, (u64, String)>>, // channel_id -> (balance, sig)
+    }
+
+    impl SpilmanHost for TestServerHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding_and_params(
+            &self,
+            channel_id: &str,
+        ) -> Option<(String, String, String, String)> {
+            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        }
+        fn save_funding(
+            &self,
+            channel_id: &str,
+            params_json: &str,
+            funding_proofs_json: &str,
+            shared_secret_hex: &str,
+            keyset_info_json: &str,
+            _initial_balance: u64,
+            _initial_signature: &str,
+        ) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (
+                    params_json.to_string(),
+                    funding_proofs_json.to_string(),
+                    shared_secret_hex.to_string(),
+                    keyset_info_json.to_string(),
+                ),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+            0
+        }
+        fn record_payment(
+            &self,
+            channel_id: &str,
+            balance: u64,
+            signature: &str,
+            _context_json: &str,
+        ) {
+            self.payments
+                .lock()
+                .unwrap()
+                .insert(channel_id.to_string(), (balance, signature.to_string()));
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            ChannelState::Open
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _signature: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        fn get_closing_data(
+            &self,
+            _channel_id: &str,
+        ) -> Option<super::bridge::ClosingData> {
+            None
+        }
+        fn get_channel_policy(&self) -> String {
+            serde_json::json!({
+                "min_expiry_in_seconds": 3600,
+                "pricing": { "sat": { "minCapacity": 10 } }
+            })
+            .to_string()
+        }
+        fn now_seconds(&self) -> u64 {
+            crate::util::unix_time()
+        }
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            channel_id: &str,
+        ) -> Option<(u64, String)> {
+            self.payments.lock().unwrap().get(channel_id).cloned()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
+            self.keyset_ids.clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            Err("not used in this test".to_string())
+        }
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            _balance: u64,
+            _receiver_proofs_json: &str,
+            _sender_proofs_json: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    // ====================================================================
+    // Setup: create a shared mint instance used for both minting and swapping
+    // ====================================================================
+
+    // Generate Charlie (server) keypair
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    let shared_mint = Arc::new(
+        crate::test_helpers::mint::create_test_mint()
+            .await
+            .unwrap(),
+    );
+
+    // Derive keyset info from the shared mint
+    let active_keyset_id = shared_mint
+        .get_active_keysets()
+        .get(&CurrencyUnit::Sat)
+        .cloned()
+        .expect("Should have SAT keyset");
+    let keyset_pubkeys = shared_mint
+        .keyset_pubkeys(&active_keyset_id)
+        .expect("Should get pubkeys");
+    let keyset = keyset_pubkeys.keysets.first().expect("Should have keyset");
+    let shared_keys = keyset.keys.clone();
+    let shared_fee_ppk = shared_mint
+        .keysets()
+        .keysets
+        .iter()
+        .find(|k| k.id == active_keyset_id)
+        .expect("Should find keyset")
+        .input_fee_ppk;
+
+    let keyset_info_json = serde_json::json!({
+        "keysetId": active_keyset_id.to_string(),
+        "unit": "sat",
+        "inputFeePpk": shared_fee_ppk,
+        "keys": shared_keys.iter().map(|(amt, pk)| {
+            (u64::from(*amt).to_string(), pk.to_hex())
+        }).collect::<HashMap<_, _>>()
+    })
+    .to_string();
+
+    // Mint proofs from the shared mint
+    let input_amount = Amount::from(100u64);
+    let proofs = crate::test_helpers::mint::mint_test_proofs(&shared_mint, input_amount)
+        .await
+        .expect("Failed to mint proofs");
+    let token = Token::new(
+        "http://localhost:3338".parse().unwrap(),
+        proofs,
+        None,
+        CurrencyUnit::Sat,
+    );
+    let token_string = token.to_string();
+
+    let client_host = TestClientHost {
+        mint: Arc::clone(&shared_mint),
+        channels: Mutex::new(HashMap::new()),
+    };
+
+    let client_bridge =
+        SpilmanClientBridge::new(client_host, None).expect("Should create client bridge");
+
+    println!(
+        "Client bridge created, alice_pubkey: {}",
+        client_bridge.alice_pubkey_hex()
+    );
+
+    // ====================================================================
+    // Open channel from token
+    // ====================================================================
+
+    let locktime = unix_time() + 7200; // 2 hours (well above the 1-hour min_expiry)
+    let max_amount = 64u64;
+
+    let open_result = client_bridge
+        .open_channel_from_token(
+            &token_string,
+            &charlie_pubkey.to_hex(),
+            locktime,
+            &keyset_info_json,
+            max_amount,
+        )
+        .expect("open_channel_from_token should succeed");
+
+    println!(
+        "Channel opened: id={}, capacity={}, funding={}",
+        open_result.channel_id, open_result.capacity, open_result.funding_token_amount
+    );
+
+    assert!(open_result.capacity > 0, "Capacity should be positive");
+    assert!(
+        open_result.capacity <= 100,
+        "Capacity should not exceed input value"
+    );
+    println!("✓ open_channel_from_token succeeded");
+
+    // Verify channel is stored
+    let channels = client_bridge.list_channels();
+    assert_eq!(channels.len(), 1, "Should have one channel");
+    assert_eq!(channels[0], open_result.channel_id);
+
+    let info = client_bridge
+        .get_channel_info(&open_result.channel_id)
+        .expect("Should get channel info");
+    assert_eq!(info.capacity, open_result.capacity);
+    println!("✓ Channel stored and retrievable");
+
+    // ====================================================================
+    // Sign balance updates
+    // ====================================================================
+
+    let update_json = client_bridge
+        .sign_balance_update(&open_result.channel_id, 10)
+        .expect("sign_balance_update should succeed");
+
+    let update: serde_json::Value =
+        serde_json::from_str(&update_json).expect("Should parse update");
+    assert_eq!(
+        update["channel_id"].as_str().unwrap(),
+        open_result.channel_id
+    );
+    assert_eq!(update["amount"].as_u64().unwrap(), 10);
+    assert!(
+        update["signature"].as_str().is_some(),
+        "Should have signature"
+    );
+    println!("✓ sign_balance_update returned valid JSON");
+
+    // ====================================================================
+    // Build payment header (with funding)
+    // ====================================================================
+
+    let header_with_funding = client_bridge
+        .build_payment_header(&open_result.channel_id, 10, true)
+        .expect("build_payment_header should succeed");
+
+    // Decode and verify
+    let decoded = base64_decode(&header_with_funding).expect("Should decode base64");
+    let header_json: serde_json::Value =
+        serde_json::from_str(&decoded).expect("Should parse header JSON");
+
+    assert_eq!(
+        header_json["channel_id"].as_str().unwrap(),
+        open_result.channel_id
+    );
+    assert_eq!(header_json["balance"].as_u64().unwrap(), 10);
+    assert!(header_json["signature"].as_str().is_some());
+    assert!(header_json["params"].is_object(), "Should include params");
+    assert!(
+        header_json["funding_proofs"].is_array(),
+        "Should include funding_proofs"
+    );
+    println!("✓ Payment header (with funding) is valid base64-encoded JSON");
+
+    // ====================================================================
+    // Build payment header (without funding)
+    // ====================================================================
+
+    let header_no_funding = client_bridge
+        .build_payment_header(&open_result.channel_id, 20, false)
+        .expect("build_payment_header should succeed");
+
+    let decoded2 = base64_decode(&header_no_funding).expect("Should decode base64");
+    let header_json2: serde_json::Value =
+        serde_json::from_str(&decoded2).expect("Should parse header JSON");
+
+    assert_eq!(header_json2["balance"].as_u64().unwrap(), 20);
+    assert!(
+        header_json2.get("params").is_none(),
+        "Should NOT include params"
+    );
+    assert!(
+        header_json2.get("funding_proofs").is_none(),
+        "Should NOT include funding_proofs"
+    );
+    println!("✓ Payment header (without funding) omits params/proofs");
+
+    // ====================================================================
+    // Feed headers into server-side SpilmanBridge (end-to-end!)
+    // ====================================================================
+
+    let mut keyset_infos = HashMap::new();
+    keyset_infos.insert(active_keyset_id, keyset_info_json.clone());
+
+    let server_host = TestServerHost {
+        keyset_ids: vec![active_keyset_id],
+        keyset_infos,
+        funding_data: Mutex::new(HashMap::new()),
+        payments: Mutex::new(HashMap::new()),
+    };
+
+    let server_bridge = SpilmanBridge::new(server_host, Some(charlie_secret));
+
+    // First request: header with funding
+    let payment_result = server_bridge
+        .process_payment_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .expect("Server should accept payment header with funding");
+
+    assert_eq!(payment_result.channel_id, open_result.channel_id);
+    assert_eq!(payment_result.balance, 10);
+    assert_eq!(payment_result.capacity, open_result.capacity);
+    println!(
+        "✓ Server accepted first payment (balance={}, capacity={})",
+        payment_result.balance, payment_result.capacity
+    );
+
+    // Second request: header without funding (server already knows channel)
+    let payment_result2 = server_bridge
+        .process_payment_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .expect("Server should accept payment header without funding");
+
+    assert_eq!(payment_result2.balance, 20);
+    println!(
+        "✓ Server accepted second payment (balance={})",
+        payment_result2.balance
+    );
+
+    // ====================================================================
+    // Remove channel
+    // ====================================================================
+
+    client_bridge.remove_channel(&open_result.channel_id);
+    assert!(
+        client_bridge
+            .get_channel_info(&open_result.channel_id)
+            .is_none(),
+        "Channel should be removed"
+    );
+    assert_eq!(client_bridge.list_channels().len(), 0);
+    println!("✓ Channel removed from storage");
+
+    println!("✓ All client bridge tests passed!");
+}

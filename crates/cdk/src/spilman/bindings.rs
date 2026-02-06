@@ -143,6 +143,72 @@ pub fn compute_funding_token_amount(
         .map_err(|e| format!("Failed to compute funding token amount: {}", e))
 }
 
+/// Create plain (non-P2PK) blinded messages for a given amount
+///
+/// This creates standard blinded messages with random secrets, suitable for
+/// minting via `/v1/mint/bolt11`. The resulting proofs can then be wrapped
+/// in a Cashu token and passed to `open_channel_from_token` for funding.
+///
+/// Returns JSON with:
+/// - `blinded_messages`: Array of blinded messages (ready for mint request)
+/// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount} for unblinding later
+pub fn create_plain_blinded_messages(
+    amount_sat: u64,
+    keyset_info_json: &str,
+) -> Result<String, String> {
+    use cdk_common::amount::SplitTarget;
+    use cdk_common::nuts::PreMintSecrets;
+
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    // amounts must be ascending (smallest first) for FeeAndAmounts::split() to work correctly
+    let mut amounts_asc = keyset_info.amounts_largest_first.clone();
+    amounts_asc.reverse();
+    let fee_and_amounts: cdk_common::amount::FeeAndAmounts =
+        (keyset_info.input_fee_ppk, amounts_asc).into();
+
+    let premint_secrets = PreMintSecrets::random(
+        keyset_info.keyset_id,
+        Amount::from(amount_sat),
+        &SplitTarget::None,
+        &fee_and_amounts,
+    )
+    .map_err(|e| format!("Failed to create blinded messages: {}", e))?;
+
+    // Serialize blinded messages (same format as create_funding_outputs)
+    let blinded_messages_json: Vec<serde_json::Value> = premint_secrets
+        .blinded_messages()
+        .iter()
+        .map(|bm| {
+            serde_json::json!({
+                "amount": u64::from(bm.amount),
+                "id": bm.keyset_id.to_string(),
+                "B_": bm.blinded_secret.to_hex()
+            })
+        })
+        .collect();
+
+    // Serialize secrets with blinding factors (same format as create_funding_outputs)
+    let secrets_json: Vec<serde_json::Value> = premint_secrets
+        .secrets
+        .iter()
+        .map(|pm| {
+            serde_json::json!({
+                "secret": pm.secret.to_string(),
+                "blinding_factor": pm.r.to_secret_hex(),
+                "amount": u64::from(pm.amount)
+            })
+        })
+        .collect();
+
+    let result = serde_json::json!({
+        "blinded_messages": blinded_messages_json,
+        "secrets_with_blinding": secrets_json
+    });
+
+    Ok(result.to_string())
+}
+
 /// Create funding outputs from params and keyset info
 ///
 /// Returns JSON with:
