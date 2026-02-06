@@ -1098,23 +1098,8 @@ mod status {
         let body1 = status1.body.unwrap();
         assert_eq!(body1.balance, cost);
 
-        // Make failed payment (wrong balance for signature)
-        use cdk::spilman::create_signed_balance_update;
-        let balance_update_json = create_signed_balance_update(
-            &channel.channel_params_json,
-            &channel.keyset_info_json,
-            &channel.alice.secret_hex,
-            &serde_json::to_string(&channel.proofs)?,
-            cost,
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
-        let balance_update: serde_json::Value = serde_json::from_str(&balance_update_json)?;
-
-        let bad_payment = json!({
-            "channel_id": balance_update["channel_id"],
-            "balance": cost + 1,  // Wrong!
-            "signature": balance_update["signature"],
-        });
-        let bad_header = encode_payment_header(&bad_payment);
+        // Make failed payment (balance=0, i.e. no payment — server should reject)
+        let bad_header = create_payment_header(&channel, 0)?;
 
         let bad_response = ctx.client.fetch_ascii_art(&bad_header, "X").await?;
         assert_eq!(bad_response.status, 402);
