@@ -1384,6 +1384,12 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let capacity = params_val["capacity"]
             .as_u64()
             .ok_or(BridgeError::InvalidRequest("missing capacity".into()))?;
+        let _funding_token_amount =
+            params_val["funding_token_amount"]
+                .as_u64()
+                .ok_or(BridgeError::InvalidRequest(
+                    "missing funding_token_amount".into(),
+                ))?;
         let locktime = params_val["locktime"]
             .as_u64()
             .ok_or(BridgeError::InvalidRequest("missing locktime".into()))?;
@@ -2556,6 +2562,7 @@ mod tests {
             "mint": "https://mint.host",
             "unit": "sat",
             "capacity": 1000,
+            "funding_token_amount": 1000,
             "maximum_amount": 64,
             "locktime": 1700000000 + 7200,
             "setup_timestamp": 1700000000,
@@ -2600,6 +2607,7 @@ mod tests {
             "mint": "https://mint.host",
             "unit": "sat",
             "capacity": 1000,
+            "funding_token_amount": 1000,
             "maximum_amount": 64,
             "locktime": 1700000000 + 7200,
             "setup_timestamp": 1700000000,
@@ -2765,6 +2773,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,
@@ -3029,6 +3038,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,
@@ -3200,6 +3210,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,
@@ -3351,6 +3362,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,
@@ -3458,6 +3470,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,

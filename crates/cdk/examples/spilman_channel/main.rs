@@ -67,12 +67,20 @@ async fn main() -> anyhow::Result<()> {
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID AND SHARED SECRET
     let maximum_amount_for_one_output = 100_000; // 100k sats maximum per output
 
+    // Compute the minimum funding token amount from the desired capacity
+    let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+        capacity,
+        &keyset_info,
+        maximum_amount_for_one_output,
+    )?;
+
     let channel_params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         mint_url.clone(),
         channel_unit.clone(),
         capacity,
+        funding_token_amount,
         locktime,
         setup_timestamp,
         sender_nonce,

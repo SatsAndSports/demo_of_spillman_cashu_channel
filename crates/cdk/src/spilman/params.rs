@@ -35,6 +35,8 @@ pub struct ChannelParameters {
     pub unit: CurrencyUnit,
     /// Channel capacity: maximum final value (after both fee stages) that Charlie can receive
     pub capacity: u64,
+    /// Total nominal value of the funding token (must satisfy: capacity <= forward(forward(funding_token_amount)))
+    pub funding_token_amount: u64,
     /// Locktime after which Alice can reclaim funds (unix timestamp)
     pub locktime: u64,
     /// Setup timestamp (unix timestamp when channel was created)
@@ -161,6 +163,7 @@ impl ChannelParameters {
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
+        funding_token_amount: u64,
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
@@ -176,12 +179,32 @@ impl ChannelParameters {
             );
         }
 
+        // Validate capacity <= forward(forward(funding_token_amount))
+        let max_capacity = {
+            let after_stage1 = keyset_info.deterministic_value_after_fees(
+                funding_token_amount,
+                maximum_amount_for_one_output,
+            )?;
+            keyset_info
+                .deterministic_value_after_fees(after_stage1, maximum_amount_for_one_output)?
+        };
+        if capacity > max_capacity {
+            anyhow::bail!(
+                "capacity {} exceeds maximum achievable capacity {} for funding_token_amount {} \
+                 (capacity must be <= forward(forward(funding_token_amount)))",
+                capacity,
+                max_capacity,
+                funding_token_amount
+            );
+        }
+
         Ok(Self {
             alice_pubkey,
             charlie_pubkey,
             mint,
             unit,
             capacity,
+            funding_token_amount,
             locktime,
             setup_timestamp,
             sender_nonce,
@@ -210,6 +233,7 @@ impl ChannelParameters {
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
+        funding_token_amount: u64,
         locktime: u64,
         setup_timestamp: u64,
         sender_nonce: String,
@@ -241,6 +265,7 @@ impl ChannelParameters {
             mint,
             unit,
             capacity,
+            funding_token_amount,
             locktime,
             setup_timestamp,
             sender_nonce,
@@ -361,6 +386,10 @@ impl ChannelParameters {
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'capacity' field"))?;
 
+        let funding_token_amount = json["funding_token_amount"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'funding_token_amount' field"))?;
+
         let maximum_amount_for_one_output = json["maximum_amount"]
             .as_u64()
             .or_else(|| json["maximum_amount_for_one_output"].as_u64())
@@ -399,6 +428,7 @@ impl ChannelParameters {
             mint,
             unit,
             capacity,
+            funding_token_amount,
             locktime,
             setup_timestamp,
             sender_nonce,
@@ -415,13 +445,14 @@ impl ChannelParameters {
     }
 
     /// Get channel ID as raw bytes (32-byte SHA256 hash)
-    /// The hash is computed over: mint|unit|capacity|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
+    /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
     pub fn get_channel_id_bytes(&self) -> [u8; 32] {
         let params_string = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.mint,
             self.unit_name(),
             self.capacity,
+            self.funding_token_amount,
             self.keyset_info.keyset_id,
             self.keyset_info.input_fee_ppk,
             self.maximum_amount_for_one_output,
@@ -446,6 +477,7 @@ impl ChannelParameters {
             "mint": self.mint,
             "unit": self.unit_name(),
             "capacity": self.capacity,
+            "funding_token_amount": self.funding_token_amount,
             "keyset_id": self.keyset_info.keyset_id.to_string(),
             "input_fee_ppk": self.keyset_info.input_fee_ppk,
             "maximum_amount": self.maximum_amount_for_one_output,
@@ -765,16 +797,24 @@ impl ChannelParameters {
         }
     }
 
-    /// Get the total funding token amount using double inverse with a specific keyset
-    pub fn get_total_funding_token_amount_with_keyset(
-        &self,
+    /// Get the minimum funding token amount for a given capacity using double inverse
+    ///
+    /// This computes the minimum funding_token_amount needed to achieve at least
+    /// the specified capacity after both fee stages, using the given keyset.
+    ///
+    /// Applies the inverse fee calculation twice to the capacity:
+    /// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
+    /// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+    pub fn get_minimum_funding_token_amount(
+        capacity: u64,
         keyset_info: &KeysetInfo,
+        maximum_amount_for_one_output: u64,
     ) -> anyhow::Result<u64> {
-        let max_amt = self.maximum_amount_for_one_output;
+        let max_amt = maximum_amount_for_one_output;
 
         // First inverse: capacity → post-stage-1 nominal (accounting for stage 2 fees)
         let first_inverse =
-            keyset_info.inverse_deterministic_value_after_fees(self.capacity, max_amt)?;
+            keyset_info.inverse_deterministic_value_after_fees(capacity, max_amt)?;
         let post_stage1_nominal = first_inverse.nominal_value;
 
         // Second inverse: post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
@@ -785,15 +825,11 @@ impl ChannelParameters {
         Ok(funding_token_nominal)
     }
 
-    /// Get the total funding token amount using double inverse
+    /// Get the total funding token amount
     ///
-    /// Applies the inverse fee calculation twice to the capacity:
-    /// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
-    /// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
-    ///
-    /// Returns the nominal value needed for the funding token
+    /// Returns the explicit funding_token_amount field.
     pub fn get_total_funding_token_amount(&self) -> anyhow::Result<u64> {
-        self.get_total_funding_token_amount_with_keyset(&self.keyset_info)
+        Ok(self.funding_token_amount)
     }
 
     /// Get the value available after stage 1 fees with a specific keyset
@@ -801,13 +837,10 @@ impl ChannelParameters {
         &self,
         keyset_info: &KeysetInfo,
     ) -> anyhow::Result<u64> {
-        // Get the funding token nominal (must be same as original funding!)
-        let funding_token_nominal = self.get_total_funding_token_amount()?;
-
         // Apply forward to get actual value after stage 1 fees (spending the funding token)
-        // using the NEW keyset for the outputs
+        // using the provided keyset for the outputs
         let value_after_stage1 = keyset_info.deterministic_value_after_fees(
-            funding_token_nominal,
+            self.funding_token_amount,
             self.maximum_amount_for_one_output,
         )?;
 
@@ -816,7 +849,7 @@ impl ChannelParameters {
 
     /// Get the value available after stage 1 fees
     ///
-    /// Takes the funding token nominal and applies the forward fee calculation
+    /// Takes the funding token amount and applies the forward fee calculation
     /// to determine the actual amount available after the swap transaction (stage 1).
     ///
     /// This represents the total amount that will be distributed between Alice and Charlie
@@ -870,13 +903,19 @@ mod tests {
         // Create a keyset_info for testing (powers of 2 up to 64, with 100 ppk fee)
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
+        // Compute the minimum funding_token_amount for the desired capacity
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
         // Create channel parameters (as Alice)
         let original_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,       // capacity
+            1000, // capacity
+            funding_token_amount,
             1700000000, // locktime
             1699999000, // setup_timestamp
             "test-nonce-12345".to_string(),
@@ -929,13 +968,18 @@ mod tests {
         // Create keyset_info
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
         // Alice creates params using her secret key
         let alice_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,
+            1000, // capacity
+            funding_token_amount,
             1700000000,
             1699999000,
             "test-nonce-12345".to_string(),
@@ -1015,13 +1059,18 @@ mod tests {
         // Create keyset_info
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
         // Alice creates params
         let alice_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,
+            1000, // capacity
+            funding_token_amount,
             1700000000,
             1699999000,
             "test-nonce-12345".to_string(),
@@ -1081,12 +1130,17 @@ mod tests {
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
         let params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,
+            1000, // capacity
+            funding_token_amount,
             1700000000,
             1699999000,
             "test-nonce-12345".to_string(),
@@ -1143,13 +1197,18 @@ mod tests {
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
         // Alice creates params
         let alice_params = ChannelParameters::new_with_secret_key(
             alice_pubkey,
             charlie_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
-            1000,
+            1000, // capacity
+            funding_token_amount,
             1700000000,
             1699999000,
             "test-nonce-12345".to_string(),
@@ -1224,6 +1283,7 @@ mod tests {
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,
+            funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
             locktime: 1700003600,

@@ -750,6 +750,28 @@ fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> PyResul
         .map_err(PyValueError::new_err)
 }
 
+/// Compute the minimum funding_token_amount needed for a given capacity.
+///
+/// Uses the double-inverse computation to determine the minimum funding token
+/// nominal value that will yield at least `capacity` after both fee stages.
+///
+/// Args:
+///     capacity: Desired channel capacity
+///     keyset_info_json: Keyset info JSON
+///     maximum_amount: Maximum amount per output (0 = no limit)
+///
+/// Returns:
+///     The minimum funding_token_amount as an integer
+#[pyfunction]
+fn compute_funding_token_amount(
+    capacity: u64,
+    keyset_info_json: &str,
+    maximum_amount: u64,
+) -> PyResult<u64> {
+    spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount)
+        .map_err(PyValueError::new_err)
+}
+
 /// Get channel ID from parameters.
 ///
 /// Args:
@@ -898,6 +920,7 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_keypair, m)?)?;
     m.add_function(wrap_pyfunction!(secret_key_to_pubkey, m)?)?;
     m.add_function(wrap_pyfunction!(compute_shared_secret, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_funding_token_amount, m)?)?;
     m.add_function(wrap_pyfunction!(channel_parameters_get_channel_id, m)?)?;
     m.add_function(wrap_pyfunction!(create_funding_outputs, m)?)?;
     m.add_function(wrap_pyfunction!(construct_proofs, m)?)?;

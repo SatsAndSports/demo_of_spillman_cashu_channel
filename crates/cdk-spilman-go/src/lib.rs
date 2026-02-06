@@ -729,6 +729,20 @@ pub unsafe extern "C" fn spilman_compute_shared_secret(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn spilman_compute_funding_token_amount(
+    capacity: u64,
+    keyset_info_json: *const c_char,
+    maximum_amount: u64,
+) -> CResult {
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match spilman::compute_funding_token_amount(capacity, k, maximum_amount) {
+        Ok(amount) => CResult::success(amount.to_string()),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn spilman_channel_parameters_get_channel_id(
     params_json: *const c_char,
     shared_secret_hex: *const c_char,

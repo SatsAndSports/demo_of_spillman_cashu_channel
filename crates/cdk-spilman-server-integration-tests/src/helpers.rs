@@ -17,8 +17,9 @@ use serde_json::{json, Value};
 
 use cdk::nuts::{Proof, SecretKey};
 use cdk::spilman::{
-    channel_parameters_get_channel_id, compute_shared_secret_from_hex, construct_proofs,
-    create_funding_outputs, create_signed_balance_update, parse_keyset_info_from_json, KeysetInfo,
+    channel_parameters_get_channel_id, compute_funding_token_amount,
+    compute_shared_secret_from_hex, construct_proofs, create_funding_outputs,
+    create_signed_balance_update, parse_keyset_info_from_json, KeysetInfo,
 };
 
 // ============================================================================
@@ -581,10 +582,16 @@ pub async fn mint_funded_channel(
     rand::rng().fill(&mut nonce_bytes);
     let sender_nonce = hex::encode(&nonce_bytes);
 
+    // Compute the minimum funding_token_amount for the desired capacity
+    let funding_token_amount =
+        compute_funding_token_amount(capacity, &keyset_info_json, maximum_amount)
+            .map_err(|e| anyhow!("Failed to compute funding token amount: {}", e))?;
+
     let channel_params = json!({
         "mint": mint_url,
         "unit": unit,
         "capacity": capacity,
+        "funding_token_amount": funding_token_amount,
         "keyset_id": keyset_id,
         "input_fee_ppk": keyset_info.input_fee_ppk,
         "maximum_amount": maximum_amount,

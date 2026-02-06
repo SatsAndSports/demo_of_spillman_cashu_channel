@@ -131,6 +131,7 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
+- is nutmix still working? and should it accept the env vars which control the fee rate?
 - scale back the demos, they're not really needed as we now have so many tests
 
 ### Protocol

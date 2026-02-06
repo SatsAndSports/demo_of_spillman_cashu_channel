@@ -866,6 +866,22 @@ pub fn channel_parameters_get_channel_id(
     .map_err(|e| JsValue::from_str(&e))
 }
 
+/// Compute the minimum funding_token_amount needed for a given capacity
+///
+/// Uses the double-inverse computation to determine the minimum funding token
+/// nominal value that will yield at least `capacity` after both fee stages.
+///
+/// Clients should call this before building channel params.
+#[wasm_bindgen]
+pub fn compute_funding_token_amount(
+    capacity: u64,
+    keyset_info_json: &str,
+    maximum_amount: u64,
+) -> Result<u64, JsValue> {
+    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
 /// Create funding outputs for a Spilman channel
 ///
 /// Takes:

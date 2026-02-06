@@ -123,6 +123,27 @@ pub fn compute_shared_secret_from_hex(
     Ok(hex::encode(shared_secret))
 }
 
+/// Compute the minimum funding_token_amount needed for a given capacity
+///
+/// Uses the double-inverse computation:
+/// 1. capacity → post-stage-1 nominal (accounting for stage 2 fees)
+/// 2. post-stage-1 nominal → funding token nominal (accounting for stage 1 fees)
+///
+/// Clients should call this before building channel params to determine the
+/// funding_token_amount field value.
+///
+/// Returns the minimum funding_token_amount as a u64 (JSON number string).
+pub fn compute_funding_token_amount(
+    capacity: u64,
+    keyset_info_json: &str,
+    maximum_amount: u64,
+) -> Result<u64, String> {
+    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
+
+    ChannelParameters::get_minimum_funding_token_amount(capacity, &keyset_info, maximum_amount)
+        .map_err(|e| format!("Failed to compute funding token amount: {}", e))
+}
+
 /// Create funding outputs from params and keyset info
 ///
 /// Returns JSON with:
@@ -413,17 +434,16 @@ pub fn compute_channel_from_token(
 
     let max_amt = maximum_amount_for_one_output;
 
-    // Step 1: v1 = forward_fees(input_value) - value after swap's input fees
-    let v1 = keyset_info
+    // Step 1: funding_token_amount = forward_fees(input_value) - value after swap's input fees
+    // This is the nominal value of the funding token after swapping wallet proofs
+    let funding_token_amount = keyset_info
         .deterministic_value_after_fees(input_value, max_amt)
-        .map_err(|e| format!("Failed to compute v1: {}", e))?;
+        .map_err(|e| format!("Failed to compute funding_token_amount: {}", e))?;
 
-    // Step 2: v2 = forward_fees(v1) - value after stage 1 close fees
+    // Step 2: capacity = forward(forward(funding_token_amount)) - value after both close stages
     let v2 = keyset_info
-        .deterministic_value_after_fees(v1, max_amt)
+        .deterministic_value_after_fees(funding_token_amount, max_amt)
         .map_err(|e| format!("Failed to compute v2: {}", e))?;
-
-    // Step 3: capacity = forward_fees(v2) - value after stage 2 swap fees
     let capacity = keyset_info
         .deterministic_value_after_fees(v2, max_amt)
         .map_err(|e| format!("Failed to compute capacity: {}", e))?;
@@ -445,13 +465,14 @@ pub fn compute_channel_from_token(
         hex::encode(&alice_pubkey.to_bytes()[..8])
     );
 
-    // Create channel parameters with the computed capacity
+    // Create channel parameters with the computed capacity and explicit funding_token_amount
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
         mint_url.to_string(),
         unit,
         capacity,
+        funding_token_amount,
         locktime,
         unix_time(),
         sender_nonce,
@@ -460,14 +481,6 @@ pub fn compute_channel_from_token(
         &alice_secret,
     )
     .map_err(|e| format!("Failed to create channel params: {}", e))?;
-
-    // Get funding token nominal via inverse²
-    let funding_token_nominal = params
-        .get_total_funding_token_amount()
-        .map_err(|e| format!("Failed to get funding token amount: {}", e))?;
-
-    // Calculate change: v1 - funding_token_nominal
-    let change_amount = v1.saturating_sub(funding_token_nominal);
 
     // Serialize proofs
     let proofs_json =
@@ -479,8 +492,8 @@ pub fn compute_channel_from_token(
     // Build result
     let result = serde_json::json!({
         "capacity": capacity,
-        "funding_token_nominal": funding_token_nominal,
-        "change_amount": change_amount,
+        "funding_token_amount": funding_token_amount,
+        "change_amount": 0,
         "input_value": input_value,
         "mint_url": mint_url.to_string(),
         "params_json": params_json,
