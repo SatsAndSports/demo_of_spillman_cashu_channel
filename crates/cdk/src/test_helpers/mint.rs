@@ -57,6 +57,48 @@ pub(crate) fn should_fail_for(operation: &str) -> bool {
     TEST_FAILURES.with(|failures| failures.borrow().contains(&operation.to_string()))
 }
 
+/// Get the input fee PPK for a given unit from environment variable or default.
+///
+/// Environment variable format: TEST_MINT_FEE_PPK_{UNIT}
+/// Examples:
+/// - TEST_MINT_FEE_PPK_SAT=400
+/// - TEST_MINT_FEE_PPK_USD=0
+///
+/// Default is 400 ppk for all units if not set.
+/// Maximum allowed value is 999 (must be < 1000).
+fn get_test_fee_ppk_for_unit(unit: &CurrencyUnit) -> u64 {
+    const DEFAULT_FEE_PPK: u64 = 400;
+    const MAX_FEE_PPK: u64 = 999;
+
+    let unit_str = unit.to_string().to_uppercase();
+    let var_name = format!("TEST_MINT_FEE_PPK_{}", unit_str);
+
+    match std::env::var(&var_name) {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(fee) => {
+                assert!(
+                    fee < 1000,
+                    "Test mint: {} must be < 1000, got {}",
+                    var_name,
+                    fee
+                );
+                if fee != DEFAULT_FEE_PPK {
+                    println!("Test mint: Using {}={} (from env)", var_name, fee);
+                }
+                fee.min(MAX_FEE_PPK)
+            }
+            Err(_) => {
+                println!(
+                    "Test mint: Invalid value for {}: '{}', using default {}",
+                    var_name, value, DEFAULT_FEE_PPK
+                );
+                DEFAULT_FEE_PPK
+            }
+        },
+        Err(_) => DEFAULT_FEE_PPK,
+    }
+}
+
 /// Creates and starts a test mint with in-memory storage and a fake Lightning backend.
 ///
 /// This mint can be used for unit tests without requiring external dependencies
@@ -100,8 +142,9 @@ pub async fn create_test_mint() -> Result<Mint, Error> {
         )
         .await?;
 
-    // Add 400 ppk input fee (0.04% per proof) to test fee calculations
-    mint_builder.set_unit_fee(&CurrencyUnit::Sat, 400)?;
+    // Set input fee from environment variable or default (400 ppk)
+    let sat_fee_ppk = get_test_fee_ppk_for_unit(&CurrencyUnit::Sat);
+    mint_builder.set_unit_fee(&CurrencyUnit::Sat, sat_fee_ppk)?;
 
     let mnemonic = Mnemonic::generate(12).map_err(|e| Error::Custom(e.to_string()))?;
 

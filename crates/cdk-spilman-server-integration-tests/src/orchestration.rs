@@ -101,13 +101,34 @@ impl MintProcess {
             script_path.display()
         );
 
+        // Forward TEST_MINT_FEE_PPK_{UNIT} → CDK_MINTD_INPUT_FEE_PPK_{UNIT}
+        // so the same env var works for both in-process unit tests and integration tests.
+        let fee_env_vars: Vec<(String, String)> = ["SAT", "MSAT", "USD"]
+            .iter()
+            .filter_map(|unit| {
+                env::var(format!("TEST_MINT_FEE_PPK_{}", unit))
+                    .ok()
+                    .map(|val| (format!("CDK_MINTD_INPUT_FEE_PPK_{}", unit), val))
+            })
+            .collect();
+
+        for (var, val) in &fee_env_vars {
+            tracing::info!("Forwarding fee override: {}={}", var, val);
+        }
+
         // Spawn in a new process group so we can kill all children
-        let child = Command::new(&script_path)
-            .arg("cdk")
+        let mut cmd = Command::new(&script_path);
+        cmd.arg("cdk")
             .arg(port.to_string())
             .current_dir(&root)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        for (var, val) in &fee_env_vars {
+            cmd.env(var, val);
+        }
+
+        let child = cmd
             .group_spawn()
             .context("Failed to spawn mint process")?;
 

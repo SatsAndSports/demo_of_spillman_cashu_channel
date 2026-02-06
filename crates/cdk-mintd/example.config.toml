@@ -5,6 +5,7 @@ listen_host = "127.0.0.1"
 listen_port = 8085
 mnemonic = ""
 # input_fee_ppk = 0
+# Per-unit override via env vars: CDK_MINTD_INPUT_FEE_PPK_SAT, CDK_MINTD_INPUT_FEE_PPK_MSAT, etc.
 # enable_swagger_ui = false
 
 [info.quote_ttl]
