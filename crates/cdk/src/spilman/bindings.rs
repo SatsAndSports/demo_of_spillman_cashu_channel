@@ -7,11 +7,10 @@ use super::{
     compute_shared_secret as ecdh, ChannelParameters, DeterministicOutputsForOneContext,
     EstablishedChannel, KeysetInfo, SpilmanChannelSender,
 };
-use crate::amount::{FeeAndAmounts, SplitTarget};
-use crate::dhke::{blind_message, construct_proofs as dhke_construct_proofs};
+use crate::dhke::construct_proofs as dhke_construct_proofs;
 use crate::nuts::{
-    BlindSignature, BlindSignatureDleq, BlindedMessage, CurrencyUnit, Id, Keys, Proof, PublicKey,
-    SecretKey, SwapRequest, Token,
+    BlindSignature, BlindSignatureDleq, CurrencyUnit, Id, Keys, Proof, PublicKey, SecretKey,
+    SwapRequest, Token,
 };
 use crate::secret::Secret;
 use crate::util::{hex, unix_time};
@@ -373,8 +372,7 @@ pub fn create_signed_balance_update(
 /// # Returns
 /// JSON with:
 /// - `capacity`: Channel capacity (final value after all fees)
-/// - `funding_token_nominal`: Nominal value needed for funding outputs
-/// - `change_amount`: Amount left over for change outputs
+/// - `funding_token_amount`: Nominal value of the funding token
 /// - `input_value`: Total value of input proofs
 /// - `mint_url`: Mint URL from the token
 /// - `params_json`: Serialized channel params for use in later functions
@@ -493,7 +491,6 @@ pub fn compute_channel_from_token(
     let result = serde_json::json!({
         "capacity": capacity,
         "funding_token_amount": funding_token_amount,
-        "change_amount": 0,
         "input_value": input_value,
         "mint_url": mint_url.to_string(),
         "params_json": params_json,
@@ -505,30 +502,25 @@ pub fn compute_channel_from_token(
 
 /// Create a swap request for funding a channel from existing proofs
 ///
-/// Takes input proofs and creates a swap request with:
-/// - Deterministic funding outputs (2-of-2 locked)
-/// - Random change outputs (anyone-can-spend)
+/// Takes input proofs and creates a swap request with deterministic
+/// funding outputs (2-of-2 locked).
 ///
 /// # Arguments
 /// * `params_json` - Channel params JSON (from compute_channel_from_token)
 /// * `alice_secret_hex` - Sender's secret key (hex)
 /// * `keyset_info_json` - Keyset info (JSON)
 /// * `input_proofs_json` - Input proofs from the token (JSON array)
-/// * `change_amount` - Amount for change outputs (from compute_channel_from_token)
 ///
 /// # Returns
 /// JSON with:
 /// - `swap_request_json`: The swap request to send to mint (JSON)
 /// - `funding_secrets_json`: Secrets for unblinding funding outputs (JSON array)
-/// - `change_secrets_json`: Secrets for unblinding change outputs (JSON array)
 /// - `funding_count`: Number of funding outputs
-/// - `change_count`: Number of change outputs
 pub fn create_funding_swap(
     params_json: &str,
     alice_secret_hex: &str,
     keyset_info_json: &str,
     input_proofs_json: &str,
-    change_amount: u64,
 ) -> Result<String, String> {
     // Parse keyset info
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
@@ -572,46 +564,8 @@ pub fn create_funding_swap(
         .get_secrets_with_blinding()
         .map_err(|e| format!("Failed to get funding secrets: {}", e))?;
 
-    // Create change outputs (random, anyone-can-spend)
-    let mut change_blinded_messages: Vec<BlindedMessage> = Vec::new();
-    let mut change_secrets_list: Vec<serde_json::Value> = Vec::new();
-
-    if change_amount > 0 {
-        // Build FeeAndAmounts for splitting
-        let amounts: Vec<u64> = keyset_info.amounts_largest_first.clone();
-        let fee_and_amounts: FeeAndAmounts = (0u64, amounts).into(); // No fee on output side
-
-        // Create random secrets for change
-        let change_amounts = Amount::from(change_amount)
-            .split_targeted(&SplitTarget::None, &fee_and_amounts)
-            .map_err(|e| format!("Failed to split change amount: {}", e))?;
-
-        for amount in change_amounts {
-            // Generate random secret
-            let secret = Secret::generate();
-
-            // Create blinded message
-            let (blinded, r) = blind_message(&secret.to_bytes(), None)
-                .map_err(|e| format!("Failed to blind change message: {}", e))?;
-
-            let blinded_message = BlindedMessage::new(amount, keyset_info.keyset_id, blinded);
-            change_blinded_messages.push(blinded_message);
-
-            // Store secret with blinding for later unblinding
-            change_secrets_list.push(serde_json::json!({
-                "secret": secret.to_string(),
-                "blinding_factor": r.to_secret_hex(),
-                "amount": u64::from(amount)
-            }));
-        }
-    }
-
-    // Combine all outputs: funding first, then change
-    let mut all_outputs = funding_blinded_messages;
-    all_outputs.extend(change_blinded_messages);
-
     // Create swap request
-    let swap_request = SwapRequest::new(input_proofs, all_outputs);
+    let swap_request = SwapRequest::new(input_proofs, funding_blinded_messages);
 
     // Serialize swap request
     let swap_request_json = serde_json::to_string(&swap_request)
@@ -629,19 +583,14 @@ pub fn create_funding_swap(
         })
         .collect();
 
-    // Serialize secrets to JSON strings
     let funding_secrets_str = serde_json::to_string(&funding_secrets_json)
         .map_err(|e| format!("Failed to serialize funding secrets: {}", e))?;
-    let change_secrets_str = serde_json::to_string(&change_secrets_list)
-        .map_err(|e| format!("Failed to serialize change secrets: {}", e))?;
 
     // Build result
     let result = serde_json::json!({
         "swap_request_json": swap_request_json,
         "funding_secrets_json": funding_secrets_str,
-        "change_secrets_json": change_secrets_str,
-        "funding_count": funding_secrets.len(),
-        "change_count": change_secrets_list.len()
+        "funding_count": funding_secrets.len()
     });
 
     Ok(result.to_string())
@@ -649,23 +598,20 @@ pub fn create_funding_swap(
 
 /// Complete a funding swap by unblinding the mint's response
 ///
-/// Takes the mint's swap response and unblinds both funding and change proofs.
+/// Takes the mint's swap response and unblinds the funding proofs.
 /// Also verifies DLEQ proofs on all signatures.
 ///
 /// # Arguments
 /// * `swap_response_json` - Mint's swap response (JSON with "signatures" array)
 /// * `funding_secrets_json` - Funding secrets from create_funding_swap (JSON array)
-/// * `change_secrets_json` - Change secrets from create_funding_swap (JSON array)
 /// * `keyset_info_json` - Keyset info (JSON)
 ///
 /// # Returns
 /// JSON with:
 /// - `funding_proofs_json`: Funding proofs for channel (JSON array)
-/// - `change_proofs_json`: Change proofs for user's wallet (JSON array)
 pub fn complete_funding_swap(
     swap_response_json: &str,
     funding_secrets_json: &str,
-    change_secrets_json: &str,
     keyset_info_json: &str,
 ) -> Result<String, String> {
     // Parse keyset info
@@ -684,28 +630,16 @@ pub fn complete_funding_swap(
     let funding_secrets_raw: Vec<serde_json::Value> = serde_json::from_str(funding_secrets_json)
         .map_err(|e| format!("Failed to parse funding secrets: {}", e))?;
 
-    // Parse change secrets
-    let change_secrets_raw: Vec<serde_json::Value> = serde_json::from_str(change_secrets_json)
-        .map_err(|e| format!("Failed to parse change secrets: {}", e))?;
-
     let funding_count = funding_secrets_raw.len();
-    let change_count = change_secrets_raw.len();
-    let total_expected = funding_count + change_count;
 
     // Verify signature count matches
-    if signatures_raw.len() != total_expected {
+    if signatures_raw.len() != funding_count {
         return Err(format!(
-            "Signature count mismatch: expected {} ({}+{}), got {}",
-            total_expected,
+            "Signature count mismatch: expected {}, got {}",
             funding_count,
-            change_count,
             signatures_raw.len()
         ));
     }
-
-    // Split signatures into funding and change
-    let funding_sigs = &signatures_raw[..funding_count];
-    let change_sigs = &signatures_raw[funding_count..];
 
     // Helper to parse and verify signatures
     let parse_signatures = |sigs: &[serde_json::Value]| -> Result<Vec<BlindSignature>, String> {
@@ -784,7 +718,7 @@ pub fn complete_funding_swap(
         };
 
     // Parse funding signatures and secrets
-    let funding_blind_sigs = parse_signatures(funding_sigs)?;
+    let funding_blind_sigs = parse_signatures(signatures_raw)?;
     let (funding_secrets, funding_rs) = parse_secrets(&funding_secrets_raw)?;
 
     // Construct funding proofs (includes DLEQ verification)
@@ -798,30 +732,12 @@ pub fn complete_funding_swap(
             },
         )?;
 
-    // Parse change signatures and secrets (if any)
-    let change_proofs = if change_count > 0 {
-        let change_blind_sigs = parse_signatures(change_sigs)?;
-        let (change_secrets, change_rs) = parse_secrets(&change_secrets_raw)?;
-
-        dhke_construct_proofs(change_blind_sigs, change_rs, change_secrets, &keys).map_err(|e| {
-            format!(
-                "Failed to construct change proofs (DLEQ verification failed?): {}",
-                e
-            )
-        })?
-    } else {
-        Vec::new()
-    };
-
     // Serialize results
     let funding_proofs_json = serde_json::to_string(&funding_proofs)
         .map_err(|e| format!("Failed to serialize funding proofs: {}", e))?;
-    let change_proofs_json = serde_json::to_string(&change_proofs)
-        .map_err(|e| format!("Failed to serialize change proofs: {}", e))?;
 
     let result = serde_json::json!({
-        "funding_proofs_json": funding_proofs_json,
-        "change_proofs_json": change_proofs_json
+        "funding_proofs_json": funding_proofs_json
     });
 
     Ok(result.to_string())
