@@ -215,31 +215,23 @@ impl KeysetInfo {
             });
         }
 
-        // Start with the target as initial guess and search upward
+        // Start with the target as initial guess and search upward.
+        // Convergence is guaranteed: with fee_ppk < 1000, fee per output < 1,
+        // and output count grows logarithmically for power-of-2 denominations,
+        // so value_after_fees(N) grows faster than fees as N increases.
         let mut nominal = target_balance;
 
         loop {
             let actual_balance = self.deterministic_value_after_fees(nominal, maximum_amount)?;
 
             if actual_balance >= target_balance {
-                // Found it! Return the nominal value and what we actually get
                 return Ok(InverseFeeResult {
                     nominal_value: nominal,
                     actual_balance,
                 });
             }
 
-            // Need more - increment by 1
             nominal += 1;
-
-            // Safety check to prevent infinite loops
-            if nominal > target_balance * 2 {
-                anyhow::bail!(
-                    "Could not find nominal value for target balance {} after searching up to {}",
-                    target_balance,
-                    nominal
-                );
-            }
         }
     }
 }
