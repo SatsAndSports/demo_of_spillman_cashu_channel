@@ -122,14 +122,37 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
     );
 
     // Step 4: Mint regular proofs first, then swap for our P2PK proofs
+    // The swap requires exact balance: input = output + fee.
+    // We mint the funding amount directly, calculate the fee, and accept that
+    // our outputs will be slightly less than requested due to fees.
     let input_proofs = test_mint
         .mint_proofs(Amount::from(funding_amount))
         .await
         .expect("Failed to mint input proofs");
 
+    let num_input_proofs = input_proofs.len() as u64;
+    let actual_fee = (input_fee_ppk * num_input_proofs).div_ceil(1000);
+    let available_for_outputs = funding_amount - actual_fee;
+    println!(
+        "Input proofs: {} sats ({} proofs), fee: {} sats, available: {} sats",
+        funding_amount, num_input_proofs, actual_fee, available_for_outputs
+    );
+
+    // Recreate funding outputs for the available amount (slightly less due to fees)
+    let adjusted_funding_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        available_for_outputs,
+        params.clone(),
+    )
+    .expect("Failed to create adjusted funding outputs");
+
+    let adjusted_blinded_messages = adjusted_funding_outputs
+        .get_blinded_messages(None)
+        .expect("Failed to get adjusted blinded messages");
+
     // Swap for our P2PK funding proofs
     let swap_request =
-        cdk_common::nuts::SwapRequest::new(input_proofs.clone(), blinded_messages.clone());
+        cdk_common::nuts::SwapRequest::new(input_proofs.clone(), adjusted_blinded_messages.clone());
     let swap_response = mint
         .process_swap_request(swap_request)
         .await
@@ -139,8 +162,8 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
         swap_response.signatures.len()
     );
 
-    // Step 5: Construct the P2PK proofs
-    let secrets_with_blinding = funding_outputs
+    // Step 5: Construct the P2PK proofs using the adjusted outputs' secrets
+    let secrets_with_blinding = adjusted_funding_outputs
         .get_secrets_with_blinding()
         .expect("Failed to get secrets with blinding");
 
@@ -169,8 +192,11 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
     );
 
     // Step 6: Try to spend with 2-of-2 (both Alice and Charlie's blinded signatures)
-    // Create outputs for where the funds will go
-    let (new_outputs, _) = create_test_blinded_messages(mint, Amount::from(capacity))
+    // Create outputs for where the funds will go.
+    // The P2PK proofs have available_for_outputs sats, minus the fee for spending them.
+    let spend_fee = (input_fee_ppk * p2pk_proofs.len() as u64).div_ceil(1000);
+    let final_output_amount = available_for_outputs - spend_fee;
+    let (new_outputs, _) = create_test_blinded_messages(mint, Amount::from(final_output_amount))
         .await
         .expect("Failed to create output messages");
 
@@ -301,9 +327,23 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     );
     println!("Created P2PK conditions with expired locktime and blinded refund key");
 
-    // Step 5: Create P2PK blinded messages using test helper
-    let input_amount = Amount::from(capacity);
-    let split_amounts = test_mint.split_amount(input_amount).unwrap();
+    // Step 5: Mint input proofs, then create P2PK outputs for available amount after fees
+    let input_proofs = test_mint
+        .mint_proofs(Amount::from(capacity))
+        .await
+        .expect("Failed to mint input proofs");
+
+    let num_input_proofs = input_proofs.len() as u64;
+    let actual_fee = (input_fee_ppk * num_input_proofs).div_ceil(1000);
+    let available_for_outputs = capacity - actual_fee;
+    println!(
+        "Input proofs: {} sats ({} proofs), fee: {} sats, available: {} sats",
+        capacity, num_input_proofs, actual_fee, available_for_outputs
+    );
+
+    // Create P2PK blinded messages for the available amount
+    let output_amount = Amount::from(available_for_outputs);
+    let split_amounts = test_mint.split_amount(output_amount).unwrap();
     let (p2pk_outputs, blinding_factors, secrets) = unzip3(
         split_amounts
             .iter()
@@ -312,12 +352,7 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     );
     println!("Created {} P2PK blinded messages", p2pk_outputs.len());
 
-    // Step 6: Mint regular proofs, then swap for P2PK proofs
-    let input_proofs = test_mint
-        .mint_proofs(input_amount)
-        .await
-        .expect("Failed to mint input proofs");
-
+    // Step 6: Swap for P2PK proofs
     let swap_request = cdk_common::nuts::SwapRequest::new(input_proofs.clone(), p2pk_outputs);
     let swap_response = mint
         .process_swap_request(swap_request)
@@ -345,7 +380,11 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     );
 
     // Step 8: Spend with ONLY Alice's refund blinded key (locktime expired)
-    let (new_outputs, _) = create_test_blinded_messages(mint, input_amount)
+    // The P2PK proofs we got are worth `available_for_outputs` sats.
+    // We need to account for fees again when spending them.
+    let refund_fee = (input_fee_ppk * p2pk_proofs.len() as u64).div_ceil(1000);
+    let refund_output_amount = available_for_outputs - refund_fee;
+    let (new_outputs, _) = create_test_blinded_messages(mint, Amount::from(refund_output_amount))
         .await
         .expect("Failed to create output messages");
 
