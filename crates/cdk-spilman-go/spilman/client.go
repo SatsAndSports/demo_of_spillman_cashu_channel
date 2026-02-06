@@ -24,6 +24,7 @@ CResult spilman_compute_funding_token_amount(uint64_t capacity, const char* keys
 CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* shared_secret, uint64_t balance, const char* output_keyset);
 CResult spilman_create_signed_balance_update(const char* params, const char* keyset, const char* secret, const char* proofs, uint64_t balance);
 CResult spilman_channel_parameters_get_channel_id(const char* params, const char* shared_secret, const char* keyset);
+CResult spilman_create_plain_blinded_messages(uint64_t amount_sat, const char* keyset_info_json);
 CResult spilman_create_funding_outputs(const char* params, const char* alice_secret, const char* keyset);
 CResult spilman_construct_proofs(const char* blind_signatures, const char* secrets_with_blinding, const char* keyset);
 void spilman_free_cresult(CResult res);
@@ -169,6 +170,27 @@ func ChannelParametersGetChannelId(params, sharedSecret, keyset string) (string,
 	defer C.free(unsafe.Pointer(cKeyset))
 
 	res := C.spilman_channel_parameters_get_channel_id(cParams, cSecret, cKeyset)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// CreatePlainBlindedMessages creates plain (non-P2PK) blinded messages for a given amount.
+// These are standard blinded messages with random secrets, suitable for minting
+// via /v1/mint/bolt11. The resulting proofs can then be wrapped in a Cashu token
+// and passed to ClientBridge.OpenChannelFromToken for funding.
+//
+// Returns JSON with:
+//   - blinded_messages: Array of blinded messages (ready for mint request)
+//   - secrets_with_blinding: Array of {secret, blinding_factor, amount} for unblinding later
+func CreatePlainBlindedMessages(amountSat uint64, keysetInfoJson string) (string, error) {
+	cKeyset := C.CString(keysetInfoJson)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	res := C.spilman_create_plain_blinded_messages(C.uint64_t(amountSat), cKeyset)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {

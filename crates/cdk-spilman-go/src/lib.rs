@@ -7,7 +7,10 @@
 #![allow(clippy::missing_safety_doc)]
 
 use cdk::nuts::SecretKey;
-use cdk::spilman::{self, ChannelState, ClosingData, SpilmanBridge, SpilmanHost};
+use cdk::spilman::{
+    self, ChannelState, ClosingData, SpilmanBridge, SpilmanClientBridge, SpilmanClientHost,
+    SpilmanHost,
+};
 pub use libc::{c_char, c_int};
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -759,6 +762,19 @@ pub unsafe extern "C" fn spilman_channel_parameters_get_channel_id(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn spilman_create_plain_blinded_messages(
+    amount_sat: u64,
+    keyset_info_json: *const c_char,
+) -> CResult {
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match spilman::create_plain_blinded_messages(amount_sat, k) {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn spilman_create_funding_outputs(
     params_json: *const c_char,
     alice_secret_hex: *const c_char,
@@ -788,4 +804,237 @@ pub unsafe extern "C" fn spilman_construct_proofs(
         Ok(json) => CResult::success(json),
         Err(e) => CResult::error(e),
     }
+}
+
+// ============================================================================
+// Client Bridge: SpilmanClientBridge via C callbacks
+// ============================================================================
+
+#[repr(C)]
+pub struct SpilmanClientHostCallbacks {
+    pub user_data: *mut libc::c_void,
+    pub call_mint_swap: extern "C" fn(
+        user_data: *mut libc::c_void,
+        mint_url: *const c_char,
+        swap_request_json: *const c_char,
+        response_out: *mut *mut c_char,
+    ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
+    pub save_channel: extern "C" fn(
+        user_data: *mut libc::c_void,
+        channel_id: *const c_char,
+        channel_json: *const c_char,
+    ),
+    pub get_channel:
+        extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char) -> *mut c_char, // NULL = not found
+    pub list_channel_ids: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char, // JSON array string
+    pub delete_channel: extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char),
+}
+
+struct CGoSpilmanClientHost {
+    callbacks: SpilmanClientHostCallbacks,
+}
+
+// Safety: We assume the Go side handles thread safety if it provides a shared user_data
+unsafe impl Send for CGoSpilmanClientHost {}
+unsafe impl Sync for CGoSpilmanClientHost {}
+
+impl SpilmanClientHost for CGoSpilmanClientHost {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        let mint_c = CString::new(mint_url).unwrap();
+        let req_c = CString::new(swap_request_json).unwrap();
+        let mut response_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.call_mint_swap)(
+            self.callbacks.user_data,
+            mint_c.as_ptr(),
+            req_c.as_ptr(),
+            &mut response_ptr,
+        );
+
+        unsafe {
+            let response = CString::from_raw(response_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(response)
+            } else {
+                Err(response)
+            }
+        }
+    }
+
+    fn save_channel(&self, channel_id: &str, channel_json: &str) {
+        let id_c = CString::new(channel_id).unwrap();
+        let json_c = CString::new(channel_json).unwrap();
+        (self.callbacks.save_channel)(self.callbacks.user_data, id_c.as_ptr(), json_c.as_ptr());
+    }
+
+    fn get_channel(&self, channel_id: &str) -> Option<String> {
+        let id_c = CString::new(channel_id).unwrap();
+        let ptr = (self.callbacks.get_channel)(self.callbacks.user_data, id_c.as_ptr());
+        if ptr.is_null() {
+            return None;
+        }
+        unsafe { Some(CString::from_raw(ptr).into_string().unwrap()) }
+    }
+
+    fn list_channel_ids(&self) -> Vec<String> {
+        let ptr = (self.callbacks.list_channel_ids)(self.callbacks.user_data);
+        if ptr.is_null() {
+            return Vec::new();
+        }
+        unsafe {
+            let json = CString::from_raw(ptr).into_string().unwrap();
+            serde_json::from_str(&json).unwrap_or_default()
+        }
+    }
+
+    fn delete_channel(&self, channel_id: &str) {
+        let id_c = CString::new(channel_id).unwrap();
+        (self.callbacks.delete_channel)(self.callbacks.user_data, id_c.as_ptr());
+    }
+}
+
+pub struct ClientBridgeInstance {
+    bridge: SpilmanClientBridge<CGoSpilmanClientHost>,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_new(
+    callbacks: SpilmanClientHostCallbacks,
+    alice_secret_hex: *const c_char,
+) -> *mut ClientBridgeInstance {
+    let secret_hex = if !alice_secret_hex.is_null() {
+        Some(CStr::from_ptr(alice_secret_hex).to_str().unwrap())
+    } else {
+        None
+    };
+
+    let host = CGoSpilmanClientHost { callbacks };
+    match SpilmanClientBridge::new(host, secret_hex) {
+        Ok(bridge) => Box::into_raw(Box::new(ClientBridgeInstance { bridge })),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_free(ptr: *mut ClientBridgeInstance) {
+    if !ptr.is_null() {
+        drop(Box::from_raw(ptr));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_alice_pubkey_hex(
+    ptr: *mut ClientBridgeInstance,
+) -> *mut c_char {
+    let instance = &*ptr;
+    CString::new(instance.bridge.alice_pubkey_hex())
+        .unwrap()
+        .into_raw()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_alice_secret_hex(
+    ptr: *mut ClientBridgeInstance,
+) -> *mut c_char {
+    let instance = &*ptr;
+    CString::new(instance.bridge.alice_secret_hex())
+        .unwrap()
+        .into_raw()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
+    ptr: *mut ClientBridgeInstance,
+    token_string: *const c_char,
+    charlie_pubkey_hex: *const c_char,
+    locktime: u64,
+    keyset_info_json: *const c_char,
+    max_amount: u64,
+) -> CResult {
+    let instance = &*ptr;
+    let token = CStr::from_ptr(token_string).to_str().unwrap();
+    let charlie = CStr::from_ptr(charlie_pubkey_hex).to_str().unwrap();
+    let keyset = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    match instance
+        .bridge
+        .open_channel_from_token(token, charlie, locktime, keyset, max_amount)
+    {
+        Ok(result) => {
+            let json = serde_json::to_string(&result).unwrap();
+            CResult::success(json)
+        }
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_sign_balance_update(
+    ptr: *mut ClientBridgeInstance,
+    channel_id: *const c_char,
+    balance: u64,
+) -> CResult {
+    let instance = &*ptr;
+    let id = CStr::from_ptr(channel_id).to_str().unwrap();
+
+    match instance.bridge.sign_balance_update(id, balance) {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_build_payment_header(
+    ptr: *mut ClientBridgeInstance,
+    channel_id: *const c_char,
+    balance: u64,
+    include_funding: c_int,
+) -> CResult {
+    let instance = &*ptr;
+    let id = CStr::from_ptr(channel_id).to_str().unwrap();
+
+    match instance
+        .bridge
+        .build_payment_header(id, balance, include_funding != 0)
+    {
+        Ok(header) => CResult::success(header),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_get_channel_info(
+    ptr: *mut ClientBridgeInstance,
+    channel_id: *const c_char,
+) -> CResult {
+    let instance = &*ptr;
+    let id = CStr::from_ptr(channel_id).to_str().unwrap();
+
+    match instance.bridge.get_channel_info(id) {
+        Some(info) => {
+            let json = serde_json::to_string(&info).unwrap();
+            CResult::success(json)
+        }
+        None => CResult::error("Channel not found".to_string()),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_list_channels(
+    ptr: *mut ClientBridgeInstance,
+) -> CResult {
+    let instance = &*ptr;
+    let channels = instance.bridge.list_channels();
+    let json = serde_json::to_string(&channels).unwrap();
+    CResult::success(json)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_remove_channel(
+    ptr: *mut ClientBridgeInstance,
+    channel_id: *const c_char,
+) {
+    let instance = &*ptr;
+    let id = CStr::from_ptr(channel_id).to_str().unwrap();
+    instance.bridge.remove_channel(id);
 }
