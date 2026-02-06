@@ -825,9 +825,6 @@ async fn test_swap_to_funding() {
     let funding_token_amount = compute_json["funding_token_amount"]
         .as_u64()
         .expect("Should have funding_token_amount");
-    let change_amount = compute_json["change_amount"]
-        .as_u64()
-        .expect("Should have change_amount");
     let params_json = compute_json["params_json"]
         .as_str()
         .expect("Should have params_json");
@@ -838,7 +835,6 @@ async fn test_swap_to_funding() {
     println!("Input value: {} sats", input_value);
     println!("Capacity: {} sats", capacity);
     println!("Funding token amount: {} sats", funding_token_amount);
-    println!("Change amount: {} sats", change_amount);
 
     // Verify the math makes sense
     assert!(capacity > 0, "Capacity should be positive");
@@ -850,7 +846,6 @@ async fn test_swap_to_funding() {
         funding_token_amount <= input_value,
         "Funding amount should not exceed input value"
     );
-    assert_eq!(change_amount, 0, "Change should be 0 with explicit funding_token_amount");
     println!("✓ compute_channel_from_token values are reasonable");
 
     // Step 5: Call create_funding_swap
@@ -859,7 +854,6 @@ async fn test_swap_to_funding() {
         &alice_secret.to_secret_hex(),
         &keyset_info_json,
         proofs_json,
-        change_amount,
     )
     .expect("create_funding_swap should succeed");
 
@@ -872,20 +866,11 @@ async fn test_swap_to_funding() {
     let funding_secrets_json = swap_json["funding_secrets_json"]
         .as_str()
         .expect("Should have funding_secrets_json");
-    let change_secrets_json = swap_json["change_secrets_json"]
-        .as_str()
-        .expect("Should have change_secrets_json");
     let funding_count = swap_json["funding_count"]
         .as_u64()
         .expect("Should have funding_count");
-    let change_count = swap_json["change_count"]
-        .as_u64()
-        .expect("Should have change_count");
 
-    println!(
-        "Created swap request with {} funding + {} change outputs",
-        funding_count, change_count
-    );
+    println!("Created swap request with {} funding outputs", funding_count);
     println!("✓ create_funding_swap succeeded");
 
     // Step 6: Execute swap with mint
@@ -919,7 +904,6 @@ async fn test_swap_to_funding() {
     let complete_result = complete_funding_swap(
         &swap_response_json,
         funding_secrets_json,
-        change_secrets_json,
         &keyset_info_json,
     )
     .expect("complete_funding_swap should succeed");
@@ -930,20 +914,11 @@ async fn test_swap_to_funding() {
     let funding_proofs_json = complete_json["funding_proofs_json"]
         .as_str()
         .expect("Should have funding_proofs_json");
-    let change_proofs_json = complete_json["change_proofs_json"]
-        .as_str()
-        .expect("Should have change_proofs_json");
 
     let funding_proofs: Vec<Proof> =
         serde_json::from_str(funding_proofs_json).expect("Should parse funding proofs");
-    let change_proofs: Vec<Proof> =
-        serde_json::from_str(change_proofs_json).expect("Should parse change proofs");
 
-    println!(
-        "Got {} funding proofs, {} change proofs",
-        funding_proofs.len(),
-        change_proofs.len()
-    );
+    println!("Got {} funding proofs", funding_proofs.len());
 
     // Verify counts match
     assert_eq!(
@@ -951,24 +926,12 @@ async fn test_swap_to_funding() {
         funding_count as usize,
         "Funding proof count should match"
     );
-    assert_eq!(
-        change_proofs.len(),
-        change_count as usize,
-        "Change proof count should match"
-    );
 
     // Verify funding proofs have expected total
     let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
     assert_eq!(
         funding_total, funding_token_amount,
         "Funding proofs should sum to funding_token_amount"
-    );
-
-    // Verify change proofs have expected total
-    let change_total: u64 = change_proofs.iter().map(|p| u64::from(p.amount)).sum();
-    assert_eq!(
-        change_total, change_amount,
-        "Change proofs should sum to change_amount"
     );
 
     // Verify all proofs have DLEQ
@@ -979,17 +942,10 @@ async fn test_swap_to_funding() {
             i
         );
     }
-    for (i, proof) in change_proofs.iter().enumerate() {
-        assert!(
-            proof.dleq.is_some(),
-            "Change proof {} should have DLEQ",
-            i
-        );
-    }
     println!("✓ All proofs have DLEQ proofs (verified during unblinding)");
 
     println!(
-        "✓ Swap-to-funding complete: {} sats → {} capacity + {} change",
-        input_value, capacity, change_amount
+        "✓ Swap-to-funding complete: {} sats → {} capacity",
+        input_value, capacity
     );
 }
