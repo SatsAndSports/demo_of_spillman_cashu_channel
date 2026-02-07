@@ -6,6 +6,7 @@ These tests require a Cashu mint running at MINT_URL (default: http://localhost:
 Run with: MINT_URL=http://localhost:3338 pytest tests/ -v
 """
 
+import base64
 import json
 import os
 import time
@@ -199,3 +200,340 @@ class TestChannelSetup:
 
         assert channel_id_1 == channel_id_2, "Channel ID should be deterministic"
         print(f"Channel ID is deterministic: {channel_id_1}")
+
+
+# ============================================================================
+# Helpers for TestClientBridge
+# ============================================================================
+
+
+def mint_plain_proofs(mint_url: str, amount_sat: int, keyset_info_json: str) -> str:
+    """Mint plain (non-P2PK) proofs via the mint HTTP API.
+
+    Uses create_plain_blinded_messages to create blinded messages, mints them via
+    the /v1/mint/bolt11 endpoint (fakewallet auto-pays), and constructs proofs.
+    Returns the proofs as a JSON array string.
+    """
+    # 1. Create plain blinded messages
+    result_json = cdk_spilman.create_plain_blinded_messages(amount_sat, keyset_info_json)
+    result = json.loads(result_json)
+    blinded_messages = result["blinded_messages"]
+    secrets_with_blinding = result["secrets_with_blinding"]
+    print(f"Created {len(blinded_messages)} plain blinded messages")
+
+    # 2. Request a mint quote
+    resp = requests.post(
+        f"{mint_url}/v1/mint/quote/bolt11",
+        json={"amount": amount_sat, "unit": "sat"},
+    )
+    resp.raise_for_status()
+    quote_id = resp.json()["quote"]
+    print(f"Got mint quote: {quote_id}")
+
+    # 3. Poll until paid (fakewallet auto-pays)
+    for i in range(60):
+        r = requests.get(f"{mint_url}/v1/mint/quote/bolt11/{quote_id}")
+        r.raise_for_status()
+        if r.json()["state"] == "PAID":
+            print("Mint quote is PAID")
+            break
+        if i == 59:
+            raise RuntimeError("Timeout waiting for mint quote to be paid")
+        time.sleep(0.1)
+
+    # 4. Mint tokens
+    resp = requests.post(
+        f"{mint_url}/v1/mint/bolt11",
+        json={"quote": quote_id, "outputs": blinded_messages},
+    )
+    assert resp.status_code == 200, f"Mint request failed (HTTP {resp.status_code}): {resp.text}"
+    signatures = resp.json()["signatures"]
+    print(f"Got {len(signatures)} blind signatures from mint")
+
+    # 5. Construct proofs
+    sigs_json = json.dumps(signatures)
+    secrets_json = json.dumps(secrets_with_blinding)
+    proofs_json = cdk_spilman.construct_proofs(sigs_json, secrets_json, keyset_info_json)
+
+    return proofs_json
+
+
+def build_cashu_a_token(mint_url: str, proofs_json: str) -> str:
+    """Build a cashuA token string from proofs JSON.
+
+    The cashuA format is: "cashuA" + base64url(JSON({token:[{mint,proofs}],unit}))
+    """
+    proofs = json.loads(proofs_json)
+    token_payload = {
+        "token": [{"mint": mint_url, "proofs": proofs}],
+        "unit": "sat",
+    }
+    json_bytes = json.dumps(token_payload).encode()
+    return "cashuA" + base64.urlsafe_b64encode(json_bytes).decode()
+
+
+class MockClientHost:
+    """Mock implementation of SpilmanClientHost for integration tests."""
+
+    def __init__(self, mint_url: str):
+        self.mint_url = mint_url
+        self.channels: dict[str, str] = {}
+
+    def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
+        resp = requests.post(
+            f"{mint_url}/v1/swap",
+            data=swap_request_json,
+            headers={"Content-Type": "application/json"},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"swap failed (HTTP {resp.status_code}): {resp.text}")
+        return resp.text
+
+    def save_channel(self, channel_id: str, channel_json: str):
+        self.channels[channel_id] = channel_json
+
+    def get_channel(self, channel_id: str) -> str | None:
+        return self.channels.get(channel_id)
+
+    def list_channel_ids(self) -> list[str]:
+        return list(self.channels.keys())
+
+    def delete_channel(self, channel_id: str):
+        self.channels.pop(channel_id, None)
+
+
+class MockServerHost:
+    """Mock implementation of SpilmanHost for server-side validation in tests."""
+
+    def __init__(self, keyset_id: str, keyset_info_json: str):
+        self.keyset_id = keyset_id
+        self.keyset_info_json = keyset_info_json
+        self.funding_data: dict[str, tuple] = {}
+        self.payments: dict[str, tuple] = {}
+
+    def receiver_key_is_acceptable(self, pubkey_hex: str) -> bool:
+        return True
+
+    def mint_and_keyset_is_acceptable(self, mint: str, keyset_id: str) -> bool:
+        return True
+
+    def get_funding_and_params(self, channel_id: str) -> tuple | None:
+        data = self.funding_data.get(channel_id)
+        if data is None:
+            return None
+        return data  # (params_json, proofs_json, shared_secret_hex, keyset_info_json)
+
+    def save_funding(
+        self,
+        channel_id: str,
+        params_json: str,
+        proofs_json: str,
+        shared_secret_hex: str,
+        keyset_info_json: str,
+        initial_balance: int,
+        initial_signature: str,
+    ):
+        self.funding_data[channel_id] = (
+            params_json,
+            proofs_json,
+            shared_secret_hex,
+            keyset_info_json,
+        )
+
+    def get_amount_due(self, channel_id: str, context_json: str | None) -> int:
+        return 0
+
+    def record_payment(
+        self, channel_id: str, balance: int, signature: str, context_json: str
+    ):
+        self.payments[channel_id] = (balance, signature)
+
+    def get_channel_state(self, channel_id: str) -> str:
+        return "open"
+
+    def mark_channel_closing(
+        self, channel_id: str, locktime: int, balance: int, signature: str
+    ):
+        pass
+
+    def get_closing_data(self, channel_id: str):
+        return None
+
+    def get_channel_policy(self) -> str:
+        return '{"min_expiry_in_seconds":3600,"pricing":{"sat":{"minCapacity":10}}}'
+
+    def now_seconds(self) -> int:
+        return int(time.time())
+
+    def get_balance_and_signature_for_unilateral_exit(
+        self, channel_id: str
+    ) -> tuple | None:
+        data = self.payments.get(channel_id)
+        if data is None:
+            return None
+        return data  # (balance, signature)
+
+    def get_active_keyset_ids(self, mint: str, unit: str) -> list[str]:
+        return [self.keyset_id]
+
+    def get_keyset_info(self, mint: str, keyset_id: str) -> str | None:
+        if keyset_id == self.keyset_id:
+            return self.keyset_info_json
+        return None
+
+    def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
+        raise RuntimeError("not used in this test")
+
+    def refresh_active_keysets(self, mint: str):
+        pass
+
+    def mark_channel_closed(
+        self,
+        channel_id: str,
+        locktime: int,
+        balance: int,
+        receiver_proofs_json: str,
+        sender_proofs_json: str,
+        receiver_sum: int,
+        sender_sum: int,
+    ):
+        pass
+
+
+class TestClientBridge:
+    """End-to-end test of SpilmanClientBridge + server-side SpilmanBridge."""
+
+    def test_client_bridge(self):
+        """Full round-trip: mint proofs -> open channel -> sign payments -> server validates."""
+        mint_url = get_mint_url()
+
+        # ================================================================
+        # Setup: fetch keyset, generate keypairs
+        # ================================================================
+
+        keyset_info = fetch_active_keyset(mint_url, "sat")
+        assert keyset_info is not None, "Failed to fetch keyset from mint"
+        keyset_json = json.dumps(keyset_info)
+        keyset_id = keyset_info["keysetId"]
+        print(f"Using keyset: {keyset_id}")
+
+        # Generate Charlie (server/receiver) keypair
+        charlie_secret, charlie_pubkey = cdk_spilman.generate_keypair()
+        print(f"Charlie pubkey: {charlie_pubkey[:16]}...")
+
+        # ================================================================
+        # Step 1: Mint plain proofs and build cashuA token
+        # ================================================================
+
+        proofs_json = mint_plain_proofs(mint_url, 100, keyset_json)
+        token = build_cashu_a_token(mint_url, proofs_json)
+        print(f"Built cashuA token: {token[:20]}...{token[-10:]}")
+
+        # ================================================================
+        # Step 2: Create client bridge and open channel
+        # ================================================================
+
+        client_host = MockClientHost(mint_url)
+        client_bridge = cdk_spilman.ClientBridge(client_host)
+        print(f"Client bridge created, alice_pubkey: {client_bridge.alice_pubkey_hex[:16]}...")
+
+        locktime = int(time.time()) + 7200  # 2 hours
+        max_amount = 64
+
+        result = client_bridge.open_channel_from_token(
+            token, charlie_pubkey, locktime, keyset_json, max_amount
+        )
+
+        print(
+            f"Channel opened: id={result.channel_id}, "
+            f"capacity={result.capacity}, funding={result.funding_token_amount}"
+        )
+
+        assert result.capacity > 0, "Capacity should be positive"
+        assert result.capacity <= 100, f"Capacity should not exceed input value, got {result.capacity}"
+
+        # Verify channel is stored
+        channels = client_bridge.list_channels()
+        assert len(channels) == 1, f"Expected 1 channel, got {len(channels)}"
+        assert channels[0] == result.channel_id
+
+        info = client_bridge.get_channel_info(result.channel_id)
+        assert info is not None, "get_channel_info returned None"
+        assert info.capacity == result.capacity
+        print("Channel stored and retrievable")
+
+        # ================================================================
+        # Step 3: Sign balance updates
+        # ================================================================
+
+        update_json = client_bridge.sign_balance_update(result.channel_id, 10)
+        update = json.loads(update_json)
+
+        assert update["channel_id"] == result.channel_id, "Balance update channel_id mismatch"
+        assert update["amount"] == 10, "Balance update amount mismatch"
+        assert "signature" in update, "Balance update missing signature"
+        print("sign_balance_update returned valid JSON")
+
+        # ================================================================
+        # Step 4: Build payment headers
+        # ================================================================
+
+        # Header WITH funding (first request to server)
+        header_with_funding = client_bridge.build_payment_header(result.channel_id, 10, True)
+        decoded = base64.b64decode(header_with_funding)
+        header_json = json.loads(decoded)
+
+        assert header_json["channel_id"] == result.channel_id, "Header channel_id mismatch"
+        assert header_json["balance"] == 10, "Header balance mismatch"
+        assert "signature" in header_json, "Header missing signature"
+        assert "params" in header_json, "Header with funding should include params"
+        assert "funding_proofs" in header_json, "Header with funding should include funding_proofs"
+        print("Payment header (with funding) is valid")
+
+        # Header WITHOUT funding (subsequent requests)
+        header_no_funding = client_bridge.build_payment_header(result.channel_id, 20, False)
+        decoded2 = base64.b64decode(header_no_funding)
+        header_json2 = json.loads(decoded2)
+
+        assert header_json2["balance"] == 20, "Header balance mismatch"
+        assert "params" not in header_json2, "Header without funding should NOT include params"
+        assert "funding_proofs" not in header_json2, "Header without funding should NOT include funding_proofs"
+        print("Payment header (without funding) omits params/proofs")
+
+        # ================================================================
+        # Step 5: Server-side validation (end-to-end!)
+        # ================================================================
+
+        server_host = MockServerHost(keyset_id, keyset_json)
+        server_bridge = cdk_spilman.SpilmanBridge(server_host, charlie_secret)
+
+        # First payment: header with funding (server learns about channel)
+        payment_result = server_bridge.process_payment(decoded.decode(), '{"type":"test"}')
+
+        assert payment_result.channel_id == result.channel_id, "Server channel_id mismatch"
+        assert payment_result.balance == 10, f"Server balance mismatch: expected 10, got {payment_result.balance}"
+        assert payment_result.capacity == result.capacity, (
+            f"Server capacity mismatch: expected {result.capacity}, got {payment_result.capacity}"
+        )
+        print(
+            f"Server accepted first payment (balance={payment_result.balance}, "
+            f"capacity={payment_result.capacity})"
+        )
+
+        # Second payment: header without funding (server already knows channel)
+        payment_result2 = server_bridge.process_payment(decoded2.decode(), '{"type":"test"}')
+
+        assert payment_result2.balance == 20, f"Server balance mismatch: expected 20, got {payment_result2.balance}"
+        print(f"Server accepted second payment (balance={payment_result2.balance})")
+
+        # ================================================================
+        # Step 6: Remove channel
+        # ================================================================
+
+        client_bridge.remove_channel(result.channel_id)
+
+        assert client_bridge.get_channel_info(result.channel_id) is None, "Channel should be removed"
+        assert len(client_bridge.list_channels()) == 0, "Channel list should be empty"
+        print("Channel removed from storage")
+
+        print("All client bridge tests passed!")

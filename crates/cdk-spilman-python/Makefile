@@ -14,11 +14,11 @@ PORT ?= 5002
 
 # Directories
 EXAMPLE_DIR := ./examples/ascii-art
-VENV_DIR := $(EXAMPLE_DIR)/venv
+VENV_DIR := $(EXAMPLE_DIR)/.venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: build venv test-integration run-server run-client clean help
+.PHONY: check-venv build venv test-integration run-server run-client clean help
 
 # Default target
 help:
@@ -38,15 +38,27 @@ help:
 # Build
 # ============================================================================
 
-# Create virtual environment
-venv:
+# Create virtual environment (auto-recreates if stale from a different path/container)
+check-venv:
+	@if [ -d "$(VENV_DIR)" ]; then \
+		expected=$$(cd "$(VENV_DIR)" && pwd); \
+		actual=$$(. $(VENV_DIR)/bin/activate 2>/dev/null && echo "$$VIRTUAL_ENV"); \
+		if [ "$$actual" = "$$expected" ]; then \
+			echo "Found existing Python .venv"; \
+		else \
+			echo "Stale Python .venv detected (expected $$expected, got $$actual), removing..."; \
+			rm -rf $(VENV_DIR); \
+		fi; \
+	fi
 	@if [ ! -d "$(VENV_DIR)" ]; then \
-		echo "Creating virtual environment..."; \
+		echo "(Re-)building Python .venv..."; \
 		python3 -m venv $(VENV_DIR); \
 		$(PIP) install --upgrade pip; \
 		$(PIP) install maturin pytest requests; \
 		$(PIP) install -r $(EXAMPLE_DIR)/requirements.txt; \
 	fi
+
+venv: check-venv
 
 # Build and install the package into the local venv
 build: venv
