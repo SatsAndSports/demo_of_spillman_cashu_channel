@@ -14,7 +14,8 @@ use std::str::FromStr;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{
-    self, ChannelState, ClosingData, SpilmanBridge as RustSpilmanBridge, SpilmanHost,
+    self, ChannelState, ClosingData, SpilmanBridge as RustSpilmanBridge,
+    SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost, SpilmanHost,
 };
 
 // ============================================================================
@@ -901,6 +902,272 @@ fn unblind_and_verify_dleq(
     .map_err(PyValueError::new_err)
 }
 
+/// Create plain (non-P2PK) blinded messages for minting.
+///
+/// This creates blinded messages suitable for the mint's /v1/mint/bolt11 endpoint.
+/// The resulting proofs can be wrapped in a cashuA token and passed to
+/// ClientBridge.open_channel_from_token() for channel funding.
+///
+/// Args:
+///     amount_sat: Amount in satoshis to create blinded messages for
+///     keyset_info_json: Keyset info JSON (from mint's /v1/keys/{id})
+///
+/// Returns:
+///     JSON with blinded_messages and secrets_with_blinding arrays
+#[pyfunction]
+fn create_plain_blinded_messages(amount_sat: u64, keyset_info_json: &str) -> PyResult<String> {
+    spilman::create_plain_blinded_messages(amount_sat, keyset_info_json)
+        .map_err(PyValueError::new_err)
+}
+
+// ============================================================================
+// Client-side: SpilmanClientBridge with Python host callbacks
+// ============================================================================
+
+/// Result of opening a new channel via ClientBridge.
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct ClientOpenChannelResult {
+    pub channel_id: String,
+    pub capacity: u64,
+    pub funding_token_amount: u64,
+    pub mint_url: String,
+}
+
+/// Information about a stored channel.
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct ClientChannelInfo {
+    pub channel_id: String,
+    pub capacity: u64,
+    pub funding_token_amount: u64,
+    pub mint_url: String,
+    pub params_json: String,
+}
+
+/// Wrapper that delegates SpilmanClientHost trait calls to a Python object.
+///
+/// The Python object must implement these methods:
+/// - call_mint_swap(mint_url: str, swap_request_json: str) -> str  # Raises on error
+/// - save_channel(channel_id: str, channel_json: str)
+/// - get_channel(channel_id: str) -> Optional[str]
+/// - list_channel_ids() -> List[str]
+/// - delete_channel(channel_id: str)
+struct PySpilmanClientHost {
+    py_host: PyObject,
+}
+
+impl SpilmanClientHost for PySpilmanClientHost {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self
+                .py_host
+                .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
+            {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
+
+    fn save_channel(&self, channel_id: &str, channel_json: &str) {
+        Python::with_gil(|py| {
+            let _ = self
+                .py_host
+                .call_method1(py, "save_channel", (channel_id, channel_json));
+        });
+    }
+
+    fn get_channel(&self, channel_id: &str) -> Option<String> {
+        Python::with_gil(|py| {
+            let result = self
+                .py_host
+                .call_method1(py, "get_channel", (channel_id,))
+                .ok()?;
+
+            if result.is_none(py) {
+                None
+            } else {
+                result.extract::<String>(py).ok()
+            }
+        })
+    }
+
+    fn list_channel_ids(&self) -> Vec<String> {
+        Python::with_gil(|py| {
+            self.py_host
+                .call_method0(py, "list_channel_ids")
+                .and_then(|r| r.extract::<Vec<String>>(py))
+                .unwrap_or_default()
+        })
+    }
+
+    fn delete_channel(&self, channel_id: &str) {
+        Python::with_gil(|py| {
+            let _ = self
+                .py_host
+                .call_method1(py, "delete_channel", (channel_id,));
+        });
+    }
+}
+
+/// Client-side Spilman channel bridge.
+///
+/// This is the client-side counterpart of SpilmanBridge. It orchestrates
+/// channel creation from tokens, payment signing, and HTTP header construction.
+///
+/// The bridge is stateless — all channel state is stored via the host callbacks.
+/// One bridge instance uses a single Alice keypair for all channels.
+#[pyclass]
+struct ClientBridge {
+    inner: RustSpilmanClientBridge<PySpilmanClientHost>,
+}
+
+#[pymethods]
+impl ClientBridge {
+    /// Create a new ClientBridge.
+    ///
+    /// Args:
+    ///     host: Python object implementing SpilmanClientHost methods
+    ///     alice_secret_hex: Optional secret key (hex). If None, a new keypair is generated.
+    #[new]
+    #[pyo3(signature = (host, alice_secret_hex=None))]
+    fn new(host: PyObject, alice_secret_hex: Option<String>) -> PyResult<Self> {
+        let py_host = PySpilmanClientHost { py_host: host };
+        let inner = RustSpilmanClientBridge::new(py_host, alice_secret_hex.as_deref())
+            .map_err(PyValueError::new_err)?;
+
+        Ok(ClientBridge { inner })
+    }
+
+    /// Get Alice's public key (hex-encoded, compressed).
+    #[getter]
+    fn alice_pubkey_hex(&self) -> String {
+        self.inner.alice_pubkey_hex().to_string()
+    }
+
+    /// Get Alice's secret key (hex-encoded).
+    #[getter]
+    fn alice_secret_hex(&self) -> String {
+        self.inner.alice_secret_hex().to_string()
+    }
+
+    /// Open a new channel from a Cashu token.
+    ///
+    /// Performs the full funding flow:
+    /// 1. Parse the token and compute channel parameters
+    /// 2. Create a funding swap request (deterministic 2-of-2 locked outputs)
+    /// 3. Submit the swap to the mint via host.call_mint_swap()
+    /// 4. Unblind signatures and verify DLEQ proofs
+    /// 5. Save the channel via host.save_channel()
+    ///
+    /// Args:
+    ///     token_string: Cashu token (cashuA... or cashuB...)
+    ///     charlie_pubkey_hex: Receiver's public key (from server's /channel/params)
+    ///     locktime: Unix timestamp for refund locktime
+    ///     keyset_info_json: Keyset info JSON (from mint's /v1/keys/{id})
+    ///     max_amount: Maximum amount per output (from server policy, 0 = no limit)
+    ///
+    /// Returns:
+    ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url
+    #[pyo3(signature = (token_string, charlie_pubkey_hex, locktime, keyset_info_json, max_amount))]
+    fn open_channel_from_token(
+        &self,
+        token_string: &str,
+        charlie_pubkey_hex: &str,
+        locktime: u64,
+        keyset_info_json: &str,
+        max_amount: u64,
+    ) -> PyResult<ClientOpenChannelResult> {
+        let result = self
+            .inner
+            .open_channel_from_token(
+                token_string,
+                charlie_pubkey_hex,
+                locktime,
+                keyset_info_json,
+                max_amount,
+            )
+            .map_err(PyRuntimeError::new_err)?;
+
+        Ok(ClientOpenChannelResult {
+            channel_id: result.channel_id,
+            capacity: result.capacity,
+            funding_token_amount: result.funding_token_amount,
+            mint_url: result.mint_url,
+        })
+    }
+
+    /// Create a signed balance update for a channel.
+    ///
+    /// Args:
+    ///     channel_id: The channel ID
+    ///     balance: New cumulative balance (must increase monotonically)
+    ///
+    /// Returns:
+    ///     JSON string with channel_id, amount, and signature
+    #[pyo3(signature = (channel_id, balance))]
+    fn sign_balance_update(&self, channel_id: &str, balance: u64) -> PyResult<String> {
+        self.inner
+            .sign_balance_update(channel_id, balance)
+            .map_err(PyRuntimeError::new_err)
+    }
+
+    /// Build a complete X-Cashu-Channel payment header value.
+    ///
+    /// Returns a base64-encoded JSON string ready to use as the header value.
+    ///
+    /// Args:
+    ///     channel_id: The channel ID
+    ///     balance: New cumulative balance
+    ///     include_funding: If True, include params and funding_proofs (first request)
+    ///
+    /// Returns:
+    ///     Base64-encoded payment header string
+    #[pyo3(signature = (channel_id, balance, include_funding))]
+    fn build_payment_header(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        include_funding: bool,
+    ) -> PyResult<String> {
+        self.inner
+            .build_payment_header(channel_id, balance, include_funding)
+            .map_err(PyRuntimeError::new_err)
+    }
+
+    /// Get information about a stored channel.
+    ///
+    /// Args:
+    ///     channel_id: The channel ID
+    ///
+    /// Returns:
+    ///     ClientChannelInfo or None if not found
+    #[pyo3(signature = (channel_id))]
+    fn get_channel_info(&self, channel_id: &str) -> Option<ClientChannelInfo> {
+        self.inner
+            .get_channel_info(channel_id)
+            .map(|info| ClientChannelInfo {
+                channel_id: info.channel_id,
+                capacity: info.capacity,
+                funding_token_amount: info.funding_token_amount,
+                mint_url: info.mint_url,
+                params_json: info.params_json,
+            })
+    }
+
+    /// List all stored channel IDs.
+    fn list_channels(&self) -> Vec<String> {
+        self.inner.list_channels()
+    }
+
+    /// Remove a channel from storage.
+    #[pyo3(signature = (channel_id))]
+    fn remove_channel(&self, channel_id: &str) {
+        self.inner.remove_channel(channel_id);
+    }
+}
+
 // ============================================================================
 // Module registration
 // ============================================================================
@@ -916,6 +1183,11 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PaymentValidationResult>()?;
     m.add_class::<FundChannelResult>()?;
 
+    // Client-side: ClientBridge
+    m.add_class::<ClientBridge>()?;
+    m.add_class::<ClientOpenChannelResult>()?;
+    m.add_class::<ClientChannelInfo>()?;
+
     // Client-side functions
     m.add_function(wrap_pyfunction!(generate_keypair, m)?)?;
     m.add_function(wrap_pyfunction!(secret_key_to_pubkey, m)?)?;
@@ -925,6 +1197,7 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_funding_outputs, m)?)?;
     m.add_function(wrap_pyfunction!(construct_proofs, m)?)?;
     m.add_function(wrap_pyfunction!(create_signed_balance_update, m)?)?;
+    m.add_function(wrap_pyfunction!(create_plain_blinded_messages, m)?)?;
 
     // Server-side functions (for closing)
     m.add_function(wrap_pyfunction!(unblind_and_verify_dleq, m)?)?;

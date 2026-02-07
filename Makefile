@@ -53,7 +53,7 @@ MATURIN := $(VENV)/bin/maturin
 # .PHONY declarations
 # ===========================================================================
 
-.PHONY: venv \
+.PHONY: check-venv venv \
 	build-python build-python-wheel install-python \
 	build-go build-mintd build-rust-server \
 	build-wasm build-blossom-wasm build-ts-wasm \
@@ -79,13 +79,26 @@ MATURIN := $(VENV)/bin/maturin
 
 # --- Python Bindings ---
 
-$(MATURIN):
-	python3 -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install maturin patchelf
-	$(PIP) install -r $(PYTHON_DEMO_DIR)/requirements.txt
+check-venv:
+	@if [ -d "$(VENV)" ]; then \
+		expected=$$(cd "$(VENV)" && pwd); \
+		actual=$$(. $(VENV)/bin/activate 2>/dev/null && echo "$$VIRTUAL_ENV"); \
+		if [ "$$actual" = "$$expected" ]; then \
+			echo "Found existing dev .venv"; \
+		else \
+			echo "Stale dev .venv detected (expected $$expected, got $$actual), removing..."; \
+			rm -rf $(VENV); \
+		fi; \
+	fi
+	@if [ ! -f "$(MATURIN)" ]; then \
+		echo "(Re-)building dev .venv..."; \
+		python3 -m venv $(VENV); \
+		$(PIP) install --upgrade pip; \
+		$(PIP) install maturin patchelf; \
+		$(PIP) install -r $(PYTHON_DEMO_DIR)/requirements.txt; \
+	fi
 
-venv: $(MATURIN)
+venv: check-venv
 
 # Build Python bindings (development mode)
 build-python: venv
@@ -331,14 +344,14 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "========================================="
 
 # All tests with CDK mint (does not require blossom-server repo)
-test-all: test-unit-spilman test-integration-go test-server-all
+test-all: test-unit-spilman test-integration-go test-integration-python test-server-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint)"
 	@echo "========================================="
 
 # All tests including blossom (requires web/blossom-server repo)
-test-all-with-blossom: test-unit-spilman test-integration-go test-blossom test-server-all
+test-all-with-blossom: test-unit-spilman test-integration-go test-integration-python test-blossom test-server-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint + blossom)"
