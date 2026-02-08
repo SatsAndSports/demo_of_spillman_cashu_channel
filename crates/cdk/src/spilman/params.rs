@@ -51,14 +51,21 @@ pub struct ChannelParameters {
     pub shared_secret: [u8; 32],
 }
 
-/// Compute ECDH shared secret from a secret key and counterparty's public key
+/// Compute the channel secret from a secret key and counterparty's public key
 ///
-/// Returns the 32-byte x-coordinate of the shared point.
+/// Performs ECDH and then hashes the result with a domain separator so that
+/// the raw Diffie-Hellman shared secret never leaves this function.
+///
+/// Returns: SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(my_secret, their_pubkey))
 pub fn compute_shared_secret(
     my_secret: &crate::nuts::SecretKey,
     their_pubkey: &crate::nuts::PublicKey,
 ) -> [u8; 32] {
-    SharedSecret::new(their_pubkey, my_secret).secret_bytes()
+    let raw_ecdh = SharedSecret::new(their_pubkey, my_secret).secret_bytes();
+    let mut input = Vec::new();
+    input.extend_from_slice(b"Cashu_Spilman_channel_secret_v1");
+    input.extend_from_slice(&raw_ecdh);
+    sha256::Hash::hash(&input).to_byte_array()
 }
 
 /// Helper to create a simple KeysetInfo for testing
@@ -256,8 +263,8 @@ impl ChannelParameters {
             );
         };
 
-        // Compute shared secret via ECDH
-        let shared_secret = SharedSecret::new(their_pubkey, my_secret);
+        // Compute channel secret (hashed ECDH)
+        let shared_secret = compute_shared_secret(my_secret, their_pubkey);
 
         Self::new(
             alice_pubkey,
@@ -271,7 +278,7 @@ impl ChannelParameters {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
-            shared_secret.secret_bytes(),
+            shared_secret,
         )
     }
 
@@ -445,10 +452,14 @@ impl ChannelParameters {
     }
 
     /// Get channel ID as raw bytes (32-byte SHA256 hash)
-    /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce
+    /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce|channel_secret
+    ///
+    /// The channel_secret (shared_secret) is included implicitly — it does not
+    /// appear in `get_channel_id_params_json()`. This means the channel ID can
+    /// only be computed by the two parties who know the shared secret.
     pub fn get_channel_id_bytes(&self) -> [u8; 32] {
         let params_string = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.mint,
             self.unit_name(),
             self.capacity,
@@ -460,7 +471,8 @@ impl ChannelParameters {
             self.alice_pubkey.to_hex(),
             self.charlie_pubkey.to_hex(),
             self.locktime,
-            self.sender_nonce
+            self.sender_nonce,
+            hex::encode(self.shared_secret)
         );
         sha256::Hash::hash(params_string.as_bytes()).to_byte_array()
     }
