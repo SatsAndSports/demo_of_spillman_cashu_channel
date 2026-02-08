@@ -34,7 +34,6 @@ endif
 COMPOSE_FILE := -f docker-compose.spilman.yml
 
 # Directories
-VENV := .venv
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 GO_CRATE_DIR := crates/cdk-spilman-go
 GO_DEMO_DIR := crates/cdk-spilman-go/examples/ascii-art
@@ -44,16 +43,17 @@ BLOSSOM_DIR := web/blossom-server
 WASM_CRATE := crates/cdk-wasm
 NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
 
-# Python tools
-PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
-MATURIN := $(VENV)/bin/maturin
+# Python tools (single venv lives in the Python crate)
+PYTHON_VENV := $(PYTHON_CRATE_DIR)/.venv
+PYTHON := $(PYTHON_VENV)/bin/python
+PIP := $(PYTHON_VENV)/bin/pip
+MATURIN := $(PYTHON_VENV)/bin/maturin
 
 # ===========================================================================
 # .PHONY declarations
 # ===========================================================================
 
-.PHONY: check-venv venv \
+.PHONY: venv \
 	build-python build-python-wheel install-python \
 	build-go build-mintd build-rust-server \
 	build-wasm build-blossom-wasm build-ts-wasm \
@@ -79,38 +79,21 @@ MATURIN := $(VENV)/bin/maturin
 
 # --- Python Bindings ---
 
-check-venv:
-	@if [ -d "$(VENV)" ]; then \
-		expected=$$(cd "$(VENV)" && pwd); \
-		actual=$$(. $(VENV)/bin/activate 2>/dev/null && echo "$$VIRTUAL_ENV"); \
-		if [ "$$actual" = "$$expected" ]; then \
-			echo "Found existing dev .venv"; \
-		else \
-			echo "Stale dev .venv detected (expected $$expected, got $$actual), removing..."; \
-			rm -rf $(VENV); \
-		fi; \
-	fi
-	@if [ ! -f "$(MATURIN)" ]; then \
-		echo "(Re-)building dev .venv..."; \
-		python3 -m venv $(VENV); \
-		$(PIP) install --upgrade pip; \
-		$(PIP) install maturin patchelf; \
-		$(PIP) install -r $(PYTHON_DEMO_DIR)/requirements.txt; \
-	fi
-
-venv: check-venv
+# Python venv (delegates to the Python crate's Makefile)
+venv:
+	$(MAKE) -C $(PYTHON_CRATE_DIR) venv
 
 # Build Python bindings (development mode)
-build-python: venv
-	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) develop
+build-python:
+	$(MAKE) -C $(PYTHON_CRATE_DIR) build
 
 # Build Python wheel
 build-python-wheel: venv
-	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) build --release
+	cd $(PYTHON_CRATE_DIR) && $(CURDIR)/$(MATURIN) build --release
 
 # Install Python wheel
-install-python: venv
-	cd $(PYTHON_CRATE_DIR) && ../../$(MATURIN) build --release && ../../$(PIP) install target/wheels/*.whl --force-reinstall
+install-python: build-python-wheel
+	$(PIP) install $(PYTHON_CRATE_DIR)/target/wheels/*.whl --force-reinstall
 
 # --- Go Bindings ---
 
@@ -425,7 +408,7 @@ clean: clean-nutmix-setup clean-logs
 	cargo clean
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
-	rm -rf $(VENV)
+	rm -rf $(PYTHON_VENV)
 	rm -f .wasm-built
 
 # ===========================================================================

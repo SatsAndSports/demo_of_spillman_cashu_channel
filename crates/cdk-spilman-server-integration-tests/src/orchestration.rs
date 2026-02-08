@@ -256,7 +256,7 @@ impl ServerProcess {
 
     fn spawn_python_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
         let server_dir = root.join("crates/cdk-spilman-python/examples/ascii-art");
-        let venv_python = root.join(".venv/bin/python");
+        let venv_python = root.join("crates/cdk-spilman-python/.venv/bin/python");
 
         // Use venv python if available, otherwise system python
         let python = if venv_python.exists() {

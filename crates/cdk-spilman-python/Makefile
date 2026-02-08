@@ -14,7 +14,7 @@ PORT ?= 5002
 
 # Directories
 EXAMPLE_DIR := ./examples/ascii-art
-VENV_DIR := $(EXAMPLE_DIR)/.venv
+VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
@@ -54,7 +54,7 @@ check-venv:
 		echo "(Re-)building Python .venv..."; \
 		python3 -m venv $(VENV_DIR); \
 		$(PIP) install --upgrade pip; \
-		$(PIP) install maturin pytest requests; \
+		$(PIP) install maturin patchelf pytest requests; \
 		$(PIP) install -r $(EXAMPLE_DIR)/requirements.txt; \
 	fi
 
