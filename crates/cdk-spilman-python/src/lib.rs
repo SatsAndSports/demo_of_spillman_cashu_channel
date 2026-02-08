@@ -920,6 +920,58 @@ fn create_plain_blinded_messages(amount_sat: u64, keyset_info_json: &str) -> PyR
         .map_err(PyValueError::new_err)
 }
 
+/// Build a cashuA token string from proofs JSON and a mint URL.
+///
+/// Args:
+///     mint_url: The mint URL to embed in the token
+///     proofs_json: JSON array of proofs (from construct_proofs or mint response)
+///
+/// Returns:
+///     A cashuA token string (e.g. "cashuAeyJ0b2...")
+#[pyfunction]
+fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> PyResult<String> {
+    spilman::build_cashu_a_token(mint_url, proofs_json).map_err(PyValueError::new_err)
+}
+
+/// Mint plain proofs from a Cashu mint via HTTP.
+///
+/// Performs the full minting flow: create blinded messages, request a mint
+/// quote, poll until paid, mint tokens, and construct proofs.
+///
+/// Args:
+///     mint_url: The mint URL (e.g. "http://localhost:3338")
+///     amount_sat: Amount to mint in satoshis
+///     keyset_info_json: Keyset info JSON (from fetch_active_keyset)
+///     call_http: Python callable (method: str, url: str, body: str) -> str
+///
+/// Returns:
+///     JSON array of proofs ready for use
+#[pyfunction]
+fn mint_proofs_from_mint(
+    py: Python<'_>,
+    mint_url: &str,
+    amount_sat: u64,
+    keyset_info_json: &str,
+    call_http: PyObject,
+) -> PyResult<String> {
+    let http_fn = |method: &str, url: &str, body: &str| -> Result<String, String> {
+        Python::with_gil(|py| {
+            let result = call_http
+                .call1(py, (method, url, body))
+                .map_err(|e| format!("HTTP callback failed: {}", e))?;
+            result
+                .extract::<String>(py)
+                .map_err(|e| format!("HTTP callback returned non-string: {}", e))
+        })
+    };
+
+    // Release the GIL during the Rust execution (which includes sleeping for poll)
+    py.allow_threads(|| {
+        spilman::mint_proofs_from_mint(mint_url, amount_sat, keyset_info_json, &http_fn)
+            .map_err(PyValueError::new_err)
+    })
+}
+
 // ============================================================================
 // Client-side: SpilmanClientBridge with Python host callbacks
 // ============================================================================
@@ -1198,6 +1250,8 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(construct_proofs, m)?)?;
     m.add_function(wrap_pyfunction!(create_signed_balance_update, m)?)?;
     m.add_function(wrap_pyfunction!(create_plain_blinded_messages, m)?)?;
+    m.add_function(wrap_pyfunction!(build_cashu_a_token, m)?)?;
+    m.add_function(wrap_pyfunction!(mint_proofs_from_mint, m)?)?;
 
     // Server-side functions (for closing)
     m.add_function(wrap_pyfunction!(unblind_and_verify_dleq, m)?)?;

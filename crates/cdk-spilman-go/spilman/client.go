@@ -27,12 +27,24 @@ CResult spilman_channel_parameters_get_channel_id(const char* params, const char
 CResult spilman_create_plain_blinded_messages(uint64_t amount_sat, const char* keyset_info_json);
 CResult spilman_create_funding_outputs(const char* params, const char* alice_secret, const char* keyset);
 CResult spilman_construct_proofs(const char* blind_signatures, const char* secrets_with_blinding, const char* keyset);
+CResult spilman_build_cashu_a_token(const char* mint_url, const char* proofs_json);
+
+typedef char* (*http_callback_fn)(void*, const char*, const char*, const char*, char**);
+CResult spilman_mint_proofs_from_mint(const char* mint_url, uint64_t amount_sat, const char* keyset_info_json, http_callback_fn call_http, void* user_data);
 void spilman_free_cresult(CResult res);
+
+// Go export for HTTP callback - gateway through C
+extern char* go_mint_http_callback(void* user_data, const char* method, const char* url, const char* body, char** response_out);
+
+static inline CResult call_mint_proofs(const char* mint_url, uint64_t amount_sat, const char* keyset_info_json, void* user_data) {
+    return spilman_mint_proofs_from_mint(mint_url, amount_sat, keyset_info_json, go_mint_http_callback, user_data);
+}
 */
 import "C"
 import (
 	"encoding/json"
 	"errors"
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -229,6 +241,58 @@ func ConstructProofs(blindSignatures, secretsWithBlinding, keyset string) (strin
 	defer C.free(unsafe.Pointer(cKeyset))
 
 	res := C.spilman_construct_proofs(cSigs, cSecrets, cKeyset)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// BuildCashuAToken builds a cashuA token string from proofs JSON and a mint URL.
+// The token format is: "cashuA" + base64url({ token: [{ mint, proofs }], unit: "sat" })
+func BuildCashuAToken(mintURL, proofsJSON string) (string, error) {
+	cMint := C.CString(mintURL)
+	defer C.free(unsafe.Pointer(cMint))
+	cProofs := C.CString(proofsJSON)
+	defer C.free(unsafe.Pointer(cProofs))
+
+	res := C.spilman_build_cashu_a_token(cMint, cProofs)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// HTTPCallback is a function that performs HTTP requests.
+// method is "GET" or "POST", url is the endpoint, body is the request body
+// (empty string for GET). Returns the response body as a string.
+type HTTPCallback func(method, url, body string) (string, error)
+
+// MintProofsFromMint mints plain proofs via the mint HTTP API.
+// This performs the full minting flow: create blinded messages, request a mint
+// quote, poll until paid, mint tokens, and construct proofs.
+//
+// The callHTTP callback is used for all HTTP communication with the mint.
+// This function is intended for tests and demos (especially with fakewallet).
+func MintProofsFromMint(mintURL string, amountSat uint64, keysetInfoJSON string, callHTTP HTTPCallback) (string, error) {
+	cMint := C.CString(mintURL)
+	defer C.free(unsafe.Pointer(cMint))
+	cKeyset := C.CString(keysetInfoJSON)
+	defer C.free(unsafe.Pointer(cKeyset))
+
+	handle := cgo.NewHandle(callHTTP)
+	defer handle.Delete()
+
+	res := C.call_mint_proofs(
+		cMint,
+		C.uint64_t(amountSat),
+		cKeyset,
+		//nolint:govet // cgo.Handle -> unsafe.Pointer is the documented pattern
+		unsafe.Pointer(handle),
+	)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {

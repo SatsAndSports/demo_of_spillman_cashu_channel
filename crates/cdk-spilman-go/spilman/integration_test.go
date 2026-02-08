@@ -304,119 +304,25 @@ func (h *testServerHost) MarkChannelClosed(channelId string, locktime, balance u
 	return nil
 }
 
-// mintPlainProofs mints plain (non-P2PK) proofs via the mint HTTP API.
-// Uses CreatePlainBlindedMessages to create blinded messages, mints them via
-// the /v1/mint/bolt11 endpoint (fakewallet auto-pays), and constructs proofs.
-// Returns the proofs as a JSON array string.
-func mintPlainProofs(t *testing.T, mintURL string, amountSat uint64, keysetInfoJSON string) string {
-	t.Helper()
-
-	// 1. Create plain blinded messages
-	resultJSON, err := CreatePlainBlindedMessages(amountSat, keysetInfoJSON)
+// httpCallback is a simple HTTP callback for use with MintProofsFromMint.
+// It performs GET and POST requests and returns the response body as a string.
+func httpCallback(method, url, body string) (string, error) {
+	var resp *http.Response
+	var err error
+	if method == "GET" {
+		resp, err = http.Get(url)
+	} else {
+		resp, err = http.Post(url, "application/json", bytes.NewBufferString(body))
+	}
 	if err != nil {
-		t.Fatalf("CreatePlainBlindedMessages failed: %v", err)
-	}
-
-	var result struct {
-		BlindedMessages     []interface{} `json:"blinded_messages"`
-		SecretsWithBlinding []interface{} `json:"secrets_with_blinding"`
-	}
-	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
-		t.Fatalf("Failed to parse blinded messages result: %v", err)
-	}
-
-	t.Logf("Created %d plain blinded messages", len(result.BlindedMessages))
-
-	// 2. Request a mint quote
-	quoteReq, _ := json.Marshal(map[string]interface{}{"amount": amountSat, "unit": "sat"})
-	resp, err := http.Post(mintURL+"/v1/mint/quote/bolt11", "application/json", bytes.NewBuffer(quoteReq))
-	if err != nil {
-		t.Fatalf("Mint quote request failed: %v", err)
+		return "", err
 	}
 	defer resp.Body.Close()
-
-	var quote struct {
-		Quote string `json:"quote"`
-	}
-	json.NewDecoder(resp.Body).Decode(&quote)
-	t.Logf("Got mint quote: %s", quote.Quote)
-
-	// 3. Poll until paid (fakewallet auto-pays)
-	for i := 0; i < 60; i++ {
-		r, err := http.Get(fmt.Sprintf("%s/v1/mint/quote/bolt11/%s", mintURL, quote.Quote))
-		if err != nil {
-			t.Fatalf("Quote poll failed: %v", err)
-		}
-		var status struct {
-			State string `json:"state"`
-		}
-		json.NewDecoder(r.Body).Decode(&status)
-		r.Body.Close()
-
-		if status.State == "PAID" {
-			t.Log("Mint quote is PAID")
-			break
-		}
-		if i == 59 {
-			t.Fatal("Timeout waiting for mint quote to be paid")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	// 4. Mint tokens
-	mintReq, _ := json.Marshal(map[string]interface{}{
-		"quote":   quote.Quote,
-		"outputs": result.BlindedMessages,
-	})
-	resp2, err := http.Post(mintURL+"/v1/mint/bolt11", "application/json", bytes.NewBuffer(mintReq))
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("Mint request failed: %v", err)
+		return "", err
 	}
-	defer resp2.Body.Close()
-
-	body, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode != 200 {
-		t.Fatalf("Mint request failed (HTTP %d): %s", resp2.StatusCode, string(body))
-	}
-
-	var mintResp struct {
-		Signatures []interface{} `json:"signatures"`
-	}
-	if err := json.Unmarshal(body, &mintResp); err != nil {
-		t.Fatalf("Failed to parse mint response: %v", err)
-	}
-	t.Logf("Got %d blind signatures from mint", len(mintResp.Signatures))
-
-	// 5. Construct proofs
-	sigsJSON, _ := json.Marshal(mintResp.Signatures)
-	secretsJSON, _ := json.Marshal(result.SecretsWithBlinding)
-
-	proofsJSON, err := ConstructProofs(string(sigsJSON), string(secretsJSON), keysetInfoJSON)
-	if err != nil {
-		t.Fatalf("ConstructProofs failed: %v", err)
-	}
-
-	return proofsJSON
-}
-
-// buildCashuAToken constructs a cashuA token string from proofs JSON.
-// The cashuA format is: "cashuA" + base64url(JSON({token:[{mint,proofs}],unit}))
-func buildCashuAToken(mintURL, proofsJSON string) string {
-	// Parse proofs to get the array
-	var proofs []interface{}
-	json.Unmarshal([]byte(proofsJSON), &proofs)
-
-	tokenPayload := map[string]interface{}{
-		"token": []map[string]interface{}{
-			{
-				"mint":   mintURL,
-				"proofs": proofs,
-			},
-		},
-		"unit": "sat",
-	}
-	jsonBytes, _ := json.Marshal(tokenPayload)
-	return "cashuA" + base64.URLEncoding.EncodeToString(jsonBytes)
+	return string(respBody), nil
 }
 
 // TestClientBridge tests the full SpilmanClientBridge end-to-end:
@@ -451,8 +357,14 @@ func TestClientBridge(t *testing.T) {
 	// Step 1: Mint plain proofs and build cashuA token
 	// ================================================================
 
-	proofsJSON := mintPlainProofs(t, mintURL, 100, string(keysetJSON))
-	token := buildCashuAToken(mintURL, proofsJSON)
+	proofsJSON, err := MintProofsFromMint(mintURL, 100, string(keysetJSON), httpCallback)
+	if err != nil {
+		t.Fatalf("MintProofsFromMint failed: %v", err)
+	}
+	token, err := BuildCashuAToken(mintURL, proofsJSON)
+	if err != nil {
+		t.Fatalf("BuildCashuAToken failed: %v", err)
+	}
 	t.Logf("Built cashuA token: %s...%s", token[:20], token[len(token)-10:])
 
 	// ================================================================
