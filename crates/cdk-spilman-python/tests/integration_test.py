@@ -207,71 +207,6 @@ class TestChannelSetup:
 # ============================================================================
 
 
-def mint_plain_proofs(mint_url: str, amount_sat: int, keyset_info_json: str) -> str:
-    """Mint plain (non-P2PK) proofs via the mint HTTP API.
-
-    Uses create_plain_blinded_messages to create blinded messages, mints them via
-    the /v1/mint/bolt11 endpoint (fakewallet auto-pays), and constructs proofs.
-    Returns the proofs as a JSON array string.
-    """
-    # 1. Create plain blinded messages
-    result_json = cdk_spilman.create_plain_blinded_messages(amount_sat, keyset_info_json)
-    result = json.loads(result_json)
-    blinded_messages = result["blinded_messages"]
-    secrets_with_blinding = result["secrets_with_blinding"]
-    print(f"Created {len(blinded_messages)} plain blinded messages")
-
-    # 2. Request a mint quote
-    resp = requests.post(
-        f"{mint_url}/v1/mint/quote/bolt11",
-        json={"amount": amount_sat, "unit": "sat"},
-    )
-    resp.raise_for_status()
-    quote_id = resp.json()["quote"]
-    print(f"Got mint quote: {quote_id}")
-
-    # 3. Poll until paid (fakewallet auto-pays)
-    for i in range(60):
-        r = requests.get(f"{mint_url}/v1/mint/quote/bolt11/{quote_id}")
-        r.raise_for_status()
-        if r.json()["state"] == "PAID":
-            print("Mint quote is PAID")
-            break
-        if i == 59:
-            raise RuntimeError("Timeout waiting for mint quote to be paid")
-        time.sleep(0.1)
-
-    # 4. Mint tokens
-    resp = requests.post(
-        f"{mint_url}/v1/mint/bolt11",
-        json={"quote": quote_id, "outputs": blinded_messages},
-    )
-    assert resp.status_code == 200, f"Mint request failed (HTTP {resp.status_code}): {resp.text}"
-    signatures = resp.json()["signatures"]
-    print(f"Got {len(signatures)} blind signatures from mint")
-
-    # 5. Construct proofs
-    sigs_json = json.dumps(signatures)
-    secrets_json = json.dumps(secrets_with_blinding)
-    proofs_json = cdk_spilman.construct_proofs(sigs_json, secrets_json, keyset_info_json)
-
-    return proofs_json
-
-
-def build_cashu_a_token(mint_url: str, proofs_json: str) -> str:
-    """Build a cashuA token string from proofs JSON.
-
-    The cashuA format is: "cashuA" + base64url(JSON({token:[{mint,proofs}],unit}))
-    """
-    proofs = json.loads(proofs_json)
-    token_payload = {
-        "token": [{"mint": mint_url, "proofs": proofs}],
-        "unit": "sat",
-    }
-    json_bytes = json.dumps(token_payload).encode()
-    return "cashuA" + base64.urlsafe_b64encode(json_bytes).decode()
-
-
 class MockClientHost:
     """Mock implementation of SpilmanClientHost for integration tests."""
 
@@ -425,8 +360,15 @@ class TestClientBridge:
         # Step 1: Mint plain proofs and build cashuA token
         # ================================================================
 
-        proofs_json = mint_plain_proofs(mint_url, 100, keyset_json)
-        token = build_cashu_a_token(mint_url, proofs_json)
+        def http_call(method, url, body):
+            if method == "GET":
+                r = requests.get(url)
+            else:
+                r = requests.post(url, data=body, headers={"Content-Type": "application/json"})
+            return r.text
+
+        proofs_json = cdk_spilman.mint_proofs_from_mint(mint_url, 100, keyset_json, http_call)
+        token = cdk_spilman.build_cashu_a_token(mint_url, proofs_json)
         print(f"Built cashuA token: {token[:20]}...{token[-10:]}")
 
         # ================================================================

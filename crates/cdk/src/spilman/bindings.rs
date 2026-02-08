@@ -808,3 +808,161 @@ pub fn complete_funding_swap(
 
     Ok(result.to_string())
 }
+
+// ============================================================================
+// TEST/DEMO HELPERS
+// ============================================================================
+// These functions consolidate common patterns used across language bindings
+// (Go, Python, TypeScript) in tests and demos.
+
+/// Build a cashuA token string from proofs JSON and a mint URL.
+///
+/// Takes a JSON array of proofs and wraps them in the cashuA token format:
+/// `"cashuA" + base64url({ token: [{ mint, proofs }], unit: "sat" })`
+///
+/// # Arguments
+/// * `mint_url` - The mint URL to embed in the token
+/// * `proofs_json` - JSON array of proofs (from construct_proofs or mint response)
+///
+/// # Returns
+/// A cashuA token string (e.g. "cashuAeyJ0b2...")
+pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, String> {
+    let proofs: serde_json::Value =
+        serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
+
+    let token_payload = serde_json::json!({
+        "token": [{
+            "mint": mint_url,
+            "proofs": proofs
+        }],
+        "unit": "sat"
+    });
+
+    let json_bytes = serde_json::to_vec(&token_payload)
+        .map_err(|e| format!("Failed to serialize token: {}", e))?;
+
+    Ok(format!("cashuA{}", base64url_encode(&json_bytes)))
+}
+
+/// Mint plain proofs from a Cashu mint via HTTP.
+///
+/// Performs the full minting flow:
+/// 1. Creates plain blinded messages for the given amount
+/// 2. Requests a mint quote via POST /v1/mint/quote/bolt11
+/// 3. Polls until the quote is PAID (up to 60 attempts, 100ms apart)
+/// 4. Mints tokens via POST /v1/mint/bolt11
+/// 5. Constructs and returns the proofs
+///
+/// The caller provides HTTP capabilities via the `call_http` callback:
+/// - `call_http("POST", url, body_json)` -> response body as JSON string
+/// - `call_http("GET", url, "")` -> response body as JSON string
+///
+/// This function is intended for tests and demos (especially with fakewallet
+/// mints that auto-pay invoices).
+///
+/// # Arguments
+/// * `mint_url` - The mint URL (e.g. "http://localhost:3338")
+/// * `amount_sat` - Amount to mint in satoshis
+/// * `keyset_info_json` - Keyset info JSON (from fetch_active_keyset)
+/// * `call_http` - HTTP callback: (method, url, body) -> response_json
+///
+/// # Returns
+/// JSON array of proofs ready for use
+pub fn mint_proofs_from_mint(
+    mint_url: &str,
+    amount_sat: u64,
+    keyset_info_json: &str,
+    call_http: &dyn Fn(&str, &str, &str) -> Result<String, String>,
+) -> Result<String, String> {
+    // 1. Create plain blinded messages
+    let result_json = create_plain_blinded_messages(amount_sat, keyset_info_json)?;
+    let result: serde_json::Value = serde_json::from_str(&result_json)
+        .map_err(|e| format!("Failed to parse blinded messages result: {}", e))?;
+    let blinded_messages = &result["blinded_messages"];
+    let secrets_with_blinding = result["secrets_with_blinding"].to_string();
+
+    // 2. Request a mint quote
+    let quote_body = serde_json::json!({
+        "amount": amount_sat,
+        "unit": "sat"
+    })
+    .to_string();
+
+    let quote_url = format!("{}/v1/mint/quote/bolt11", mint_url);
+    let quote_resp = call_http("POST", &quote_url, &quote_body)?;
+    let quote: serde_json::Value = serde_json::from_str(&quote_resp)
+        .map_err(|e| format!("Failed to parse mint quote response: {}", e))?;
+    let quote_id = quote["quote"]
+        .as_str()
+        .ok_or("Missing 'quote' in mint quote response")?;
+
+    // 3. Poll until paid (fakewallet auto-pays)
+    let poll_url = format!("{}/v1/mint/quote/bolt11/{}", mint_url, quote_id);
+    for i in 0..60 {
+        let poll_resp = call_http("GET", &poll_url, "")?;
+        let poll: serde_json::Value = serde_json::from_str(&poll_resp)
+            .map_err(|e| format!("Failed to parse poll response: {}", e))?;
+        if poll["state"].as_str() == Some("PAID") {
+            break;
+        }
+        if i == 59 {
+            return Err("Timeout waiting for mint quote to be paid".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // 4. Mint tokens
+    let mint_body = serde_json::json!({
+        "quote": quote_id,
+        "outputs": blinded_messages
+    })
+    .to_string();
+
+    let mint_token_url = format!("{}/v1/mint/bolt11", mint_url);
+    let mint_resp = call_http("POST", &mint_token_url, &mint_body)?;
+    let mint_result: serde_json::Value = serde_json::from_str(&mint_resp)
+        .map_err(|e| format!("Failed to parse mint response: {}", e))?;
+    let signatures = mint_result["signatures"]
+        .as_array()
+        .ok_or("Missing 'signatures' in mint response")?;
+    let signatures_json = serde_json::to_string(signatures)
+        .map_err(|e| format!("Failed to serialize signatures: {}", e))?;
+
+    // 5. Construct proofs
+    construct_proofs(&signatures_json, &secrets_with_blinding, keyset_info_json)
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
+/// Base64url encode bytes (URL-safe alphabet, no padding).
+///
+/// Uses `-` and `_` instead of `+` and `/`, and strips trailing `=` padding.
+/// This matches the encoding used by cashuA tokens.
+fn base64url_encode(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
+
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        result.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
+
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+        }
+
+        if chunk.len() > 2 {
+            result.push(ALPHABET[(triple & 0x3F) as usize] as char);
+        }
+    }
+
+    result
+}

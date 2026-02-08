@@ -806,6 +806,76 @@ pub unsafe extern "C" fn spilman_construct_proofs(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn spilman_build_cashu_a_token(
+    mint_url: *const c_char,
+    proofs_json: *const c_char,
+) -> CResult {
+    let m = CStr::from_ptr(mint_url).to_str().unwrap();
+    let p = CStr::from_ptr(proofs_json).to_str().unwrap();
+
+    match spilman::build_cashu_a_token(m, p) {
+        Ok(token) => CResult::success(token),
+        Err(e) => CResult::error(e),
+    }
+}
+
+/// C callback type for HTTP requests: (user_data, method, url, body, response_out) -> error_out
+/// Returns null on success (response written to response_out), or error string on failure.
+type HttpCallbackFn = extern "C" fn(
+    user_data: *mut libc::c_void,
+    method: *const c_char,
+    url: *const c_char,
+    body: *const c_char,
+    response_out: *mut *mut c_char,
+) -> *mut c_char;
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_mint_proofs_from_mint(
+    mint_url: *const c_char,
+    amount_sat: u64,
+    keyset_info_json: *const c_char,
+    call_http: HttpCallbackFn,
+    user_data: *mut libc::c_void,
+) -> CResult {
+    let m = CStr::from_ptr(mint_url).to_str().unwrap();
+    let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
+
+    let http_fn = |method: &str, url: &str, body: &str| -> Result<String, String> {
+        let c_method = CString::new(method).unwrap();
+        let c_url = CString::new(url).unwrap();
+        let c_body = CString::new(body).unwrap();
+        let mut response_ptr: *mut c_char = std::ptr::null_mut();
+
+        let err_ptr = call_http(
+            user_data,
+            c_method.as_ptr(),
+            c_url.as_ptr(),
+            c_body.as_ptr(),
+            &mut response_ptr,
+        );
+
+        if !err_ptr.is_null() {
+            let err = CStr::from_ptr(err_ptr).to_str().unwrap().to_string();
+            libc::free(err_ptr as *mut libc::c_void);
+            return Err(err);
+        }
+
+        if response_ptr.is_null() {
+            return Err("HTTP callback returned null response".to_string());
+        }
+
+        let response = CStr::from_ptr(response_ptr).to_str().unwrap().to_string();
+        libc::free(response_ptr as *mut libc::c_void);
+        Ok(response)
+    };
+
+    match spilman::mint_proofs_from_mint(m, amount_sat, k, &http_fn) {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
+    }
+}
+
 // ============================================================================
 // Client Bridge: SpilmanClientBridge via C callbacks
 // ============================================================================
