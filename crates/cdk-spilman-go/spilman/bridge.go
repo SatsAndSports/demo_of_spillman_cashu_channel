@@ -43,12 +43,14 @@ typedef struct {
     char* (*get_keyset_info)(void*, const char*, const char*);
     int (*call_mint_swap)(void*, const char*, const char*, char**);
     int (*refresh_active_keysets)(void*, const char*);
+    int (*compute_channel_secret)(void*, const char*, const char*, char**);
+    int (*sign_with_tweaked_key)(void*, const char*, const char*, const char*, char**);
     int (*mark_channel_closed)(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
 } SpilmanHostCallbacks;
 
 // Function declarations from gateway.c and Rust
 SpilmanHostCallbacks fill_callbacks(void* user_data);
-void* spilman_bridge_new(SpilmanHostCallbacks callbacks, const char* server_secret_key_hex);
+void* spilman_bridge_new(SpilmanHostCallbacks callbacks);
 void spilman_bridge_free(void* ptr);
 CResult spilman_bridge_process_payment(void* ptr, const char* payment_json, const char* context_json);
 CResult spilman_bridge_validate_payment(void* ptr, const char* payment_json, const char* context_json);
@@ -77,8 +79,9 @@ type Bridge struct {
 }
 
 // NewBridge creates a new Bridge with the given host implementation.
-// The serverSecretKeyHex is optional - if empty, a new key will be generated.
-func NewBridge(host SpilmanHost, serverSecretKeyHex string) *Bridge {
+// The host must implement ComputeChannelSecret and SignWithTweakedKey
+// for cryptographic operations (the bridge no longer holds the secret key).
+func NewBridge(host SpilmanHost) *Bridge {
 	handle := cgo.NewHandle(host)
 	// Convert cgo.Handle to void* for C callback struct.
 	// cgo.Handle is a uintptr type. We pass it to C as a void* (user_data),
@@ -90,13 +93,7 @@ func NewBridge(host SpilmanHost, serverSecretKeyHex string) *Bridge {
 	// The warning cannot be suppressed with directives.
 	callbacks := C.fill_callbacks(unsafe.Pointer(handle)) //nolint:govet
 
-	var cSecret *C.char
-	if serverSecretKeyHex != "" {
-		cSecret = C.CString(serverSecretKeyHex)
-		defer C.free(unsafe.Pointer(cSecret))
-	}
-
-	ptr := C.spilman_bridge_new(callbacks, cSecret)
+	ptr := C.spilman_bridge_new(callbacks)
 	return &Bridge{ptr: ptr, handle: handle}
 }
 
@@ -439,5 +436,31 @@ func go_mark_channel_closed(userData unsafe.Pointer, channelId *C.char, locktime
 	if err != nil {
 		return 0
 	}
+	return 1
+}
+
+//export go_compute_channel_secret
+func go_compute_channel_secret(userData unsafe.Pointer, charliePubkeyHex *C.char, alicePubkeyHex *C.char, resultOut **C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	result, err := host.ComputeChannelSecret(C.GoString(alicePubkeyHex), C.GoString(charliePubkeyHex))
+	if err != nil {
+		*resultOut = C.CString(err.Error())
+		return 0
+	}
+	*resultOut = C.CString(result)
+	return 1
+}
+
+//export go_sign_with_tweaked_key
+func go_sign_with_tweaked_key(userData unsafe.Pointer, signerPubkeyHex *C.char, messageHex *C.char, tweakScalarHex *C.char, resultOut **C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanHost)
+	result, err := host.SignWithTweakedKey(C.GoString(signerPubkeyHex), C.GoString(messageHex), C.GoString(tweakScalarHex))
+	if err != nil {
+		*resultOut = C.CString(err.Error())
+		return 0
+	}
+	*resultOut = C.CString(result)
 	return 1
 }

@@ -14,6 +14,7 @@ use crate::stores::{ChannelFundingData, KeysetCacheEntry, Stores, UnitPricing};
 pub struct AsciiArtHost {
     pub stores: Arc<Stores>,
     pub server_pubkey: PublicKey,
+    pub server_secret_hex: String,
     pub mint_url: String,
     pub pricing: HashMap<String, UnitPricing>,
     pub min_expiry_seconds: u64,
@@ -25,12 +26,14 @@ impl AsciiArtHost {
         stores: Arc<Stores>,
         mint_url: &str,
         server_pubkey: PublicKey,
+        server_secret_hex: String,
         pricing: HashMap<String, UnitPricing>,
         min_expiry_seconds: u64,
     ) -> Self {
         Self {
             stores,
             server_pubkey,
+            server_secret_hex,
             mint_url: mint_url.to_string(),
             pricing,
             min_expiry_seconds,
@@ -328,6 +331,14 @@ impl SpilmanHost for AsciiArtHost {
         // In the Rust server, we call the mint swap directly in async route handlers
         // using call_mint_swap_async instead of this sync method.
         Err("Use call_mint_swap_async for async context".to_string())
+    }
+
+    fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
+        cdk::spilman::compute_channel_secret_from_hex(&self.server_secret_hex, alice_pubkey_hex)
+    }
+
+    fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
+        cdk::spilman::sign_with_tweaked_key_util(&self.server_secret_hex, message_hex, tweak_scalar_hex)
     }
 
     fn mark_channel_closed(

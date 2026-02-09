@@ -504,6 +504,41 @@ impl SpilmanHost for PySpilmanHost {
             }
         })
     }
+
+    fn compute_channel_secret(
+        &self,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self.py_host.call_method1(
+                py,
+                "compute_channel_secret",
+                (charlie_pubkey_hex, alice_pubkey_hex),
+            ) {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self.py_host.call_method1(
+                py,
+                "sign_with_tweaked_key",
+                (signer_pubkey_hex, message_hex, tweak_scalar_hex),
+            ) {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
 }
 
 /// Spilman payment channel bridge for servers (receivers).
@@ -519,23 +554,17 @@ struct SpilmanBridge {
 impl SpilmanBridge {
     /// Create a new SpilmanBridge.
     ///
+    /// The bridge itself is keyless — all secret key operations are delegated
+    /// to the host via `compute_channel_secret()` and `sign_with_tweaked_key()`.
+    ///
     /// Args:
     ///     host: Python object implementing SpilmanHost methods
-    ///     secret_key_hex: Server's secret key (hex string, 64 chars)
     #[new]
-    #[pyo3(signature = (host, secret_key_hex=None))]
-    fn new(host: PyObject, secret_key_hex: Option<String>) -> PyResult<Self> {
-        let secret_key = match secret_key_hex {
-            Some(hex) => {
-                Some(SecretKey::from_hex(&hex).map_err(|e| PyValueError::new_err(e.to_string()))?)
-            }
-            None => None,
-        };
-
+    fn new(host: PyObject) -> Self {
         let py_host = PySpilmanHost { py_host: host };
-        let inner = RustSpilmanBridge::new(py_host, secret_key);
+        let inner = RustSpilmanBridge::new(py_host);
 
-        Ok(SpilmanBridge { inner })
+        SpilmanBridge { inner }
     }
 
     /// Process an incoming payment request.

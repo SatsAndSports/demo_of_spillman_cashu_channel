@@ -126,6 +126,21 @@ pub struct SpilmanHostCallbacks {
     ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
     pub refresh_active_keysets:
         extern "C" fn(user_data: *mut libc::c_void, mint_url: *const c_char) -> c_int, // 1 = success, 0 = error (optional - can be no-op returning 1)
+    /// Compute channel secret: performs ECDH and returns hex. Returns 1=success, 0=error.
+    pub compute_channel_secret: extern "C" fn(
+        user_data: *mut libc::c_void,
+        charlie_pubkey_hex: *const c_char,
+        alice_pubkey_hex: *const c_char,
+        result_out: *mut *mut c_char,
+    ) -> c_int,
+    /// Sign with tweaked key: returns 1=success, 0=error. result_out gets signature hex.
+    pub sign_with_tweaked_key: extern "C" fn(
+        user_data: *mut libc::c_void,
+        signer_pubkey_hex: *const c_char,
+        message_hex: *const c_char,
+        tweak_scalar_hex: *const c_char,
+        result_out: *mut *mut c_char,
+    ) -> c_int,
     pub mark_channel_closed: extern "C" fn(
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
@@ -445,6 +460,61 @@ impl SpilmanHost for CGoSpilmanHost {
             Err("mark_channel_closed failed".to_string())
         }
     }
+
+    fn compute_channel_secret(
+        &self,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, String> {
+        let cp_c = CString::new(charlie_pubkey_hex).unwrap();
+        let ap_c = CString::new(alice_pubkey_hex).unwrap();
+        let mut result_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.compute_channel_secret)(
+            self.callbacks.user_data,
+            cp_c.as_ptr(),
+            ap_c.as_ptr(),
+            &mut result_ptr,
+        );
+
+        unsafe {
+            let result = CString::from_raw(result_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(result)
+            } else {
+                Err(result)
+            }
+        }
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String> {
+        let sp_c = CString::new(signer_pubkey_hex).unwrap();
+        let msg_c = CString::new(message_hex).unwrap();
+        let tw_c = CString::new(tweak_scalar_hex).unwrap();
+        let mut result_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.sign_with_tweaked_key)(
+            self.callbacks.user_data,
+            sp_c.as_ptr(),
+            msg_c.as_ptr(),
+            tw_c.as_ptr(),
+            &mut result_ptr,
+        );
+
+        unsafe {
+            let result = CString::from_raw(result_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(result)
+            } else {
+                Err(result)
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -458,17 +528,9 @@ pub struct BridgeInstance {
 #[no_mangle]
 pub unsafe extern "C" fn spilman_bridge_new(
     callbacks: SpilmanHostCallbacks,
-    server_secret_key_hex: *const c_char,
 ) -> *mut BridgeInstance {
-    let secret_key = if !server_secret_key_hex.is_null() {
-        let hex = CStr::from_ptr(server_secret_key_hex).to_str().unwrap();
-        SecretKey::from_hex(hex).ok()
-    } else {
-        None
-    };
-
     let host = CGoSpilmanHost { callbacks };
-    let bridge = SpilmanBridge::new(host, secret_key);
+    let bridge = SpilmanBridge::new(host);
 
     Box::into_raw(Box::new(BridgeInstance { bridge }))
 }

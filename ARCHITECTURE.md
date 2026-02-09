@@ -140,7 +140,7 @@ Core methods (`process_payment`, `fund_channel`, `validate_payment`) return type
 
 ### The SpilmanHost Trait
 
-The bridge delegates policy decisions to the host application:
+The bridge delegates policy decisions and cryptographic operations to the host application:
 
 ```rust
 trait SpilmanHost {
@@ -167,9 +167,20 @@ trait SpilmanHost {
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
     fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    
+    // Cryptographic operations (host owns the secret key)
+    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String>;
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
 }
 // See INTEGRATION.md for full method signatures and documentation.
 ```
+
+**Key design principle**: Like the client-side bridge, the server-side bridge never holds or sees the server's secret key. All operations requiring the key are delegated to the host via callbacks:
+
+- `compute_channel_secret`: Host performs ECDH between Charlie's secret and Alice's pubkey, then hashes with a domain separator
+- `sign_with_tweaked_key`: Host produces BIP-340 Schnorr signatures using `(secret + tweak)`, where the tweak is the P2BK blinding scalar computed by the bridge
+
+For hosts holding raw keys, convenience functions `compute_channel_secret_from_hex()` and `sign_with_tweaked_key_util()` are provided.
 
 ### Language Bridges
 
@@ -285,7 +296,7 @@ Alice                                Charlie                              Mint
 | `spilman/keysets_and_amounts.rs` | Fee calculations, amount decomposition |
 | `spilman/deterministic.rs` | Deterministic blinded output generation |
 | `spilman/balance_update.rs` | Balance update messages and Schnorr signatures |
-| `spilman/sender_and_receiver.rs` | `SpilmanChannelSender`, `SpilmanChannelReceiver`, `verify_valid_channel` |
+| `spilman/sender_and_receiver.rs` | `SpilmanChannelSender`, `verify_valid_channel` |
 | `spilman/established_channel.rs` | `EstablishedChannel` state container |
 | `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait (server-side) |
 | `spilman/client_bridge.rs` | `SpilmanClientBridge` and `SpilmanClientHost` trait (client-side) |

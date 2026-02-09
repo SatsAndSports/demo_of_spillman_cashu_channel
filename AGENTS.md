@@ -155,7 +155,7 @@ For detailed information, see:
 
 ## Quick Reference: SpilmanHost Trait
 
-The bridge delegates policy (pricing policy and data-storage policy) to the host via these hooks:
+The bridge delegates policy (pricing policy and data-storage policy) and cryptographic operations to the host via these hooks. The bridge never holds or sees the server's secret key.
 
 ```rust
 trait SpilmanHost {
@@ -182,6 +182,10 @@ trait SpilmanHost {
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
     fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    
+    // Cryptographic operations (host owns the secret key)
+    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String>;
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
 }
 ```
 

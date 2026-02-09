@@ -47,7 +47,7 @@ pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
 pub use params::{compute_channel_secret, ChannelParameters};
 pub use sender_and_receiver::{
     verify_valid_channel, ChannelVerificationError, ChannelVerificationResult,
-    SpilmanChannelReceiver, SpilmanChannelSender,
+    SpilmanChannelSender,
 };
 
 #[cfg(test)]

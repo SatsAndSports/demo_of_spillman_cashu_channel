@@ -19,7 +19,7 @@ Environment variables:
 
 from flask import Flask, request, jsonify
 from typing import Optional
-from cdk_spilman import SpilmanBridge, secret_key_to_pubkey
+from cdk_spilman import SpilmanBridge, secret_key_to_pubkey, compute_channel_secret, sign_with_tweaked_key_util
 import pyfiglet
 import json
 import base64
@@ -498,6 +498,35 @@ class AsciiArtHost:
         data = keyset_cache.get((mint, keyset_id))
         return data["info_json"] if data else None
 
+    def compute_channel_secret(self, charlie_pubkey_hex: str, alice_pubkey_hex: str) -> str:
+        """
+        Perform ECDH to compute the shared channel secret.
+
+        The server (Charlie) uses its own secret key with Alice's public key.
+
+        Args:
+            charlie_pubkey_hex: Charlie's public key (should match this server's pubkey).
+            alice_pubkey_hex: Alice's (sender's) public key.
+
+        Returns:
+            The shared secret as a hex string (64 chars).
+        """
+        return compute_channel_secret(self.secret_key, alice_pubkey_hex)
+
+    def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
+        """
+        Sign a message with a tweaked key (BIP-340 Schnorr).
+
+        Args:
+            signer_pubkey_hex: The signer's public key (should match this server's pubkey).
+            message_hex: SHA-256 hash of the message (32 bytes, hex).
+            tweak_scalar_hex: P2BK blinding scalar to add (32 bytes, hex).
+
+        Returns:
+            BIP-340 Schnorr signature (64 bytes, hex).
+        """
+        return sign_with_tweaked_key_util(self.secret_key, message_hex, tweak_scalar_hex)
+
     def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
         """
         Call the mint's /v1/swap endpoint.
@@ -570,7 +599,7 @@ class AsciiArtHost:
 
 # Initialize host and bridge
 host = AsciiArtHost(SECRET_KEY, MINT_URL)
-bridge = SpilmanBridge(host, SECRET_KEY)
+bridge = SpilmanBridge(host)
 
 
 @app.route("/channel/params")

@@ -118,6 +118,7 @@ async fn main() {
         stores.clone(),
         &mint_url,
         server_pubkey,
+        secret_key_hex.clone(),
         pricing.clone(),
         MIN_EXPIRY_SECONDS,
     ));
@@ -133,7 +134,7 @@ async fn main() {
     println!();
 
     // Create bridge
-    let bridge = SpilmanBridge::new((*host).clone(), Some(secret_key));
+    let bridge = SpilmanBridge::new((*host).clone());
 
     // Load figlet font
     let figlet_font = figlet_rs::FIGfont::standard().expect("Failed to load figlet font");

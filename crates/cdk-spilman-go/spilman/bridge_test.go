@@ -1,6 +1,7 @@
 package spilman
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -75,32 +76,22 @@ func (m *MockHost) MarkChannelClosed(channelId string, locktime, balance uint64,
 	return nil
 }
 
-func TestNewBridgeWithoutServerKey(t *testing.T) {
+func (m *MockHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+	return "", fmt.Errorf("not implemented in mock")
+}
+
+func (m *MockHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
+	return "", fmt.Errorf("not implemented in mock")
+}
+
+func TestNewBridge(t *testing.T) {
 	_, pubkey, err := GenerateKeypair()
 	if err != nil {
 		t.Fatalf("GenerateKeypair failed: %v", err)
 	}
 
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
-	if bridge == nil {
-		t.Fatal("NewBridge returned nil")
-	}
-	defer bridge.Free()
-
-	if bridge.ptr == nil {
-		t.Error("Bridge pointer should not be nil")
-	}
-}
-
-func TestNewBridgeWithServerKey(t *testing.T) {
-	secret, pubkey, err := GenerateKeypair()
-	if err != nil {
-		t.Fatalf("GenerateKeypair failed: %v", err)
-	}
-
-	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, secret)
+	bridge := NewBridge(host)
 	if bridge == nil {
 		t.Fatal("NewBridge returned nil")
 	}
@@ -114,7 +105,7 @@ func TestNewBridgeWithServerKey(t *testing.T) {
 func TestBridgeFree(t *testing.T) {
 	_, pubkey, _ := GenerateKeypair()
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
+	bridge := NewBridge(host)
 
 	// First free should work
 	bridge.Free()
@@ -131,7 +122,7 @@ func TestBridgeFree(t *testing.T) {
 func TestBridgeProcessPaymentRejectsInvalidJson(t *testing.T) {
 	_, pubkey, _ := GenerateKeypair()
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
+	bridge := NewBridge(host)
 	defer bridge.Free()
 
 	// Invalid JSON should return error
@@ -144,7 +135,7 @@ func TestBridgeProcessPaymentRejectsInvalidJson(t *testing.T) {
 func TestBridgeProcessPaymentRejectsMissingFields(t *testing.T) {
 	_, pubkey, _ := GenerateKeypair()
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
+	bridge := NewBridge(host)
 	defer bridge.Free()
 
 	// Missing required fields
@@ -157,7 +148,7 @@ func TestBridgeProcessPaymentRejectsMissingFields(t *testing.T) {
 func TestBridgeFundChannelRejectsInvalidJson(t *testing.T) {
 	_, pubkey, _ := GenerateKeypair()
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
+	bridge := NewBridge(host)
 	defer bridge.Free()
 
 	_, err := bridge.FundChannel("not valid json")
@@ -169,7 +160,7 @@ func TestBridgeFundChannelRejectsInvalidJson(t *testing.T) {
 func TestBridgeValidatePaymentRejectsInvalidJson(t *testing.T) {
 	_, pubkey, _ := GenerateKeypair()
 	host := &MockHost{receiverPubkey: pubkey}
-	bridge := NewBridge(host, "")
+	bridge := NewBridge(host)
 	defer bridge.Free()
 
 	_, err := bridge.ValidatePayment("not valid json", "{}")

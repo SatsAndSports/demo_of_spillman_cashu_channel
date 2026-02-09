@@ -114,6 +114,23 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = refreshActiveKeysets)]
     fn refresh_active_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
+
+    /// Compute the ECDH-derived channel secret
+    #[wasm_bindgen(method, catch, js_name = computeChannelSecret)]
+    fn compute_channel_secret(
+        this: &JsSpilmanHost,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, JsValue>;
+
+    /// Sign a message with the tweaked (P2BK-blinded) key
+    #[wasm_bindgen(method, catch, js_name = signWithTweakedKey)]
+    fn sign_with_tweaked_key(
+        this: &JsSpilmanHost,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, JsValue>;
 }
 
 struct WasmSpilmanHostProxy {
@@ -291,6 +308,27 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         )
     }
 
+    fn compute_channel_secret(
+        &self,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, String> {
+        self.js_host
+            .compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex)
+            .map_err(|e| e.as_string().unwrap_or_else(|| "compute_channel_secret failed".to_string()))
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String> {
+        self.js_host
+            .sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex)
+            .map_err(|e| e.as_string().unwrap_or_else(|| "sign_with_tweaked_key failed".to_string()))
+    }
+
     fn mark_channel_closed(
         &self,
         channel_id: &str,
@@ -323,27 +361,18 @@ pub struct WasmSpilmanBridge {
 
 #[wasm_bindgen]
 impl WasmSpilmanBridge {
+    /// Create a new WasmSpilmanBridge.
+    ///
+    /// The bridge itself is keyless — all secret key operations are delegated
+    /// to the host via `computeChannelSecret()` and `signWithTweakedKey()`.
     #[wasm_bindgen(constructor)]
-    pub fn new(
-        js_host: JsSpilmanHost,
-        server_secret_key_hex: Option<String>,
-    ) -> Result<WasmSpilmanBridge, JsValue> {
-        let secret_key = match server_secret_key_hex {
-            Some(hex) => {
-                Some(SecretKey::from_hex(&hex).map_err(|e| JsValue::from_str(&e.to_string()))?)
-            }
-            None => None,
-        };
-
-        Ok(WasmSpilmanBridge {
-            bridge: SpilmanBridge::new(
-                WasmSpilmanHostProxy {
-                    js_host: js_host.clone().unchecked_into(),
-                },
-                secret_key,
-            ),
+    pub fn new(js_host: JsSpilmanHost) -> WasmSpilmanBridge {
+        WasmSpilmanBridge {
+            bridge: SpilmanBridge::new(WasmSpilmanHostProxy {
+                js_host: js_host.clone().unchecked_into(),
+            }),
             js_host,
-        })
+        }
     }
 
     /// Process a payment and record usage
@@ -845,6 +874,28 @@ pub fn compute_channel_secret(
     their_pubkey_hex: &str,
 ) -> Result<String, JsValue> {
     cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Sign a message with a tweaked (P2BK-blinded) key
+///
+/// This is the standalone utility version that SpilmanHost implementations
+/// can call from their `signWithTweakedKey` method.
+///
+/// # Arguments
+/// * `secret_key_hex` - The signer's secret key (32 bytes, hex-encoded)
+/// * `message_hex` - SHA-256 hash of the message to sign (32 bytes, hex-encoded)
+/// * `tweak_scalar_hex` - The P2BK blinding scalar to add (32 bytes, hex-encoded)
+///
+/// # Returns
+/// The BIP-340 Schnorr signature (64 bytes, hex-encoded)
+#[wasm_bindgen]
+pub fn sign_with_tweaked_key(
+    secret_key_hex: &str,
+    message_hex: &str,
+    tweak_scalar_hex: &str,
+) -> Result<String, JsValue> {
+    cdk::spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex)
         .map_err(|e| JsValue::from_str(&e))
 }
 

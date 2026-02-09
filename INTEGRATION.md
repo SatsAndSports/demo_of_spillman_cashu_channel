@@ -327,6 +327,31 @@ trait SpilmanHost {
     /// Returns the response JSON on success.
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) 
         -> Result<String, String>;
+
+    // ==================== Cryptographic Operations ====================
+    // The bridge never holds the server's secret key. These callbacks
+    // allow the host to perform key operations without exposing the key.
+    
+    /// Compute the hashed ECDH channel secret.
+    /// The host performs ECDH(charlie_secret, alice_pubkey) and hashes with
+    /// domain separator "Cashu_Spilman_channel_secret_v1".
+    /// For hosts holding raw keys, use compute_channel_secret_from_hex().
+    fn compute_channel_secret(
+        &self,
+        charlie_pubkey_hex: &str,   // Receiver's (your server's) pubkey - identifies which key
+        alice_pubkey_hex: &str,     // Sender's public key
+    ) -> Result<String, String>;
+    
+    /// Sign a message with a tweaked key (BIP-340 Schnorr).
+    /// The bridge computes the tweak (P2BK blinding scalar) and message hash,
+    /// then asks the host to produce a signature using (secret + tweak).
+    /// For hosts holding raw keys, use sign_with_tweaked_key_util().
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,    // Identifies which key to use
+        message_hex: &str,           // SHA-256 hash (32 bytes, hex)
+        tweak_scalar_hex: &str,      // P2BK blinding scalar (32 bytes, hex)
+    ) -> Result<String, String>;
 }
 ```
 
@@ -417,25 +442,27 @@ function updateBalance(channelId: string, balance: number, signature: string) {
 
 ### Creating the Bridge
 
+The bridge is keyless — it never holds or sees the server's secret key. Cryptographic operations are delegated to the host via `compute_channel_secret` and `sign_with_tweaked_key` callbacks.
+
 ```typescript
 // TypeScript (WASM)
 import { SpilmanBridge } from "cdk-wasm";
 
-const bridge = new SpilmanBridge(spilmanHooks, serverSecretKeyHex);
+const bridge = new SpilmanBridge(spilmanHooks);
 ```
 
 ```rust
 // Rust
 use cdk::spilman::{SpilmanBridge, SpilmanHost};
 
-let bridge = SpilmanBridge::new(my_host, Some(server_secret_key));
+let bridge = SpilmanBridge::new(my_host);
 ```
 
 ```python
 # Python
 from cdk_spilman_python import SpilmanBridge
 
-bridge = SpilmanBridge(hooks, server_secret_key_hex)
+bridge = SpilmanBridge(hooks)
 ```
 
 ### Key Methods
