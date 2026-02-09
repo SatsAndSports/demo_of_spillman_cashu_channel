@@ -42,7 +42,7 @@ typedef struct {
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
     char* (*get_keyset_info)(void*, const char*, const char*);
     int (*call_mint_swap)(void*, const char*, const char*, char**);
-    int (*refresh_active_keysets)(void*, const char*);
+    int (*refresh_all_keysets)(void*, const char*);
     int (*compute_channel_secret)(void*, const char*, const char*, char**);
     int (*sign_with_tweaked_key)(void*, const char*, const char*, const char*, char**);
     int (*mark_channel_closed)(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
@@ -409,11 +409,11 @@ func go_call_mint_swap(userData unsafe.Pointer, mintUrl *C.char, swapReqJson *C.
 	return 1
 }
 
-//export go_refresh_active_keysets
-func go_refresh_active_keysets(userData unsafe.Pointer, mintUrl *C.char) C.int {
+//export go_refresh_all_keysets
+func go_refresh_all_keysets(userData unsafe.Pointer, mintUrl *C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	err := host.RefreshActiveKeysets(C.GoString(mintUrl))
+	err := host.RefreshAllKeysets(C.GoString(mintUrl))
 	if err != nil {
 		return 0
 	}

@@ -367,9 +367,9 @@ func (h *AsciiArtHost) CallMintSwap(mintUrl, swapRequestJson string) (string, er
 	return string(body), nil
 }
 
-func (h *AsciiArtHost) RefreshActiveKeysets(mintUrl string) error {
-	log.Printf("  [Host] RefreshActiveKeysets for %s\n", mintUrl)
-	refreshActiveKeysets(mintUrl)
+func (h *AsciiArtHost) RefreshAllKeysets(mintUrl string) error {
+	log.Printf("  [Host] RefreshAllKeysets for %s\n", mintUrl)
+	refreshAllKeysets(mintUrl)
 	return nil
 }
 
@@ -506,7 +506,7 @@ func initializeKeysets() {
 	log.Printf("Cached %d keysets\n", len(keysetCache))
 }
 
-func refreshActiveKeysets(mintUrl string) {
+func refreshAllKeysets(mintUrl string) {
 	log.Printf("  [Keyset] Refreshing keysets from %s...\n", mintUrl)
 	resp, err := http.Get(mintUrl + "/v1/keysets")
 	if err != nil {

@@ -122,7 +122,7 @@ type SpilmanHost interface {
     GetActiveKeysetIds(mint, unit string) []string
     GetKeysetInfo(mint, keysetId string) (string, bool)
     CallMintSwap(mintUrl, swapRequestJson string) (string, error)
-    RefreshActiveKeysets(mintUrl string) error
+    RefreshAllKeysets(mintUrl string) error
 }
 ```
 

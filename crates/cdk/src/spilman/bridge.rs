@@ -131,26 +131,31 @@ pub trait SpilmanHost {
     /// Get active keyset IDs for a mint and unit
     /// There is no requirement that this be up-to-date
     /// If the bridge concludes that the ids might be
-    /// out of date, it may call 'refresh_active_keysets'
+    /// out of date, it may call 'refresh_all_keysets'
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
 
     /// Get full KeysetInfo JSON for a specific keyset
     /// There is no requirement that this be complete
     /// If the bridge concludes that the data maybe be
-    /// out of date, it may call 'refresh_active_keysets'
+    /// out of date, it may call 'refresh_all_keysets'
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
 
-    /// Refresh the active keyset cache for a mint
+    /// Refresh the keyset cache for a mint (both active and inactive keysets).
     ///
     /// Called when a swap fails (possibly due to stale keyset data).
-    /// The host should re-fetch keysets from the mint and update its cache.
+    /// The host should re-fetch ALL keysets from the mint and update its cache,
+    /// including inactive (deactivated) keysets. Retaining inactive keyset data
+    /// is important because existing channels may have been funded with a keyset
+    /// that has since been deactivated — the bridge still needs to look up its
+    /// key data via `get_keyset_info`.
+    ///
     /// Returns Ok(()) on success, or an error string on failure.
     ///
     /// Note: This is primarily used by async WASM bindings which implement
     /// retry logic. The sync Rust implementation returns an error by default.
-    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String> {
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         let _ = mint;
-        Err("refresh_active_keysets not implemented (sync)".to_string())
+        Err("refresh_all_keysets not implemented (sync)".to_string())
     }
 
     /// Call the mint's /v1/swap endpoint
@@ -1945,7 +1950,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     ///
     /// After this succeeds, the caller should:
     /// 1. POST `swap_request` to `{mint_url}/v1/swap`
-    /// 2. On mint error: call `refresh_active_keysets()`, re-call this method, retry step 1
+    /// 2. On mint error: call `refresh_all_keysets()`, re-call this method, retry step 1
     /// 3. Call `unblind_and_verify_dleq()` with the mint response
     /// 4. Call `host.mark_channel_closed()` with the unblinded proofs
     ///
@@ -2316,7 +2321,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             Ok(success) => Ok(success),
             Err(CloseError::MintRejected { mint_error, .. }) => {
                 // 8. Refresh keysets and retry
-                if self.host.refresh_active_keysets(&mint_url).is_err() {
+                if self.host.refresh_all_keysets(&mint_url).is_err() {
                     // Refresh failed, return original error
                     return Err(CloseError::mint_rejected(mint_error));
                 }
@@ -2954,7 +2959,7 @@ mod tests {
     /// Mock host that simulates keyset refresh behavior
     ///
     /// Initially returns `stale_keyset_id` as the active keyset.
-    /// After `refresh_active_keysets()` is called, returns `fresh_keyset_id`.
+    /// After `refresh_all_keysets()` is called, returns `fresh_keyset_id`.
     /// This simulates the real-world scenario where a mint deactivates a keyset
     /// and the server needs to refresh its cache to discover the new active keyset.
     struct RefreshableMockHost {
@@ -3066,7 +3071,7 @@ mod tests {
             self.keyset_infos.get(keyset_id).cloned()
         }
 
-        fn refresh_active_keysets(&self, _mint: &str) -> Result<(), String> {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
             // Simulate fetching from mint and discovering new active keyset
             *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
             self.refresh_count.set(self.refresh_count.get() + 1);
@@ -3120,11 +3125,11 @@ mod tests {
         }
     }
 
-    /// Test: Cooperative close uses refreshed keysets after refresh_active_keysets()
+    /// Test: Cooperative close uses refreshed keysets after refresh_all_keysets()
     ///
     /// Simulates the retry scenario where:
     /// 1. First prepare uses stale keyset (which would fail at mint)
-    /// 2. After refresh_active_keysets(), second prepare uses fresh keyset
+    /// 2. After refresh_all_keysets(), second prepare uses fresh keyset
     ///
     /// This verifies the retry logic works correctly - when a swap fails due to
     /// stale keyset, refreshing and re-preparing will use the new keyset.
@@ -3258,10 +3263,10 @@ mod tests {
             "Refresh should not have been called yet"
         );
 
-        // STEP 2: Simulate mint error - call refresh_active_keysets
+        // STEP 2: Simulate mint error - call refresh_all_keysets
         bridge
             .host()
-            .refresh_active_keysets("https://mint.host")
+            .refresh_all_keysets("https://mint.host")
             .expect("Refresh should succeed");
 
         assert_eq!(
@@ -3269,7 +3274,7 @@ mod tests {
             1,
             "Refresh should have been called once"
         );
-        println!("✓ refresh_active_keysets() called");
+        println!("✓ refresh_all_keysets() called");
 
         // STEP 3: Second prepare - should now use fresh keyset
         let prepared_second = bridge
@@ -3298,7 +3303,7 @@ mod tests {
         println!("✓ Retry would use different keyset after refresh");
     }
 
-    /// Test: Unilateral close uses refreshed keysets after refresh_active_keysets()
+    /// Test: Unilateral close uses refreshed keysets after refresh_all_keysets()
     ///
     /// Same pattern as cooperative close test, but for server-initiated close.
     ///
@@ -3423,11 +3428,11 @@ mod tests {
         // STEP 2: Simulate mint error - call refresh
         bridge
             .host()
-            .refresh_active_keysets("https://mint.host")
+            .refresh_all_keysets("https://mint.host")
             .expect("Refresh should succeed");
 
         assert_eq!(bridge.host().refresh_count.get(), 1);
-        println!("✓ refresh_active_keysets() called");
+        println!("✓ refresh_all_keysets() called");
 
         // STEP 3: Second prepare - should use fresh keyset
         let prepared_second = bridge

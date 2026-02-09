@@ -255,7 +255,7 @@ export const spilmanHooks = {
     console.log(`  [Host] Channel ${channelId.substring(0, 8)} closed. Earned: ${receiverSumNum} sat`);
   },
 
-  refreshActiveKeysets: async (mint: string): Promise<void> => {
+  refreshAllKeysets: async (mint: string): Promise<void> => {
     console.log(`  [Host] Refreshing keysets for mint: ${mint}`);
     keysetCache.clearForMint(mint);
     try {

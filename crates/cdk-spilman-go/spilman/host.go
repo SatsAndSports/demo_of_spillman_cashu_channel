@@ -7,7 +7,7 @@ package spilman
 // - Validate incoming requests (ReceiverKeyIsAcceptable, MintAndKeysetIsAcceptable)
 // - Store and retrieve channel data (GetFundingAndParams, SaveFunding, etc.)
 // - Determine pricing (GetAmountDue, GetChannelPolicy)
-// - Communicate with the mint (CallMintSwap, RefreshActiveKeysets)
+// - Communicate with the mint (CallMintSwap, RefreshAllKeysets)
 // - Track channel lifecycle (GetChannelState, MarkChannelClosing, MarkChannelClosed)
 type SpilmanHost interface {
 	// ReceiverKeyIsAcceptable returns true if the given receiver public key is acceptable.
@@ -72,9 +72,11 @@ type SpilmanHost interface {
 	// This is called during channel close to exchange the channel proofs for new proofs.
 	CallMintSwap(mintUrl, swapRequestJson string) (string, error)
 
-	// RefreshActiveKeysets fetches and caches the active keysets from the mint.
-	// Called when a keyset is not found in the local cache.
-	RefreshActiveKeysets(mintUrl string) error
+	// RefreshAllKeysets re-fetches ALL keysets (active and inactive) from the mint.
+	// Called when a swap fails, possibly due to stale keyset data.
+	// The host should retain inactive keyset data because existing channels
+	// may have been funded with a now-deactivated keyset.
+	RefreshAllKeysets(mintUrl string) error
 
 	// MarkChannelClosed marks a channel as fully CLOSED after a successful swap.
 	// Called with the final proof distribution for record-keeping.

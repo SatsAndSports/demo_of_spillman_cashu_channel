@@ -124,7 +124,7 @@ pub struct SpilmanHostCallbacks {
         swap_request_json: *const c_char,
         response_out: *mut *mut c_char,
     ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
-    pub refresh_active_keysets:
+    pub refresh_all_keysets:
         extern "C" fn(user_data: *mut libc::c_void, mint_url: *const c_char) -> c_int, // 1 = success, 0 = error (optional - can be no-op returning 1)
     /// Compute channel secret: performs ECDH and returns hex. Returns 1=success, 0=error.
     pub compute_channel_secret: extern "C" fn(
@@ -419,13 +419,13 @@ impl SpilmanHost for CGoSpilmanHost {
         }
     }
 
-    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String> {
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         let mint_c = CString::new(mint).unwrap();
-        let ok = (self.callbacks.refresh_active_keysets)(self.callbacks.user_data, mint_c.as_ptr());
+        let ok = (self.callbacks.refresh_all_keysets)(self.callbacks.user_data, mint_c.as_ptr());
         if ok != 0 {
             Ok(())
         } else {
-            Err("refresh_active_keysets failed".to_string())
+            Err("refresh_all_keysets failed".to_string())
         }
     }
 

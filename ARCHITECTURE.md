@@ -165,7 +165,7 @@ trait SpilmanHost {
     // Keyset cache and mint communication
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
-    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
     
     // Cryptographic operations (host owns the secret key)
