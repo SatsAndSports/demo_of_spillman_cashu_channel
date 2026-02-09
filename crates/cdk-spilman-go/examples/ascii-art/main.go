@@ -143,7 +143,8 @@ var (
 // ============================================================================
 
 type AsciiArtHost struct {
-	pubkey string
+	pubkey    string
+	secretKey string
 }
 
 func (h *AsciiArtHost) ReceiverKeyIsAcceptable(pubkeyHex string) bool {
@@ -389,6 +390,16 @@ func (h *AsciiArtHost) MarkChannelClosed(channelId string, locktime, balance uin
 		"sender_sum":      senderSum,
 	}
 	return nil
+}
+
+func (h *AsciiArtHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+	log.Printf("  [Host] ComputeChannelSecret: alice=%s... charlie=%s...\n", alicePubkeyHex[:16], charliePubkeyHex[:16])
+	return spilman.ComputeChannelSecret(h.secretKey, alicePubkeyHex)
+}
+
+func (h *AsciiArtHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
+	log.Printf("  [Host] SignWithTweakedKey: signer=%s...\n", signerPubkeyHex[:16])
+	return spilman.SignWithTweakedKeyUtil(h.secretKey, messageHex, tweakScalarHex)
 }
 
 // ============================================================================
@@ -669,8 +680,8 @@ func runServer() {
 	log.Printf("Mint version: %s\n", getMintVersion(MINT_URL))
 
 	pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
-	host := &AsciiArtHost{pubkey: pubkey}
-	bridge := spilman.NewBridge(host, SERVER_SECRET_KEY)
+	host := &AsciiArtHost{pubkey: pubkey, secretKey: SERVER_SECRET_KEY}
+	bridge := spilman.NewBridge(host)
 	defer bridge.Free()
 
 	http.HandleFunc("/channel/params", func(w http.ResponseWriter, r *http.Request) {

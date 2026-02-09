@@ -9,7 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cdk::nuts::SecretKey;
 use cdk::spilman::{
-    channel_parameters_get_channel_id, compute_channel_secret_from_hex, create_funding_outputs,
+    channel_parameters_get_channel_id, compute_channel_secret_from_hex,
+    compute_funding_token_amount, create_funding_outputs,
 };
 
 fn get_mint_url() -> String {
@@ -123,13 +124,19 @@ fn test_funding_outputs_and_channel_id() {
         .unwrap()
         .as_secs();
 
+    let capacity = 100u64;
+    let maximum_amount = 64u64;
+    let funding_token_amount = compute_funding_token_amount(capacity, &keyset_json, maximum_amount)
+        .expect("Failed to compute funding token amount");
+
     let params = serde_json::json!({
         "alice_pubkey": alice_pubkey.to_hex(),
         "charlie_pubkey": receiver_pubkey.to_hex(),
         "mint": mint_url,
         "unit": "sat",
-        "capacity": 100u64,
-        "maximum_amount": 64u64,
+        "capacity": capacity,
+        "maximum_amount": maximum_amount,
+        "funding_token_amount": funding_token_amount,
         "locktime": now + 7200,
         "setup_timestamp": now,
         "sender_nonce": format!("test-rust-{}", now),
@@ -198,13 +205,19 @@ fn test_channel_id_deterministic() {
         .unwrap()
         .as_secs();
 
+    let capacity = 100u64;
+    let maximum_amount = 64u64;
+    let funding_token_amount = compute_funding_token_amount(capacity, &keyset_json, maximum_amount)
+        .expect("Failed to compute funding token amount");
+
     let params = serde_json::json!({
         "alice_pubkey": alice_pubkey.to_hex(),
         "charlie_pubkey": receiver_pubkey.to_hex(),
         "mint": mint_url,
         "unit": "sat",
-        "capacity": 100u64,
-        "maximum_amount": 64u64,
+        "capacity": capacity,
+        "maximum_amount": maximum_amount,
+        "funding_token_amount": funding_token_amount,
         "locktime": now + 7200,
         "setup_timestamp": now,
         "sender_nonce": "deterministic-test",

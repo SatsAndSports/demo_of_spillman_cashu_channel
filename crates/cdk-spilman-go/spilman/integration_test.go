@@ -239,6 +239,7 @@ func (h *testClientHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex s
 type testServerHost struct {
 	keysetID       string
 	keysetInfoJSON string
+	secretKey      string
 	mu             sync.Mutex
 	fundingData    map[string]serverFunding
 	payments       map[string]serverPayment
@@ -256,10 +257,11 @@ type serverPayment struct {
 	signature string
 }
 
-func newTestServerHost(keysetID, keysetInfoJSON string) *testServerHost {
+func newTestServerHost(keysetID, keysetInfoJSON, secretKey string) *testServerHost {
 	return &testServerHost{
 		keysetID:       keysetID,
 		keysetInfoJSON: keysetInfoJSON,
+		secretKey:      secretKey,
 		fundingData:    make(map[string]serverFunding),
 		payments:       make(map[string]serverPayment),
 	}
@@ -340,6 +342,14 @@ func (h *testServerHost) RefreshActiveKeysets(mintUrl string) error { return nil
 
 func (h *testServerHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
 	return nil
+}
+
+func (h *testServerHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+	return ComputeChannelSecret(h.secretKey, alicePubkeyHex)
+}
+
+func (h *testServerHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
+	return SignWithTweakedKeyUtil(h.secretKey, messageHex, tweakScalarHex)
 }
 
 // httpCallback is a simple HTTP callback for use with MintProofsFromMint.
@@ -551,8 +561,8 @@ func TestClientBridge(t *testing.T) {
 	// Step 5: Server-side validation (end-to-end!)
 	// ================================================================
 
-	serverHost := newTestServerHost(keysetID, string(keysetJSON))
-	serverBridge := NewBridge(serverHost, charlieSecret)
+	serverHost := newTestServerHost(keysetID, string(keysetJSON), charlieSecret)
+	serverBridge := NewBridge(serverHost)
 	if serverBridge == nil {
 		t.Fatal("NewBridge returned nil")
 	}

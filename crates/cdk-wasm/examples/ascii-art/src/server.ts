@@ -16,7 +16,7 @@ import express from "express";
 import figlet from "figlet";
 import * as secp from "@noble/secp256k1";
 import { randomBytes } from "crypto";
-import { WasmSpilmanBridge } from "./wasm/cdk_wasm.js";
+import { WasmSpilmanBridge, compute_channel_secret, sign_with_tweaked_key } from "./wasm/cdk_wasm.js";
 import {
   channelFunding,
   channelBalance,
@@ -265,13 +265,21 @@ export const spilmanHooks = {
       console.error(`  [Host] Failed to refresh keysets: ${e}`);
     }
   },
+
+  computeChannelSecret: (charliePubkeyHex: string, alicePubkeyHex: string): string => {
+    return compute_channel_secret(SECRET_KEY, alicePubkeyHex);
+  },
+
+  signWithTweakedKey: (signerPubkeyHex: string, messageHex: string, tweakScalarHex: string): string => {
+    return sign_with_tweaked_key(SECRET_KEY, messageHex, tweakScalarHex);
+  },
 };
 
 // ============================================================================
 // Initialize Bridge
 // ============================================================================
 
-const bridge = new WasmSpilmanBridge(spilmanHooks, SECRET_KEY);
+const bridge = new WasmSpilmanBridge(spilmanHooks);
 
 // ============================================================================
 // Keyset Initialization

@@ -257,9 +257,10 @@ class MockClientHost:
 class MockServerHost:
     """Mock implementation of SpilmanHost for server-side validation in tests."""
 
-    def __init__(self, keyset_id: str, keyset_info_json: str):
+    def __init__(self, keyset_id: str, keyset_info_json: str, secret_key_hex: str):
         self.keyset_id = keyset_id
         self.keyset_info_json = keyset_info_json
+        self.secret_key_hex = secret_key_hex
         self.funding_data: dict[str, tuple] = {}
         self.payments: dict[str, tuple] = {}
 
@@ -335,6 +336,12 @@ class MockServerHost:
 
     def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
         raise RuntimeError("not used in this test")
+
+    def compute_channel_secret(self, charlie_pubkey_hex: str, alice_pubkey_hex: str) -> str:
+        return cdk_spilman.compute_channel_secret(self.secret_key_hex, alice_pubkey_hex)
+
+    def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
+        return cdk_spilman.sign_with_tweaked_key_util(self.secret_key_hex, message_hex, tweak_scalar_hex)
 
     def refresh_active_keysets(self, mint: str):
         pass
@@ -468,8 +475,8 @@ class TestClientBridge:
         # Step 5: Server-side validation (end-to-end!)
         # ================================================================
 
-        server_host = MockServerHost(keyset_id, keyset_json)
-        server_bridge = cdk_spilman.SpilmanBridge(server_host, charlie_secret)
+        server_host = MockServerHost(keyset_id, keyset_json, charlie_secret)
+        server_bridge = cdk_spilman.SpilmanBridge(server_host)
 
         # First payment: header with funding (server learns about channel)
         payment_result = server_bridge.process_payment(decoded.decode(), '{"type":"test"}')

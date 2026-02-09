@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 
 use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
-    DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo, SpilmanChannelReceiver,
+    DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo,
 };
-use crate::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SecretKey, SwapRequest};
+use crate::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SwapRequest};
 use crate::util::hex;
 use std::str::FromStr;
 
@@ -184,12 +184,54 @@ pub trait SpilmanHost {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> Result<(), String>;
+
+    /// Compute the ECDH-derived channel secret.
+    ///
+    /// The host performs ECDH between the server's secret key and Alice's public key,
+    /// then hashes the result with domain separator "Cashu_Spilman_channel_secret_v1".
+    ///
+    /// # Arguments
+    /// * `charlie_pubkey_hex` - The server's (Charlie's) public key, hex-encoded
+    /// * `alice_pubkey_hex` - The client's (Alice's) public key, hex-encoded
+    ///
+    /// # Returns
+    /// The 32-byte channel secret as a hex string, or an error.
+    fn compute_channel_secret(
+        &self,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, String>;
+
+    /// Sign a message with the tweaked (P2BK-blinded) server key.
+    ///
+    /// The bridge computes the P2BK blinding tweak scalar and the SIG_ALL message hash,
+    /// then delegates actual signing to the host. The host must:
+    /// 1. Look up the secret key for `signer_pubkey_hex`
+    /// 2. Handle BIP-340 parity (negate secret if pubkey has odd Y)
+    /// 3. Add `tweak_scalar_hex` to the (possibly negated) secret key
+    /// 4. Produce a BIP-340 Schnorr signature over `message_hex`
+    ///
+    /// The helper function `sign_with_tweaked_key_util` in `bindings.rs` implements
+    /// this logic and can be called by host implementations.
+    ///
+    /// # Arguments
+    /// * `signer_pubkey_hex` - The server's public key (identifies which key to sign with)
+    /// * `message_hex` - SHA-256 hash of the SIG_ALL message (32 bytes, hex)
+    /// * `tweak_scalar_hex` - The P2BK blinding scalar (32 bytes, hex)
+    ///
+    /// # Returns
+    /// BIP-340 Schnorr signature (64 bytes, hex), or an error.
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String>;
 }
 
 /// Bridge for processing Spilman payments
 pub struct SpilmanBridge<H: SpilmanHost> {
     host: H,
-    server_secret_key: Option<SecretKey>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -993,11 +1035,14 @@ pub fn unblind_and_verify_dleq(
 }
 
 impl<H: SpilmanHost> SpilmanBridge<H> {
-    pub fn new(host: H, server_secret_key: Option<SecretKey>) -> Self {
-        Self {
-            host,
-            server_secret_key,
-        }
+    /// Create a new SpilmanBridge.
+    ///
+    /// The bridge itself is stateless and keyless — all secret key operations
+    /// are delegated to the host via `compute_channel_secret()` and
+    /// `sign_with_tweaked_key()`. The bridge never holds or sees the server's
+    /// secret key.
+    pub fn new(host: H) -> Self {
+        Self { host }
     }
 
     /// Get a reference to the host
@@ -1372,11 +1417,6 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         balance: u64,
         signature: &str,
     ) -> Result<(String, String, String, String), BridgeError> {
-        let server_secret_key = self
-            .server_secret_key
-            .as_ref()
-            .ok_or(BridgeError::ServerMisconfigured("no secret key".into()))?;
-
         let params_json = params_val.to_string();
         let unit = params_val["unit"]
             .as_str()
@@ -1472,18 +1512,26 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         let alice_pubkey_hex = params_val["alice_pubkey"]
             .as_str()
             .ok_or(BridgeError::InvalidRequest("missing alice_pubkey".into()))?;
-        let alice_pubkey = PublicKey::from_hex(alice_pubkey_hex)
+        // Validate alice_pubkey is a valid pubkey (without storing it)
+        PublicKey::from_hex(alice_pubkey_hex)
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
 
-        // 5. Compute shared secret
-        let channel_secret = super::compute_channel_secret(server_secret_key, &alice_pubkey);
-        let channel_secret_hex = hex::encode(channel_secret);
+        // 5. Compute shared secret (delegated to host)
+        let channel_secret_hex = self
+            .host
+            .compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex)
+            .map_err(BridgeError::ServerMisconfigured)?;
 
         // 6. Parse keyset info
         let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(BridgeError::InvalidRequest)?;
 
         // 7. Verify channel_id matches
+        let channel_secret_bytes = hex::decode(&channel_secret_hex)
+            .map_err(|e| BridgeError::Internal(format!("Invalid channel secret hex: {}", e)))?;
+        let channel_secret: [u8; 32] = channel_secret_bytes
+            .try_into()
+            .map_err(|_| BridgeError::Internal("Channel secret must be 32 bytes".to_string()))?;
         let params = ChannelParameters::from_json_with_channel_secret(
             &params_json,
             keyset_info.clone(),
@@ -1719,20 +1767,63 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         }
 
-        // 9. Create channel and receiver, verify + add Charlie's signature
+        // 9. Verify Alice's signature, then add Charlie's signature (delegated to host)
         let channel = EstablishedChannel::new(params.clone(), funding_proofs)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        let server_secret_key = self
-            .server_secret_key
-            .as_ref()
-            .ok_or(BridgeError::ServerMisconfigured("no secret key".into()))?;
-
-        let receiver = SpilmanChannelReceiver::new(server_secret_key.clone(), channel);
-
-        let signed_swap_request = receiver
-            .add_second_signature(&balance_update, swap_request)
+        // 9a. Verify Alice's signature (public-key-only operation)
+        balance_update
+            .verify_sender_signature(&channel)
             .map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
+
+        // 9b. Compute the SIG_ALL message hash and receiver tweak scalar
+        {
+            use crate::nuts::nut10::SpendingConditionVerification;
+            use bitcoin::hashes::{sha256, Hash};
+
+            let msg = swap_request.sig_all_msg_to_sign();
+            let msg_hash = sha256::Hash::hash(msg.as_bytes());
+            let message_hex = hex::encode(msg_hash.to_byte_array());
+
+            let tweak = params
+                .derive_receiver_blinding_scalar_for_stage1()
+                .map_err(|e| BridgeError::Internal(e.to_string()))?;
+            let tweak_scalar_hex = hex::encode(tweak.to_be_bytes());
+
+            let charlie_pubkey_hex = params.charlie_pubkey.to_hex();
+
+            // 9c. Delegate signing to host
+            let signature_hex = self
+                .host
+                .sign_with_tweaked_key(&charlie_pubkey_hex, &message_hex, &tweak_scalar_hex)
+                .map_err(BridgeError::ServerMisconfigured)?;
+
+            // 9d. Attach signature to swap request witness
+            let charlie_sig: bitcoin::secp256k1::schnorr::Signature =
+                signature_hex.parse().map_err(
+                    |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
+                        BridgeError::InvalidSignature(format!("Invalid host signature: {}", e))
+                    },
+                )?;
+
+            let first_input = swap_request
+                .inputs_mut()
+                .first_mut()
+                .ok_or_else(|| BridgeError::Internal("swap request has no inputs".into()))?;
+
+            match first_input.witness.as_mut() {
+                Some(witness) => {
+                    witness.add_signatures(vec![charlie_sig.to_string()]);
+                }
+                None => {
+                    use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
+                    let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
+                    p2pk_witness.add_signatures(vec![charlie_sig.to_string()]);
+                    first_input.witness = Some(p2pk_witness);
+                }
+            }
+        }
+        let signed_swap_request = swap_request;
 
         // 10. Get expected total (value after stage 1 fees) using the OUTPUT keyset
         let expected_total = params
@@ -2429,7 +2520,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nuts::{Id, PublicKey};
+    use crate::nuts::{Id, PublicKey, SecretKey};
 
     struct MockHost {
         receiver_acceptable: bool,
@@ -2546,6 +2637,23 @@ mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
+
+        fn compute_channel_secret(
+            &self,
+            _charlie_pubkey_hex: &str,
+            _alice_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            Err("not implemented".to_string())
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            _message_hex: &str,
+            _tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            Err("not implemented".to_string())
+        }
     }
 
     #[test]
@@ -2554,7 +2662,7 @@ mod tests {
             receiver_acceptable: false,
             mint_acceptable: true,
         };
-        let bridge = SpilmanBridge::new(host, Some(SecretKey::generate()));
+        let bridge = SpilmanBridge::new(host);
 
         let params = serde_json::json!({
             "alice_pubkey": SecretKey::generate().public_key().to_hex(),
@@ -2599,7 +2707,7 @@ mod tests {
             receiver_acceptable: true,
             mint_acceptable: false,
         };
-        let bridge = SpilmanBridge::new(host, Some(SecretKey::generate()));
+        let bridge = SpilmanBridge::new(host);
 
         let params = serde_json::json!({
             "alice_pubkey": SecretKey::generate().public_key().to_hex(),
@@ -2643,6 +2751,7 @@ mod tests {
         pub keyset_infos: std::collections::HashMap<Id, String>,
         pub funding_data: std::collections::HashMap<String, (String, String, String, String)>,
         pub amount_due: u64,
+        pub charlie_secret_hex: String,
     }
 
     impl SpilmanHost for FlexibleMockHost {
@@ -2742,6 +2851,30 @@ mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
+
+        fn compute_channel_secret(
+            &self,
+            _charlie_pubkey_hex: &str,
+            alice_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            super::super::bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                alice_pubkey_hex,
+            )
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            super::super::bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
     }
 
     #[test]
@@ -2817,9 +2950,10 @@ mod tests {
             .into_iter()
             .collect(),
             amount_due: balance,
+            charlie_secret_hex: charlie_sk.to_secret_hex(),
         };
 
-        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+        let bridge = SpilmanBridge::new(host);
 
         // Create a signature for balance update (100 sats to Charlie)
         let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
@@ -2876,6 +3010,8 @@ mod tests {
         amount_due: u64,
         /// Stored payment for unilateral close (balance, signature)
         stored_payment: Option<(u64, String)>,
+        /// Charlie's secret key (hex) for signing
+        charlie_secret_hex: String,
     }
 
     impl SpilmanHost for RefreshableMockHost {
@@ -2996,6 +3132,30 @@ mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
+
+        fn compute_channel_secret(
+            &self,
+            _charlie_pubkey_hex: &str,
+            alice_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            super::super::bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                alice_pubkey_hex,
+            )
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            super::super::bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
     }
 
     /// Test: Cooperative close uses refreshed keysets after refresh_active_keysets()
@@ -3093,9 +3253,10 @@ mod tests {
             .collect(),
             amount_due: balance,
             stored_payment: None,
+            charlie_secret_hex: charlie_sk.to_secret_hex(),
         };
 
-        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+        let bridge = SpilmanBridge::new(host);
 
         // Create signed balance update
         let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
@@ -3270,9 +3431,10 @@ mod tests {
             amount_due: balance,
             // Stored payment for unilateral close
             stored_payment: Some((balance, balance_update.signature.to_string())),
+            charlie_secret_hex: charlie_sk.to_secret_hex(),
         };
 
-        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+        let bridge = SpilmanBridge::new(host);
 
         // STEP 1: First prepare - should use stale keyset
         let prepared_first = bridge
@@ -3406,9 +3568,10 @@ mod tests {
             .into_iter()
             .collect(),
             amount_due: 0, // Not relevant for fund_channel
+            charlie_secret_hex: charlie_sk.to_secret_hex(),
         };
 
-        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+        let bridge = SpilmanBridge::new(host);
 
         // Create a valid signature for the non-zero balance
         let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();
@@ -3509,9 +3672,10 @@ mod tests {
             .into_iter()
             .collect(),
             amount_due: 0,
+            charlie_secret_hex: charlie_sk.to_secret_hex(),
         };
 
-        let bridge = SpilmanBridge::new(host, Some(charlie_sk.clone()));
+        let bridge = SpilmanBridge::new(host);
 
         // Create signature for balance=0
         let channel = EstablishedChannel::new(params_struct.clone(), proofs.clone()).unwrap();

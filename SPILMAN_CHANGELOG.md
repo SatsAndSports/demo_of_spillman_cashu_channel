@@ -4,6 +4,20 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features (Feb 5-9, 2026)
 
+### Secret Key Removal from Server Bridge (SpilmanBridge)
+
+Redesigned the `SpilmanBridge` (server-side) so it **never holds or sees the server's secret key**, mirroring the client-side redesign. The host (application layer) owns the key and provides callbacks for operations that need it.
+
+- Added `compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex) -> Result<String, String>` to `SpilmanHost` trait — called during `validate_and_save_new_channel` for ECDH
+- Added `sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex) -> Result<String, String>` to `SpilmanHost` trait — called during cooperative/unilateral close for signing the swap request
+- Added `derive_receiver_blinding_scalar_for_stage1()` to `ChannelParameters` — exposes the receiver's P2BK tweak scalar for host signing
+- Removed `server_secret_key: Option<SecretKey>` from `SpilmanBridge` — constructor is now `new(host)` (infallible, keyless)
+- Removed `SpilmanChannelReceiver` entirely — replaced by host-delegated signing
+- All FFI layers updated: WASM (`JsSpilmanHost` extern), Go (`SpilmanHostCallbacks` struct + CGO exports), Python (`PySpilmanHost`)
+- All 10+ host implementations updated to own the secret key and delegate to `compute_channel_secret_from_hex` / `sign_with_tweaked_key_util`
+- Fixed Go `#[repr(C)]` struct field ordering mismatch between `gateway.c` / `bridge.go` CGO header and Rust `lib.rs`
+- Fixed pre-existing Rust integration test failure: added missing `funding_token_amount` field to params JSON
+
 ### Client-Side Bridge: SpilmanClientBridge
 
 Added a full client-side bridge (`SpilmanClientBridge` + `SpilmanClientHost` trait) mirroring the server-side `SpilmanBridge` / `SpilmanHost` pattern. The client bridge orchestrates channel creation from tokens, payment signing, and HTTP header construction.

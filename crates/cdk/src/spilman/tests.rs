@@ -1095,6 +1095,7 @@ async fn test_client_bridge() {
         keyset_infos: HashMap<Id, String>,
         funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
         payments: Mutex<HashMap<String, (u64, String)>>, // channel_id -> (balance, sig)
+        charlie_secret_hex: String,
     }
 
     impl SpilmanHost for TestServerHost {
@@ -1203,6 +1204,30 @@ async fn test_client_bridge() {
             _sender_sum: u64,
         ) -> Result<(), String> {
             Ok(())
+        }
+
+        fn compute_channel_secret(
+            &self,
+            _charlie_pubkey_hex: &str,
+            alice_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            super::bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                alice_pubkey_hex,
+            )
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            super::bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
         }
     }
 
@@ -1408,9 +1433,10 @@ async fn test_client_bridge() {
         keyset_infos,
         funding_data: Mutex::new(HashMap::new()),
         payments: Mutex::new(HashMap::new()),
+        charlie_secret_hex: charlie_secret.to_secret_hex(),
     };
 
-    let server_bridge = SpilmanBridge::new(server_host, Some(charlie_secret));
+    let server_bridge = SpilmanBridge::new(server_host);
 
     // First request: header with funding
     let payment_result = server_bridge

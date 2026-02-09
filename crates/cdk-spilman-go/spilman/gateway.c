@@ -24,6 +24,8 @@ typedef struct {
     char* (*get_keyset_info)(void*, const char*, const char*);
     int (*call_mint_swap)(void*, const char*, const char*, char**);
     int (*refresh_active_keysets)(void*, const char*);
+    int (*compute_channel_secret)(void*, const char*, const char*, char**);
+    int (*sign_with_tweaked_key)(void*, const char*, const char*, const char*, char**);
     int (*mark_channel_closed)(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
 } SpilmanHostCallbacks;
 
@@ -44,6 +46,8 @@ extern char* go_get_active_keyset_ids(void*, const char*, const char*);
 extern char* go_get_keyset_info(void*, const char*, const char*);
 extern int go_call_mint_swap(void*, const char*, const char*, char**);
 extern int go_refresh_active_keysets(void*, const char*);
+extern int go_compute_channel_secret(void*, const char*, const char*, char**);
+extern int go_sign_with_tweaked_key(void*, const char*, const char*, const char*, char**);
 extern int go_mark_channel_closed(void*, const char*, uint64_t, uint64_t, const char*, const char*, uint64_t, uint64_t);
 
 #include <stdio.h>
@@ -68,6 +72,8 @@ SpilmanHostCallbacks fill_callbacks(void* user_data) {
     cb.get_keyset_info = go_get_keyset_info;
     cb.call_mint_swap = go_call_mint_swap;
     cb.refresh_active_keysets = go_refresh_active_keysets;
+    cb.compute_channel_secret = go_compute_channel_secret;
+    cb.sign_with_tweaked_key = go_sign_with_tweaked_key;
     cb.mark_channel_closed = go_mark_channel_closed;
     return cb;
 }

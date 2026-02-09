@@ -79,6 +79,35 @@ type SpilmanHost interface {
 	// MarkChannelClosed marks a channel as fully CLOSED after a successful swap.
 	// Called with the final proof distribution for record-keeping.
 	MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
+
+	// ComputeChannelSecret computes the hashed ECDH channel secret.
+	//
+	// The host performs ECDH between Charlie's secret key (identified by
+	// charliePubkeyHex) and Alice's public key, then hashes the result:
+	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(charlie_secret, alice_pubkey))
+	//
+	// For hosts that hold raw secret keys, use the standalone ComputeChannelSecret()
+	// function (wraps the Rust utility).
+	//
+	// Returns the hashed channel secret as a 64-char hex string (32 bytes).
+	ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error)
+
+	// SignWithTweakedKey signs a message with a tweaked key (BIP-340 Schnorr).
+	//
+	// The bridge computes the tweak (P2BK blinding scalar) and message hash,
+	// then asks the host to produce a signature using (secret + tweak) where
+	// secret is the key corresponding to signerPubkeyHex.
+	//
+	// For hosts that hold raw secret keys, use SignWithTweakedKeyUtil() as
+	// a convenience implementation.
+	//
+	// Arguments:
+	//   signerPubkeyHex: identifies which key to use (Charlie's pubkey for server-side)
+	//   messageHex: SHA-256 hash of the SIG_ALL message (32 bytes, hex)
+	//   tweakScalarHex: P2BK blinding scalar to add to secret key (32 bytes, hex)
+	//
+	// Returns the BIP-340 Schnorr signature (64 bytes, hex).
+	SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error)
 }
 
 // ClosingData holds the pre-swap state for a channel in CLOSING state.
