@@ -212,7 +212,7 @@ class MockClientHost:
 
     def __init__(self, mint_url: str):
         self.mint_url = mint_url
-        self.channels: dict[str, str] = {}
+        self.channels: dict[str, tuple[str, str]] = {}  # channel_id -> (channel_json, channel_secret_hex)
         self.keys: dict[str, str] = {}  # pubkey_hex -> secret_hex
 
     def register_key(self, secret_hex: str, pubkey_hex: str):
@@ -229,10 +229,10 @@ class MockClientHost:
             raise RuntimeError(f"swap failed (HTTP {resp.status_code}): {resp.text}")
         return resp.text
 
-    def save_channel(self, channel_id: str, channel_json: str):
-        self.channels[channel_id] = channel_json
+    def save_channel(self, channel_id: str, channel_json: str, channel_secret_hex: str):
+        self.channels[channel_id] = (channel_json, channel_secret_hex)
 
-    def get_channel(self, channel_id: str) -> str | None:
+    def get_channel(self, channel_id: str) -> tuple[str, str] | None:
         return self.channels.get(channel_id)
 
     def list_channel_ids(self) -> list[str]:
@@ -246,6 +246,12 @@ class MockClientHost:
         if secret_hex is None:
             raise RuntimeError(f"No key registered for pubkey: {signer_pubkey_hex}")
         return cdk_spilman.sign_with_tweaked_key_util(secret_hex, message_hex, tweak_scalar_hex)
+
+    def compute_channel_secret(self, alice_pubkey_hex: str, charlie_pubkey_hex: str) -> str:
+        secret_hex = self.keys.get(alice_pubkey_hex)
+        if secret_hex is None:
+            raise RuntimeError(f"No key registered for pubkey: {alice_pubkey_hex}")
+        return cdk_spilman.compute_channel_secret(secret_hex, charlie_pubkey_hex)
 
 
 class MockServerHost:
@@ -386,18 +392,20 @@ class TestClientBridge:
         # Step 2: Create client bridge and open channel
         # ================================================================
 
-        client_host = MockClientHost(mint_url)
-        client_bridge = cdk_spilman.ClientBridge(client_host)
+        # Generate Alice keypair externally and register with host
+        alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
 
-        # Register Alice's key with the host so it can sign on her behalf
-        client_host.register_key(client_bridge.alice_secret_hex, client_bridge.alice_pubkey_hex)
-        print(f"Client bridge created, alice_pubkey: {client_bridge.alice_pubkey_hex[:16]}...")
+        client_host = MockClientHost(mint_url)
+        client_host.register_key(alice_secret, alice_pubkey)
+
+        client_bridge = cdk_spilman.ClientBridge(client_host)
+        print(f"Client bridge created, alice_pubkey: {alice_pubkey[:16]}...")
 
         locktime = int(time.time()) + 7200  # 2 hours
         max_amount = 64
 
         result = client_bridge.open_channel_from_token(
-            token, charlie_pubkey, locktime, keyset_json, max_amount
+            token, charlie_pubkey, alice_pubkey, locktime, keyset_json, max_amount
         )
 
         print(

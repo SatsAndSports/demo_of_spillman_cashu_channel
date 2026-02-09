@@ -1009,6 +1009,7 @@ pub struct ClientOpenChannelResult {
     pub capacity: u64,
     pub funding_token_amount: u64,
     pub mint_url: String,
+    pub alice_pubkey_hex: String,
 }
 
 /// Information about a stored channel.
@@ -1026,11 +1027,12 @@ pub struct ClientChannelInfo {
 ///
 /// The Python object must implement these methods:
 /// - call_mint_swap(mint_url: str, swap_request_json: str) -> str  # Raises on error
-/// - save_channel(channel_id: str, channel_json: str)
-/// - get_channel(channel_id: str) -> Optional[str]
+/// - save_channel(channel_id: str, channel_json: str, channel_secret_hex: str)
+/// - get_channel(channel_id: str) -> Optional[tuple[str, str]]  # (channel_json, channel_secret_hex)
 /// - list_channel_ids() -> List[str]
 /// - delete_channel(channel_id: str)
 /// - sign_with_tweaked_key(signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str
+/// - compute_channel_secret(alice_pubkey_hex: str, charlie_pubkey_hex: str) -> str
 struct PySpilmanClientHost {
     py_host: PyObject,
 }
@@ -1048,15 +1050,17 @@ impl SpilmanClientHost for PySpilmanClientHost {
         })
     }
 
-    fn save_channel(&self, channel_id: &str, channel_json: &str) {
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
         Python::with_gil(|py| {
-            let _ = self
-                .py_host
-                .call_method1(py, "save_channel", (channel_id, channel_json));
+            let _ = self.py_host.call_method1(
+                py,
+                "save_channel",
+                (channel_id, channel_json, channel_secret_hex),
+            );
         });
     }
 
-    fn get_channel(&self, channel_id: &str) -> Option<String> {
+    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -1066,7 +1070,11 @@ impl SpilmanClientHost for PySpilmanClientHost {
             if result.is_none(py) {
                 None
             } else {
-                result.extract::<String>(py).ok()
+                let tuple = result.extract::<(String, String)>(py).ok()?;
+                Some(cdk::spilman::ChannelData {
+                    channel_json: tuple.0,
+                    channel_secret_hex: tuple.1,
+                })
             }
         })
     }
@@ -1105,6 +1113,23 @@ impl SpilmanClientHost for PySpilmanClientHost {
             }
         })
     }
+
+    fn compute_channel_secret(
+        &self,
+        alice_pubkey_hex: &str,
+        charlie_pubkey_hex: &str,
+    ) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self.py_host.call_method1(
+                py,
+                "compute_channel_secret",
+                (alice_pubkey_hex, charlie_pubkey_hex),
+            ) {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
 }
 
 /// Client-side Spilman channel bridge.
@@ -1112,8 +1137,9 @@ impl SpilmanClientHost for PySpilmanClientHost {
 /// This is the client-side counterpart of SpilmanBridge. It orchestrates
 /// channel creation from tokens, payment signing, and HTTP header construction.
 ///
-/// The bridge is stateless — all channel state is stored via the host callbacks.
-/// One bridge instance uses a single Alice keypair for all channels.
+/// The bridge is stateless and keyless — all channel state is stored via the
+/// host callbacks. The bridge never holds or sees Alice's secret key; all
+/// operations requiring the key are delegated to the host.
 #[pyclass]
 struct ClientBridge {
     inner: RustSpilmanClientBridge<PySpilmanClientHost>,
@@ -1123,54 +1149,47 @@ struct ClientBridge {
 impl ClientBridge {
     /// Create a new ClientBridge.
     ///
+    /// The bridge is stateless and keyless — it delegates all key operations
+    /// to the host. The caller passes alice_pubkey_hex per channel when
+    /// opening channels.
+    ///
     /// Args:
     ///     host: Python object implementing SpilmanClientHost methods
-    ///     alice_secret_hex: Optional secret key (hex). If None, a new keypair is generated.
     #[new]
-    #[pyo3(signature = (host, alice_secret_hex=None))]
-    fn new(host: PyObject, alice_secret_hex: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (host))]
+    fn new(host: PyObject) -> Self {
         let py_host = PySpilmanClientHost { py_host: host };
-        let inner = RustSpilmanClientBridge::new(py_host, alice_secret_hex.as_deref())
-            .map_err(PyValueError::new_err)?;
+        let inner = RustSpilmanClientBridge::new(py_host);
 
-        Ok(ClientBridge { inner })
-    }
-
-    /// Get Alice's public key (hex-encoded, compressed).
-    #[getter]
-    fn alice_pubkey_hex(&self) -> String {
-        self.inner.alice_pubkey_hex().to_string()
-    }
-
-    /// Get Alice's secret key (hex-encoded).
-    #[getter]
-    fn alice_secret_hex(&self) -> String {
-        self.inner.alice_secret_hex().to_string()
+        ClientBridge { inner }
     }
 
     /// Open a new channel from a Cashu token.
     ///
     /// Performs the full funding flow:
-    /// 1. Parse the token and compute channel parameters
-    /// 2. Create a funding swap request (deterministic 2-of-2 locked outputs)
-    /// 3. Submit the swap to the mint via host.call_mint_swap()
-    /// 4. Unblind signatures and verify DLEQ proofs
-    /// 5. Save the channel via host.save_channel()
+    /// 1. Compute ECDH channel secret via host.compute_channel_secret()
+    /// 2. Parse the token and compute channel parameters
+    /// 3. Create a funding swap request (deterministic 2-of-2 locked outputs)
+    /// 4. Submit the swap to the mint via host.call_mint_swap()
+    /// 5. Unblind signatures and verify DLEQ proofs
+    /// 6. Save the channel via host.save_channel()
     ///
     /// Args:
     ///     token_string: Cashu token (cashuA... or cashuB...)
     ///     charlie_pubkey_hex: Receiver's public key (from server's /channel/params)
+    ///     alice_pubkey_hex: Sender's public key (caller chooses which key for this channel)
     ///     locktime: Unix timestamp for refund locktime
     ///     keyset_info_json: Keyset info JSON (from mint's /v1/keys/{id})
     ///     max_amount: Maximum amount per output (from server policy, 0 = no limit)
     ///
     /// Returns:
-    ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url
-    #[pyo3(signature = (token_string, charlie_pubkey_hex, locktime, keyset_info_json, max_amount))]
+    ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url, alice_pubkey_hex
+    #[pyo3(signature = (token_string, charlie_pubkey_hex, alice_pubkey_hex, locktime, keyset_info_json, max_amount))]
     fn open_channel_from_token(
         &self,
         token_string: &str,
         charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
         locktime: u64,
         keyset_info_json: &str,
         max_amount: u64,
@@ -1180,6 +1199,7 @@ impl ClientBridge {
             .open_channel_from_token(
                 token_string,
                 charlie_pubkey_hex,
+                alice_pubkey_hex,
                 locktime,
                 keyset_info_json,
                 max_amount,
@@ -1191,6 +1211,7 @@ impl ClientBridge {
             capacity: result.capacity,
             funding_token_amount: result.funding_token_amount,
             mint_url: result.mint_url,
+            alice_pubkey_hex: result.alice_pubkey_hex,
         })
     }
 

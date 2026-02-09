@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,20 +175,28 @@ func (h *testClientHost) CallMintSwap(mintURL, swapRequestJSON string) (string, 
 	return string(body), nil
 }
 
-func (h *testClientHost) SaveChannel(channelID, channelJSON string) {
+func (h *testClientHost) SaveChannel(channelID, channelJSON, channelSecretHex string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.channels[channelID] = channelJSON
+	h.channels[channelID] = channelJSON + "\x00" + channelSecretHex // store both, separated by null
 }
 
-func (h *testClientHost) GetChannel(channelID string) *string {
+func (h *testClientHost) GetChannel(channelID string) *ChannelData {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v, ok := h.channels[channelID]
 	if !ok {
 		return nil
 	}
-	return &v
+	// Split on null byte to recover channel_json and channel_secret_hex
+	parts := strings.SplitN(v, "\x00", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	return &ChannelData{
+		ChannelJSON:      parts[0],
+		ChannelSecretHex: parts[1],
+	}
 }
 
 func (h *testClientHost) ListChannelIDs() []string {
@@ -214,6 +223,16 @@ func (h *testClientHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakSc
 		return "", fmt.Errorf("no key registered for pubkey: %s", signerPubkeyHex)
 	}
 	return SignWithTweakedKeyUtil(secretHex, messageHex, tweakScalarHex)
+}
+
+func (h *testClientHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+	h.mu.Lock()
+	secretHex, ok := h.keys[alicePubkeyHex]
+	h.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("no key registered for pubkey: %s", alicePubkeyHex)
+	}
+	return ComputeChannelSecret(secretHex, charliePubkeyHex)
 }
 
 // testServerHost implements SpilmanHost for the server-side bridge in tests.
@@ -390,21 +409,27 @@ func TestClientBridge(t *testing.T) {
 	// Step 2: Create client bridge and open channel
 	// ================================================================
 
+	// Generate Alice keypair externally and register with host
+	aliceSecret, alicePubkey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatalf("GenerateKeypair (alice) failed: %v", err)
+	}
+
 	clientHost := newTestClientHost(mintURL)
-	clientBridge, err := NewClientBridge(clientHost, nil)
+	clientHost.RegisterKey(aliceSecret, alicePubkey)
+
+	clientBridge, err := NewClientBridge(clientHost)
 	if err != nil {
 		t.Fatalf("NewClientBridge failed: %v", err)
 	}
 	defer clientBridge.Free()
 
-	// Register Alice's key with the host so it can sign on her behalf
-	clientHost.RegisterKey(clientBridge.AliceSecretHex(), clientBridge.AlicePubkeyHex())
-	t.Logf("Client bridge created, alice_pubkey: %s...", clientBridge.AlicePubkeyHex()[:16])
+	t.Logf("Client bridge created, alice_pubkey: %s...", alicePubkey[:16])
 
 	locktime := uint64(time.Now().Unix()) + 7200 // 2 hours
 	maxAmount := uint64(64)
 
-	openResult, err := clientBridge.OpenChannelFromToken(token, charliePubkey, locktime, string(keysetJSON), maxAmount)
+	openResult, err := clientBridge.OpenChannelFromToken(token, charliePubkey, alicePubkey, locktime, string(keysetJSON), maxAmount)
 	if err != nil {
 		t.Fatalf("OpenChannelFromToken failed: %v", err)
 	}
