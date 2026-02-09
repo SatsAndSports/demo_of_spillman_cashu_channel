@@ -25,6 +25,23 @@ type SpilmanClientHost interface {
 
 	// DeleteChannel removes a channel from storage.
 	DeleteChannel(channelID string)
+
+	// SignWithTweakedKey signs a message with a tweaked key (BIP-340 Schnorr).
+	//
+	// The bridge computes the tweak (P2BK blinding scalar) and message hash,
+	// then asks the host to produce a signature using (secret + tweak) where
+	// secret is the key corresponding to signerPubkeyHex.
+	//
+	// For hosts that hold raw secret keys, use SignWithTweakedKeyUtil() as
+	// a convenience implementation.
+	//
+	// Arguments:
+	//   signerPubkeyHex: identifies which key to use (Alice's pubkey for this channel)
+	//   messageHex: SHA-256 hash of the SIG_ALL message (32 bytes, hex)
+	//   tweakScalarHex: P2BK blinding scalar to add to secret key (32 bytes, hex)
+	//
+	// Returns the BIP-340 Schnorr signature (64 bytes, hex).
+	SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error)
 }
 
 // OpenChannelResult contains the result of opening a new channel.

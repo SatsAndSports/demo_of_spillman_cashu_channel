@@ -22,10 +22,11 @@ mod sender_and_receiver;
 
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
 pub use bindings::{
-    build_cashu_a_token, channel_parameters_get_channel_id, complete_funding_swap,
-    compute_channel_from_token, compute_funding_token_amount, compute_channel_secret_from_hex,
-    construct_proofs, create_funding_outputs, create_funding_swap, create_plain_blinded_messages,
-    create_signed_balance_update, mint_proofs_from_mint, parse_keyset_info_from_json,
+    attach_signature_to_balance_update, build_cashu_a_token, channel_parameters_get_channel_id,
+    complete_funding_swap, compute_channel_from_token, compute_channel_secret_from_hex,
+    compute_funding_token_amount, construct_proofs, create_funding_outputs, create_funding_swap,
+    create_plain_blinded_messages, create_signed_balance_update, create_unsigned_balance_update,
+    mint_proofs_from_mint, parse_keyset_info_from_json, sign_with_tweaked_key_util,
 };
 pub use client_bridge::{
     base64_decode, ClientChannelInfo, OpenChannelResult, SpilmanClientBridge, SpilmanClientHost,

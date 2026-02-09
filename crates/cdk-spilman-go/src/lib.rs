@@ -898,6 +898,13 @@ pub struct SpilmanClientHostCallbacks {
         extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char) -> *mut c_char, // NULL = not found
     pub list_channel_ids: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char, // JSON array string
     pub delete_channel: extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char),
+    pub sign_with_tweaked_key: extern "C" fn(
+        user_data: *mut libc::c_void,
+        signer_pubkey_hex: *const c_char,
+        message_hex: *const c_char,
+        tweak_scalar_hex: *const c_char,
+        response_out: *mut *mut c_char,
+    ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
 }
 
 struct CGoSpilmanClientHost {
@@ -960,6 +967,35 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
     fn delete_channel(&self, channel_id: &str) {
         let id_c = CString::new(channel_id).unwrap();
         (self.callbacks.delete_channel)(self.callbacks.user_data, id_c.as_ptr());
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String> {
+        let pubkey_c = CString::new(signer_pubkey_hex).unwrap();
+        let msg_c = CString::new(message_hex).unwrap();
+        let tweak_c = CString::new(tweak_scalar_hex).unwrap();
+        let mut response_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.sign_with_tweaked_key)(
+            self.callbacks.user_data,
+            pubkey_c.as_ptr(),
+            msg_c.as_ptr(),
+            tweak_c.as_ptr(),
+            &mut response_ptr,
+        );
+
+        unsafe {
+            let response = CString::from_raw(response_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(response)
+            } else {
+                Err(response)
+            }
+        }
     }
 }
 
@@ -1107,4 +1143,24 @@ pub unsafe extern "C" fn spilman_client_bridge_remove_channel(
     let instance = &*ptr;
     let id = CStr::from_ptr(channel_id).to_str().unwrap();
     instance.bridge.remove_channel(id);
+}
+
+/// Utility function for signing with a tweaked key.
+///
+/// Hosts can use this to implement `sign_with_tweaked_key` when they hold raw secret keys.
+/// Handles BIP-340 parity, adds tweak to secret, produces BIP-340 Schnorr signature.
+#[no_mangle]
+pub unsafe extern "C" fn spilman_sign_with_tweaked_key_util(
+    secret_key_hex: *const c_char,
+    message_hex: *const c_char,
+    tweak_scalar_hex: *const c_char,
+) -> CResult {
+    let secret = CStr::from_ptr(secret_key_hex).to_str().unwrap();
+    let msg = CStr::from_ptr(message_hex).to_str().unwrap();
+    let tweak = CStr::from_ptr(tweak_scalar_hex).to_str().unwrap();
+
+    match cdk::spilman::sign_with_tweaked_key_util(secret, msg, tweak) {
+        Ok(sig) => CResult::success(sig),
+        Err(e) => CResult::error(e),
+    }
 }

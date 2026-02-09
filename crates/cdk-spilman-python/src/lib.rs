@@ -972,6 +972,31 @@ fn mint_proofs_from_mint(
     })
 }
 
+/// Utility function for signing with a tweaked key (BIP-340 Schnorr).
+///
+/// Handles BIP-340 parity: if the public key has odd Y, negates the secret
+/// before adding the tweak. Then produces a BIP-340 Schnorr signature.
+///
+/// This is a convenience function for SpilmanClientHost implementations
+/// that hold raw secret keys.
+///
+/// Args:
+///     secret_key_hex: The signer's secret key (32 bytes, hex)
+///     message_hex: SHA-256 hash of the message (32 bytes, hex)
+///     tweak_scalar_hex: P2BK blinding scalar to add (32 bytes, hex)
+///
+/// Returns:
+///     BIP-340 Schnorr signature (64 bytes, hex)
+#[pyfunction]
+fn sign_with_tweaked_key_util(
+    secret_key_hex: &str,
+    message_hex: &str,
+    tweak_scalar_hex: &str,
+) -> PyResult<String> {
+    spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex)
+        .map_err(PyValueError::new_err)
+}
+
 // ============================================================================
 // Client-side: SpilmanClientBridge with Python host callbacks
 // ============================================================================
@@ -1005,6 +1030,7 @@ pub struct ClientChannelInfo {
 /// - get_channel(channel_id: str) -> Optional[str]
 /// - list_channel_ids() -> List[str]
 /// - delete_channel(channel_id: str)
+/// - sign_with_tweaked_key(signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str
 struct PySpilmanClientHost {
     py_host: PyObject,
 }
@@ -1060,6 +1086,24 @@ impl SpilmanClientHost for PySpilmanClientHost {
                 .py_host
                 .call_method1(py, "delete_channel", (channel_id,));
         });
+    }
+
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self.py_host.call_method1(
+                py,
+                "sign_with_tweaked_key",
+                (signer_pubkey_hex, message_hex, tweak_scalar_hex),
+            ) {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
     }
 }
 
@@ -1252,6 +1296,7 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(create_plain_blinded_messages, m)?)?;
     m.add_function(wrap_pyfunction!(build_cashu_a_token, m)?)?;
     m.add_function(wrap_pyfunction!(mint_proofs_from_mint, m)?)?;
+    m.add_function(wrap_pyfunction!(sign_with_tweaked_key_util, m)?)?;
 
     // Server-side functions (for closing)
     m.add_function(wrap_pyfunction!(unblind_and_verify_dleq, m)?)?;

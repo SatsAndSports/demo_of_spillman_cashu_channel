@@ -19,6 +19,7 @@ CResult spilman_client_bridge_sign_balance_update(void* ptr, const char* channel
 CResult spilman_client_bridge_build_payment_header(void* ptr, const char* channel_id, uint64_t balance, int include_funding);
 CResult spilman_client_bridge_get_channel_info(void* ptr, const char* channel_id);
 CResult spilman_client_bridge_list_channels(void* ptr);
+CResult spilman_sign_with_tweaked_key_util(const char* secret_key_hex, const char* message_hex, const char* tweak_scalar_hex);
 void spilman_free_cresult(CResult res);
 */
 import "C"
@@ -118,4 +119,27 @@ func clientBridgeListChannels(ptr unsafe.Pointer) []string {
 		return nil
 	}
 	return channels
+}
+
+// SignWithTweakedKeyUtil is a convenience function for SpilmanClientHost implementations.
+//
+// Given a secret key, message hash, and tweak scalar, computes (secret + tweak)
+// with BIP-340 parity handling and produces a BIP-340 Schnorr signature.
+//
+// Hosts that hold raw secret keys can call this from their SignWithTweakedKey method.
+func SignWithTweakedKeyUtil(secretKeyHex, messageHex, tweakScalarHex string) (string, error) {
+	cSecret := C.CString(secretKeyHex)
+	defer C.free(unsafe.Pointer(cSecret))
+	cMsg := C.CString(messageHex)
+	defer C.free(unsafe.Pointer(cMsg))
+	cTweak := C.CString(tweakScalarHex)
+	defer C.free(unsafe.Pointer(cTweak))
+
+	res := C.spilman_sign_with_tweaked_key_util(cSecret, cMsg, cTweak)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
 }

@@ -190,3 +190,16 @@ func go_client_delete_channel(userData unsafe.Pointer, channelID *C.char) {
 	host := h.Value().(SpilmanClientHost)
 	host.DeleteChannel(C.GoString(channelID))
 }
+
+//export go_client_sign_with_tweaked_key
+func go_client_sign_with_tweaked_key(userData unsafe.Pointer, signerPubkeyHex *C.char, messageHex *C.char, tweakScalarHex *C.char, responseOut **C.char) C.int {
+	h := cgo.Handle(userData)
+	host := h.Value().(SpilmanClientHost)
+	resp, err := host.SignWithTweakedKey(C.GoString(signerPubkeyHex), C.GoString(messageHex), C.GoString(tweakScalarHex))
+	if err != nil {
+		*responseOut = C.CString(err.Error())
+		return 0
+	}
+	*responseOut = C.CString(resp)
+	return 1
+}

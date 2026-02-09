@@ -620,6 +620,15 @@ impl ChannelParameters {
         derive_blinded_secret_key(alice_secret, &r)
     }
 
+    /// Get the sender's P2BK blinding scalar for stage 1 signing.
+    ///
+    /// This is the tweak scalar that must be added to Alice's secret key
+    /// (with BIP-340 parity handling) to produce the blinded signing key.
+    /// Used by the external signer flow in SpilmanClientBridge.
+    pub fn derive_sender_blinding_scalar_for_stage1(&self) -> anyhow::Result<Scalar> {
+        self.derive_blinding_scalar("sender_stage1")
+    }
+
     /// Get the blinded sender (Alice) pubkey for stage 1 locktime refund
     ///
     /// Uses a DIFFERENT blinding tweak than the 2-of-2 spending path, so the mint

@@ -24,8 +24,8 @@ use crate::nuts::SecretKey;
 use serde::{Deserialize, Serialize};
 
 use super::bindings::{
-    complete_funding_swap, compute_channel_from_token, create_funding_swap,
-    create_signed_balance_update,
+    attach_signature_to_balance_update, complete_funding_swap, compute_channel_from_token,
+    create_funding_swap, create_unsigned_balance_update,
 };
 
 // ============================================================================
@@ -62,6 +62,34 @@ pub trait SpilmanClientHost {
 
     /// Delete a channel from storage.
     fn delete_channel(&self, channel_id: &str);
+
+    /// Sign a message with a tweaked key (BIP-340 Schnorr).
+    ///
+    /// The bridge computes the tweak (P2BK blinding scalar) and message hash,
+    /// then asks the host to produce a BIP-340 Schnorr signature using
+    /// the key `(secret + tweak)` where `secret` is the key corresponding
+    /// to `signer_pubkey_hex`.
+    ///
+    /// The host must handle BIP-340 parity: if the public key has odd Y,
+    /// negate the secret key before adding the tweak.
+    ///
+    /// For hosts that hold raw secret keys, the convenience function
+    /// `crate::spilman::bindings::sign_with_tweaked_key_util()` provides
+    /// a standard implementation.
+    ///
+    /// # Arguments
+    /// * `signer_pubkey_hex` - Identifies which key to use (Alice's pubkey for this channel)
+    /// * `message_hex` - SHA-256 hash of the SIG_ALL message (32 bytes, hex-encoded)
+    /// * `tweak_scalar_hex` - The P2BK blinding scalar to add to the secret key (32 bytes, hex)
+    ///
+    /// # Returns
+    /// The BIP-340 Schnorr signature as a 64-byte hex string.
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, String>;
 }
 
 // ============================================================================
@@ -285,15 +313,50 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     ///
     /// The `balance` is the cumulative amount the receiver (Charlie) can claim.
     /// It must increase monotonically across calls.
+    ///
+    /// Signing is delegated to the host via `sign_with_tweaked_key()`.
     pub fn sign_balance_update(&self, channel_id: &str, balance: u64) -> Result<String, String> {
         let stored = self.load_channel(channel_id)?;
 
-        create_signed_balance_update(
+        // Step 1: Create unsigned balance update (computes message hash + tweak)
+        let unsigned_json = create_unsigned_balance_update(
             &stored.params_json,
             &stored.keyset_info_json,
             &self.alice_secret_hex,
             &stored.funding_proofs_json,
             balance,
+        )?;
+
+        let unsigned: serde_json::Value = serde_json::from_str(&unsigned_json)
+            .map_err(|e| format!("Failed to parse unsigned update: {}", e))?;
+
+        let unsigned_swap_request_json = unsigned["unsigned_swap_request_json"]
+            .as_str()
+            .ok_or("Missing 'unsigned_swap_request_json'")?;
+        let message_hex = unsigned["message_hex"]
+            .as_str()
+            .ok_or("Missing 'message_hex'")?;
+        let tweak_scalar_hex = unsigned["tweak_scalar_hex"]
+            .as_str()
+            .ok_or("Missing 'tweak_scalar_hex'")?;
+        let channel_id_from_update = unsigned["channel_id"]
+            .as_str()
+            .ok_or("Missing 'channel_id'")?;
+        let amount = unsigned["amount"].as_u64().ok_or("Missing 'amount'")?;
+
+        // Step 2: Delegate signing to the host
+        let signature_hex = self.host.sign_with_tweaked_key(
+            &self.alice_pubkey_hex,
+            message_hex,
+            tweak_scalar_hex,
+        )?;
+
+        // Step 3: Attach signature and build the BalanceUpdateMessage
+        attach_signature_to_balance_update(
+            unsigned_swap_request_json,
+            &signature_hex,
+            channel_id_from_update,
+            amount,
         )
     }
 
@@ -304,22 +367,16 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// If `include_funding` is true, the header includes `params` and `funding_proofs`
     /// (needed for the first request, or when the server doesn't know this channel yet).
     /// Subsequent requests can set `include_funding` to false for smaller headers.
+    ///
+    /// Signing is delegated to the host via `sign_with_tweaked_key()`.
     pub fn build_payment_header(
         &self,
         channel_id: &str,
         balance: u64,
         include_funding: bool,
     ) -> Result<String, String> {
-        let stored = self.load_channel(channel_id)?;
-
-        // Sign the balance update
-        let update_json = create_signed_balance_update(
-            &stored.params_json,
-            &stored.keyset_info_json,
-            &self.alice_secret_hex,
-            &stored.funding_proofs_json,
-            balance,
-        )?;
+        // Sign the balance update (uses host.sign_with_tweaked_key internally)
+        let update_json = self.sign_balance_update(channel_id, balance)?;
 
         let update: serde_json::Value = serde_json::from_str(&update_json)
             .map_err(|e| format!("Failed to parse balance update: {}", e))?;
@@ -332,6 +389,8 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         });
 
         if include_funding {
+            let stored = self.load_channel(channel_id)?;
+
             // Parse params_json into a JSON object for inclusion
             let params: serde_json::Value = serde_json::from_str(&stored.params_json)
                 .map_err(|e| format!("Failed to parse params: {}", e))?;
