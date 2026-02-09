@@ -12,7 +12,7 @@
 export interface ChannelFundingData {
   paramsJson: string;
   fundingProofsJson: string;
-  sharedSecret: string;
+  channelSecret: string;
   keysetInfoJson: string;
 }
 

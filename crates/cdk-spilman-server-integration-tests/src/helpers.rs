@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use cdk::nuts::{Proof, SecretKey};
 use cdk::spilman::{
     channel_parameters_get_channel_id, compute_funding_token_amount,
-    compute_shared_secret_from_hex, construct_proofs, create_funding_outputs,
+    compute_channel_secret_from_hex, construct_proofs, create_funding_outputs,
     create_signed_balance_update, parse_keyset_info_from_json, KeysetInfo,
 };
 
@@ -40,7 +40,7 @@ pub struct Channel {
     pub channel_params: Value,
     pub channel_params_json: String,
     pub channel_id: String,
-    pub shared_secret: String,
+    pub channel_secret: String,
     pub proofs: Vec<Proof>,
     pub keyset_info: KeysetInfo,
     pub keyset_info_json: String,
@@ -677,12 +677,12 @@ pub async fn mint_funded_channel(
     let proofs: Vec<Proof> = serde_json::from_str(&proofs_json)?;
 
     // Compute shared secret and channel ID
-    let shared_secret =
-        compute_shared_secret_from_hex(&alice.secret_hex, &server_params.receiver_pubkey)
+    let channel_secret =
+        compute_channel_secret_from_hex(&alice.secret_hex, &server_params.receiver_pubkey)
             .map_err(|e| anyhow!("Failed to compute shared secret: {}", e))?;
 
     let channel_id =
-        channel_parameters_get_channel_id(&channel_params_json, &shared_secret, &keyset_info_json)
+        channel_parameters_get_channel_id(&channel_params_json, &channel_secret, &keyset_info_json)
             .map_err(|e| anyhow!("Failed to get channel ID: {}", e))?;
 
     // Get output count from blinded_messages
@@ -693,7 +693,7 @@ pub async fn mint_funded_channel(
         channel_params,
         channel_params_json,
         channel_id,
-        shared_secret,
+        channel_secret,
         proofs,
         keyset_info,
         keyset_info_json,

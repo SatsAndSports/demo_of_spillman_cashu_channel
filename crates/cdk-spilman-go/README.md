@@ -80,13 +80,13 @@ func main() {
     secret, pubkey, _ := spilman.GenerateKeypair()
     
     // Compute shared secret with receiver's pubkey (for deterministic blinding)
-    sharedSecret, _ := spilman.ComputeSharedSecret(secret, receiverPubkey)
+    channelSecret, _ := spilman.ComputeChannelSecret(secret, receiverPubkey)
     
     // Create a signed balance update
     signature, _ := spilman.CreateSignedBalanceUpdate(
         paramsJson,
         keysetJson, 
-        sharedSecret,
+        channelSecret,
         proofsJson,
         balance,
     )
@@ -146,7 +146,7 @@ See [host.go](spilman/host.go) for full documentation of each method.
 |----------|-------------|
 | `GenerateKeypair()` | Generate a new secp256k1 keypair |
 | `SecretKeyToPubkey(secret)` | Derive public key from secret |
-| `ComputeSharedSecret(mySecret, theirPubkey)` | ECDH shared secret |
+| `ComputeChannelSecret(mySecret, theirPubkey)` | Compute channel secret (hashed ECDH) |
 | `CreateSignedBalanceUpdate(...)` | Create signed payment |
 | `CreateFundingOutputs(...)` | Create blinded outputs for funding |
 | `ConstructProofs(...)` | Construct proofs from mint response |

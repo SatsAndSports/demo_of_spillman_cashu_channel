@@ -273,7 +273,7 @@ impl SpilmanHost for PySpilmanHost {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -286,7 +286,7 @@ impl SpilmanHost for PySpilmanHost {
                     channel_id,
                     params_json,
                     funding_proofs_json,
-                    shared_secret_hex,
+                    channel_secret_hex,
                     keyset_info_json,
                     initial_balance,
                     initial_signature,
@@ -746,8 +746,8 @@ fn secret_key_to_pubkey(secret_hex: &str) -> PyResult<String> {
 /// Returns:
 ///     Shared secret as hex string (64 chars)
 #[pyfunction]
-fn compute_shared_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> PyResult<String> {
-    spilman::compute_shared_secret_from_hex(my_secret_hex, their_pubkey_hex)
+fn compute_channel_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> PyResult<String> {
+    spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
         .map_err(PyValueError::new_err)
 }
 
@@ -777,7 +777,7 @@ fn compute_funding_token_amount(
 ///
 /// Args:
 ///     params_json: Channel parameters JSON
-///     shared_secret_hex: Pre-computed shared secret (hex)
+///     channel_secret_hex: Pre-computed shared secret (hex)
 ///     keyset_info_json: Keyset info JSON
 ///
 /// Returns:
@@ -785,10 +785,10 @@ fn compute_funding_token_amount(
 #[pyfunction]
 fn channel_parameters_get_channel_id(
     params_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    spilman::channel_parameters_get_channel_id(params_json, shared_secret_hex, keyset_info_json)
+    spilman::channel_parameters_get_channel_id(params_json, channel_secret_hex, keyset_info_json)
         .map_err(PyValueError::new_err)
 }
 
@@ -873,20 +873,20 @@ fn create_signed_balance_update(
 ///     secrets_with_blinding_json: JSON array from validate_and_prepare_cooperative_close
 ///     params_json: Channel parameters JSON
 ///     keyset_info_json: Keyset info JSON (funding keyset)
-///     shared_secret_hex: Shared secret (hex)
+///     channel_secret_hex: Shared secret (hex)
 ///     balance: The balance used to close the channel
 ///     output_keyset_info_json: Optional Keyset info JSON for outputs
 ///
 /// Returns:
 ///     JSON with receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1
 #[pyfunction]
-#[pyo3(signature = (blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, shared_secret_hex, balance, output_keyset_info_json=None))]
+#[pyo3(signature = (blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, channel_secret_hex, balance, output_keyset_info_json=None))]
 fn unblind_and_verify_dleq(
     blind_signatures_json: &str,
     secrets_with_blinding_json: &str,
     params_json: &str,
     keyset_info_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     balance: u64,
     output_keyset_info_json: Option<String>,
 ) -> PyResult<String> {
@@ -895,7 +895,7 @@ fn unblind_and_verify_dleq(
         secrets_with_blinding_json,
         params_json,
         keyset_info_json,
-        shared_secret_hex,
+        channel_secret_hex,
         balance,
         output_keyset_info_json.as_deref(),
     )
@@ -1243,7 +1243,7 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Client-side functions
     m.add_function(wrap_pyfunction!(generate_keypair, m)?)?;
     m.add_function(wrap_pyfunction!(secret_key_to_pubkey, m)?)?;
-    m.add_function(wrap_pyfunction!(compute_shared_secret, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_channel_secret, m)?)?;
     m.add_function(wrap_pyfunction!(compute_funding_token_amount, m)?)?;
     m.add_function(wrap_pyfunction!(channel_parameters_get_channel_id, m)?)?;
     m.add_function(wrap_pyfunction!(create_funding_outputs, m)?)?;

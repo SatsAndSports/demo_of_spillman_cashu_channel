@@ -15,7 +15,7 @@ import { randomBytes } from "crypto";
 import * as secp from "@noble/secp256k1";
 import qrcode from "qrcode-terminal";
 import {
-  compute_shared_secret,
+  compute_channel_secret,
   compute_funding_token_amount,
   channel_parameters_get_channel_id,
   create_funding_outputs,
@@ -231,8 +231,8 @@ export async function runClient(messages: string[]): Promise<void> {
 
   // 4. Compute shared secret
   console.log("[4/9] Computing shared secret...");
-  const sharedSecret = compute_shared_secret(alice.secret, charliePubkey);
-  console.log(`  Shared secret: ${sharedSecret.substring(0, 24)}...`);
+  const channelSecret = compute_channel_secret(alice.secret, charliePubkey);
+  console.log(`  Shared secret: ${channelSecret.substring(0, 24)}...`);
   console.log();
 
   // 5. Build channel params
@@ -272,7 +272,7 @@ export async function runClient(messages: string[]): Promise<void> {
 
   const channelId = channel_parameters_get_channel_id(
     JSON.stringify(channelParams),
-    sharedSecret,
+    channelSecret,
     keysetInfoJson
   );
   console.log(`  Channel ID: ${channelId.substring(0, 24)}...`);

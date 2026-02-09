@@ -245,13 +245,13 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .ok_or("Missing 'funding_proofs_json' in complete result")?;
 
         // Compute channel ID (we need the shared secret and keyset info)
-        let shared_secret_hex = super::bindings::compute_shared_secret_from_hex(
+        let channel_secret_hex = super::bindings::compute_channel_secret_from_hex(
             &self.alice_secret_hex,
             charlie_pubkey_hex,
         )?;
         let channel_id = super::bindings::channel_parameters_get_channel_id(
             params_json,
-            &shared_secret_hex,
+            &channel_secret_hex,
             keyset_info_json,
         )?;
 

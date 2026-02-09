@@ -1045,7 +1045,7 @@ async fn test_client_bridge() {
             channel_id: &str,
             params_json: &str,
             funding_proofs_json: &str,
-            shared_secret_hex: &str,
+            channel_secret_hex: &str,
             keyset_info_json: &str,
             _initial_balance: u64,
             _initial_signature: &str,
@@ -1055,7 +1055,7 @@ async fn test_client_bridge() {
                 (
                     params_json.to_string(),
                     funding_proofs_json.to_string(),
-                    shared_secret_hex.to_string(),
+                    channel_secret_hex.to_string(),
                     keyset_info_json.to_string(),
                 ),
             );

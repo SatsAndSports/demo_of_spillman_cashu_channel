@@ -171,14 +171,14 @@ func (h *AsciiArtHost) GetFundingAndParams(channelId string) (string, string, st
 	return data["params"], data["proofs"], data["secret"], data["keyset"], true
 }
 
-func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
+func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
 	log.Printf("  [Host] SaveFunding for %s\n", channelId[:8])
 	mu.Lock()
 	defer mu.Unlock()
 	channelFunding[channelId] = map[string]string{
 		"params": paramsJson,
 		"proofs": proofsJson,
-		"secret": sharedSecretHex,
+		"secret": channelSecretHex,
 		"keyset": keysetInfoJson,
 	}
 	// Store the initial balance/signature for closing
@@ -1127,7 +1127,7 @@ func runClient(messages []string) {
 	log.Printf("  Found keyset: %s (%s)\n", ki["keysetId"], ki["unit"])
 
 	log.Println("[4/8] Computing shared secret...")
-	ss, _ := spilman.ComputeSharedSecret(alice.Secret, sp.Receiver_pubkey)
+	ss, _ := spilman.ComputeChannelSecret(alice.Secret, sp.Receiver_pubkey)
 
 	log.Println("[5/8] Building channel parameters...")
 	total := 0

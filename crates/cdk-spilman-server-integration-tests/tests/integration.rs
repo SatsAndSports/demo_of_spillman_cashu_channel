@@ -341,11 +341,11 @@ mod verification {
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Build params with tampered keyset
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             &channel.channel_params_json,
             tampered_keyset,
             {
-                let bytes = hex::decode(&channel.shared_secret)?;
+                let bytes = hex::decode(&channel.channel_secret)?;
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
                 arr
@@ -383,11 +383,11 @@ mod verification {
         // Build params
         let keyset = parse_keyset_info_from_json(&channel.keyset_info_json)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             &channel.channel_params_json,
             keyset,
             {
-                let bytes = hex::decode(&channel.shared_secret)?;
+                let bytes = hex::decode(&channel.channel_secret)?;
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
                 arr
@@ -432,11 +432,11 @@ mod verification {
             dleq.e = cdk::nuts::SecretKey::from_hex(&new_e_hex)?;
         }
 
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             &channel.channel_params_json,
             tampered_keyset,
             {
-                let bytes = hex::decode(&channel.shared_secret)?;
+                let bytes = hex::decode(&channel.channel_secret)?;
                 let mut arr = [0u8; 32];
                 arr.copy_from_slice(&bytes);
                 arr

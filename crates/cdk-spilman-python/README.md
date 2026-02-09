@@ -54,7 +54,7 @@ print(f"Payment accepted: balance={result.balance}, channel={result.channel_id}"
 ```python
 from cdk_spilman import (
     generate_keypair,
-    compute_shared_secret,
+    compute_channel_secret,
     channel_parameters_get_channel_id,
     create_funding_outputs,
     create_signed_balance_update,
@@ -64,10 +64,10 @@ from cdk_spilman import (
 secret, pubkey = generate_keypair()
 
 # Compute shared secret with receiver
-shared_secret = compute_shared_secret(secret, receiver_pubkey)
+channel_secret = compute_channel_secret(secret, receiver_pubkey)
 
 # Get channel ID
-channel_id = channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)
+channel_id = channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)
 
 # Create funding outputs for minting
 funding = create_funding_outputs(params_json, secret, keyset_json)
@@ -130,8 +130,8 @@ See `examples/ascii-art/README.md` for more details.
 
 - `generate_keypair()` - Generate a new secp256k1 keypair
 - `secret_key_to_pubkey(secret_hex)` - Derive public key from secret
-- `compute_shared_secret(my_secret, their_pubkey)` - Compute ECDH shared secret
-- `channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)` - Get channel ID
+- `compute_channel_secret(my_secret, their_pubkey)` - Compute ECDH shared secret
+- `channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)` - Get channel ID
 - `create_funding_outputs(params_json, secret, keyset_json)` - Create blinded outputs for funding
 - `construct_proofs(signatures_json, secrets_json, keyset_json)` - Construct proofs from signatures
 - `create_signed_balance_update(params_json, keyset_json, secret, proofs_json, balance)` - Sign a payment

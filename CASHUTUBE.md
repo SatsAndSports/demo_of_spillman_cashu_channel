@@ -181,7 +181,7 @@ Error types:
 
 | Store | Key | Fields |
 |-------|-----|--------|
-| `channelFunding` | channel_id | paramsJson, fundingProofsJson, sharedSecret, keysetInfoJson |
+| `channelFunding` | channel_id | paramsJson, fundingProofsJson, channelSecret, keysetInfoJson |
 | `channelBalance` | channel_id | balance, signature |
 | `channelUsage` | channel_id | blobsServed, bytesServed |
 | `channelClosed` | channel_id | locktime, closedAmount, receiverSum, senderSum, receiverProofsJson |

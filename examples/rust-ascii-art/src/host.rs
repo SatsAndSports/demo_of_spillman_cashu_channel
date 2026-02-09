@@ -166,7 +166,7 @@ impl SpilmanHost for AsciiArtHost {
             (
                 f.params_json,
                 f.funding_proofs_json,
-                f.shared_secret,
+                f.channel_secret,
                 f.keyset_info_json,
             )
         })
@@ -177,7 +177,7 @@ impl SpilmanHost for AsciiArtHost {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -187,7 +187,7 @@ impl SpilmanHost for AsciiArtHost {
             ChannelFundingData {
                 params_json: params_json.to_string(),
                 funding_proofs_json: funding_proofs_json.to_string(),
-                shared_secret: shared_secret_hex.to_string(),
+                channel_secret: channel_secret_hex.to_string(),
                 keyset_info_json: keyset_info_json.to_string(),
             },
         );

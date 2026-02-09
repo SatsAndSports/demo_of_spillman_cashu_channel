@@ -30,7 +30,7 @@ This is implemented using Cashu's NUT-11 spending conditions:
 
 Both parties can compute the **same** blinded outputs for the commitment transaction using a shared secret derived via ECDH. This eliminates round trips during payment:
 
-1. Alice and Charlie derive `shared_secret = ECDH(alice_secret, charlie_pubkey)`
+1. Alice and Charlie derive `channel_secret = ECDH(alice_secret, charlie_pubkey)`
 2. Both use the shared secret to deterministically generate blinding factors
 3. Both can independently compute the same `BlindedMessage` outputs
 
@@ -94,7 +94,7 @@ With P2BK:
 All protocol-critical derivations (scalars, nonces, blinding factors) use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency.
 
 ```
-r = SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{retry_counter}")
+r = SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
 
 If pubkey has even Y:  blinded_pubkey = raw_pubkey + r*G
 If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity)
@@ -102,7 +102,7 @@ If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity)
 blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
 ```
 
-Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings. `channel_id` is a hex string. Raw bytes are only used for the domain separator prefix and the `shared_secret`.
+Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings. `channel_id` is a hex string. Raw bytes are only used for the domain separator prefix and the `channel_secret`.
 
 ### Blinding Contexts
 
@@ -198,7 +198,7 @@ Alice                                Charlie
   |  {receiver_pubkey, pricing, ...}    |
   |<------------------------------------|
   |                                     |
-  |  [Compute shared_secret via ECDH]   |
+  |  [Compute channel_secret via ECDH]   |
   |  [Generate channel_id]              |
   |  [Create funding token]             |
   |  [Mint/swap to get proofs]          |

@@ -21,7 +21,7 @@ func (m *MockHost) GetFundingAndParams(channelId string) (string, string, string
 	return "", "", "", "", false
 }
 
-func (m *MockHost) SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
+func (m *MockHost) SaveFunding(channelId, paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
 }
 
 func (m *MockHost) GetAmountDue(channelId string, contextJson *string) uint64 {

@@ -4,7 +4,7 @@
 //! making them easy to wrap with any FFI system.
 
 use super::{
-    compute_shared_secret as ecdh, ChannelParameters, DeterministicOutputsForOneContext,
+    compute_channel_secret as ecdh, ChannelParameters, DeterministicOutputsForOneContext,
     EstablishedChannel, KeysetInfo, SpilmanChannelSender,
 };
 use crate::dhke::construct_proofs as dhke_construct_proofs;
@@ -76,29 +76,29 @@ pub fn parse_keyset_info_from_json(json_str: &str) -> Result<KeysetInfo, String>
 /// for FFI compatibility.
 pub fn channel_parameters_get_channel_id(
     params_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     keyset_info_json: &str,
 ) -> Result<String, String> {
     // Parse the shared secret
-    let shared_secret_bytes =
-        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let channel_secret_bytes =
+        hex::decode(channel_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
 
-    if shared_secret_bytes.len() != 32 {
+    if channel_secret_bytes.len() != 32 {
         return Err(format!(
             "Shared secret must be 32 bytes, got {}",
-            shared_secret_bytes.len()
+            channel_secret_bytes.len()
         ));
     }
 
-    let mut shared_secret = [0u8; 32];
-    shared_secret.copy_from_slice(&shared_secret_bytes);
+    let mut channel_secret = [0u8; 32];
+    channel_secret.copy_from_slice(&channel_secret_bytes);
 
     // Parse real KeysetInfo from JSON
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
-    // Use from_json_with_shared_secret to construct params
+    // Use from_json_with_channel_secret to construct params
     let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
             .map_err(|e| format!("Failed to parse params: {}", e))?;
 
     Ok(params.get_channel_id())
@@ -107,7 +107,7 @@ pub fn channel_parameters_get_channel_id(
 /// Compute ECDH shared secret from hex strings
 ///
 /// Returns the x-coordinate of the shared point as a hex string (32 bytes).
-pub fn compute_shared_secret_from_hex(
+pub fn compute_channel_secret_from_hex(
     my_secret_hex: &str,
     their_pubkey_hex: &str,
 ) -> Result<String, String> {
@@ -118,8 +118,8 @@ pub fn compute_shared_secret_from_hex(
         .parse()
         .map_err(|e| format!("Invalid pubkey: {}", e))?;
 
-    let shared_secret = ecdh(&my_secret, &their_pubkey);
-    Ok(hex::encode(shared_secret))
+    let channel_secret = ecdh(&my_secret, &their_pubkey);
+    Ok(hex::encode(channel_secret))
 }
 
 /// Compute the minimum funding_token_amount needed for a given capacity

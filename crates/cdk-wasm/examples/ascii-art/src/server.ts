@@ -92,7 +92,7 @@ export const spilmanHooks = {
     return [
       funding.paramsJson,
       funding.fundingProofsJson,
-      funding.sharedSecret,
+      funding.channelSecret,
       funding.keysetInfoJson,
     ];
   },
@@ -101,7 +101,7 @@ export const spilmanHooks = {
     channelId: string,
     paramsJson: string,
     fundingProofsJson: string,
-    sharedSecret: string,
+    channelSecret: string,
     keysetInfoJson: string,
     initialBalance: number,
     initialSignature: string
@@ -109,7 +109,7 @@ export const spilmanHooks = {
     channelFunding.insert(channelId, {
       paramsJson,
       fundingProofsJson,
-      sharedSecret,
+      channelSecret,
       keysetInfoJson,
     });
     // Store the initial balance/signature for closing

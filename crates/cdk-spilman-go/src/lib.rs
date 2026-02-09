@@ -64,7 +64,7 @@ pub struct SpilmanHostCallbacks {
         channel_id: *const c_char,
         params_json: *const c_char,
         funding_proofs_json: *const c_char,
-        shared_secret_hex: *const c_char,
+        channel_secret_hex: *const c_char,
         keyset_info_json: *const c_char,
         initial_balance: u64,
         initial_signature: *const c_char,
@@ -196,7 +196,7 @@ impl SpilmanHost for CGoSpilmanHost {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -204,7 +204,7 @@ impl SpilmanHost for CGoSpilmanHost {
         let id_c = CString::new(channel_id).unwrap();
         let p_c = CString::new(params_json).unwrap();
         let pr_c = CString::new(funding_proofs_json).unwrap();
-        let s_c = CString::new(shared_secret_hex).unwrap();
+        let s_c = CString::new(channel_secret_hex).unwrap();
         let k_c = CString::new(keyset_info_json).unwrap();
         let sig_c = CString::new(initial_signature).unwrap();
 
@@ -635,7 +635,7 @@ pub unsafe extern "C" fn spilman_unblind_and_verify_dleq(
     secrets_json: *const c_char,
     params_json: *const c_char,
     keyset_json: *const c_char,
-    shared_secret_hex: *const c_char,
+    channel_secret_hex: *const c_char,
     balance: u64,
     output_keyset_json: *const c_char,
 ) -> CResult {
@@ -643,7 +643,7 @@ pub unsafe extern "C" fn spilman_unblind_and_verify_dleq(
     let secrets = CStr::from_ptr(secrets_json).to_str().unwrap();
     let params = CStr::from_ptr(params_json).to_str().unwrap();
     let keyset = CStr::from_ptr(keyset_json).to_str().unwrap();
-    let secret = CStr::from_ptr(shared_secret_hex).to_str().unwrap();
+    let secret = CStr::from_ptr(channel_secret_hex).to_str().unwrap();
     let output_keyset = if !output_keyset_json.is_null() {
         Some(CStr::from_ptr(output_keyset_json).to_str().unwrap())
     } else {
@@ -718,14 +718,14 @@ pub unsafe extern "C" fn spilman_free_cresult(res: CResult) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn spilman_compute_shared_secret(
+pub unsafe extern "C" fn spilman_compute_channel_secret(
     my_secret_hex: *const c_char,
     their_pubkey_hex: *const c_char,
 ) -> CResult {
     let my_sk = CStr::from_ptr(my_secret_hex).to_str().unwrap();
     let their_pk = CStr::from_ptr(their_pubkey_hex).to_str().unwrap();
 
-    match spilman::compute_shared_secret_from_hex(my_sk, their_pk) {
+    match spilman::compute_channel_secret_from_hex(my_sk, their_pk) {
         Ok(s) => CResult::success(s),
         Err(e) => CResult::error(e.to_string()),
     }
@@ -748,11 +748,11 @@ pub unsafe extern "C" fn spilman_compute_funding_token_amount(
 #[no_mangle]
 pub unsafe extern "C" fn spilman_channel_parameters_get_channel_id(
     params_json: *const c_char,
-    shared_secret_hex: *const c_char,
+    channel_secret_hex: *const c_char,
     keyset_info_json: *const c_char,
 ) -> CResult {
     let p = CStr::from_ptr(params_json).to_str().unwrap();
-    let s = CStr::from_ptr(shared_secret_hex).to_str().unwrap();
+    let s = CStr::from_ptr(channel_secret_hex).to_str().unwrap();
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
     match spilman::channel_parameters_get_channel_id(p, s, k) {

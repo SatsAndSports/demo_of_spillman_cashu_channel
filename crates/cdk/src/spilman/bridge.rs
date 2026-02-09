@@ -49,7 +49,7 @@ pub trait SpilmanHost {
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &crate::nuts::Id) -> bool;
 
     /// Get cached funding data for a channel
-    /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
+    /// Returns (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)
     fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
 
     /// Save funding data for a channel, including the initial payment proof
@@ -63,7 +63,7 @@ pub trait SpilmanHost {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -302,7 +302,7 @@ pub struct PreparedClose {
     /// Keyset info JSON (for unblinding phase)
     pub keyset_info_json: String,
     /// Shared secret hex (for unblinding phase)
-    pub shared_secret: String,
+    pub channel_secret: String,
 }
 
 /// HTTP-friendly error for close preparation.
@@ -920,7 +920,7 @@ pub fn unblind_and_verify_dleq(
     secrets_with_blinding_json: &str,
     params_json: &str,
     keyset_info_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     balance: u64,
     output_keyset_info_json: Option<&str>,
 ) -> Result<String, String> {
@@ -934,14 +934,14 @@ pub fn unblind_and_verify_dleq(
         None => keyset_info.clone(),
     };
 
-    let shared_secret_bytes =
-        hex::decode(shared_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
+    let channel_secret_bytes =
+        hex::decode(channel_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    let channel_secret: [u8; 32] = channel_secret_bytes
         .try_into()
         .map_err(|_| "Shared secret must be 32 bytes".to_string())?;
 
     let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
             .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
     let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json)
@@ -1151,7 +1151,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 }
             };
 
-        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
+        let (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json) =
             funding_and_params;
 
         // 4. Parse params for capacity and unit checks
@@ -1172,7 +1172,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             self.verify_signature(
                 &params_json,
                 &funding_proofs_json,
-                &shared_secret_hex,
+                &channel_secret_hex,
                 &keyset_info_json,
                 channel_id,
                 balance,
@@ -1296,7 +1296,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             }
         };
 
-        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) =
+        let (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json) =
             funding_and_params;
 
         // 4. Parse params for capacity
@@ -1311,7 +1311,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             self.verify_signature(
                 &params_json,
                 &funding_proofs_json,
-                &shared_secret_hex,
+                &channel_secret_hex,
                 &keyset_info_json,
                 channel_id,
                 balance,
@@ -1476,18 +1476,18 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
 
         // 5. Compute shared secret
-        let shared_secret = super::compute_shared_secret(server_secret_key, &alice_pubkey);
-        let shared_secret_hex = hex::encode(shared_secret);
+        let channel_secret = super::compute_channel_secret(server_secret_key, &alice_pubkey);
+        let channel_secret_hex = hex::encode(channel_secret);
 
         // 6. Parse keyset info
         let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(BridgeError::InvalidRequest)?;
 
         // 7. Verify channel_id matches
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             &params_json,
             keyset_info.clone(),
-            shared_secret,
+            channel_secret,
         )
         .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1510,7 +1510,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         self.verify_signature(
             &params_json,
             &funding_proofs_json,
-            &shared_secret_hex,
+            &channel_secret_hex,
             &keyset_info_json,
             channel_id,
             balance,
@@ -1523,7 +1523,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             channel_id,
             &params_json,
             &funding_proofs_json,
-            &shared_secret_hex,
+            &channel_secret_hex,
             &keyset_info_json,
             balance,
             signature,
@@ -1532,7 +1532,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         Ok((
             params_json,
             funding_proofs_json,
-            shared_secret_hex,
+            channel_secret_hex,
             keyset_info_json,
         ))
     }
@@ -1542,24 +1542,24 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         &self,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         channel_id: &str,
         balance: u64,
         signature: &str,
     ) -> Result<(), String> {
-        let shared_secret_bytes = hex::decode(shared_secret_hex).map_err(|e| e.to_string())?;
-        let shared_secret: [u8; 32] = shared_secret_bytes
+        let channel_secret_bytes = hex::decode(channel_secret_hex).map_err(|e| e.to_string())?;
+        let channel_secret: [u8; 32] = channel_secret_bytes
             .try_into()
             .map_err(|_| "invalid shared secret length")?;
 
         let keyset_info =
             super::parse_keyset_info_from_json(keyset_info_json).map_err(|e| e.to_string())?;
 
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             params_json,
             keyset_info,
-            shared_secret,
+            channel_secret,
         )
         .map_err(|e| e.to_string())?;
 
@@ -1597,7 +1597,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
     /// * `channel_id` - The channel ID
     /// * `balance` - The balance to close at
     /// * `signature` - Alice's signature authorizing this balance
-    /// * `funding_data` - Tuple of (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
+    /// * `funding_data` - Tuple of (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)
     /// * `validate_balance_equals_amount_due` - If true, verify balance == amount_due (for cooperative close)
     fn prepare_close_data_impl(
         &self,
@@ -1607,22 +1607,22 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         funding_data: (String, String, String, String),
         validate_balance_equals_amount_due: bool,
     ) -> Result<CloseData, BridgeError> {
-        let (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json) = funding_data;
+        let (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json) = funding_data;
 
         // 1. Parse everything we need
-        let shared_secret_bytes =
-            hex::decode(&shared_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?;
-        let shared_secret: [u8; 32] = shared_secret_bytes
+        let channel_secret_bytes =
+            hex::decode(&channel_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let channel_secret: [u8; 32] = channel_secret_bytes
             .try_into()
             .map_err(|_| BridgeError::Internal("invalid shared secret length".into()))?;
 
         let keyset_info = super::parse_keyset_info_from_json(&keyset_info_json)
             .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
-        let params = ChannelParameters::from_json_with_shared_secret(
+        let params = ChannelParameters::from_json_with_channel_secret(
             &params_json,
             keyset_info,
-            shared_secret,
+            channel_secret,
         )
         .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
@@ -1923,7 +1923,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .map_err(ClosePreparationError::from_bridge_error)?;
 
         // 3. Get funding data for unblinding phase
-        let (params_json, _funding_proofs_json, shared_secret, keyset_info_json) = self
+        let (params_json, _funding_proofs_json, channel_secret, keyset_info_json) = self
             .host
             .get_funding_and_params(&channel_id)
             .ok_or_else(|| ClosePreparationError::internal("channel not found after validation"))?;
@@ -1961,7 +1961,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 .unwrap_or(serde_json::Value::Null),
             params_json,
             keyset_info_json,
-            shared_secret,
+            channel_secret,
         })
     }
 
@@ -1989,7 +1989,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
             .map_err(ClosePreparationError::from_bridge_error)?;
 
         // 2. Get funding data for unblinding phase
-        let (params_json, _funding_proofs_json, shared_secret, keyset_info_json) = self
+        let (params_json, _funding_proofs_json, channel_secret, keyset_info_json) = self
             .host
             .get_funding_and_params(channel_id)
             .ok_or_else(|| ClosePreparationError::internal("channel not found after validation"))?;
@@ -2033,7 +2033,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 .unwrap_or(serde_json::Value::Null),
             params_json,
             keyset_info_json,
-            shared_secret,
+            channel_secret,
         })
     }
 
@@ -2099,7 +2099,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 })?;
 
         // 3. Get funding data
-        let (params_json, _funding_proofs_json, shared_secret_hex, keyset_info_json) = self
+        let (params_json, _funding_proofs_json, channel_secret_hex, keyset_info_json) = self
             .host
             .get_funding_and_params(channel_id)
             .ok_or_else(|| CloseError::ValidationFailed {
@@ -2203,7 +2203,7 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 &secrets_with_blinding_json,
                 &params_json,
                 &keyset_info_json,
-                &shared_secret_hex,
+                &channel_secret_hex,
                 closing_data.balance,
                 Some(output_keyset_info_json),
             )
@@ -2457,7 +2457,7 @@ mod tests {
             _channel_id: &str,
             _params_json: &str,
             _funding_proofs_json: &str,
-            _shared_secret_hex: &str,
+            _channel_secret_hex: &str,
             _keyset_info_json: &str,
             _initial_balance: u64,
             _initial_signature: &str,
@@ -2663,7 +2663,7 @@ mod tests {
             _channel_id: &str,
             _params_json: &str,
             _funding_proofs_json: &str,
-            _shared_secret_hex: &str,
+            _channel_secret_hex: &str,
             _keyset_info_json: &str,
             _initial_balance: u64,
             _initial_signature: &str,
@@ -2750,12 +2750,12 @@ mod tests {
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
         use crate::spilman::{
-            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+            compute_channel_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
         };
 
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         // Create Keyset A (the one the channel is funded with)
         let keyset_a = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
@@ -2779,7 +2779,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "nonce".to_string(),
             keyset_info: keyset_a.clone(),
-            shared_secret,
+            channel_secret,
         };
         let channel_id = params_struct.get_channel_id();
         let balance = 100;
@@ -2810,7 +2810,7 @@ mod tests {
                 (
                     params_struct.get_channel_id_params_json(),
                     serde_json::to_string(&proofs).unwrap(),
-                    hex::encode(shared_secret),
+                    hex::encode(channel_secret),
                     serde_json::to_string(&keyset_a).unwrap(),
                 ),
             )]
@@ -2899,7 +2899,7 @@ mod tests {
             _channel_id: &str,
             _params_json: &str,
             _funding_proofs_json: &str,
-            _shared_secret_hex: &str,
+            _channel_secret_hex: &str,
             _keyset_info_json: &str,
             _initial_balance: u64,
             _initial_signature: &str,
@@ -3015,12 +3015,12 @@ mod tests {
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
         use crate::spilman::{
-            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+            compute_channel_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
         };
 
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         // Create "stale" keyset (the one initially cached, but deactivated at mint)
         let keyset_stale = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
@@ -3044,7 +3044,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "test-refresh-coop".to_string(),
             keyset_info: keyset_stale.clone(),
-            shared_secret,
+            channel_secret,
         };
         let channel_id = params_struct.get_channel_id();
         let balance = 100;
@@ -3085,7 +3085,7 @@ mod tests {
                 (
                     params_struct.get_channel_id_params_json(),
                     serde_json::to_string(&proofs).unwrap(),
-                    hex::encode(shared_secret),
+                    hex::encode(channel_secret),
                     serde_json::to_string(&keyset_stale).unwrap(),
                 ),
             )]
@@ -3187,12 +3187,12 @@ mod tests {
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
         use crate::spilman::{
-            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+            compute_channel_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
         };
 
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         // Create "stale" keyset
         let keyset_stale = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
@@ -3216,7 +3216,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "test-refresh-unilateral".to_string(),
             keyset_info: keyset_stale.clone(),
-            shared_secret,
+            channel_secret,
         };
         let channel_id = params_struct.get_channel_id();
         let balance = 200;
@@ -3261,7 +3261,7 @@ mod tests {
                 (
                     params_struct.get_channel_id_params_json(),
                     serde_json::to_string(&proofs).unwrap(),
-                    hex::encode(shared_secret),
+                    hex::encode(channel_secret),
                     serde_json::to_string(&keyset_stale).unwrap(),
                 ),
             )]
@@ -3345,12 +3345,12 @@ mod tests {
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
         use crate::spilman::{
-            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+            compute_channel_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
         };
 
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
         let keyset_id = keyset_info.keyset_id;
@@ -3368,7 +3368,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "test-nonzero-funding".to_string(),
             keyset_info: keyset_info.clone(),
-            shared_secret,
+            channel_secret,
         };
         let channel_id = params_struct.get_channel_id();
 
@@ -3399,7 +3399,7 @@ mod tests {
                 (
                     params_struct.get_channel_id_params_json(),
                     serde_json::to_string(&proofs).unwrap(),
-                    hex::encode(shared_secret),
+                    hex::encode(channel_secret),
                     serde_json::to_string(&keyset_info).unwrap(),
                 ),
             )]
@@ -3454,12 +3454,12 @@ mod tests {
         use crate::secret::Secret;
         use crate::spilman::params::mock_keyset_info;
         use crate::spilman::{
-            compute_shared_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
+            compute_channel_secret, ChannelParameters, EstablishedChannel, SpilmanChannelSender,
         };
 
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
         let keyset_id = keyset_info.keyset_id;
@@ -3476,7 +3476,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "test-wrong-sig".to_string(),
             keyset_info: keyset_info.clone(),
-            shared_secret,
+            channel_secret,
         };
         let channel_id = params_struct.get_channel_id();
 
@@ -3502,7 +3502,7 @@ mod tests {
                 (
                     params_struct.get_channel_id_params_json(),
                     serde_json::to_string(&proofs).unwrap(),
-                    hex::encode(shared_secret),
+                    hex::encode(channel_secret),
                     serde_json::to_string(&keyset_info).unwrap(),
                 ),
             )]
