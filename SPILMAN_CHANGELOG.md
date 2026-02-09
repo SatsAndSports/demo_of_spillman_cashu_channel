@@ -2,6 +2,51 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 5-9, 2026)
+
+### Client-Side Bridge: SpilmanClientBridge
+
+Added a full client-side bridge (`SpilmanClientBridge` + `SpilmanClientHost` trait) mirroring the server-side `SpilmanBridge` / `SpilmanHost` pattern. The client bridge orchestrates channel creation from tokens, payment signing, and HTTP header construction.
+
+- **Go implementation first** (`cdk-spilman-go`), then **Python** (`cdk-spilman-python`), both with full integration tests
+- **Core Rust API** (`client_bridge.rs`): `open_channel_from_token`, `sign_balance_update`, `build_payment_header`, `get_channel_info`, `list_channels`, `remove_channel`
+- **`compute_channel_from_token` binding**: Parses a cashuA/cashuB token and computes channel parameters + funding swap in one step
+- **`create_funding_swap` binding**: Creates the mint swap request for funding, with deterministic 2-of-2 locked outputs
+- **`complete_funding_swap` binding**: Processes the mint's swap response, unblinding signatures and verifying DLEQ proofs
+- **Code de-duplication**: `MintProofsFromMint` and `BuildCashuAToken` utility functions lifted from per-language test code into core Rust bindings, shared across Go and Python
+
+### Secret Key Removal from Client Bridge (Stages 1-2)
+
+Redesigned the `SpilmanClientBridge` so it **never holds or sees Alice's secret key**. The host (application layer) owns the key and provides callbacks for operations that need it.
+
+**Stage 1: `sign_with_tweaked_key` callback**
+- Added `sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex) -> Result<String, String>` to `SpilmanClientHost` trait
+- New binding functions: `sign_with_tweaked_key_util()` (convenience for hosts holding raw keys), `create_unsigned_balance_update()`, `attach_signature_to_balance_update()`
+- Added `derive_sender_blinding_scalar_for_stage1()` public method on `ChannelParameters`
+
+**Stage 2: Full secret removal**
+- Added `compute_channel_secret(alice_pubkey_hex, charlie_pubkey_hex) -> Result<String, String>` to `SpilmanClientHost` trait
+- Bridge constructor `new(host)` takes no key parameter (infallible, no longer returns `Result`)
+- `open_channel_from_token()` takes `alice_pubkey_hex` per channel, enabling different keys per channel
+- Removed `alice_secret_hex`, `alice_pubkey_hex` fields and accessors from bridge struct
+- `ChannelData` struct separates channel JSON from channel secret for flexible host storage
+- `StoredChannel` includes per-channel `alice_pubkey_hex`
+- All FFI layers (Go, Python) and all tests updated
+
+### Protocol Changes
+
+- **Rename `shared_secret` to `channel_secret`**: Consistent naming across all code, docs, and FFI bindings
+- **Channel ID includes channel_secret**: Restored the channel secret hash in the channel ID derivation (it had been accidentally removed). The channel_id is `SHA256(mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|alice_pubkey|charlie_pubkey|locktime|sender_nonce|channel_secret_hex)`
+- **`funding_token_amount` as explicit parameter**: No longer deterministically computed from capacity. Now an explicit field in `ChannelParameters`, with `compute_funding_token_amount()` utility for computing the minimum needed for a given capacity
+- **Configurable mint fees in tests**: Dev mint now uses `input_fee_ppk=400`; all tests adjusted for non-zero fees
+
+### Package Restructuring
+
+- **Go package tidied** (`cdk-spilman-go`): Separate `spilman/` package directory, platform-specific CGO files, `packaged/` directory for pre-built libs, full README
+- **TypeScript ASCII Art moved** to `crates/cdk-wasm/examples/ascii-art/` (from `examples/ts-ascii-art/`)
+- **Python venv simplified**: Single `.venv` at the top of the Python subproject
+- **Rust ASCII Art**: Added integration tests (`examples/rust-ascii-art/tests/integration.rs`)
+
 ## Completed Features (Feb 3, 2026)
 
 ### Atomic Funding with Initial Payment Proof

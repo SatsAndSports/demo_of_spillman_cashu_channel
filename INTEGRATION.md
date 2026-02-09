@@ -362,7 +362,7 @@ The four examples servers users four separate in-memory stores like this:
 interface ChannelFunding {
   paramsJson: string;        // Channel parameters
   fundingProofsJson: string; // The locked Cashu proofs
-  sharedSecret: string;      // ECDH secret (hex)
+  channelSecret: string;     // ECDH channel secret (hex)
   keysetInfoJson: string;    // Keyset keys and fees
 }
 
@@ -741,6 +741,102 @@ examples/rust-ascii-art/src/stores.rs
 # Bridge interface (Rust source)
 crates/cdk/src/spilman/bridge.rs
 ```
+
+---
+
+## Client-Side: SpilmanClientBridge
+
+For clients (payers) who want to open and manage channels programmatically, the `SpilmanClientBridge` provides a mirror of the server-side pattern.
+
+### The SpilmanClientHost Interface
+
+You implement this interface to connect the client bridge to your app's key management and storage:
+
+```rust
+trait SpilmanClientHost {
+    /// Submit a swap request to the mint.
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    
+    /// Save channel state. The bridge passes an opaque channel JSON blob
+    /// and the channel secret separately (so the host can encrypt it).
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str);
+    
+    /// Retrieve channel state. Returns None if not found.
+    fn get_channel(&self, channel_id: &str) -> Option<ChannelData>;
+    
+    /// List all stored channel IDs.
+    fn list_channel_ids(&self) -> Vec<String>;
+    
+    /// Delete a channel from storage.
+    fn delete_channel(&self, channel_id: &str);
+    
+    /// Sign a message with a tweaked key (BIP-340 Schnorr).
+    /// The bridge computes the tweak and message hash, then asks the host
+    /// to produce a signature using (secret + tweak).
+    /// For hosts holding raw keys, use sign_with_tweaked_key_util().
+    fn sign_with_tweaked_key(
+        &self,
+        signer_pubkey_hex: &str,   // Identifies which key to use
+        message_hex: &str,          // SHA-256 hash (32 bytes, hex)
+        tweak_scalar_hex: &str,     // P2BK blinding scalar (32 bytes, hex)
+    ) -> Result<String, String>;
+    
+    /// Compute the hashed ECDH channel secret.
+    /// The host performs ECDH(alice_secret, charlie_pubkey) and hashes with
+    /// domain separator "Cashu_Spilman_channel_secret_v1".
+    /// For hosts holding raw keys, use compute_channel_secret_from_hex().
+    fn compute_channel_secret(
+        &self,
+        alice_pubkey_hex: &str,     // Identifies which secret key to use
+        charlie_pubkey_hex: &str,   // Receiver's public key
+    ) -> Result<String, String>;
+}
+```
+
+### Key Design: Bridge Never Sees the Secret Key
+
+The bridge is **stateless and keyless**. All cryptographic operations requiring Alice's secret key are delegated to the host. This enables:
+
+- **External signers / HSMs**: The host can delegate to hardware
+- **Per-channel keys**: The caller passes `alice_pubkey_hex` to `open_channel_from_token()`, so different channels can use different keys
+- **Key rotation**: The host manages key lifecycle independently
+
+### Using the Client Bridge
+
+```rust
+// Create bridge (no key parameter)
+let bridge = SpilmanClientBridge::new(my_host);
+
+// Open a channel from a Cashu token
+let result = bridge.open_channel_from_token(
+    token_string,
+    charlie_pubkey_hex,
+    alice_pubkey_hex,  // Caller chooses which key for this channel
+    locktime,
+    keyset_info_json,
+    max_amount,
+)?;
+
+// Sign balance updates
+let update_json = bridge.sign_balance_update(&result.channel_id, 10)?;
+
+// Build payment headers (base64-encoded, ready for X-Cashu-Channel)
+let header = bridge.build_payment_header(&result.channel_id, 10, true)?;  // with funding
+let header = bridge.build_payment_header(&result.channel_id, 20, false)?; // without
+```
+
+### Available in All Languages
+
+| Language | Bridge | Host Interface |
+|----------|--------|----------------|
+| Rust | `SpilmanClientBridge` | `SpilmanClientHost` trait |
+| Go | `ClientBridge` | `SpilmanClientHost` interface |
+| Python | `ClientBridge` | Duck-typed class with required methods |
+
+See the integration tests in each language for complete working examples:
+- Rust: `crates/cdk/src/spilman/tests.rs` (`test_client_bridge`)
+- Go: `crates/cdk-spilman-go/spilman/integration_test.go` (`TestClientBridge`)
+- Python: `crates/cdk-spilman-python/tests/integration_test.py` (`TestClientBridge`)
 
 ---
 

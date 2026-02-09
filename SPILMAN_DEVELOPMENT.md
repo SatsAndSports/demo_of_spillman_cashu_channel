@@ -57,10 +57,10 @@ For developers without a local Rust toolchain, or for reproducible builds, you c
 
 ```bash
 # Run the full integration test suite (52 tests) - default: Podman
-make test-rust-only-containerized
+make test-containerized
 
 # Using Docker instead
-make test-rust-only-containerized CONTAINER_ENGINE=docker
+make test-containerized CONTAINER_ENGINE=docker
 ```
 
 This single command:
@@ -252,11 +252,14 @@ make clean
 ### Rust Tests
 
 ```bash
+# Quick: Spilman unit tests + Rust server integration tests
+make test-rust-only
+
+# Spilman-specific unit tests (includes mint integration)
+cargo test -p cdk spilman
+
 # All CDK tests
 cargo test -p cdk
-
-# Spilman-specific tests (includes mint integration)
-cargo test -p cdk spilman
 
 # Clippy checks (must pass)
 cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-spilman-server-integration-tests -- -D warnings
@@ -313,6 +316,31 @@ Test coverage includes:
 - `closing` - Cooperative close, idempotent close, error cases
 - `unilateral_closing` - Server-initiated close, overpayment handling
 
+### Go Integration Tests
+
+The Go bindings (`cdk-spilman-go`) include both unit tests and integration tests (the latter require a running mint):
+
+```bash
+# Unit tests (no mint needed)
+make test-unit-go
+
+# Integration tests (starts mint automatically)
+make test-integration-go
+```
+
+The integration tests cover standalone functions (keypair generation, channel secret, funding outputs, channel ID) and the full `ClientBridge` end-to-end flow (mint proofs, open channel, sign payments, server-side validation).
+
+### Python Integration Tests
+
+The Python bindings (`cdk-spilman-python`) include integration tests that require a running mint:
+
+```bash
+# Integration tests (starts mint automatically, builds Python wheel)
+make test-integration-python
+```
+
+The tests cover standalone functions (keypair generation, channel secret, funding outputs) and the full `ClientBridge` end-to-end flow, including server-side validation with a `MockServerHost`.
+
 ### Rust ASCII Art Server
 
 The Rust ASCII Art server (`examples/rust-ascii-art/`) is a native implementation using the core `cdk` Spilman library directly (no WASM or FFI).
@@ -356,7 +384,7 @@ python client.py
 
 ### Go Demo
 
-**Note:** This is a proof-of-concept demonstrating Go bindings. For comprehensive test coverage, see the TypeScript ASCII Art tests above.
+**Note:** This is a proof-of-concept demonstrating Go bindings. For comprehensive test coverage, see the server integration tests above.
 
 ```bash
 # Build Go bindings
@@ -364,6 +392,19 @@ make build-go
 
 # Run parallel test
 make test-go-parallel
+```
+
+### Running All Tests
+
+```bash
+# Quick: Spilman unit tests + Rust server integration
+make test-rust-only
+
+# Everything except blossom: unit tests + Go/Python integration + all 4 server suites
+make test-all
+
+# Everything including blossom (requires web/blossom-server repo)
+make test-all-with-blossom
 ```
 
 ## Setting Up Blossom Server

@@ -43,7 +43,9 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 
 ### Protocol Implementation
 - `spilman/params.rs` - `ChannelParameters`, channel ID, P2BK blinding
-- `spilman/bridge.rs` - `SpilmanBridge`, `SpilmanHost` trait
+- `spilman/bridge.rs` - `SpilmanBridge`, `SpilmanHost` trait (server-side)
+- `spilman/client_bridge.rs` - `SpilmanClientBridge`, `SpilmanClientHost` trait (client-side)
+- `spilman/bindings.rs` - FFI-friendly wrapper functions (compute_channel_from_token, create_funding_swap, etc.)
 - `spilman/balance_update.rs` - Balance updates and Schnorr signatures
 - `spilman/deterministic.rs` - Deterministic blinded output generation
 - `spilman/sender_and_receiver.rs` - `verify_valid_channel`, DLEQ verification
@@ -131,12 +133,12 @@ For detailed information, see:
 | Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
 
 ## Active TODOs
-- ensure all four test-integration-* are working. e.g. python and maturin
-- make the ClientBridge include Alice's secret in the channel, to allow each channel to have a differnet secret
-- scale back the demos, they're not really needed as we now have so many tests
 
 ### Protocol
 - Keyset rotation issue: deactivated keysets removed from cache break existing channels (High Priority)
+
+### Cleanup
+- Scale back the demos, they're not really needed as we now have so many tests
 
 ### Player
 - Remember volume preference in localStorage
@@ -184,6 +186,27 @@ trait SpilmanHost {
 ```
 
 See [INTEGRATION.md](INTEGRATION.md) for full method signatures and documentation.
+
+## Quick Reference: SpilmanClientHost Trait
+
+The client-side bridge delegates key management and storage to the host via these hooks:
+
+```rust
+trait SpilmanClientHost {
+    // Mint communication
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    
+    // Channel storage
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str);
+    fn get_channel(&self, channel_id: &str) -> Option<ChannelData>;
+    fn list_channel_ids(&self) -> Vec<String>;
+    fn delete_channel(&self, channel_id: &str);
+    
+    // Key operations (bridge never sees the secret key)
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
+    fn compute_channel_secret(&self, alice_pubkey_hex: &str, charlie_pubkey_hex: &str) -> Result<String, String>;
+}
+```
 
 ## Quick Reference: Payment Header
 
