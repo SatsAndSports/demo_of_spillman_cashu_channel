@@ -50,21 +50,18 @@ The signature covers `SHA256(channel_id || amount)` using Alice's **blinded** se
 
 ### 4. Channel ID
 
-The channel ID is a SHA256 hash of the canonical channel parameters:
+The channel ID is a SHA256 hash of all canonical channel parameters, using pipe-delimited text:
 
 ```
 channel_id = SHA256(
-  mint_url || 
-  alice_pubkey || 
-  charlie_pubkey || 
-  capacity || 
-  locktime || 
-  nonce || 
-  keyset_id
+  mint_url | unit | capacity | funding_token_amount |
+  keyset_id | input_fee_ppk | maximum_amount |
+  setup_timestamp | alice_pubkey | charlie_pubkey |
+  locktime | sender_nonce | channel_secret_hex
 )
 ```
 
-This binds all parameters together cryptographically. Any tampering changes the channel ID.
+The `channel_secret` (ECDH shared secret) is included, meaning only the two parties who know the secret can compute the channel ID. All fields are pipe-delimited decimal text (for cross-platform consistency). This binds all parameters together cryptographically. Any tampering changes the channel ID.
 
 ### 5. DLEQ Verification
 
@@ -186,6 +183,34 @@ Each language implements the `SpilmanHost` trait/interface:
 
 The security-critical logic (DLEQ, signatures, channel ID) stays in Rust.
 
+### Client-Side Bridge
+
+The `SpilmanClientBridge` mirrors the server-side pattern, providing a high-level API for channel management on the client side:
+
+```rust
+trait SpilmanClientHost {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str);
+    fn get_channel(&self, channel_id: &str) -> Option<ChannelData>;
+    fn list_channel_ids(&self) -> Vec<String>;
+    fn delete_channel(&self, channel_id: &str);
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
+    fn compute_channel_secret(&self, alice_pubkey_hex: &str, charlie_pubkey_hex: &str) -> Result<String, String>;
+}
+```
+
+**Key design principle**: The bridge never holds or sees Alice's secret key. All operations requiring the key are delegated to the host via callbacks:
+
+- `sign_with_tweaked_key`: Host produces BIP-340 Schnorr signatures using `(secret + tweak)`, where the tweak is the P2BK blinding scalar computed by the bridge
+- `compute_channel_secret`: Host performs ECDH between Alice's secret and Charlie's pubkey, then hashes with a domain separator
+
+This enables external signers, HSMs, or any key management strategy the host prefers. The caller passes `alice_pubkey_hex` per channel when opening, so different channels can use different keys.
+
+The bridge orchestrates:
+1. **Channel opening**: `open_channel_from_token()` — parses token, computes ECDH via host, creates funding swap, submits to mint, verifies DLEQ, saves channel
+2. **Payment signing**: `sign_balance_update()` / `build_payment_header()` — creates balance updates with host-delegated signing
+3. **Channel management**: `get_channel_info()`, `list_channels()`, `remove_channel()`
+
 ## Channel Lifecycle
 
 ### 1. Channel Setup
@@ -262,8 +287,9 @@ Alice                                Charlie                              Mint
 | `spilman/balance_update.rs` | Balance update messages and Schnorr signatures |
 | `spilman/sender_and_receiver.rs` | `SpilmanChannelSender`, `SpilmanChannelReceiver`, `verify_valid_channel` |
 | `spilman/established_channel.rs` | `EstablishedChannel` state container |
-| `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait |
-| `spilman/bindings.rs` | FFI-friendly wrapper functions |
+| `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait (server-side) |
+| `spilman/client_bridge.rs` | `SpilmanClientBridge` and `SpilmanClientHost` trait (client-side) |
+| `spilman/bindings.rs` | FFI-friendly wrapper functions (compute_channel_from_token, create_funding_swap, etc.) |
 | `spilman/tests.rs` | Integration tests against real mint |
 
 ## Transport Constraints
