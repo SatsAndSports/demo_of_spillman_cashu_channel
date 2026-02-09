@@ -72,11 +72,11 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 	keysetJson, _ := json.Marshal(keysetInfo)
 
 	// 4. Compute shared secret
-	sharedSecret, err := ComputeSharedSecret(aliceSecret, receiverPubkey)
+	channelSecret, err := ComputeChannelSecret(aliceSecret, receiverPubkey)
 	if err != nil {
-		t.Fatalf("ComputeSharedSecret failed: %v", err)
+		t.Fatalf("ComputeChannelSecret failed: %v", err)
 	}
-	t.Logf("Computed shared secret: %s...", sharedSecret[:16])
+	t.Logf("Computed shared secret: %s...", channelSecret[:16])
 
 	// 5. Build channel parameters
 	fundingTokenAmount, err := ComputeFundingTokenAmount(uint64(100), string(keysetJson), uint64(64))
@@ -100,7 +100,7 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 	paramsJson, _ := json.Marshal(params)
 
 	// 6. Get channel ID
-	channelId, err := ChannelParametersGetChannelId(string(paramsJson), sharedSecret, string(keysetJson))
+	channelId, err := ChannelParametersGetChannelId(string(paramsJson), channelSecret, string(keysetJson))
 	if err != nil {
 		t.Fatalf("ChannelParametersGetChannelId failed: %v", err)
 	}
@@ -207,10 +207,10 @@ type testServerHost struct {
 }
 
 type serverFunding struct {
-	paramsJSON      string
-	proofsJSON      string
-	sharedSecretHex string
-	keysetInfoJSON  string
+	paramsJSON       string
+	proofsJSON       string
+	channelSecretHex string
+	keysetInfoJSON   string
 }
 
 type serverPayment struct {
@@ -237,17 +237,17 @@ func (h *testServerHost) GetFundingAndParams(channelId string) (string, string, 
 	if !ok {
 		return "", "", "", "", false
 	}
-	return f.paramsJSON, f.proofsJSON, f.sharedSecretHex, f.keysetInfoJSON, true
+	return f.paramsJSON, f.proofsJSON, f.channelSecretHex, f.keysetInfoJSON, true
 }
 
-func (h *testServerHost) SaveFunding(channelId, paramsJSON, proofsJSON, sharedSecretHex, keysetInfoJSON string, initialBalance uint64, initialSignature string) {
+func (h *testServerHost) SaveFunding(channelId, paramsJSON, proofsJSON, channelSecretHex, keysetInfoJSON string, initialBalance uint64, initialSignature string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.fundingData[channelId] = serverFunding{
-		paramsJSON:      paramsJSON,
-		proofsJSON:      proofsJSON,
-		sharedSecretHex: sharedSecretHex,
-		keysetInfoJSON:  keysetInfoJSON,
+		paramsJSON:       paramsJSON,
+		proofsJSON:       proofsJSON,
+		channelSecretHex: channelSecretHex,
+		keysetInfoJSON:   keysetInfoJSON,
 	}
 }
 

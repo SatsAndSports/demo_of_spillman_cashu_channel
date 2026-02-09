@@ -48,7 +48,7 @@ pub struct ChannelParameters {
     /// Maximum amount for one output (amounts larger than this are filtered out)
     pub maximum_amount_for_one_output: u64,
     /// Shared secret derived from ECDH between Alice and Charlie
-    pub shared_secret: [u8; 32],
+    pub channel_secret: [u8; 32],
 }
 
 /// Compute the channel secret from a secret key and counterparty's public key
@@ -57,7 +57,7 @@ pub struct ChannelParameters {
 /// the raw Diffie-Hellman shared secret never leaves this function.
 ///
 /// Returns: SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(my_secret, their_pubkey))
-pub fn compute_shared_secret(
+pub fn compute_channel_secret(
     my_secret: &crate::nuts::SecretKey,
     their_pubkey: &crate::nuts::PublicKey,
 ) -> [u8; 32] {
@@ -176,7 +176,7 @@ impl ChannelParameters {
         sender_nonce: String,
         keyset_info: KeysetInfo,
         maximum_amount_for_one_output: u64,
-        shared_secret: [u8; 32],
+        channel_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         // Validate input_fee_ppk is in valid range
         if keyset_info.input_fee_ppk > 999 {
@@ -217,7 +217,7 @@ impl ChannelParameters {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
-            shared_secret,
+            channel_secret,
         })
     }
 
@@ -264,7 +264,7 @@ impl ChannelParameters {
         };
 
         // Compute channel secret (hashed ECDH)
-        let shared_secret = compute_shared_secret(my_secret, their_pubkey);
+        let channel_secret = compute_channel_secret(my_secret, their_pubkey);
 
         Self::new(
             alice_pubkey,
@@ -278,7 +278,7 @@ impl ChannelParameters {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
-            shared_secret,
+            channel_secret,
         )
     }
 
@@ -326,18 +326,18 @@ impl ChannelParameters {
             );
         };
 
-        let shared_secret = compute_shared_secret(my_secret, their_pubkey);
+        let channel_secret = compute_channel_secret(my_secret, their_pubkey);
 
-        Self::from_json_with_shared_secret(json_str, keyset_info, shared_secret)
+        Self::from_json_with_channel_secret(json_str, keyset_info, channel_secret)
     }
 
     /// Create channel parameters from a JSON string with a pre-computed shared secret
     ///
     /// Same as `from_json` but takes the shared secret directly instead of computing it.
-    pub fn from_json_with_shared_secret(
+    pub fn from_json_with_channel_secret(
         json_str: &str,
         keyset_info: KeysetInfo,
-        shared_secret: [u8; 32],
+        channel_secret: [u8; 32],
     ) -> anyhow::Result<Self> {
         let json: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
@@ -441,7 +441,7 @@ impl ChannelParameters {
             sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
-            shared_secret,
+            channel_secret,
         )
     }
 
@@ -454,7 +454,7 @@ impl ChannelParameters {
     /// Get channel ID as raw bytes (32-byte SHA256 hash)
     /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce|channel_secret
     ///
-    /// The channel_secret (shared_secret) is included implicitly — it does not
+    /// The channel_secret (channel_secret) is included implicitly — it does not
     /// appear in `get_channel_id_params_json()`. This means the channel ID can
     /// only be computed by the two parties who know the shared secret.
     pub fn get_channel_id_bytes(&self) -> [u8; 32] {
@@ -472,7 +472,7 @@ impl ChannelParameters {
             self.charlie_pubkey.to_hex(),
             self.locktime,
             self.sender_nonce,
-            hex::encode(self.shared_secret)
+            hex::encode(self.channel_secret)
         );
         sha256::Hash::hash(params_string.as_bytes()).to_byte_array()
     }
@@ -509,7 +509,7 @@ impl ChannelParameters {
     /// - "sender_stage1_refund" - for funding token locktime refund
     /// - "sender_stage2" / "receiver_stage2" - for stage 1 outputs (spent in stage 2)
     ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{retry_counter}")
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     ///
     /// Note: This produces a SHARED blinding scalar for all proofs with the same context.
@@ -521,7 +521,7 @@ impl ChannelParameters {
             let text = format!("{}|{}|{}", channel_id, context, retry_counter);
             let mut input = Vec::new();
             input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
-            input.extend_from_slice(&self.shared_secret);
+            input.extend_from_slice(&self.channel_secret);
             input.extend_from_slice(text.as_bytes());
 
             let hash = sha256::Hash::hash(&input);
@@ -546,7 +546,7 @@ impl ChannelParameters {
     /// better privacy for stage 1 outputs - the mint cannot trivially link proofs
     /// from the same channel closure.
     ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || shared_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
+    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     fn derive_blinding_scalar_for_output(
         &self,
@@ -563,7 +563,7 @@ impl ChannelParameters {
             );
             let mut input = Vec::new();
             input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
-            input.extend_from_slice(&self.shared_secret);
+            input.extend_from_slice(&self.channel_secret);
             input.extend_from_slice(text.as_bytes());
 
             let hash = sha256::Hash::hash(&input);
@@ -755,7 +755,7 @@ impl ChannelParameters {
     }
 
     /// Create a deterministic output with blinding using the channel ID and shared secret
-    /// Uses shared_secret, channel_id, context, amount, and index in the derivation per NUT-XX spec
+    /// Uses channel_secret, channel_id, context, amount, and index in the derivation per NUT-XX spec
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
     /// - "sender"/"receiver" create simple P2PK outputs for commitments
@@ -768,19 +768,19 @@ impl ChannelParameters {
     ) -> Result<DeterministicSecretWithBlinding, anyhow::Error> {
         let channel_id = self.get_channel_id();
 
-        // Derive deterministic nonce: SHA256(shared_secret || "{channel_id}|{context}|{amount}|nonce|{index}")
+        // Derive deterministic nonce: SHA256(channel_secret || "{channel_id}|{context}|{amount}|nonce|{index}")
         let nonce_text = format!("{}|{}|{}|nonce|{}", channel_id, context, amount, index);
         let mut nonce_input = Vec::new();
-        nonce_input.extend_from_slice(&self.shared_secret);
+        nonce_input.extend_from_slice(&self.channel_secret);
         nonce_input.extend_from_slice(nonce_text.as_bytes());
 
         let hash = sha256::Hash::hash(&nonce_input);
         let nonce = hex::encode(hash.to_byte_array());
 
-        // Derive deterministic blinding factor: SHA256(shared_secret || "{channel_id}|{context}|{amount}|blinding|{index}")
+        // Derive deterministic blinding factor: SHA256(channel_secret || "{channel_id}|{context}|{amount}|blinding|{index}")
         let blinding_text = format!("{}|{}|{}|blinding|{}", channel_id, context, amount, index);
         let mut blinding_input = Vec::new();
-        blinding_input.extend_from_slice(&self.shared_secret);
+        blinding_input.extend_from_slice(&self.channel_secret);
         blinding_input.extend_from_slice(blinding_text.as_bytes());
 
         let hash = sha256::Hash::hash(&blinding_input);
@@ -955,7 +955,7 @@ mod tests {
 
         // Verify shared secrets match (ECDH should produce same result from both sides)
         assert_eq!(
-            original_params.shared_secret, reconstructed_params.shared_secret,
+            original_params.channel_secret, reconstructed_params.channel_secret,
             "Shared secrets should match (ECDH is symmetric)"
         );
 
@@ -1009,7 +1009,7 @@ mod tests {
 
         // Verify shared secrets match (ECDH symmetry)
         assert_eq!(
-            alice_params.shared_secret, charlie_params.shared_secret,
+            alice_params.channel_secret, charlie_params.channel_secret,
             "Shared secrets should match"
         );
 
@@ -1285,7 +1285,7 @@ mod tests {
     fn test_channel_id_derivation() {
         let alice_sk = SecretKey::generate();
         let charlie_sk = SecretKey::generate();
-        let shared_secret = compute_shared_secret(&alice_sk, &charlie_sk.public_key());
+        let channel_secret = compute_channel_secret(&alice_sk, &charlie_sk.public_key());
 
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
@@ -1301,7 +1301,7 @@ mod tests {
             locktime: 1700003600,
             sender_nonce: "test-nonce".to_string(),
             keyset_info: keyset,
-            shared_secret,
+            channel_secret,
         };
 
         let channel_id = params.get_channel_id();

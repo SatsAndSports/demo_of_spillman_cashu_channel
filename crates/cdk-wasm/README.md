@@ -56,7 +56,7 @@ const secret = secretBytes.toString("hex");
 const pubkey = Buffer.from(pubkeyBytes).toString("hex");
 
 // Compute shared secret with receiver (WASM)
-const sharedSecret = wasm.compute_shared_secret(secret, receiverPubkey);
+const sharedSecret = wasm.compute_channel_secret(secret, receiverPubkey);
 
 // Get channel ID (WASM)
 const channelId = wasm.channel_parameters_get_channel_id(
@@ -143,8 +143,8 @@ Each contains:
 
 - `generate_keypair()` - Generate a new secp256k1 keypair (returns JSON)
 - `secret_key_to_pubkey(secret_hex)` - Derive public key from secret
-- `compute_shared_secret(my_secret, their_pubkey)` - Compute ECDH shared secret
-- `channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)` - Get channel ID
+- `compute_channel_secret(my_secret, their_pubkey)` - Compute ECDH shared secret
+- `channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)` - Get channel ID
 - `create_funding_outputs(params_json, secret, keyset_json)` - Create blinded outputs for funding
 - `construct_proofs(signatures_json, secrets_json, keyset_json)` - Construct proofs from signatures
 - `spilman_channel_sender_create_signed_balance_update(...)` - Sign a payment

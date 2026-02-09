@@ -86,7 +86,7 @@ func TestSecretKeyToPubkeyWrongLength(t *testing.T) {
 	}
 }
 
-func TestComputeSharedSecret(t *testing.T) {
+func TestComputeChannelSecret(t *testing.T) {
 	// Generate two keypairs
 	secretA, pubkeyA, err := GenerateKeypair()
 	if err != nil {
@@ -98,39 +98,39 @@ func TestComputeSharedSecret(t *testing.T) {
 		t.Fatalf("GenerateKeypair B failed: %v", err)
 	}
 
-	// Compute shared secret from both sides
-	sharedAB, err := ComputeSharedSecret(secretA, pubkeyB)
+	// Compute channel secret from both sides
+	channelAB, err := ComputeChannelSecret(secretA, pubkeyB)
 	if err != nil {
-		t.Fatalf("ComputeSharedSecret(A, B) failed: %v", err)
+		t.Fatalf("ComputeChannelSecret(A, B) failed: %v", err)
 	}
 
-	sharedBA, err := ComputeSharedSecret(secretB, pubkeyA)
+	channelBA, err := ComputeChannelSecret(secretB, pubkeyA)
 	if err != nil {
-		t.Fatalf("ComputeSharedSecret(B, A) failed: %v", err)
+		t.Fatalf("ComputeChannelSecret(B, A) failed: %v", err)
 	}
 
-	// ECDH: both should produce the same shared secret
-	if sharedAB != sharedBA {
-		t.Errorf("Shared secrets should match: %s != %s", sharedAB, sharedBA)
+	// ECDH: both should produce the same channel secret
+	if channelAB != channelBA {
+		t.Errorf("Shared secrets should match: %s != %s", channelAB, channelBA)
 	}
 
 	// Shared secret should be 64 hex chars (32 bytes)
-	if len(sharedAB) != 64 {
-		t.Errorf("Expected shared secret length 64, got %d", len(sharedAB))
+	if len(channelAB) != 64 {
+		t.Errorf("Expected channel secret length 64, got %d", len(channelAB))
 	}
 }
 
-func TestComputeSharedSecretInvalidInputs(t *testing.T) {
+func TestComputeChannelSecretInvalidInputs(t *testing.T) {
 	secret, pubkey, _ := GenerateKeypair()
 
 	// Invalid secret
-	_, err := ComputeSharedSecret("invalid", pubkey)
+	_, err := ComputeChannelSecret("invalid", pubkey)
 	if err == nil {
 		t.Error("Expected error for invalid secret")
 	}
 
 	// Invalid pubkey
-	_, err = ComputeSharedSecret(secret, "invalid")
+	_, err = ComputeChannelSecret(secret, "invalid")
 	if err == nil {
 		t.Error("Expected error for invalid pubkey")
 	}

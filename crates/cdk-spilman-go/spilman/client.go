@@ -19,11 +19,11 @@ typedef struct {
 // Client function declarations from Rust FFI
 CResult spilman_generate_keypair();
 CResult spilman_secret_key_to_pubkey(const char* secret_hex);
-CResult spilman_compute_shared_secret(const char* my_secret_hex, const char* their_pubkey_hex);
+CResult spilman_compute_channel_secret(const char* my_secret_hex, const char* their_pubkey_hex);
 CResult spilman_compute_funding_token_amount(uint64_t capacity, const char* keyset_info_json, uint64_t maximum_amount);
-CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* shared_secret, uint64_t balance, const char* output_keyset);
+CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* channel_secret, uint64_t balance, const char* output_keyset);
 CResult spilman_create_signed_balance_update(const char* params, const char* keyset, const char* secret, const char* proofs, uint64_t balance);
-CResult spilman_channel_parameters_get_channel_id(const char* params, const char* shared_secret, const char* keyset);
+CResult spilman_channel_parameters_get_channel_id(const char* params, const char* channel_secret, const char* keyset);
 CResult spilman_create_plain_blinded_messages(uint64_t amount_sat, const char* keyset_info_json);
 CResult spilman_create_funding_outputs(const char* params, const char* alice_secret, const char* keyset);
 CResult spilman_construct_proofs(const char* blind_signatures, const char* secrets_with_blinding, const char* keyset);
@@ -83,15 +83,15 @@ func SecretKeyToPubkey(secretHex string) (string, error) {
 	return C.GoString(res.data), nil
 }
 
-// ComputeSharedSecret computes the ECDH shared secret between two parties.
+// ComputeChannelSecret computes the ECDH shared secret between two parties.
 // Used for deterministic blinding in P2BK (Pay-to-Blinded-Key) outputs.
-func ComputeSharedSecret(mySecretHex, theirPubkeyHex string) (string, error) {
+func ComputeChannelSecret(mySecretHex, theirPubkeyHex string) (string, error) {
 	cSecret := C.CString(mySecretHex)
 	defer C.free(unsafe.Pointer(cSecret))
 	cPubkey := C.CString(theirPubkeyHex)
 	defer C.free(unsafe.Pointer(cPubkey))
 
-	res := C.spilman_compute_shared_secret(cSecret, cPubkey)
+	res := C.spilman_compute_channel_secret(cSecret, cPubkey)
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {
@@ -123,7 +123,7 @@ func ComputeFundingTokenAmount(capacity uint64, keysetInfoJson string, maximumAm
 
 // UnblindAndVerifyDleq unblinds mint signatures and verifies DLEQ proofs.
 // Used by clients to verify and construct proofs from mint blind signature responses.
-func UnblindAndVerifyDleq(sigs, secrets, params, keyset, sharedSecret string, balance uint64, outputKeyset *string) (string, error) {
+func UnblindAndVerifyDleq(sigs, secrets, params, keyset, channelSecret string, balance uint64, outputKeyset *string) (string, error) {
 	cSigs := C.CString(sigs)
 	defer C.free(unsafe.Pointer(cSigs))
 	cSecrets := C.CString(secrets)
@@ -132,7 +132,7 @@ func UnblindAndVerifyDleq(sigs, secrets, params, keyset, sharedSecret string, ba
 	defer C.free(unsafe.Pointer(cParams))
 	cKeyset := C.CString(keyset)
 	defer C.free(unsafe.Pointer(cKeyset))
-	cSecret := C.CString(sharedSecret)
+	cSecret := C.CString(channelSecret)
 	defer C.free(unsafe.Pointer(cSecret))
 
 	var cOutputKeyset *C.char
@@ -173,10 +173,10 @@ func CreateSignedBalanceUpdate(params, keyset, secret, proofs string, balance ui
 
 // ChannelParametersGetChannelId computes the channel ID from parameters.
 // The channel ID uniquely identifies a channel based on its parameters and shared secret.
-func ChannelParametersGetChannelId(params, sharedSecret, keyset string) (string, error) {
+func ChannelParametersGetChannelId(params, channelSecret, keyset string) (string, error) {
 	cParams := C.CString(params)
 	defer C.free(unsafe.Pointer(cParams))
-	cSecret := C.CString(sharedSecret)
+	cSecret := C.CString(channelSecret)
 	defer C.free(unsafe.Pointer(cSecret))
 	cKeyset := C.CString(keyset)
 	defer C.free(unsafe.Pointer(cKeyset))

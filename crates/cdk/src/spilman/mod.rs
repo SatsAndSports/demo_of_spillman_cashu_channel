@@ -23,7 +23,7 @@ mod sender_and_receiver;
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
 pub use bindings::{
     build_cashu_a_token, channel_parameters_get_channel_id, complete_funding_swap,
-    compute_channel_from_token, compute_funding_token_amount, compute_shared_secret_from_hex,
+    compute_channel_from_token, compute_funding_token_amount, compute_channel_secret_from_hex,
     construct_proofs, create_funding_outputs, create_funding_swap, create_plain_blinded_messages,
     create_signed_balance_update, mint_proofs_from_mint, parse_keyset_info_from_json,
 };
@@ -42,7 +42,7 @@ pub use deterministic::{
 };
 pub use established_channel::EstablishedChannel;
 pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
-pub use params::{compute_shared_secret, ChannelParameters};
+pub use params::{compute_channel_secret, ChannelParameters};
 pub use sender_and_receiver::{
     verify_valid_channel, ChannelVerificationError, ChannelVerificationResult,
     SpilmanChannelReceiver, SpilmanChannelSender,

@@ -221,8 +221,8 @@ impl SpilmanChannelSender {
     }
 
     /// Get the shared secret with Charlie (stored in channel params)
-    pub fn get_shared_secret(&self) -> &[u8; 32] {
-        &self.channel.params.shared_secret
+    pub fn get_channel_secret(&self) -> &[u8; 32] {
+        &self.channel.params.channel_secret
     }
 
     /// Restore sender's proofs after Charlie has exited the channel
@@ -382,7 +382,7 @@ impl SpilmanChannelReceiver {
     }
 
     /// Get the shared secret with Alice (stored in channel params)
-    pub fn get_shared_secret(&self) -> &[u8; 32] {
-        &self.channel.params.shared_secret
+    pub fn get_channel_secret(&self) -> &[u8; 32] {
+        &self.channel.params.channel_secret
     }
 }

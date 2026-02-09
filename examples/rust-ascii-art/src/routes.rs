@@ -556,7 +556,7 @@ async fn post_channel_close(
         &prepared.secrets_with_blinding.to_string(),
         &prepared.params_json,
         &prepared.keyset_info_json,
-        &prepared.shared_secret,
+        &prepared.channel_secret,
         prepared.balance,
         Some(&prepared.output_keyset_info.to_string()),
     ) {
@@ -754,7 +754,7 @@ async fn post_unilateral_close(
         &prepared.secrets_with_blinding.to_string(),
         &prepared.params_json,
         &prepared.keyset_info_json,
-        &prepared.shared_secret,
+        &prepared.channel_secret,
         prepared.balance,
         Some(&prepared.output_keyset_info.to_string()),
     ) {

@@ -14,7 +14,7 @@ use std::sync::RwLock;
 pub struct ChannelFundingData {
     pub params_json: String,
     pub funding_proofs_json: String,
-    pub shared_secret: String,
+    pub channel_secret: String,
     pub keyset_info_json: String,
 }
 

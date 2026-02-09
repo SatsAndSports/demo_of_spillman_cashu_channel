@@ -64,7 +64,7 @@ def get_mints_units_keysets():
     return result
 
 # In-memory stores
-channel_funding = {}   # channel_id -> {params, proofs, shared_secret, keyset_info}
+channel_funding = {}   # channel_id -> {params, proofs, channel_secret, keyset_info}
 channel_usage = {}     # channel_id -> {chars_served: int}
 channel_largest_payment = {}  # channel_id -> {balance: int, signature: str}
 channel_closing = {}   # channel_id -> {locktime, balance, signature}  (pre-swap state)
@@ -245,7 +245,7 @@ class AsciiArtHost:
             channel_id: The unique ID of the payment channel.
 
         Returns:
-            A tuple of (params_json, funding_proofs_json, shared_secret_hex, 
+            A tuple of (params_json, funding_proofs_json, channel_secret_hex, 
             keyset_info_json) if found, otherwise None.
         """
         data = channel_funding.get(channel_id)
@@ -254,7 +254,7 @@ class AsciiArtHost:
         return (
             data["params"],
             data["proofs"],
-            data["shared_secret"],
+            data["channel_secret"],
             data["keyset_info"]
         )
     
@@ -263,7 +263,7 @@ class AsciiArtHost:
         channel_id: str,
         params: str,
         proofs: str,
-        shared_secret: str,
+        channel_secret: str,
         keyset_info: str,
         initial_balance: int,
         initial_signature: str
@@ -275,7 +275,7 @@ class AsciiArtHost:
             channel_id: The unique ID of the payment channel.
             params: The full channel parameters as a JSON string.
             proofs: The funding proofs as a JSON string.
-            shared_secret: The ECDH shared secret as a hex string.
+            channel_secret: The ECDH shared secret as a hex string.
             keyset_info: The keyset information as a JSON string.
             initial_balance: The initial balance (can be 0 or non-zero).
             initial_signature: The signature for the initial balance.
@@ -283,7 +283,7 @@ class AsciiArtHost:
         channel_funding[channel_id] = {
             "params": params,
             "proofs": proofs,
-            "shared_secret": shared_secret,
+            "channel_secret": channel_secret,
             "keyset_info": keyset_info
         }
         # Store the initial balance/signature for closing

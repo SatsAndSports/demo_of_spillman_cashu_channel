@@ -7,7 +7,7 @@
 // then use NewBridge to create a Bridge instance.
 //
 // For client implementation, use the utility functions like GenerateKeypair,
-// ComputeSharedSecret, and CreateSignedBalanceUpdate.
+// ComputeChannelSecret, and CreateSignedBalanceUpdate.
 package spilman
 
 // CGO LDFLAGS are defined in platform-specific files:
@@ -295,10 +295,10 @@ func go_get_funding_and_params(userData unsafe.Pointer, channelId *C.char, param
 }
 
 //export go_save_funding
-func go_save_funding(userData unsafe.Pointer, channelId *C.char, paramsJson *C.char, fundingProofsJson *C.char, sharedSecretHex *C.char, keysetInfoJson *C.char, initialBalance C.uint64_t, initialSignature *C.char) {
+func go_save_funding(userData unsafe.Pointer, channelId *C.char, paramsJson *C.char, fundingProofsJson *C.char, channelSecretHex *C.char, keysetInfoJson *C.char, initialBalance C.uint64_t, initialSignature *C.char) {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	host.SaveFunding(C.GoString(channelId), C.GoString(paramsJson), C.GoString(fundingProofsJson), C.GoString(sharedSecretHex), C.GoString(keysetInfoJson), uint64(initialBalance), C.GoString(initialSignature))
+	host.SaveFunding(C.GoString(channelId), C.GoString(paramsJson), C.GoString(fundingProofsJson), C.GoString(channelSecretHex), C.GoString(keysetInfoJson), uint64(initialBalance), C.GoString(initialSignature))
 }
 
 //export go_get_amount_due

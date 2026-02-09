@@ -213,14 +213,14 @@ trait SpilmanHost {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
     );
     
     /// Retrieve stored funding data for a channel.
-    /// Returns (params_json, funding_proofs_json, shared_secret_hex, keyset_info_json)
+    /// Returns (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)
     fn get_funding_and_params(&self, channel_id: &str) 
         -> Option<(String, String, String, String)>;
 
@@ -342,7 +342,7 @@ The four examples servers users four separate in-memory stores like this:
 
 | Store | Key | Data | Purpose |
 |-------|-----|------|---------|
-| **Funding** | channel_id | params, proofs, shared_secret, keyset_info | Validate signatures, construct close |
+| **Funding** | channel_id | params, proofs, channel_secret, keyset_info | Validate signatures, construct close |
 | **Balance** | channel_id | balance, signature | Track highest payment, close channel |
 | **Usage** | channel_id | service-specific metrics | Calculate amount_due |
 | **Closing** | channel_id | locktime, balance, signature | Retry failed swaps |

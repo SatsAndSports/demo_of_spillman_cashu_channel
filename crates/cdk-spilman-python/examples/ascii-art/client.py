@@ -30,7 +30,7 @@ except ImportError:
 
 from cdk_spilman import (
     generate_keypair,
-    compute_shared_secret,
+    compute_channel_secret,
     compute_funding_token_amount,
     channel_parameters_get_channel_id,
     create_funding_outputs,
@@ -225,8 +225,8 @@ def main():
     
     # 4. Compute shared secret
     print("[4/8] Computing shared secret...")
-    shared_secret = compute_shared_secret(alice_secret, charlie_pubkey)
-    print(f"  Shared secret: {shared_secret[:24]}...")
+    channel_secret = compute_channel_secret(alice_secret, charlie_pubkey)
+    print(f"  Shared secret: {channel_secret[:24]}...")
     print()
     
     # 5. Calculate capacity and build channel params
@@ -257,7 +257,7 @@ def main():
     # Get channel ID
     channel_id = channel_parameters_get_channel_id(
         json.dumps(channel_params),
-        shared_secret,
+        channel_secret,
         json.dumps(keyset_info)
     )
     print(f"  Channel ID: {channel_id[:24]}...")

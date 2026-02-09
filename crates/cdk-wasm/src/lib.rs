@@ -35,7 +35,7 @@ extern "C" {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -127,7 +127,7 @@ impl SpilmanHost for WasmSpilmanHostProxy {
             return None;
         }
 
-        // Expecting an array [params, funding_proofs, shared_secret, keyset_info]
+        // Expecting an array [params, funding_proofs, channel_secret, keyset_info]
         let arr = js_sys::Array::from(&val);
         if arr.length() != 4 {
             return None;
@@ -156,7 +156,7 @@ impl SpilmanHost for WasmSpilmanHostProxy {
         channel_id: &str,
         params_json: &str,
         funding_proofs_json: &str,
-        shared_secret_hex: &str,
+        channel_secret_hex: &str,
         keyset_info_json: &str,
         initial_balance: u64,
         initial_signature: &str,
@@ -165,7 +165,7 @@ impl SpilmanHost for WasmSpilmanHostProxy {
             channel_id,
             params_json,
             funding_proofs_json,
-            shared_secret_hex,
+            channel_secret_hex,
             keyset_info_json,
             initial_balance,
             initial_signature,
@@ -627,7 +627,7 @@ impl WasmSpilmanBridge {
             &prepared.secrets_with_blinding.to_string(),
             &prepared.params_json,
             &prepared.keyset_info_json,
-            &prepared.shared_secret,
+            &prepared.channel_secret,
             prepared.balance,
             Some(&prepared.output_keyset_info.to_string()),
         )
@@ -785,7 +785,7 @@ impl WasmSpilmanBridge {
             &prepared.secrets_with_blinding.to_string(),
             &prepared.params_json,
             &prepared.keyset_info_json,
-            &prepared.shared_secret,
+            &prepared.channel_secret,
             prepared.balance,
             Some(&prepared.output_keyset_info.to_string()),
         )
@@ -840,11 +840,11 @@ impl WasmSpilmanBridge {
 ///
 /// Returns the x-coordinate of the shared point as a hex string (32 bytes).
 #[wasm_bindgen]
-pub fn compute_shared_secret(
+pub fn compute_channel_secret(
     my_secret_hex: &str,
     their_pubkey_hex: &str,
 ) -> Result<String, JsValue> {
-    cdk::spilman::compute_shared_secret_from_hex(my_secret_hex, their_pubkey_hex)
+    cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
         .map_err(|e| JsValue::from_str(&e))
 }
 
@@ -855,12 +855,12 @@ pub fn compute_shared_secret(
 #[wasm_bindgen]
 pub fn channel_parameters_get_channel_id(
     params_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     keyset_info_json: &str,
 ) -> Result<String, JsValue> {
     cdk::spilman::channel_parameters_get_channel_id(
         params_json,
-        shared_secret_hex,
+        channel_secret_hex,
         keyset_info_json,
     )
     .map_err(|e| JsValue::from_str(&e))
@@ -914,7 +914,7 @@ pub fn create_funding_outputs(
 /// * `secrets_with_blinding_json` - JSON array from validateAndPrepareCooperativeClose's secrets_with_blinding
 /// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
 /// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
-/// * `shared_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
+/// * `channel_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
 /// * `balance` - The receiver's (Charlie's) intended balance (for verification)
 /// * `output_keyset_info_json` - Optional KeysetInfo JSON for outputs (if switched during close)
 ///
@@ -930,7 +930,7 @@ pub fn unblind_and_verify_dleq(
     secrets_with_blinding_json: &str,
     params_json: &str,
     keyset_info_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     balance: u64,
     output_keyset_info_json: Option<String>,
 ) -> Result<String, JsValue> {
@@ -939,7 +939,7 @@ pub fn unblind_and_verify_dleq(
         secrets_with_blinding_json,
         params_json,
         keyset_info_json,
-        shared_secret_hex,
+        channel_secret_hex,
         balance,
         output_keyset_info_json.as_deref(),
     )
@@ -985,7 +985,7 @@ pub fn spilman_channel_sender_create_signed_balance_update(
 ///
 /// Takes:
 /// - `params_json`: Channel parameters JSON
-/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `channel_secret_hex`: Pre-computed shared secret (hex)
 /// - `funding_proofs_json`: JSON array of funding proofs
 /// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
 /// - `channel_id`: The channel ID from the balance update
@@ -996,7 +996,7 @@ pub fn spilman_channel_sender_create_signed_balance_update(
 #[wasm_bindgen]
 pub fn verify_balance_update_signature(
     params_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     funding_proofs_json: &str,
     keyset_info_json: &str,
     channel_id: &str,
@@ -1007,9 +1007,9 @@ pub fn verify_balance_update_signature(
     use cdk::nuts::Proof;
     use cdk::spilman::{parse_keyset_info_from_json, BalanceUpdateMessage, EstablishedChannel};
 
-    let shared_secret_bytes = hex::decode(shared_secret_hex)
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
+    let channel_secret: [u8; 32] = channel_secret_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
 
@@ -1017,7 +1017,7 @@ pub fn verify_balance_update_signature(
         parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
 
     let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
             .map_err(|e| {
                 JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
             })?;
@@ -1081,7 +1081,7 @@ pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool
 ///
 /// Takes:
 /// - `params_json`: Channel parameters JSON
-/// - `shared_secret_hex`: Pre-computed shared secret (hex)
+/// - `channel_secret_hex`: Pre-computed shared secret (hex)
 /// - `funding_proofs_json`: JSON array of funding proofs
 /// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
 ///
@@ -1089,16 +1089,16 @@ pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool
 #[wasm_bindgen]
 pub fn verify_channel(
     params_json: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     funding_proofs_json: &str,
     keyset_info_json: &str,
 ) -> Result<String, JsValue> {
     use cdk::nuts::Proof;
     use cdk::spilman::{parse_keyset_info_from_json, verify_valid_channel};
 
-    let shared_secret_bytes = hex::decode(shared_secret_hex)
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
+    let channel_secret: [u8; 32] = channel_secret_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
 
@@ -1106,7 +1106,7 @@ pub fn verify_channel(
         parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
 
     let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
             .map_err(|e| {
                 JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
             })?;
@@ -1199,7 +1199,7 @@ pub fn get_sender_blinded_secret_key_for_stage2_output(
 /// * `params_json` - Channel parameters JSON
 /// * `keyset_info_json` - Keyset info JSON with keys and fee info
 /// * `charlie_secret_hex` - Charlie's raw secret key in hex
-/// * `shared_secret_hex` - Pre-computed shared secret (hex)
+/// * `channel_secret_hex` - Pre-computed shared secret (hex)
 /// * `amount` - The proof amount
 /// * `index` - The proof index within proofs of the same amount
 ///
@@ -1210,7 +1210,7 @@ pub fn get_receiver_blinded_secret_key_for_stage2_output(
     params_json: &str,
     keyset_info_json: &str,
     charlie_secret_hex: &str,
-    shared_secret_hex: &str,
+    channel_secret_hex: &str,
     amount: u64,
     index: u32,
 ) -> Result<String, JsValue> {
@@ -1220,14 +1220,14 @@ pub fn get_receiver_blinded_secret_key_for_stage2_output(
     let charlie_secret = SecretKey::from_hex(charlie_secret_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid secret key: {}", e)))?;
 
-    let shared_secret_bytes = hex::decode(shared_secret_hex)
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
         .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let shared_secret: [u8; 32] = shared_secret_bytes
+    let channel_secret: [u8; 32] = channel_secret_bytes
         .try_into()
         .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
 
     let params =
-        ChannelParameters::from_json_with_shared_secret(params_json, keyset_info, shared_secret)
+        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
             .map_err(|e| {
                 JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
             })?;

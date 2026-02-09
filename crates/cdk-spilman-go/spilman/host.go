@@ -19,13 +19,13 @@ type SpilmanHost interface {
 	MintAndKeysetIsAcceptable(mint string, keysetId string) bool
 
 	// GetFundingAndParams retrieves stored channel data for an existing channel.
-	// Returns (paramsJson, proofsJson, sharedSecretHex, keysetInfoJson, true) if found,
+	// Returns (paramsJson, proofsJson, channelSecretHex, keysetInfoJson, true) if found,
 	// or ("", "", "", "", false) if the channel is not known.
-	GetFundingAndParams(channelId string) (paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, ok bool)
+	GetFundingAndParams(channelId string) (paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, ok bool)
 
 	// SaveFunding stores channel data when a new channel is registered.
 	// Called after validating the initial funding (balance=0 signature).
-	SaveFunding(channelId, paramsJson, proofsJson, sharedSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string)
+	SaveFunding(channelId, paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string)
 
 	// GetAmountDue returns the amount owed for a request on the given channel.
 	// contextJson contains request-specific data (e.g., the requested resource).

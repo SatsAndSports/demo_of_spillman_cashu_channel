@@ -91,14 +91,14 @@ class TestChannelSetup:
 
         assert derived_pubkey == expected_pubkey, "Derived pubkey should match"
 
-    def test_compute_shared_secret(self):
+    def test_compute_channel_secret(self):
         """Test ECDH shared secret computation."""
         alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
         bob_secret, bob_pubkey = cdk_spilman.generate_keypair()
 
         # Both parties should compute the same shared secret
-        shared_alice = cdk_spilman.compute_shared_secret(alice_secret, bob_pubkey)
-        shared_bob = cdk_spilman.compute_shared_secret(bob_secret, alice_pubkey)
+        shared_alice = cdk_spilman.compute_channel_secret(alice_secret, bob_pubkey)
+        shared_bob = cdk_spilman.compute_channel_secret(bob_secret, alice_pubkey)
 
         assert shared_alice == shared_bob, "Shared secrets should match"
         assert len(shared_alice) == 64, f"Shared secret should be 64 hex chars, got {len(shared_alice)}"
@@ -123,8 +123,8 @@ class TestChannelSetup:
         print(f"Fetched keyset: {keyset_info['keysetId']}")
 
         # Compute shared secret
-        shared_secret = cdk_spilman.compute_shared_secret(alice_secret, receiver_pubkey)
-        print(f"Computed shared secret: {shared_secret[:16]}...")
+        channel_secret = cdk_spilman.compute_channel_secret(alice_secret, receiver_pubkey)
+        print(f"Computed shared secret: {channel_secret[:16]}...")
 
         # Build channel parameters
         now = int(time.time())
@@ -146,7 +146,7 @@ class TestChannelSetup:
         params_json = json.dumps(params)
 
         # Get channel ID
-        channel_id = cdk_spilman.channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)
+        channel_id = cdk_spilman.channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)
         assert len(channel_id) == 64, f"Channel ID should be 64 hex chars, got {len(channel_id)}"
         print(f"Channel ID: {channel_id}")
 
@@ -174,7 +174,7 @@ class TestChannelSetup:
         assert keyset_info is not None, "Failed to fetch keyset from mint"
         keyset_json = json.dumps(keyset_info)
 
-        shared_secret = cdk_spilman.compute_shared_secret(alice_secret, receiver_pubkey)
+        channel_secret = cdk_spilman.compute_channel_secret(alice_secret, receiver_pubkey)
 
         now = int(time.time())
         funding_token_amount = cdk_spilman.compute_funding_token_amount(100, keyset_json, 64)
@@ -195,8 +195,8 @@ class TestChannelSetup:
         params_json = json.dumps(params)
 
         # Compute channel ID twice
-        channel_id_1 = cdk_spilman.channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)
-        channel_id_2 = cdk_spilman.channel_parameters_get_channel_id(params_json, shared_secret, keyset_json)
+        channel_id_1 = cdk_spilman.channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)
+        channel_id_2 = cdk_spilman.channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)
 
         assert channel_id_1 == channel_id_2, "Channel ID should be deterministic"
         print(f"Channel ID is deterministic: {channel_id_1}")
@@ -256,14 +256,14 @@ class MockServerHost:
         data = self.funding_data.get(channel_id)
         if data is None:
             return None
-        return data  # (params_json, proofs_json, shared_secret_hex, keyset_info_json)
+        return data  # (params_json, proofs_json, channel_secret_hex, keyset_info_json)
 
     def save_funding(
         self,
         channel_id: str,
         params_json: str,
         proofs_json: str,
-        shared_secret_hex: str,
+        channel_secret_hex: str,
         keyset_info_json: str,
         initial_balance: int,
         initial_signature: str,
@@ -271,7 +271,7 @@ class MockServerHost:
         self.funding_data[channel_id] = (
             params_json,
             proofs_json,
-            shared_secret_hex,
+            channel_secret_hex,
             keyset_info_json,
         )
 

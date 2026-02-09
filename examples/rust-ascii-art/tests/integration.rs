@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cdk::nuts::SecretKey;
 use cdk::spilman::{
-    channel_parameters_get_channel_id, compute_shared_secret_from_hex, create_funding_outputs,
+    channel_parameters_get_channel_id, compute_channel_secret_from_hex, create_funding_outputs,
 };
 
 fn get_mint_url() -> String {
@@ -112,10 +112,10 @@ fn test_funding_outputs_and_channel_id() {
     println!("Fetched keyset: {}", keyset_id);
 
     // 4. Compute shared secret
-    let shared_secret_hex =
-        compute_shared_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
+    let channel_secret_hex =
+        compute_channel_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
             .expect("Failed to compute shared secret");
-    println!("Computed shared secret: {}...", &shared_secret_hex[..16]);
+    println!("Computed shared secret: {}...", &channel_secret_hex[..16]);
 
     // 5. Build channel parameters (JSON format for bindings)
     let now = SystemTime::now()
@@ -140,7 +140,7 @@ fn test_funding_outputs_and_channel_id() {
 
     // 6. Get channel ID
     let channel_id =
-        channel_parameters_get_channel_id(&params_json, &shared_secret_hex, &keyset_json)
+        channel_parameters_get_channel_id(&params_json, &channel_secret_hex, &keyset_json)
             .expect("Failed to get channel ID");
     println!("Channel ID: {}", channel_id);
 
@@ -189,8 +189,8 @@ fn test_channel_id_deterministic() {
         fetch_active_keyset_json(&mint_url, "sat").expect("Failed to fetch keyset from mint");
     let keyset_json = serde_json::to_string(&keyset_info).expect("Failed to serialize keyset");
 
-    let shared_secret_hex =
-        compute_shared_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
+    let channel_secret_hex =
+        compute_channel_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
             .expect("Failed to compute shared secret");
 
     let now = SystemTime::now()
@@ -215,10 +215,10 @@ fn test_channel_id_deterministic() {
 
     // Compute channel ID twice
     let channel_id_1 =
-        channel_parameters_get_channel_id(&params_json, &shared_secret_hex, &keyset_json)
+        channel_parameters_get_channel_id(&params_json, &channel_secret_hex, &keyset_json)
             .expect("Failed to get channel ID");
     let channel_id_2 =
-        channel_parameters_get_channel_id(&params_json, &shared_secret_hex, &keyset_json)
+        channel_parameters_get_channel_id(&params_json, &channel_secret_hex, &keyset_json)
             .expect("Failed to get channel ID");
 
     assert_eq!(

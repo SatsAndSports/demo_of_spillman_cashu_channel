@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { randomBytes } from "crypto";
 import * as secp from "@noble/secp256k1";
 import {
-  compute_shared_secret,
+  compute_channel_secret,
   compute_funding_token_amount,
   channel_parameters_get_channel_id,
   create_funding_outputs,
@@ -120,8 +120,8 @@ describe("Channel Setup", () => {
     const bob = generateKeypair();
 
     // Both parties should compute the same shared secret
-    const sharedAlice = compute_shared_secret(alice.secret, bob.pubkey);
-    const sharedBob = compute_shared_secret(bob.secret, alice.pubkey);
+    const sharedAlice = compute_channel_secret(alice.secret, bob.pubkey);
+    const sharedBob = compute_channel_secret(bob.secret, alice.pubkey);
 
     expect(sharedAlice).toBe(sharedBob);
     expect(sharedAlice).toHaveLength(64);
@@ -144,8 +144,8 @@ describe("Channel Setup", () => {
     console.log(`Fetched keyset: ${keysetInfo!.keysetId}`);
 
     // Compute shared secret
-    const sharedSecret = compute_shared_secret(alice.secret, receiver.pubkey);
-    console.log(`Computed shared secret: ${sharedSecret.slice(0, 16)}...`);
+    const channelSecret = compute_channel_secret(alice.secret, receiver.pubkey);
+    console.log(`Computed shared secret: ${channelSecret.slice(0, 16)}...`);
 
     // Build channel parameters
     const now = Math.floor(Date.now() / 1000);
@@ -173,7 +173,7 @@ describe("Channel Setup", () => {
     // Get channel ID
     const channelId = channel_parameters_get_channel_id(
       paramsJson,
-      sharedSecret,
+      channelSecret,
       keysetJson
     );
     expect(channelId).toHaveLength(64);
@@ -207,7 +207,7 @@ describe("Channel Setup", () => {
     expect(keysetInfo).not.toBeNull();
     const keysetJson = JSON.stringify(keysetInfo);
 
-    const sharedSecret = compute_shared_secret(alice.secret, receiver.pubkey);
+    const channelSecret = compute_channel_secret(alice.secret, receiver.pubkey);
 
     const now = Math.floor(Date.now() / 1000);
     const fundingTokenAmount = Number(compute_funding_token_amount(
@@ -234,12 +234,12 @@ describe("Channel Setup", () => {
     // Compute channel ID twice
     const channelId1 = channel_parameters_get_channel_id(
       paramsJson,
-      sharedSecret,
+      channelSecret,
       keysetJson
     );
     const channelId2 = channel_parameters_get_channel_id(
       paramsJson,
-      sharedSecret,
+      channelSecret,
       keysetJson
     );
 
