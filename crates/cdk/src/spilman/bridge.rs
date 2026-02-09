@@ -1748,24 +1748,9 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         };
 
         // 8. Add Alice's signature to the swap request witness
-        {
-            use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
-            let first_input = swap_request
-                .inputs_mut()
-                .first_mut()
-                .ok_or_else(|| BridgeError::Internal("swap request has no inputs".into()))?;
-
-            match first_input.witness.as_mut() {
-                Some(witness) => {
-                    witness.add_signatures(vec![sig.to_string()]);
-                }
-                None => {
-                    let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-                    p2pk_witness.add_signatures(vec![sig.to_string()]);
-                    first_input.witness = Some(p2pk_witness);
-                }
-            }
-        }
+        swap_request
+            .attach_signature_to_first_input(&sig.to_string())
+            .map_err(|e| BridgeError::Internal(format!("attach Alice signature: {}", e)))?;
 
         // 9. Verify Alice's signature, then add Charlie's signature (delegated to host)
         let channel = EstablishedChannel::new(params.clone(), funding_proofs)
@@ -1779,11 +1764,8 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
         // 9b. Compute the SIG_ALL message hash and receiver tweak scalar
         {
             use crate::nuts::nut10::SpendingConditionVerification;
-            use bitcoin::hashes::{sha256, Hash};
 
-            let msg = swap_request.sig_all_msg_to_sign();
-            let msg_hash = sha256::Hash::hash(msg.as_bytes());
-            let message_hex = hex::encode(msg_hash.to_byte_array());
+            let message_hex = swap_request.sig_all_message_hash_hex();
 
             let tweak = params
                 .derive_receiver_blinding_scalar_for_stage1()
@@ -1798,30 +1780,10 @@ impl<H: SpilmanHost> SpilmanBridge<H> {
                 .sign_with_tweaked_key(&charlie_pubkey_hex, &message_hex, &tweak_scalar_hex)
                 .map_err(BridgeError::ServerMisconfigured)?;
 
-            // 9d. Attach signature to swap request witness
-            let charlie_sig: bitcoin::secp256k1::schnorr::Signature =
-                signature_hex.parse().map_err(
-                    |e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| {
-                        BridgeError::InvalidSignature(format!("Invalid host signature: {}", e))
-                    },
-                )?;
-
-            let first_input = swap_request
-                .inputs_mut()
-                .first_mut()
-                .ok_or_else(|| BridgeError::Internal("swap request has no inputs".into()))?;
-
-            match first_input.witness.as_mut() {
-                Some(witness) => {
-                    witness.add_signatures(vec![charlie_sig.to_string()]);
-                }
-                None => {
-                    use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
-                    let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-                    p2pk_witness.add_signatures(vec![charlie_sig.to_string()]);
-                    first_input.witness = Some(p2pk_witness);
-                }
-            }
+            // 9d. Attach Charlie's signature to swap request witness
+            swap_request
+                .attach_signature_to_first_input(&signature_hex)
+                .map_err(|e| BridgeError::Internal(format!("attach Charlie signature: {}", e)))?;
         }
         let signed_swap_request = swap_request;
 

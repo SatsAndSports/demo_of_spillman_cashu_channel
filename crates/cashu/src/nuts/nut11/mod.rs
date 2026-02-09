@@ -914,13 +914,12 @@ impl From<Tag> for Vec<String> {
 }
 
 impl SwapRequest {
-    /// Sign swap request with SIG_ALL
-    pub fn sign_sig_all(&mut self, secret_key: SecretKey) -> Result<(), Error> {
-        // Get message to sign
-        let msg = self.sig_all_msg_to_sign();
-        let signature = secret_key.sign(msg.as_bytes())?;
-
-        // Add signature to first input witness
+    /// Attach a signature string to the first input proof's witness.
+    ///
+    /// Appends to existing signatures if a witness is already present,
+    /// or creates a new P2PKWitness. This is the common pattern for
+    /// SIG_ALL transactions where all signatures go on the first input.
+    pub fn attach_signature_to_first_input(&mut self, sig_hex: &str) -> Result<(), Error> {
         let first_input = self
             .inputs_mut()
             .first_mut()
@@ -928,16 +927,23 @@ impl SwapRequest {
 
         match first_input.witness.as_mut() {
             Some(witness) => {
-                witness.add_signatures(vec![signature.to_string()]);
+                witness.add_signatures(vec![sig_hex.to_string()]);
             }
             None => {
                 let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-                p2pk_witness.add_signatures(vec![signature.to_string()]);
+                p2pk_witness.add_signatures(vec![sig_hex.to_string()]);
                 first_input.witness = Some(p2pk_witness);
             }
         };
 
         Ok(())
+    }
+
+    /// Sign swap request with SIG_ALL
+    pub fn sign_sig_all(&mut self, secret_key: SecretKey) -> Result<(), Error> {
+        let msg = self.sig_all_msg_to_sign();
+        let signature = secret_key.sign(msg.as_bytes())?;
+        self.attach_signature_to_first_input(&signature.to_string())
     }
 }
 
@@ -945,13 +951,12 @@ impl<Q> MeltRequest<Q>
 where
     Q: std::fmt::Display + Serialize + DeserializeOwned,
 {
-    /// Sign melt request with SIG_ALL
-    pub fn sign_sig_all(&mut self, secret_key: SecretKey) -> Result<(), Error> {
-        // Get message to sign
-        let msg = self.sig_all_msg_to_sign();
-        let signature = secret_key.sign(msg.as_bytes())?;
-
-        // Add signature to first input witness
+    /// Attach a signature string to the first input proof's witness.
+    ///
+    /// Appends to existing signatures if a witness is already present,
+    /// or creates a new P2PKWitness. This is the common pattern for
+    /// SIG_ALL transactions where all signatures go on the first input.
+    pub fn attach_signature_to_first_input(&mut self, sig_hex: &str) -> Result<(), Error> {
         let first_input = self
             .inputs_mut()
             .first_mut()
@@ -959,16 +964,23 @@ where
 
         match first_input.witness.as_mut() {
             Some(witness) => {
-                witness.add_signatures(vec![signature.to_string()]);
+                witness.add_signatures(vec![sig_hex.to_string()]);
             }
             None => {
                 let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-                p2pk_witness.add_signatures(vec![signature.to_string()]);
+                p2pk_witness.add_signatures(vec![sig_hex.to_string()]);
                 first_input.witness = Some(p2pk_witness);
             }
         };
 
         Ok(())
+    }
+
+    /// Sign melt request with SIG_ALL
+    pub fn sign_sig_all(&mut self, secret_key: SecretKey) -> Result<(), Error> {
+        let msg = self.sig_all_msg_to_sign();
+        let signature = secret_key.sign(msg.as_bytes())?;
+        self.attach_signature_to_first_input(&signature.to_string())
     }
 }
 
