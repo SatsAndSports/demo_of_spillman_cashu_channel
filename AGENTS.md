@@ -132,7 +132,7 @@ For detailed information, see:
 
 ## Active TODOs
 - ensure all four test-integration-* are working. e.g. python and maturin
-- is nutmix still working? and should it accept the env vars which control the fee rate?
+- make the ClientBridge include Alice's secret in the channel, to allow each channel to have a differnet secret
 - scale back the demos, they're not really needed as we now have so many tests
 
 ### Protocol
