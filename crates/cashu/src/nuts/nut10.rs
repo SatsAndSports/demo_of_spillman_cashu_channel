@@ -323,6 +323,18 @@ pub trait SpendingConditionVerification {
     /// For melt: input secrets + quote/payment request
     fn sig_all_msg_to_sign(&self) -> String;
 
+    /// Compute the SHA-256 hash of the SIG_ALL message, returned as a hex string.
+    ///
+    /// This is the 32-byte digest that gets signed with BIP-340 Schnorr.
+    /// Provided as a convenience to avoid duplicating the hash computation
+    /// at every call site.
+    fn sig_all_message_hash_hex(&self) -> String {
+        use bitcoin::hashes::{sha256, Hash};
+        let msg = self.sig_all_msg_to_sign();
+        let hash = sha256::Hash::hash(msg.as_bytes());
+        crate::util::hex::encode(hash.to_byte_array())
+    }
+
     /// Check if at least one proof in the set has SIG_ALL flag set
     ///
     /// SIG_ALL requires all proofs in the transaction to be signed.

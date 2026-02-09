@@ -1065,7 +1065,6 @@ pub fn create_unsigned_balance_update(
     balance: u64,
 ) -> Result<String, String> {
     use crate::nuts::nut10::SpendingConditionVerification;
-    use bitcoin::hashes::{sha256, Hash};
 
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
     let channel_secret_bytes = hex::decode(channel_secret_hex)
@@ -1098,10 +1097,8 @@ pub fn create_unsigned_balance_update(
         .create_swap_request(channel.funding_proofs.clone(), None)
         .map_err(|e| format!("create_swap_request failed: {}", e))?;
 
-    // Compute the SIG_ALL message and hash it
-    let msg_to_sign = swap_request.sig_all_msg_to_sign();
-    let msg_hash = sha256::Hash::hash(msg_to_sign.as_bytes());
-    let message_hex = hex::encode(msg_hash.to_byte_array());
+    // Compute the SIG_ALL message hash
+    let message_hex = swap_request.sig_all_message_hash_hex();
 
     // Compute the tweak scalar (P2BK blinding for sender_stage1)
     let tweak = params
@@ -1148,8 +1145,6 @@ pub fn attach_signature_to_balance_update(
     channel_id: &str,
     amount: u64,
 ) -> Result<String, String> {
-    use crate::nuts::{nut00::Witness, nut11::P2PKWitness};
-
     // Parse the unsigned swap request
     let mut swap_request: SwapRequest = serde_json::from_str(unsigned_swap_request_json)
         .map_err(|e| format!("Failed to parse swap request: {}", e))?;
@@ -1162,21 +1157,9 @@ pub fn attach_signature_to_balance_update(
     )?;
 
     // Attach the signature to the first input's witness
-    let first_input = swap_request
-        .inputs_mut()
-        .first_mut()
-        .ok_or("No inputs in swap request")?;
-
-    match first_input.witness.as_mut() {
-        Some(witness) => {
-            witness.add_signatures(vec![signature_hex.to_string()]);
-        }
-        None => {
-            let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
-            p2pk_witness.add_signatures(vec![signature_hex.to_string()]);
-            first_input.witness = Some(p2pk_witness);
-        }
-    };
+    swap_request
+        .attach_signature_to_first_input(signature_hex)
+        .map_err(|e| format!("attach_signature_to_first_input failed: {}", e))?;
 
     // Extract the composite signature from the now-signed swap request
     let balance_update = super::balance_update::BalanceUpdateMessage::from_signed_swap_request(
