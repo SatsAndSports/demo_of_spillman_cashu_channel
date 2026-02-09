@@ -14,7 +14,7 @@ typedef struct {
 } CResult;
 
 // Client bridge FFI functions that return CResult
-CResult spilman_client_bridge_open_channel_from_token(void* ptr, const char* token, const char* charlie_pubkey, uint64_t locktime, const char* keyset_info, uint64_t max_amount);
+CResult spilman_client_bridge_open_channel_from_token(void* ptr, const char* token, const char* charlie_pubkey, const char* alice_pubkey, uint64_t locktime, const char* keyset_info, uint64_t max_amount);
 CResult spilman_client_bridge_sign_balance_update(void* ptr, const char* channel_id, uint64_t balance);
 CResult spilman_client_bridge_build_payment_header(void* ptr, const char* channel_id, uint64_t balance, int include_funding);
 CResult spilman_client_bridge_get_channel_info(void* ptr, const char* channel_id);
@@ -30,16 +30,18 @@ import (
 )
 
 // clientBridgeOpenChannel calls the Rust FFI and returns the parsed result.
-func clientBridgeOpenChannel(ptr unsafe.Pointer, token, charliePubkeyHex string, locktime uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
+func clientBridgeOpenChannel(ptr unsafe.Pointer, token, charliePubkeyHex, alicePubkeyHex string, locktime uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
 	cToken := C.CString(token)
 	defer C.free(unsafe.Pointer(cToken))
 	cCharlie := C.CString(charliePubkeyHex)
 	defer C.free(unsafe.Pointer(cCharlie))
+	cAlice := C.CString(alicePubkeyHex)
+	defer C.free(unsafe.Pointer(cAlice))
 	cKeyset := C.CString(keysetInfoJSON)
 	defer C.free(unsafe.Pointer(cKeyset))
 
 	res := C.spilman_client_bridge_open_channel_from_token(
-		ptr, cToken, cCharlie, C.uint64_t(locktime), cKeyset, C.uint64_t(maxAmount))
+		ptr, cToken, cCharlie, cAlice, C.uint64_t(locktime), cKeyset, C.uint64_t(maxAmount))
 	defer C.spilman_free_cresult(res)
 
 	if res.error != nil {

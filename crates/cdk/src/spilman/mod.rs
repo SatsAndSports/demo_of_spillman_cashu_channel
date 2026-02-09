@@ -29,7 +29,8 @@ pub use bindings::{
     mint_proofs_from_mint, parse_keyset_info_from_json, sign_with_tweaked_key_util,
 };
 pub use client_bridge::{
-    base64_decode, ClientChannelInfo, OpenChannelResult, SpilmanClientBridge, SpilmanClientHost,
+    base64_decode, ChannelData, ClientChannelInfo, OpenChannelResult, SpilmanClientBridge,
+    SpilmanClientHost,
 };
 pub use bridge::{
     unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelState,

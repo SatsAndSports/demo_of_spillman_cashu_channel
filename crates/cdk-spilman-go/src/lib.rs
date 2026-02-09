@@ -893,9 +893,10 @@ pub struct SpilmanClientHostCallbacks {
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
         channel_json: *const c_char,
+        channel_secret_hex: *const c_char,
     ),
     pub get_channel:
-        extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char) -> *mut c_char, // NULL = not found
+        extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char) -> *mut c_char, // NULL = not found, otherwise JSON: {"channel_json":"...","channel_secret_hex":"..."}
     pub list_channel_ids: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char, // JSON array string
     pub delete_channel: extern "C" fn(user_data: *mut libc::c_void, channel_id: *const c_char),
     pub sign_with_tweaked_key: extern "C" fn(
@@ -903,6 +904,12 @@ pub struct SpilmanClientHostCallbacks {
         signer_pubkey_hex: *const c_char,
         message_hex: *const c_char,
         tweak_scalar_hex: *const c_char,
+        response_out: *mut *mut c_char,
+    ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
+    pub compute_channel_secret: extern "C" fn(
+        user_data: *mut libc::c_void,
+        alice_pubkey_hex: *const c_char,
+        charlie_pubkey_hex: *const c_char,
         response_out: *mut *mut c_char,
     ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
 }
@@ -938,19 +945,32 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
         }
     }
 
-    fn save_channel(&self, channel_id: &str, channel_json: &str) {
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
         let id_c = CString::new(channel_id).unwrap();
         let json_c = CString::new(channel_json).unwrap();
-        (self.callbacks.save_channel)(self.callbacks.user_data, id_c.as_ptr(), json_c.as_ptr());
+        let secret_c = CString::new(channel_secret_hex).unwrap();
+        (self.callbacks.save_channel)(
+            self.callbacks.user_data,
+            id_c.as_ptr(),
+            json_c.as_ptr(),
+            secret_c.as_ptr(),
+        );
     }
 
-    fn get_channel(&self, channel_id: &str) -> Option<String> {
+    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
         let id_c = CString::new(channel_id).unwrap();
         let ptr = (self.callbacks.get_channel)(self.callbacks.user_data, id_c.as_ptr());
         if ptr.is_null() {
             return None;
         }
-        unsafe { Some(CString::from_raw(ptr).into_string().unwrap()) }
+        unsafe {
+            let json_str = CString::from_raw(ptr).into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+            Some(cdk::spilman::ChannelData {
+                channel_json: v["channel_json"].as_str()?.to_string(),
+                channel_secret_hex: v["channel_secret_hex"].as_str()?.to_string(),
+            })
+        }
     }
 
     fn list_channel_ids(&self) -> Vec<String> {
@@ -997,6 +1017,32 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
             }
         }
     }
+
+    fn compute_channel_secret(
+        &self,
+        alice_pubkey_hex: &str,
+        charlie_pubkey_hex: &str,
+    ) -> Result<String, String> {
+        let alice_c = CString::new(alice_pubkey_hex).unwrap();
+        let charlie_c = CString::new(charlie_pubkey_hex).unwrap();
+        let mut response_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.compute_channel_secret)(
+            self.callbacks.user_data,
+            alice_c.as_ptr(),
+            charlie_c.as_ptr(),
+            &mut response_ptr,
+        );
+
+        unsafe {
+            let response = CString::from_raw(response_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(response)
+            } else {
+                Err(response)
+            }
+        }
+    }
 }
 
 pub struct ClientBridgeInstance {
@@ -1006,19 +1052,10 @@ pub struct ClientBridgeInstance {
 #[no_mangle]
 pub unsafe extern "C" fn spilman_client_bridge_new(
     callbacks: SpilmanClientHostCallbacks,
-    alice_secret_hex: *const c_char,
 ) -> *mut ClientBridgeInstance {
-    let secret_hex = if !alice_secret_hex.is_null() {
-        Some(CStr::from_ptr(alice_secret_hex).to_str().unwrap())
-    } else {
-        None
-    };
-
     let host = CGoSpilmanClientHost { callbacks };
-    match SpilmanClientBridge::new(host, secret_hex) {
-        Ok(bridge) => Box::into_raw(Box::new(ClientBridgeInstance { bridge })),
-        Err(_) => ptr::null_mut(),
-    }
+    let bridge = SpilmanClientBridge::new(host);
+    Box::into_raw(Box::new(ClientBridgeInstance { bridge }))
 }
 
 #[no_mangle]
@@ -1029,30 +1066,11 @@ pub unsafe extern "C" fn spilman_client_bridge_free(ptr: *mut ClientBridgeInstan
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn spilman_client_bridge_alice_pubkey_hex(
-    ptr: *mut ClientBridgeInstance,
-) -> *mut c_char {
-    let instance = &*ptr;
-    CString::new(instance.bridge.alice_pubkey_hex())
-        .unwrap()
-        .into_raw()
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn spilman_client_bridge_alice_secret_hex(
-    ptr: *mut ClientBridgeInstance,
-) -> *mut c_char {
-    let instance = &*ptr;
-    CString::new(instance.bridge.alice_secret_hex())
-        .unwrap()
-        .into_raw()
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
     ptr: *mut ClientBridgeInstance,
     token_string: *const c_char,
     charlie_pubkey_hex: *const c_char,
+    alice_pubkey_hex: *const c_char,
     locktime: u64,
     keyset_info_json: *const c_char,
     max_amount: u64,
@@ -1060,11 +1078,12 @@ pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
     let instance = &*ptr;
     let token = CStr::from_ptr(token_string).to_str().unwrap();
     let charlie = CStr::from_ptr(charlie_pubkey_hex).to_str().unwrap();
+    let alice = CStr::from_ptr(alice_pubkey_hex).to_str().unwrap();
     let keyset = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
     match instance
         .bridge
-        .open_channel_from_token(token, charlie, locktime, keyset, max_amount)
+        .open_channel_from_token(token, charlie, alice, locktime, keyset, max_amount)
     {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();

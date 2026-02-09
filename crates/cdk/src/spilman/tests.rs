@@ -808,10 +808,18 @@ async fn test_swap_to_funding() {
     let locktime = unix_time() + 3600; // 1 hour in future
     let max_amount = 64u64;
 
+    // Compute channel secret via the utility function (what the host would do)
+    let channel_secret_hex = super::bindings::compute_channel_secret_from_hex(
+        &alice_secret.to_secret_hex(),
+        &charlie_pubkey.to_hex(),
+    )
+    .expect("compute_channel_secret_from_hex should succeed");
+
     let compute_result = compute_channel_from_token(
         &token_string,
         &charlie_pubkey.to_hex(),
-        &alice_secret.to_secret_hex(),
+        &alice_secret.public_key().to_hex(),
+        &channel_secret_hex,
         locktime,
         &keyset_info_json,
         max_amount,
@@ -848,10 +856,10 @@ async fn test_swap_to_funding() {
     );
     println!("✓ compute_channel_from_token values are reasonable");
 
-    // Step 5: Call create_funding_swap
+    // Step 5: Call create_funding_swap (now uses channel_secret_hex instead of alice_secret_hex)
     let swap_result = create_funding_swap(
         params_json,
-        &alice_secret.to_secret_hex(),
+        &channel_secret_hex,
         &keyset_info_json,
         proofs_json,
     )
@@ -968,7 +976,8 @@ async fn test_client_bridge() {
 
     struct TestClientHost {
         mint: Arc<crate::mint::Mint>,
-        channels: Mutex<HashMap<String, String>>,
+        /// Channel storage: channel_id -> (channel_json, channel_secret_hex)
+        channels: Mutex<HashMap<String, (String, String)>>,
         /// Key storage: pubkey_hex -> secret_hex (for sign_with_tweaked_key)
         keys: Mutex<HashMap<String, String>>,
     }
@@ -1004,19 +1013,23 @@ async fn test_client_bridge() {
                 .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
 
-        fn save_channel(&self, channel_id: &str, channel_json: &str) {
-            self.channels
-                .lock()
-                .unwrap()
-                .insert(channel_id.to_string(), channel_json.to_string());
+        fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
+            self.channels.lock().unwrap().insert(
+                channel_id.to_string(),
+                (channel_json.to_string(), channel_secret_hex.to_string()),
+            );
         }
 
-        fn get_channel(&self, channel_id: &str) -> Option<String> {
-            self.channels
-                .lock()
-                .unwrap()
-                .get(channel_id)
-                .cloned()
+        fn get_channel(
+            &self,
+            channel_id: &str,
+        ) -> Option<super::client_bridge::ChannelData> {
+            let channels = self.channels.lock().unwrap();
+            let (json, secret) = channels.get(channel_id)?;
+            Some(super::client_bridge::ChannelData {
+                channel_json: json.clone(),
+                channel_secret_hex: secret.clone(),
+            })
         }
 
         fn list_channel_ids(&self) -> Vec<String> {
@@ -1046,6 +1059,29 @@ async fn test_client_bridge() {
                 &secret_hex,
                 message_hex,
                 tweak_scalar_hex,
+            )
+        }
+
+        fn compute_channel_secret(
+            &self,
+            alice_pubkey_hex: &str,
+            charlie_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            let secret_hex = self
+                .keys
+                .lock()
+                .unwrap()
+                .get(alice_pubkey_hex)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "No key registered for pubkey: {}",
+                        alice_pubkey_hex
+                    )
+                })?;
+            super::bindings::compute_channel_secret_from_hex(
+                &secret_hex,
+                charlie_pubkey_hex,
             )
         }
     }
@@ -1226,24 +1262,27 @@ async fn test_client_bridge() {
     );
     let token_string = token.to_string();
 
+    // Generate Alice's keypair externally (the bridge never sees the secret)
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey_hex = alice_secret.public_key().to_hex();
+
     let client_host = TestClientHost {
         mint: Arc::clone(&shared_mint),
-        channels: Mutex::new(HashMap::new()),
+        channels: Mutex::new(HashMap::new()),  // (channel_json, channel_secret_hex)
         keys: Mutex::new(HashMap::new()),
     };
 
-    let client_bridge =
-        SpilmanClientBridge::new(client_host, None).expect("Should create client bridge");
-
-    // Register Alice's key with the host so it can sign on her behalf
-    client_bridge.host().register_key(
-        client_bridge.alice_secret_hex(),
-        client_bridge.alice_pubkey_hex(),
+    // Register Alice's key with the host so it can sign and compute ECDH
+    client_host.register_key(
+        &alice_secret.to_secret_hex(),
+        &alice_pubkey_hex,
     );
+
+    let client_bridge = SpilmanClientBridge::new(client_host);
 
     println!(
         "Client bridge created, alice_pubkey: {}",
-        client_bridge.alice_pubkey_hex()
+        alice_pubkey_hex
     );
 
     // ====================================================================
@@ -1257,6 +1296,7 @@ async fn test_client_bridge() {
         .open_channel_from_token(
             &token_string,
             &charlie_pubkey.to_hex(),
+            &alice_pubkey_hex,
             locktime,
             &keyset_info_json,
             max_amount,

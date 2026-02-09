@@ -1,5 +1,12 @@
 package spilman
 
+// ChannelData holds channel state returned by GetChannel.
+// Separates the opaque channel JSON from the sensitive channel secret.
+type ChannelData struct {
+	ChannelJSON      string
+	ChannelSecretHex string
+}
+
 // SpilmanClientHost is the interface that client applications must implement
 // to provide mint communication and channel storage for the client bridge.
 //
@@ -14,11 +21,15 @@ type SpilmanClientHost interface {
 
 	// SaveChannel persists channel state.
 	// The channelJSON is an opaque JSON blob managed by the bridge.
-	SaveChannel(channelID, channelJSON string)
+	// The channelSecretHex is the hashed ECDH secret (32 bytes, hex),
+	// passed separately so the host can store it with appropriate protection.
+	SaveChannel(channelID, channelJSON, channelSecretHex string)
 
 	// GetChannel retrieves channel state by channel ID.
 	// Returns nil if the channel is not found.
-	GetChannel(channelID string) *string
+	// The returned ChannelData contains both the opaque channel JSON
+	// and the channel secret, matching what was passed to SaveChannel.
+	GetChannel(channelID string) *ChannelData
 
 	// ListChannelIDs returns all stored channel IDs.
 	ListChannelIDs() []string
@@ -42,6 +53,18 @@ type SpilmanClientHost interface {
 	//
 	// Returns the BIP-340 Schnorr signature (64 bytes, hex).
 	SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error)
+
+	// ComputeChannelSecret computes the hashed ECDH channel secret.
+	//
+	// The host performs ECDH between Alice's secret key (identified by
+	// alicePubkeyHex) and Charlie's public key, then hashes the result:
+	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(alice_secret, charlie_pubkey))
+	//
+	// For hosts that hold raw secret keys, use ComputeChannelSecret() from
+	// the standalone functions (wraps the Rust utility).
+	//
+	// Returns the hashed channel secret as a 64-char hex string (32 bytes).
+	ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error)
 }
 
 // OpenChannelResult contains the result of opening a new channel.
@@ -50,6 +73,7 @@ type OpenChannelResult struct {
 	Capacity           uint64 `json:"capacity"`
 	FundingTokenAmount uint64 `json:"funding_token_amount"`
 	MintURL            string `json:"mint_url"`
+	AlicePubkeyHex     string `json:"alice_pubkey_hex"`
 }
 
 // ClientChannelInfo contains information about a stored channel.

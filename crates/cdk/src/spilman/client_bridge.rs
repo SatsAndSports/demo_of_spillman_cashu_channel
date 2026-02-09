@@ -20,7 +20,6 @@
 //! let header = bridge.build_payment_header(&result.channel_id, 20, false)?; // subsequent
 //! ```
 
-use crate::nuts::SecretKey;
 use serde::{Deserialize, Serialize};
 
 use super::bindings::{
@@ -50,12 +49,16 @@ pub trait SpilmanClientHost {
     /// Save channel state. Called after successful channel creation.
     ///
     /// The `channel_json` is an opaque JSON blob managed by the bridge.
-    fn save_channel(&self, channel_id: &str, channel_json: &str);
+    /// The `channel_secret_hex` is the hashed ECDH secret (32 bytes, hex),
+    /// passed separately so the host can store it with appropriate protection.
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str);
 
     /// Retrieve channel state by channel ID.
     ///
-    /// Returns `None` if the channel is not found.
-    fn get_channel(&self, channel_id: &str) -> Option<String>;
+    /// Returns `None` if the channel is not found. The returned `ChannelData`
+    /// contains the opaque channel JSON and the channel secret, matching
+    /// what was passed to `save_channel`.
+    fn get_channel(&self, channel_id: &str) -> Option<ChannelData>;
 
     /// List all stored channel IDs.
     fn list_channel_ids(&self) -> Vec<String>;
@@ -90,6 +93,29 @@ pub trait SpilmanClientHost {
         message_hex: &str,
         tweak_scalar_hex: &str,
     ) -> Result<String, String>;
+
+    /// Compute the hashed ECDH channel secret for a channel.
+    ///
+    /// The host performs ECDH between Alice's secret key (identified by
+    /// `alice_pubkey_hex`) and Charlie's public key, then hashes the result
+    /// with a domain separator:
+    ///   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(alice_secret, charlie_pubkey))
+    ///
+    /// For hosts that hold raw secret keys, the convenience function
+    /// `crate::spilman::bindings::compute_channel_secret_from_hex()` provides
+    /// a standard implementation.
+    ///
+    /// # Arguments
+    /// * `alice_pubkey_hex` - Alice's public key (identifies which secret key to use)
+    /// * `charlie_pubkey_hex` - Charlie's (receiver's) public key
+    ///
+    /// # Returns
+    /// The hashed channel secret as a 64-char hex string (32 bytes).
+    fn compute_channel_secret(
+        &self,
+        alice_pubkey_hex: &str,
+        charlie_pubkey_hex: &str,
+    ) -> Result<String, String>;
 }
 
 // ============================================================================
@@ -103,6 +129,10 @@ pub struct OpenChannelResult {
     pub capacity: u64,
     pub funding_token_amount: u64,
     pub mint_url: String,
+    /// Alice's public key used for this channel.
+    /// The caller passes this to `open_channel_from_token` and gets it back
+    /// here so it can be associated with the channel.
+    pub alice_pubkey_hex: String,
 }
 
 /// Information about a stored channel.
@@ -115,7 +145,22 @@ pub struct ClientChannelInfo {
     pub params_json: String,
 }
 
+/// Channel data returned by `SpilmanClientHost::get_channel`.
+///
+/// Separates the opaque channel JSON from the sensitive channel secret,
+/// allowing hosts to store them differently (e.g., encrypt the secret).
+#[derive(Debug, Clone)]
+pub struct ChannelData {
+    /// Opaque channel state JSON (managed by the bridge).
+    pub channel_json: String,
+    /// The hashed ECDH channel secret (32 bytes, hex-encoded).
+    pub channel_secret_hex: String,
+}
+
 /// Internal channel state stored via the host.
+///
+/// This is serialized as the `channel_json` blob in `ChannelData`.
+/// The `channel_secret_hex` is stored separately via the host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredChannel {
     channel_id: String,
@@ -125,6 +170,8 @@ struct StoredChannel {
     capacity: u64,
     funding_token_amount: u64,
     mint_url: String,
+    /// Alice's public key for this channel (per-channel, not from bridge).
+    alice_pubkey_hex: String,
 }
 
 // ============================================================================
@@ -137,68 +184,36 @@ struct StoredChannel {
 /// channel creation from tokens, payment signing, and HTTP header construction.
 ///
 /// The bridge itself is stateless — all channel state is stored via the host.
-/// One bridge instance uses a single Alice keypair for all channels.
+/// The bridge never holds or sees Alice's secret key; all operations requiring
+/// the key are delegated to the host via callbacks.
 pub struct SpilmanClientBridge<H: SpilmanClientHost> {
     host: H,
-    alice_secret_hex: String,
-    alice_pubkey_hex: String,
 }
 
 impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// Create a new client bridge.
     ///
-    /// If `alice_secret_hex` is `None`, a new keypair is generated.
-    pub fn new(host: H, alice_secret_hex: Option<&str>) -> Result<Self, String> {
-        let (secret_hex, pubkey_hex) = match alice_secret_hex {
-            Some(hex) => {
-                let sk = SecretKey::from_hex(hex)
-                    .map_err(|e| format!("Invalid alice secret key: {}", e))?;
-                (hex.to_string(), sk.public_key().to_hex())
-            }
-            None => {
-                let sk = SecretKey::generate();
-                (sk.to_secret_hex(), sk.public_key().to_hex())
-            }
-        };
-
-        Ok(Self {
-            host,
-            alice_secret_hex: secret_hex,
-            alice_pubkey_hex: pubkey_hex,
-        })
-    }
-
-    /// Get Alice's public key (hex-encoded, compressed).
-    ///
-    /// Give this to the server when setting up a channel.
-    pub fn alice_pubkey_hex(&self) -> &str {
-        &self.alice_pubkey_hex
-    }
-
-    /// Get Alice's secret key (hex-encoded).
-    ///
-    /// Needed for persistence/restoration of the bridge.
-    pub fn alice_secret_hex(&self) -> &str {
-        &self.alice_secret_hex
-    }
-
-    /// Get a reference to the host.
-    pub fn host(&self) -> &H {
-        &self.host
+    /// The bridge is stateless and keyless — it delegates all key operations
+    /// to the host. The caller passes `alice_pubkey_hex` per channel when
+    /// opening channels.
+    pub fn new(host: H) -> Self {
+        Self { host }
     }
 
     /// Open a new channel from a Cashu token.
     ///
     /// This performs the full funding flow:
-    /// 1. Parse the token and compute channel parameters
-    /// 2. Create a funding swap request (deterministic 2-of-2 locked outputs)
-    /// 3. Submit the swap to the mint via `host.call_mint_swap()`
-    /// 4. Unblind signatures and verify DLEQ proofs
-    /// 5. Save the channel via `host.save_channel()`
+    /// 1. Compute ECDH channel secret via `host.compute_channel_secret()`
+    /// 2. Parse the token and compute channel parameters
+    /// 3. Create a funding swap request (deterministic 2-of-2 locked outputs)
+    /// 4. Submit the swap to the mint via `host.call_mint_swap()`
+    /// 5. Unblind signatures and verify DLEQ proofs
+    /// 6. Save the channel via `host.save_channel()`
     ///
     /// # Arguments
     /// * `token_string` - Cashu token (cashuA... or cashuB...)
     /// * `charlie_pubkey_hex` - Receiver's public key (from server's `/channel/params`)
+    /// * `alice_pubkey_hex` - Sender's public key (caller chooses which key for this channel)
     /// * `locktime` - Unix timestamp for refund locktime
     /// * `keyset_info_json` - Keyset info JSON (from mint's `/v1/keys/{id}`)
     /// * `max_amount` - Maximum amount per output (from server policy, 0 = no limit)
@@ -206,15 +221,22 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         &self,
         token_string: &str,
         charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
         locktime: u64,
         keyset_info_json: &str,
         max_amount: u64,
     ) -> Result<OpenChannelResult, String> {
-        // Step 1: Parse token and compute channel parameters
+        // Step 1: Compute channel secret via host (ECDH delegation)
+        let channel_secret_hex = self
+            .host
+            .compute_channel_secret(alice_pubkey_hex, charlie_pubkey_hex)?;
+
+        // Step 2: Parse token and compute channel parameters
         let compute_result = compute_channel_from_token(
             token_string,
             charlie_pubkey_hex,
-            &self.alice_secret_hex,
+            alice_pubkey_hex,
+            &channel_secret_hex,
             locktime,
             keyset_info_json,
             max_amount,
@@ -240,10 +262,10 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .as_str()
             .ok_or("Missing 'proofs_json' in compute result")?;
 
-        // Step 2: Create funding swap request
+        // Step 3: Create funding swap request
         let swap_result = create_funding_swap(
             params_json,
-            &self.alice_secret_hex,
+            &channel_secret_hex,
             keyset_info_json,
             proofs_json,
         )?;
@@ -258,10 +280,10 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .as_str()
             .ok_or("Missing 'funding_secrets_json' in swap result")?;
 
-        // Step 3: Submit swap to mint
+        // Step 4: Submit swap to mint
         let swap_response_json = self.host.call_mint_swap(&mint_url, swap_request_json)?;
 
-        // Step 4: Unblind signatures and verify DLEQ
+        // Step 5: Unblind signatures and verify DLEQ
         let complete_result =
             complete_funding_swap(&swap_response_json, funding_secrets_json, keyset_info_json)?;
 
@@ -272,18 +294,14 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .as_str()
             .ok_or("Missing 'funding_proofs_json' in complete result")?;
 
-        // Compute channel ID (we need the shared secret and keyset info)
-        let channel_secret_hex = super::bindings::compute_channel_secret_from_hex(
-            &self.alice_secret_hex,
-            charlie_pubkey_hex,
-        )?;
+        // Compute channel ID
         let channel_id = super::bindings::channel_parameters_get_channel_id(
             params_json,
             &channel_secret_hex,
             keyset_info_json,
         )?;
 
-        // Step 5: Save channel state
+        // Step 6: Save channel state
         let stored = StoredChannel {
             channel_id: channel_id.clone(),
             params_json: params_json.to_string(),
@@ -292,18 +310,21 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             capacity,
             funding_token_amount,
             mint_url: mint_url.clone(),
+            alice_pubkey_hex: alice_pubkey_hex.to_string(),
         };
 
         let channel_json = serde_json::to_string(&stored)
             .map_err(|e| format!("Failed to serialize channel state: {}", e))?;
 
-        self.host.save_channel(&channel_id, &channel_json);
+        self.host
+            .save_channel(&channel_id, &channel_json, &channel_secret_hex);
 
         Ok(OpenChannelResult {
             channel_id,
             capacity,
             funding_token_amount,
             mint_url,
+            alice_pubkey_hex: alice_pubkey_hex.to_string(),
         })
     }
 
@@ -316,13 +337,13 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     ///
     /// Signing is delegated to the host via `sign_with_tweaked_key()`.
     pub fn sign_balance_update(&self, channel_id: &str, balance: u64) -> Result<String, String> {
-        let stored = self.load_channel(channel_id)?;
+        let (stored, channel_secret_hex) = self.load_channel(channel_id)?;
 
         // Step 1: Create unsigned balance update (computes message hash + tweak)
         let unsigned_json = create_unsigned_balance_update(
             &stored.params_json,
             &stored.keyset_info_json,
-            &self.alice_secret_hex,
+            &channel_secret_hex,
             &stored.funding_proofs_json,
             balance,
         )?;
@@ -344,9 +365,9 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .ok_or("Missing 'channel_id'")?;
         let amount = unsigned["amount"].as_u64().ok_or("Missing 'amount'")?;
 
-        // Step 2: Delegate signing to the host
+        // Step 2: Delegate signing to the host (use per-channel alice pubkey)
         let signature_hex = self.host.sign_with_tweaked_key(
-            &self.alice_pubkey_hex,
+            &stored.alice_pubkey_hex,
             message_hex,
             tweak_scalar_hex,
         )?;
@@ -389,7 +410,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         });
 
         if include_funding {
-            let stored = self.load_channel(channel_id)?;
+            let (stored, _) = self.load_channel(channel_id)?;
 
             // Parse params_json into a JSON object for inclusion
             let params: serde_json::Value = serde_json::from_str(&stored.params_json)
@@ -409,8 +430,8 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
 
     /// Get information about a stored channel.
     pub fn get_channel_info(&self, channel_id: &str) -> Option<ClientChannelInfo> {
-        let json = self.host.get_channel(channel_id)?;
-        let stored: StoredChannel = serde_json::from_str(&json).ok()?;
+        let data = self.host.get_channel(channel_id)?;
+        let stored: StoredChannel = serde_json::from_str(&data.channel_json).ok()?;
         Some(ClientChannelInfo {
             channel_id: stored.channel_id,
             capacity: stored.capacity,
@@ -434,12 +455,14 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     // Internal helpers
     // ========================================================================
 
-    fn load_channel(&self, channel_id: &str) -> Result<StoredChannel, String> {
-        let json = self
+    fn load_channel(&self, channel_id: &str) -> Result<(StoredChannel, String), String> {
+        let data = self
             .host
             .get_channel(channel_id)
             .ok_or_else(|| format!("Channel not found: {}", channel_id))?;
-        serde_json::from_str(&json).map_err(|e| format!("Failed to parse channel state: {}", e))
+        let stored: StoredChannel = serde_json::from_str(&data.channel_json)
+            .map_err(|e| format!("Failed to parse channel state: {}", e))?;
+        Ok((stored, data.channel_secret_hex))
     }
 }
 

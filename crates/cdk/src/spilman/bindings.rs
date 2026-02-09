@@ -430,7 +430,8 @@ pub fn create_signed_balance_update(
 /// # Arguments
 /// * `token_string` - The Cashu token (cashuA... or cashuB...)
 /// * `charlie_pubkey_hex` - Receiver's public key (hex)
-/// * `alice_secret_hex` - Sender's secret key (hex)
+/// * `alice_pubkey_hex` - Sender's public key (hex)
+/// * `channel_secret_hex` - Pre-computed ECDH channel secret (32 bytes, hex)
 /// * `locktime` - Unix timestamp for refund locktime
 /// * `keyset_info_json` - Keyset info from mint (JSON)
 /// * `maximum_amount_for_one_output` - Max amount per output from server policy
@@ -446,7 +447,8 @@ pub fn create_signed_balance_update(
 pub fn compute_channel_from_token(
     token_string: &str,
     charlie_pubkey_hex: &str,
-    alice_secret_hex: &str,
+    alice_pubkey_hex: &str,
+    channel_secret_hex: &str,
     locktime: u64,
     keyset_info_json: &str,
     maximum_amount_for_one_output: u64,
@@ -512,15 +514,27 @@ pub fn compute_channel_from_token(
         .deterministic_value_after_fees(v2, max_amt)
         .map_err(|e| format!("Failed to compute capacity: {}", e))?;
 
-    // Parse Alice's secret key
-    let alice_secret =
-        SecretKey::from_hex(alice_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
-    let alice_pubkey = alice_secret.public_key();
+    // Parse Alice's pubkey
+    let alice_pubkey: PublicKey = alice_pubkey_hex
+        .parse()
+        .map_err(|e| format!("Invalid alice pubkey: {}", e))?;
 
     // Parse Charlie's pubkey
     let charlie_pubkey: PublicKey = charlie_pubkey_hex
         .parse()
         .map_err(|e| format!("Invalid charlie pubkey: {}", e))?;
+
+    // Parse channel secret
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
+        .map_err(|e| format!("Invalid channel secret hex: {}", e))?;
+    if channel_secret_bytes.len() != 32 {
+        return Err(format!(
+            "Channel secret must be 32 bytes, got {}",
+            channel_secret_bytes.len()
+        ));
+    }
+    let mut channel_secret = [0u8; 32];
+    channel_secret.copy_from_slice(&channel_secret_bytes);
 
     // Generate sender nonce
     let sender_nonce = format!(
@@ -529,8 +543,8 @@ pub fn compute_channel_from_token(
         hex::encode(&alice_pubkey.to_bytes()[..8])
     );
 
-    // Create channel parameters with the computed capacity and explicit funding_token_amount
-    let params = ChannelParameters::new_with_secret_key(
+    // Create channel parameters with pre-computed channel secret
+    let params = ChannelParameters::new(
         alice_pubkey,
         charlie_pubkey,
         mint_url.to_string(),
@@ -542,7 +556,7 @@ pub fn compute_channel_from_token(
         sender_nonce,
         keyset_info.clone(),
         max_amt,
-        &alice_secret,
+        channel_secret,
     )
     .map_err(|e| format!("Failed to create channel params: {}", e))?;
 
@@ -573,7 +587,7 @@ pub fn compute_channel_from_token(
 ///
 /// # Arguments
 /// * `params_json` - Channel params JSON (from compute_channel_from_token)
-/// * `alice_secret_hex` - Sender's secret key (hex)
+/// * `channel_secret_hex` - Pre-computed ECDH channel secret (32 bytes, hex)
 /// * `keyset_info_json` - Keyset info (JSON)
 /// * `input_proofs_json` - Input proofs from the token (JSON array)
 ///
@@ -584,22 +598,30 @@ pub fn compute_channel_from_token(
 /// - `funding_count`: Number of funding outputs
 pub fn create_funding_swap(
     params_json: &str,
-    alice_secret_hex: &str,
+    channel_secret_hex: &str,
     keyset_info_json: &str,
     input_proofs_json: &str,
 ) -> Result<String, String> {
     // Parse keyset info
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
-    // Parse Alice's secret key
-    let alice_secret =
-        SecretKey::from_hex(alice_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
+    // Parse channel secret
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
+        .map_err(|e| format!("Invalid channel secret hex: {}", e))?;
+    if channel_secret_bytes.len() != 32 {
+        return Err(format!(
+            "Channel secret must be 32 bytes, got {}",
+            channel_secret_bytes.len()
+        ));
+    }
+    let mut channel_secret = [0u8; 32];
+    channel_secret.copy_from_slice(&channel_secret_bytes);
 
-    // Create ChannelParameters from JSON
-    let params = ChannelParameters::from_json_with_secret_key(
+    // Create ChannelParameters from JSON with pre-computed channel secret
+    let params = ChannelParameters::from_json_with_channel_secret(
         params_json,
         keyset_info.clone(),
-        &alice_secret,
+        channel_secret,
     )
     .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
 
@@ -1024,7 +1046,7 @@ pub fn sign_with_tweaked_key_util(
 /// # Arguments
 /// * `params_json` - Channel parameters JSON
 /// * `keyset_info_json` - Keyset info JSON
-/// * `alice_secret_hex` - Alice's secret key (used only for ECDH to reconstruct ChannelParameters)
+/// * `channel_secret_hex` - The hashed ECDH channel secret (32 bytes, hex)
 /// * `proofs_json` - Funding proofs JSON
 /// * `balance` - New balance for Charlie
 ///
@@ -1038,7 +1060,7 @@ pub fn sign_with_tweaked_key_util(
 pub fn create_unsigned_balance_update(
     params_json: &str,
     keyset_info_json: &str,
-    alice_secret_hex: &str,
+    channel_secret_hex: &str,
     proofs_json: &str,
     balance: u64,
 ) -> Result<String, String> {
@@ -1046,11 +1068,22 @@ pub fn create_unsigned_balance_update(
     use bitcoin::hashes::{sha256, Hash};
 
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
-    let alice_secret =
-        SecretKey::from_hex(alice_secret_hex).map_err(|e| format!("Invalid secret key: {}", e))?;
-    let params =
-        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
-            .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
+        .map_err(|e| format!("Invalid channel secret hex: {}", e))?;
+    if channel_secret_bytes.len() != 32 {
+        return Err(format!(
+            "Channel secret must be 32 bytes, got {}",
+            channel_secret_bytes.len()
+        ));
+    }
+    let mut channel_secret_arr = [0u8; 32];
+    channel_secret_arr.copy_from_slice(&channel_secret_bytes);
+    let params = ChannelParameters::from_json_with_channel_secret(
+        params_json,
+        keyset_info,
+        channel_secret_arr,
+    )
+    .map_err(|e| format!("Failed to create ChannelParameters: {}", e))?;
     let funding_proofs: Vec<Proof> =
         serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
 
