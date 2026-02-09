@@ -213,6 +213,11 @@ class MockClientHost:
     def __init__(self, mint_url: str):
         self.mint_url = mint_url
         self.channels: dict[str, str] = {}
+        self.keys: dict[str, str] = {}  # pubkey_hex -> secret_hex
+
+    def register_key(self, secret_hex: str, pubkey_hex: str):
+        """Store a keypair so the host can sign on behalf of this key."""
+        self.keys[pubkey_hex] = secret_hex
 
     def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
         resp = requests.post(
@@ -235,6 +240,12 @@ class MockClientHost:
 
     def delete_channel(self, channel_id: str):
         self.channels.pop(channel_id, None)
+
+    def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
+        secret_hex = self.keys.get(signer_pubkey_hex)
+        if secret_hex is None:
+            raise RuntimeError(f"No key registered for pubkey: {signer_pubkey_hex}")
+        return cdk_spilman.sign_with_tweaked_key_util(secret_hex, message_hex, tweak_scalar_hex)
 
 
 class MockServerHost:
@@ -377,6 +388,9 @@ class TestClientBridge:
 
         client_host = MockClientHost(mint_url)
         client_bridge = cdk_spilman.ClientBridge(client_host)
+
+        # Register Alice's key with the host so it can sign on her behalf
+        client_host.register_key(client_bridge.alice_secret_hex, client_bridge.alice_pubkey_hex)
         print(f"Client bridge created, alice_pubkey: {client_bridge.alice_pubkey_hex[:16]}...")
 
         locktime = int(time.time()) + 7200  # 2 hours

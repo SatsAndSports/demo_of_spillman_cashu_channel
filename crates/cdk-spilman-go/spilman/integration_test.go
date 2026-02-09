@@ -138,13 +138,22 @@ type testClientHost struct {
 	mintURL  string
 	mu       sync.Mutex
 	channels map[string]string
+	keys     map[string]string // pubkey_hex -> secret_hex
 }
 
 func newTestClientHost(mintURL string) *testClientHost {
 	return &testClientHost{
 		mintURL:  mintURL,
 		channels: make(map[string]string),
+		keys:     make(map[string]string),
 	}
+}
+
+// RegisterKey stores a keypair so the host can sign on behalf of this key.
+func (h *testClientHost) RegisterKey(secretHex, pubkeyHex string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.keys[pubkeyHex] = secretHex
 }
 
 func (h *testClientHost) CallMintSwap(mintURL, swapRequestJSON string) (string, error) {
@@ -195,6 +204,16 @@ func (h *testClientHost) DeleteChannel(channelID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.channels, channelID)
+}
+
+func (h *testClientHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
+	h.mu.Lock()
+	secretHex, ok := h.keys[signerPubkeyHex]
+	h.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("no key registered for pubkey: %s", signerPubkeyHex)
+	}
+	return SignWithTweakedKeyUtil(secretHex, messageHex, tweakScalarHex)
 }
 
 // testServerHost implements SpilmanHost for the server-side bridge in tests.
@@ -377,6 +396,9 @@ func TestClientBridge(t *testing.T) {
 		t.Fatalf("NewClientBridge failed: %v", err)
 	}
 	defer clientBridge.Free()
+
+	// Register Alice's key with the host so it can sign on her behalf
+	clientHost.RegisterKey(clientBridge.AliceSecretHex(), clientBridge.AlicePubkeyHex())
 	t.Logf("Client bridge created, alice_pubkey: %s...", clientBridge.AlicePubkeyHex()[:16])
 
 	locktime := uint64(time.Now().Unix()) + 7200 // 2 hours

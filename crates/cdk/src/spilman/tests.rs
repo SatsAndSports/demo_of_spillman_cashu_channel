@@ -969,6 +969,18 @@ async fn test_client_bridge() {
     struct TestClientHost {
         mint: Arc<crate::mint::Mint>,
         channels: Mutex<HashMap<String, String>>,
+        /// Key storage: pubkey_hex -> secret_hex (for sign_with_tweaked_key)
+        keys: Mutex<HashMap<String, String>>,
+    }
+
+    impl TestClientHost {
+        /// Register a keypair so the host can sign on behalf of this key.
+        fn register_key(&self, secret_hex: &str, pubkey_hex: &str) {
+            self.keys
+                .lock()
+                .unwrap()
+                .insert(pubkey_hex.to_string(), secret_hex.to_string());
+        }
     }
 
     impl SpilmanClientHost for TestClientHost {
@@ -1013,6 +1025,28 @@ async fn test_client_bridge() {
 
         fn delete_channel(&self, channel_id: &str) {
             self.channels.lock().unwrap().remove(channel_id);
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            let secret_hex = self
+                .keys
+                .lock()
+                .unwrap()
+                .get(signer_pubkey_hex)
+                .cloned()
+                .ok_or_else(|| {
+                    format!("No key registered for pubkey: {}", signer_pubkey_hex)
+                })?;
+            super::bindings::sign_with_tweaked_key_util(
+                &secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
         }
     }
 
@@ -1195,10 +1229,17 @@ async fn test_client_bridge() {
     let client_host = TestClientHost {
         mint: Arc::clone(&shared_mint),
         channels: Mutex::new(HashMap::new()),
+        keys: Mutex::new(HashMap::new()),
     };
 
     let client_bridge =
         SpilmanClientBridge::new(client_host, None).expect("Should create client bridge");
+
+    // Register Alice's key with the host so it can sign on her behalf
+    client_bridge.host().register_key(
+        client_bridge.alice_secret_hex(),
+        client_bridge.alice_pubkey_hex(),
+    );
 
     println!(
         "Client bridge created, alice_pubkey: {}",
