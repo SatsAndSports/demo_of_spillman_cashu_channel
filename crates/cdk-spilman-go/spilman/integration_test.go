@@ -338,7 +338,7 @@ func (h *testServerHost) CallMintSwap(mintUrl, swapRequestJson string) (string, 
 	return "", fmt.Errorf("not used in this test")
 }
 
-func (h *testServerHost) RefreshActiveKeysets(mintUrl string) error { return nil }
+func (h *testServerHost) RefreshAllKeysets(mintUrl string) error { return nil }
 
 func (h *testServerHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
 	return nil

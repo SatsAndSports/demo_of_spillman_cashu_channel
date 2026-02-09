@@ -68,7 +68,7 @@ func (m *MockHost) CallMintSwap(mintUrl, swapRequestJson string) (string, error)
 	return "", nil
 }
 
-func (m *MockHost) RefreshActiveKeysets(mintUrl string) error {
+func (m *MockHost) RefreshAllKeysets(mintUrl string) error {
 	return nil
 }
 

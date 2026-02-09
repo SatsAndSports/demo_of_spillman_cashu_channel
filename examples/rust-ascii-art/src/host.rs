@@ -321,10 +321,10 @@ impl SpilmanHost for AsciiArtHost {
             .map(|e| e.info_json)
     }
 
-    fn refresh_active_keysets(&self, _mint: &str) -> Result<(), String> {
+    fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
         // In the Rust server, we handle keyset refresh at startup only.
-        // The async refresh_active_keysets_async method should be used instead.
-        Err("Use refresh_active_keysets_async for async context".to_string())
+        // The async refresh_all_keysets_async method should be used instead.
+        Err("Use refresh_all_keysets_async for async context".to_string())
     }
 
     fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {

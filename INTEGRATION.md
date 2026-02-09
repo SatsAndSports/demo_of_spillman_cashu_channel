@@ -318,8 +318,10 @@ trait SpilmanHost {
     /// Get full keyset info JSON for a specific keyset.
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
     
-    /// Refresh keyset cache from mint (called on swap failure).
-    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String>;
+    /// Refresh ALL keysets (active and inactive) from the mint.
+    /// Called on swap failure. Must retain inactive keyset data
+    /// so existing channels can still look up their keyset info.
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
 
     // ==================== Mint Communication ====================
     

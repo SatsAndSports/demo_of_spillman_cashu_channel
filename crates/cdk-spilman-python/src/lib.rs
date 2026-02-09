@@ -135,7 +135,7 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - mark_channel_closed(channel_id: str, ...) -> None  # Raises on error
 ///
 /// Optional methods (default implementations exist):
-/// - refresh_active_keysets(mint: str) -> None  # Re-fetch keysets from mint (for retry logic)
+/// - refresh_all_keysets(mint: str) -> None  # Re-fetch keysets from mint (for retry logic)
 struct PySpilmanHost {
     py_host: PyObject,
 }
@@ -457,17 +457,17 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn refresh_active_keysets(&self, mint: &str) -> Result<(), String> {
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         Python::with_gil(|py| {
             // Check if the method exists on the Python host
-            if self.py_host.getattr(py, "refresh_active_keysets").is_err() {
+            if self.py_host.getattr(py, "refresh_all_keysets").is_err() {
                 // Method not implemented, use default behavior
-                return Err("refresh_active_keysets not implemented".to_string());
+                return Err("refresh_all_keysets not implemented".to_string());
             }
 
             match self
                 .py_host
-                .call_method1(py, "refresh_active_keysets", (mint,))
+                .call_method1(py, "refresh_all_keysets", (mint,))
             {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
@@ -685,7 +685,7 @@ impl SpilmanBridge {
     /// 1. Validates the payment signature and checks balance == amount_due
     /// 2. Creates the fully-signed swap request
     /// 3. Submits the swap to the mint via host.call_mint_swap()
-    /// 4. If swap fails, calls host.refresh_active_keysets() and retries once
+    /// 4. If swap fails, calls host.refresh_all_keysets() and retries once
     /// 5. Unblinds signatures and verifies DLEQ proofs
     /// 6. Marks the channel as closed via host.mark_channel_closed()
     ///
@@ -714,7 +714,7 @@ impl SpilmanBridge {
     /// 1. Retrieves the stored balance and signature from the host
     /// 2. Creates the fully-signed swap request
     /// 3. Submits the swap to the mint via host.call_mint_swap()
-    /// 4. If swap fails, calls host.refresh_active_keysets() and retries once
+    /// 4. If swap fails, calls host.refresh_all_keysets() and retries once
     /// 5. Unblinds signatures and verifies DLEQ proofs
     /// 6. Marks the channel as closed via host.mark_channel_closed()
     ///

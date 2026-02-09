@@ -112,8 +112,8 @@ extern "C" {
         sender_sum: u64,
     ) -> Result<(), JsValue>;
 
-    #[wasm_bindgen(method, js_name = refreshActiveKeysets)]
-    fn refresh_active_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
+    #[wasm_bindgen(method, js_name = refreshAllKeysets)]
+    fn refresh_all_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
 
     /// Compute the ECDH-derived channel secret
     #[wasm_bindgen(method, catch, js_name = computeChannelSecret)]
@@ -540,9 +540,9 @@ impl WasmSpilmanBridge {
     ///
     /// Called when a swap fails (possibly due to stale keyset data).
     /// The host should re-fetch keysets from the mint and update its cache.
-    #[wasm_bindgen(js_name = refreshActiveKeysetsViaHost)]
-    pub async fn refresh_active_keysets_via_host(&self, mint_url: &str) -> Result<(), JsValue> {
-        let promise = self.js_host.refresh_active_keysets(mint_url);
+    #[wasm_bindgen(js_name = refreshAllKeysetsViaHost)]
+    pub async fn refresh_all_keysets_via_host(&self, mint_url: &str) -> Result<(), JsValue> {
+        let promise = self.js_host.refresh_all_keysets(mint_url);
         JsFuture::from(promise).await?;
         Ok(())
     }
@@ -608,7 +608,7 @@ impl WasmSpilmanBridge {
         // 3. Check for mint error - if so, refresh keysets and retry once
         if swap_response.get("error").is_some() {
             // Try to refresh keyset cache (ignore errors - best effort)
-            let _ = self.refresh_active_keysets_via_host(&prepared.mint_url).await;
+            let _ = self.refresh_all_keysets_via_host(&prepared.mint_url).await;
 
             // Re-prepare with potentially updated keyset info
             let retry_prepared = match self.bridge.prepare_cooperative_close_for_execution(payment_json) {
@@ -766,7 +766,7 @@ impl WasmSpilmanBridge {
         // 3. Check for mint error - if so, refresh keysets and retry once
         if swap_response.get("error").is_some() {
             // Try to refresh keyset cache (ignore errors - best effort)
-            let _ = self.refresh_active_keysets_via_host(&prepared.mint_url).await;
+            let _ = self.refresh_all_keysets_via_host(&prepared.mint_url).await;
 
             // Re-prepare with potentially updated keyset info
             let retry_prepared = match self.bridge.prepare_unilateral_close_for_execution(channel_id) {

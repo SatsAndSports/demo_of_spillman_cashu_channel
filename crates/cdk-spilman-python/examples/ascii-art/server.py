@@ -154,7 +154,7 @@ def initialize_keysets():
         print("Payment validation may fail for new channels")
 
 
-def refresh_active_keysets(mint_url: str):
+def refresh_all_keysets(mint_url: str):
     """Re-fetch keysets from mint to update active status in cache.
     
     Called when a swap fails (e.g., "Inactive Keyset" error) to refresh

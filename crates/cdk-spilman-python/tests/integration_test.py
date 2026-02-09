@@ -343,7 +343,7 @@ class MockServerHost:
     def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
         return cdk_spilman.sign_with_tweaked_key_util(self.secret_key_hex, message_hex, tweak_scalar_hex)
 
-    def refresh_active_keysets(self, mint: str):
+    def refresh_all_keysets(self, mint: str):
         pass
 
     def mark_channel_closed(
