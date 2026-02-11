@@ -406,23 +406,58 @@ func (h *AsciiArtHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScal
 // Initialization & Server Helpers
 // ============================================================================
 
-func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active bool) string {
-	keysetCacheMu.Lock()
-	defer keysetCacheMu.Unlock()
+type MintKeysetWithKeys struct {
+	Id          string
+	Unit        string
+	Active      bool
+	InputFeePpk uint64
+	Keys        map[string]string
+}
 
-	if entry, ok := keysetCache[keysetId]; ok {
-		if active {
-			entry.Active = true
-			keysetCache[keysetId] = entry
-		}
-		return entry.InfoJson
+var fetchAllKeysetsFromMint = func(mintUrl string) ([]MintKeysetWithKeys, error) {
+	resp, err := http.Get(mintUrl + "/v1/keysets")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		Keysets []struct {
+			Id          string `json:"id"`
+			Unit        string `json:"unit"`
+			Active      bool   `json:"active"`
+			InputFeePpk uint64 `json:"input_fee_ppk"`
+		} `json:"keysets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
 	}
 
-	log.Printf("  [Keyset] Fetching keyset %s from %s...\n", keysetId, mintUrl)
+	var result []MintKeysetWithKeys
+	for _, k := range data.Keysets {
+		if _, ok := allPricing[k.Unit]; !ok {
+			continue
+		}
+		keys, err := fetchKeysetKeys(mintUrl, k.Id)
+		if err != nil || len(keys) == 0 {
+			continue
+		}
+		result = append(result, MintKeysetWithKeys{
+			Id:          k.Id,
+			Unit:        k.Unit,
+			Active:      k.Active,
+			InputFeePpk: k.InputFeePpk,
+			Keys:        keys,
+		})
+	}
+
+	return result, nil
+}
+
+func fetchKeysetKeys(mintUrl, keysetId string) (map[string]string, error) {
 	resp, err := http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, keysetId))
 	if err != nil {
-		log.Printf("  [Error] Failed to fetch keys: %v", err)
-		return ""
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -431,13 +466,17 @@ func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active 
 			Keys map[string]string `json:"keys"`
 		} `json:"keysets"`
 	}
-	json.NewDecoder(resp.Body).Decode(&data)
-
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
 	if len(data.Keysets) == 0 {
-		return ""
+		return nil, fmt.Errorf("no keysets returned")
 	}
 
-	keys := data.Keysets[0].Keys
+	return data.Keysets[0].Keys, nil
+}
+
+func buildKeysetInfoJson(keysetId, unit string, keys map[string]string, inputFeePpk uint64) string {
 	var amounts []uint64
 	for k := range keys {
 		var val uint64
@@ -454,12 +493,24 @@ func fetchKeysetInfo(mintUrl, keysetId, unit string, inputFeePpk uint64, active 
 		"amounts":     amounts,
 	}
 	infoJson, _ := json.Marshal(info)
-	keysetCache[keysetId] = KeysetCacheEntry{
-		InfoJson: string(infoJson),
-		Active:   active,
-		Unit:     unit,
-	}
 	return string(infoJson)
+}
+
+func mergeKeysetEntry(keysetId string, entry KeysetCacheEntry) {
+	keysetCacheMu.Lock()
+	defer keysetCacheMu.Unlock()
+
+	if existing, ok := keysetCache[keysetId]; ok {
+		existing.Active = entry.Active
+		existing.Unit = entry.Unit
+		if entry.InfoJson != "" {
+			existing.InfoJson = entry.InfoJson
+		}
+		keysetCache[keysetId] = existing
+		return
+	}
+
+	keysetCache[keysetId] = entry
 }
 
 func getMintVersion(mintUrl string) string {
@@ -481,54 +532,38 @@ func getMintVersion(mintUrl string) string {
 
 func initializeKeysets() {
 	log.Printf("Fetching keysets from %s...\n", MINT_URL)
-	resp, err := http.Get(MINT_URL + "/v1/keysets")
+	keysets, err := fetchAllKeysetsFromMint(MINT_URL)
 	if err != nil {
 		log.Printf("WARNING: Failed to fetch keysets: %v", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	var data struct {
-		Keysets []struct {
-			Id          string `json:"id"`
-			Unit        string `json:"unit"`
-			Active      bool   `json:"active"`
-			InputFeePpk uint64 `json:"input_fee_ppk"`
-		} `json:"keysets"`
-	}
-	json.NewDecoder(resp.Body).Decode(&data)
-
-	for _, k := range data.Keysets {
-		if _, ok := allPricing[k.Unit]; ok {
-			fetchKeysetInfo(MINT_URL, k.Id, k.Unit, k.InputFeePpk, k.Active)
-		}
+	for _, k := range keysets {
+		infoJson := buildKeysetInfoJson(k.Id, k.Unit, k.Keys, k.InputFeePpk)
+		mergeKeysetEntry(k.Id, KeysetCacheEntry{
+			InfoJson: infoJson,
+			Active:   k.Active,
+			Unit:     k.Unit,
+		})
 	}
 	log.Printf("Cached %d keysets\n", len(keysetCache))
 }
 
 func refreshAllKeysets(mintUrl string) {
 	log.Printf("  [Keyset] Refreshing keysets from %s...\n", mintUrl)
-	resp, err := http.Get(mintUrl + "/v1/keysets")
+	keysets, err := fetchAllKeysetsFromMint(mintUrl)
 	if err != nil {
 		log.Printf("  [Keyset] Refresh failed: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
 
-	var data struct {
-		Keysets []struct {
-			Id          string `json:"id"`
-			Unit        string `json:"unit"`
-			Active      bool   `json:"active"`
-			InputFeePpk uint64 `json:"input_fee_ppk"`
-		} `json:"keysets"`
-	}
-	json.NewDecoder(resp.Body).Decode(&data)
-
-	for _, k := range data.Keysets {
-		if _, ok := allPricing[k.Unit]; ok {
-			fetchKeysetInfo(mintUrl, k.Id, k.Unit, k.InputFeePpk, k.Active)
-		}
+	for _, k := range keysets {
+		infoJson := buildKeysetInfoJson(k.Id, k.Unit, k.Keys, k.InputFeePpk)
+		mergeKeysetEntry(k.Id, KeysetCacheEntry{
+			InfoJson: infoJson,
+			Active:   k.Active,
+			Unit:     k.Unit,
+		})
 	}
 	log.Printf("  [Keyset] Refresh complete, %d keysets cached\n", len(keysetCache))
 }

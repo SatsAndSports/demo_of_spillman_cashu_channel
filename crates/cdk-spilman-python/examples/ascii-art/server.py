@@ -74,50 +74,38 @@ channel_closed = {}    # channel_id -> {balance, receiver_proofs, sender_proofs}
 keyset_cache = {}
 
 
-def fetch_details_for_one_keyset(mint_url: str, keyset_id: str, unit: str, input_fee_ppk: int = 0, set_the_active_flag: Optional[bool] = None) -> str:
-    """Fetch keyset info from mint and cache it.
+def build_keyset_info_json(keyset_id: str, unit: str, keys_data: dict, input_fee_ppk: int) -> str:
+    keyset_info = {
+        "keysetId": keyset_id,
+        "unit": unit,
+        "keys": keys_data,
+        "inputFeePpk": input_fee_ppk,
+        "amounts": sorted([int(k) for k in keys_data.keys()], reverse=True),
+    }
+    return json.dumps(keyset_info)
 
-    Optionally, set the value of the 'active' flag
-    """
-    cache_key = (mint_url, keyset_id)
-    if cache_key in keyset_cache:
-        # Update active status if provided
-        if set_the_active_flag is not None:
-            keyset_cache[cache_key]["active"] = set_the_active_flag
-        return keyset_cache[cache_key]["info_json"]
-    
-    print(f"  [Keyset] Fetching keyset {keyset_id} from {mint_url}...")
-    
-    try:
-        # Get keys for this keyset
-        resp = http_requests.get(f"{mint_url}/v1/keys/{keyset_id}")
-        resp.raise_for_status()
-        keys_data = resp.json()["keysets"][0]["keys"]
-        
-        keyset_info = {
-            "keysetId": keyset_id,
-            "unit": unit,
-            "keys": keys_data,
-            "inputFeePpk": input_fee_ppk,
-            "amounts": sorted([int(k) for k in keys_data.keys()], reverse=True)
-        }
-        
-        keyset_info_json = json.dumps(keyset_info)
-        
-        # If set_the_active_flag is None, we default to False for new discoveries
-        active_status = set_the_active_flag if set_the_active_flag is not None else False
-        
-        keyset_cache[cache_key] = {
-            "info_json": keyset_info_json,
-            "active": active_status,
-            "unit": unit
-        }
-        print(f"  [Keyset] Cached keyset {keyset_id} (active={active_status})")
-        return keyset_info_json
-    except Exception as e:
-        print(f"  [Keyset] Failed to fetch keyset: {e}")
-        return None
 
+def fetch_all_keysets_from_mint(mint_url: str):
+    """Fetch full keyset info for all keysets (active and inactive) from the mint."""
+    resp = http_requests.get(f"{mint_url}/v1/keysets")
+    resp.raise_for_status()
+    keysets = resp.json()["keysets"]
+
+    result = []
+    for k in keysets:
+        if k.get("unit") not in ALL_PRICING:
+            continue
+        keys_resp = http_requests.get(f"{mint_url}/v1/keys/{k['id']}")
+        keys_resp.raise_for_status()
+        keys_data = keys_resp.json()["keysets"][0]["keys"]
+        info_json = build_keyset_info_json(k["id"], k["unit"], keys_data, k.get("input_fee_ppk", 0))
+        result.append({
+            "id": k["id"],
+            "unit": k["unit"],
+            "active": k.get("active", False),
+            "info_json": info_json,
+        })
+    return result
 
 def get_mint_version(mint_url: str) -> str:
     """Fetch mint version from /v1/info endpoint."""
@@ -134,19 +122,13 @@ def initialize_keysets():
     """Fetch and cache keysets (active and inactive) from approved mints at startup."""
     print(f"Fetching keysets from {MINT_URL}...")
     try:
-        resp = http_requests.get(f"{MINT_URL}/v1/keysets")
-        resp.raise_for_status()
-        keysets = resp.json()["keysets"]
-        
+        keysets = fetch_all_keysets_from_mint(MINT_URL)
         for k in keysets:
-            if k["unit"] in ALL_PRICING:
-                fetch_details_for_one_keyset(
-                    MINT_URL, 
-                    k["id"], 
-                    k["unit"], 
-                    k.get("input_fee_ppk", 0),
-                    set_the_active_flag=k.get("active", False)
-                )
+            keyset_cache[(MINT_URL, k["id"])] = {
+                "info_json": k["info_json"],
+                "active": k["active"],
+                "unit": k["unit"],
+            }
         
         print(f"Cached {len(keyset_cache)} keysets")
     except Exception as e:
@@ -162,19 +144,13 @@ def refresh_all_keysets(mint_url: str):
     """
     print(f"  [Keyset] Refreshing keysets from {mint_url}...")
     try:
-        resp = http_requests.get(f"{mint_url}/v1/keysets")
-        resp.raise_for_status()
-        keysets = resp.json()["keysets"]
-        
+        keysets = fetch_all_keysets_from_mint(mint_url)
         for k in keysets:
-            if k.get("unit") in ALL_PRICING:
-                fetch_details_for_one_keyset(
-                    mint_url,
-                    k["id"],
-                    k["unit"],
-                    k.get("input_fee_ppk", 0),
-                    set_the_active_flag=k.get("active", False)
-                )
+            keyset_cache[(mint_url, k["id"])] = {
+                "info_json": k["info_json"],
+                "active": k["active"],
+                "unit": k["unit"],
+            }
         print(f"  [Keyset] Refresh complete, {len(keyset_cache)} keysets cached")
     except Exception as e:
         print(f"  [Keyset] Refresh failed: {e}")
@@ -497,6 +473,12 @@ class AsciiArtHost:
         """
         data = keyset_cache.get((mint, keyset_id))
         return data["info_json"] if data else None
+
+    def refresh_all_keysets(self, mint: str):
+        """
+        Refresh the keyset cache for a mint (active and inactive keysets).
+        """
+        refresh_all_keysets(mint)
 
     def compute_channel_secret(self, charlie_pubkey_hex: str, alice_pubkey_hex: str) -> str:
         """
