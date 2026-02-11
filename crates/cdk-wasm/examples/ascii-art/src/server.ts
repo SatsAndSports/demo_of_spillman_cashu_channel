@@ -257,7 +257,6 @@ export const spilmanHooks = {
 
   refreshAllKeysets: async (mint: string): Promise<void> => {
     console.log(`  [Host] Refreshing keysets for mint: ${mint}`);
-    keysetCache.clearForMint(mint);
     try {
       await fetchAndCacheKeysetsForMint(mint);
       console.log(`  [Host] Keyset refresh complete for: ${mint}`);
@@ -285,13 +284,22 @@ const bridge = new WasmSpilmanBridge(spilmanHooks);
 // Keyset Initialization
 // ============================================================================
 
-// Fetch and cache keysets for a specific mint
-export async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void> {
+interface FetchedKeysetEntry {
+  id: string;
+  infoJson: string;
+  active: boolean;
+  unit: string;
+}
+
+// Fetch all keysets from a mint (including full keys)
+export let fetchAllKeysetsFromMint = async (mintUrl: string): Promise<FetchedKeysetEntry[]> => {
   const keysetsResp = await fetch(`${mintUrl}/v1/keysets`);
   if (!keysetsResp.ok) throw new Error(`Failed to fetch keysets: ${keysetsResp.status}`);
   const keysetsData = await keysetsResp.json();
 
-  for (const ks of keysetsData.keysets) {
+  const results: FetchedKeysetEntry[] = [];
+
+  for (const ks of keysetsData.keysets || []) {
     if (ks.unit in ALL_PRICING) {
       // Fetch full keys for this keyset
       const keysResp = await fetch(`${mintUrl}/v1/keys/${ks.id}`);
@@ -307,12 +315,27 @@ export async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void
         amounts: Object.keys(keys).map(Number).sort((a, b) => b - a),
       };
 
-      keysetCache.set(mintUrl, ks.id, {
+      results.push({
+        id: ks.id,
         infoJson: JSON.stringify(keysetInfo),
         active: ks.active,
         unit: ks.unit,
       });
     }
+  }
+
+  return results;
+};
+
+// Fetch and cache keysets for a specific mint
+export async function fetchAndCacheKeysetsForMint(mintUrl: string): Promise<void> {
+  const keysets = await fetchAllKeysetsFromMint(mintUrl);
+  for (const entry of keysets) {
+    keysetCache.set(mintUrl, entry.id, {
+      infoJson: entry.infoJson,
+      active: entry.active,
+      unit: entry.unit,
+    });
   }
 }
 

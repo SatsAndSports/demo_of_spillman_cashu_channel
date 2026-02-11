@@ -9,6 +9,86 @@ use cdk::spilman::{ChannelState, ClosingData, SpilmanHost};
 
 use crate::stores::{ChannelFundingData, KeysetCacheEntry, Stores, UnitPricing};
 
+/// Represents keyset info and keys fetched from a mint.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MintKeysetWithKeys {
+    pub id: String,
+    pub unit: String,
+    pub active: bool,
+    pub input_fee_ppk: u64,
+    pub keys: serde_json::Value,
+}
+
+/// Standalone helper to fetch all keyset info (including keys) from a mint.
+pub async fn fetch_all_keysets_from_mint(mint_url: &str) -> Result<Vec<MintKeysetWithKeys>, String> {
+    let client = reqwest::Client::new();
+
+    // 1. Fetch /v1/keysets
+    let keysets_url = format!("{}/v1/keysets", mint_url);
+    let keysets_resp: serde_json::Value = client
+        .get(&keysets_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch keysets: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse keysets response: {}", e))?;
+
+    let keysets = keysets_resp
+        .get("keysets")
+        .and_then(|k| k.as_array())
+        .ok_or("Invalid keysets response")?;
+
+    let mut result = Vec::new();
+
+    for keyset in keysets {
+        let id = keyset
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("Keyset missing id")?
+            .to_string();
+        let unit = keyset
+            .get("unit")
+            .and_then(|v| v.as_str())
+            .ok_or("Keyset missing unit")?
+            .to_string();
+        let active = keyset.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+        let input_fee_ppk = keyset
+            .get("input_fee_ppk")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        // 2. Fetch keys for this keyset
+        let keys_url = format!("{}/v1/keys/{}", mint_url, id);
+        let keys_resp: serde_json::Value = client
+            .get(&keys_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch keys for {}: {}", id, e))?
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse keys response for {}: {}", id, e))?;
+
+        let keys = keys_resp
+            .get("keysets")
+            .and_then(|k| k.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|k| k.get("keys"))
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        result.push(MintKeysetWithKeys {
+            id,
+            unit,
+            active,
+            input_fee_ppk,
+            keys,
+        });
+    }
+
+    Ok(result)
+}
+
 /// SpilmanHost implementation for the ASCII art server.
 #[derive(Clone)]
 pub struct AsciiArtHost {
@@ -47,77 +127,64 @@ impl AsciiArtHost {
         params.get("unit")?.as_str().map(String::from)
     }
 
+    /// Refresh the keyset cache for a mint (async version).
+    pub async fn refresh_all_keysets_async(&self, mint_url: &str) -> Result<(), String> {
+        tracing::info!("  [Keyset] Refreshing keysets from {}...", mint_url);
+        let keysets = fetch_all_keysets_from_mint(mint_url).await?;
+
+        for ks in keysets {
+            let info_json = Self::build_keyset_info_json(&ks.id, &ks.unit, &ks.keys, ks.input_fee_ppk);
+
+            self.stores.set_keyset(
+                mint_url,
+                &ks.id,
+                KeysetCacheEntry {
+                    info_json,
+                    active: ks.active,
+                    unit: ks.unit,
+                },
+            );
+        }
+        tracing::info!("  [Keyset] Refresh complete");
+        Ok(())
+    }
+
+    /// Build KeysetInfo JSON (matching the format expected by the bridge).
+    fn build_keyset_info_json(
+        keyset_id: &str,
+        unit: &str,
+        keys: &serde_json::Value,
+        input_fee_ppk: u64,
+    ) -> String {
+        serde_json::json!({
+            "keysetId": keyset_id,
+            "unit": unit,
+            "keys": keys,
+            "inputFeePpk": input_fee_ppk,
+        })
+        .to_string()
+    }
+
     /// Fetch keysets from the mint and populate the cache (async version for startup).
     pub async fn fetch_keysets_async(&self) -> Result<(), String> {
-        let client = reqwest::Client::new();
+        let keysets = fetch_all_keysets_from_mint(&self.mint_url).await?;
 
-        // Fetch /v1/keysets
-        let keysets_url = format!("{}/v1/keysets", self.mint_url);
-        let keysets_resp: serde_json::Value = client
-            .get(&keysets_url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch keysets: {}", e))?
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse keysets response: {}", e))?;
+        tracing::info!(
+            "Fetched {} keysets from {}",
+            keysets.len(),
+            self.mint_url
+        );
 
-        let keysets = keysets_resp
-            .get("keysets")
-            .and_then(|k| k.as_array())
-            .ok_or("Invalid keysets response")?;
-
-        tracing::info!("Fetched {} keysets from {}", keysets.len(), self.mint_url);
-
-        for keyset in keysets {
-            let keyset_id = keyset
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or("Keyset missing id")?;
-            let unit = keyset
-                .get("unit")
-                .and_then(|v| v.as_str())
-                .ok_or("Keyset missing unit")?;
-            let active = keyset.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
-            let input_fee_ppk = keyset
-                .get("input_fee_ppk")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-
-            // Fetch keys for this keyset
-            let keys_url = format!("{}/v1/keys/{}", self.mint_url, keyset_id);
-            let keys_resp: serde_json::Value = client
-                .get(&keys_url)
-                .send()
-                .await
-                .map_err(|e| format!("Failed to fetch keys for {}: {}", keyset_id, e))?
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse keys response for {}: {}", keyset_id, e))?;
-
-            // Build KeysetInfo JSON (matching the format expected by the bridge)
-            let keys = keys_resp
-                .get("keysets")
-                .and_then(|k| k.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|k| k.get("keys"))
-                .cloned()
-                .unwrap_or(serde_json::json!({}));
-
-            let keyset_info = serde_json::json!({
-                "keysetId": keyset_id,
-                "unit": unit,
-                "keys": keys,
-                "inputFeePpk": input_fee_ppk,
-            });
+        for ks in keysets {
+            let info_json = Self::build_keyset_info_json(&ks.id, &ks.unit, &ks.keys, ks.input_fee_ppk);
 
             self.stores.set_keyset(
                 &self.mint_url,
-                keyset_id,
+                &ks.id,
                 KeysetCacheEntry {
-                    info_json: keyset_info.to_string(),
-                    active,
-                    unit: unit.to_string(),
+                    info_json,
+                    active: ks.active,
+                    unit: ks.unit,
                 },
             );
         }
