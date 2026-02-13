@@ -20,6 +20,7 @@
 //! let header = bridge.build_payment_header(&result.channel_id, 20, false)?; // subsequent
 //! ```
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::bindings::{
@@ -425,7 +426,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
 
         // Base64 encode
         let header_str = header.to_string();
-        Ok(base64_encode(&header_str))
+        Ok(base64::prelude::BASE64_STANDARD.encode(header_str))
     }
 
     /// Get information about a stored channel.
@@ -466,77 +467,11 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     }
 }
 
-/// Base64 encode a string (standard encoding, matches btoa()).
-fn base64_encode(input: &str) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let bytes = input.as_bytes();
-    let mut result = String::with_capacity(bytes.len().div_ceil(3) * 4);
-
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
-
-        if chunk.len() > 1 {
-            result.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-
-        if chunk.len() > 2 {
-            result.push(ALPHABET[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-
-    result
-}
-
 /// Base64 decode a string (standard encoding).
 pub fn base64_decode(input: &str) -> Result<String, String> {
-    let input = input.trim_end_matches('=');
-    let bytes: Vec<u8> = input.bytes().collect();
+    let bytes = base64::prelude::BASE64_STANDARD
+        .decode(input.trim())
+        .map_err(|e| format!("Base64 decode failed: {}", e))?;
 
-    let decode_char = |c: u8| -> Result<u32, String> {
-        match c {
-            b'A'..=b'Z' => Ok((c - b'A') as u32),
-            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            _ => Err(format!("Invalid base64 character: {}", c as char)),
-        }
-    };
-
-    let mut result = Vec::new();
-    for chunk in bytes.chunks(4) {
-        let vals: Vec<u32> = chunk
-            .iter()
-            .map(|&c| decode_char(c))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let triple = match vals.len() {
-            4 => (vals[0] << 18) | (vals[1] << 12) | (vals[2] << 6) | vals[3],
-            3 => (vals[0] << 18) | (vals[1] << 12) | (vals[2] << 6),
-            2 => (vals[0] << 18) | (vals[1] << 12),
-            _ => return Err("Invalid base64 chunk length".to_string()),
-        };
-
-        result.push(((triple >> 16) & 0xFF) as u8);
-        if vals.len() > 2 {
-            result.push(((triple >> 8) & 0xFF) as u8);
-        }
-        if vals.len() > 3 {
-            result.push((triple & 0xFF) as u8);
-        }
-    }
-
-    String::from_utf8(result).map_err(|e| format!("Invalid UTF-8 in base64 decode: {}", e))
+    String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8 in base64 decode: {}", e))
 }
