@@ -15,6 +15,7 @@ use crate::nuts::{
 use crate::secret::Secret;
 use crate::util::{hex, unix_time};
 use crate::Amount;
+use base64::Engine;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -863,7 +864,10 @@ pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, 
     let json_bytes = serde_json::to_vec(&token_payload)
         .map_err(|e| format!("Failed to serialize token: {}", e))?;
 
-    Ok(format!("cashuA{}", base64url_encode(&json_bytes)))
+    Ok(format!(
+        "cashuA{}",
+        base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(json_bytes)
+    ))
 }
 
 /// Mint plain proofs from a Cashu mint via HTTP.
@@ -1176,39 +1180,4 @@ pub fn attach_signature_to_balance_update(
     });
 
     Ok(result.to_string())
-}
-
-// ============================================================================
-// Internal helpers
-// ============================================================================
-
-/// Base64url encode bytes (URL-safe alphabet, no padding).
-///
-/// Uses `-` and `_` instead of `+` and `/`, and strips trailing `=` padding.
-/// This matches the encoding used by cashuA tokens.
-fn base64url_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
-
-    for chunk in input.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
-
-        if chunk.len() > 1 {
-            result.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
-        }
-
-        if chunk.len() > 2 {
-            result.push(ALPHABET[(triple & 0x3F) as usize] as char);
-        }
-    }
-
-    result
 }

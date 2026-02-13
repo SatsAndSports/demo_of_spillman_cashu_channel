@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "ascii-art"
+EXAMPLE_DIR = Path(__file__).resolve().parents[3] / "examples" / "python-ascii-art"
 sys.path.insert(0, str(EXAMPLE_DIR))
 
 import server as ascii_server  # noqa: E402

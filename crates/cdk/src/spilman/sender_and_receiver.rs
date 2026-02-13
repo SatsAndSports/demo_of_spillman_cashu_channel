@@ -9,7 +9,9 @@ use crate::nuts::{Proof, PublicKey, RestoreRequest, SecretKey, SwapRequest};
 use crate::Amount;
 
 use super::balance_update::BalanceUpdateMessage;
-use super::deterministic::{CommitmentOutputs, MintConnection};
+use super::deterministic::{
+    CommitmentOutputs, DeterministicOutputsForOneContext, MintConnection,
+};
 use super::established_channel::EstablishedChannel;
 use super::params::ChannelParameters;
 
@@ -33,6 +35,24 @@ pub enum ChannelVerificationError {
     MissingMintKey { proof_index: usize, amount: u64 },
     /// Keyset ID doesn't match the keys (keys may have been tampered with)
     InvalidKeysetId { expected: String, computed: String },
+    /// Total value of funding proofs doesn't match funding_token_amount
+    ValueMismatch { expected: u64, actual: u64 },
+    /// Number of funding proofs doesn't match expected count
+    CountMismatch { expected: usize, actual: usize },
+    /// A proof's secret doesn't match the deterministic derivation
+    SecretMismatch {
+        proof_index: usize,
+        expected: String,
+        actual: String,
+    },
+    /// A proof's amount doesn't match the deterministic derivation
+    AmountMismatch {
+        proof_index: usize,
+        expected: u64,
+        actual: u64,
+    },
+    /// Internal error during verification
+    InternalError(String),
 }
 
 /// Result of verifying a channel
@@ -74,11 +94,8 @@ impl ChannelVerificationResult {
 ///
 /// 1. Keyset ID matches the keys (prevents key substitution attacks)
 /// 2. DLEQ proofs - the mint actually signed each funding proof (offline verification)
-///
-/// Future verifications to add:
-/// - Secret structure matches expected deterministic derivation
-/// - Spending conditions are correct (2-of-2 multisig with locktime)
-/// - Total value matches expected funding amount
+/// 3. Total value matches expected funding amount
+/// 4. Secret structure matches expected deterministic derivation
 ///
 /// Returns a result containing all verification errors found (if any)
 pub fn verify_valid_channel(
@@ -137,6 +154,58 @@ pub fn verify_valid_channel(
                 amount,
                 reason: e.to_string(),
             });
+        }
+    }
+
+    // 3. Verify total value
+    let total_value: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    if total_value != params.funding_token_amount {
+        errors.push(ChannelVerificationError::ValueMismatch {
+            expected: params.funding_token_amount,
+            actual: total_value,
+        });
+    }
+
+    // 4. Verify structural consistency
+    let expected_outputs = match DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        params.funding_token_amount,
+        params.clone(),
+    ) {
+        Ok(outputs) => match outputs.get_secrets_with_blinding() {
+            Ok(secrets) => secrets,
+            Err(e) => {
+                errors.push(ChannelVerificationError::InternalError(e.to_string()));
+                return ChannelVerificationResult::failed(errors);
+            }
+        },
+        Err(e) => {
+            errors.push(ChannelVerificationError::InternalError(e.to_string()));
+            return ChannelVerificationResult::failed(errors);
+        }
+    };
+
+    if funding_proofs.len() != expected_outputs.len() {
+        errors.push(ChannelVerificationError::CountMismatch {
+            expected: expected_outputs.len(),
+            actual: funding_proofs.len(),
+        });
+    } else {
+        for (i, (proof, expected)) in funding_proofs.iter().zip(expected_outputs.iter()).enumerate() {
+            if proof.secret != expected.secret {
+                errors.push(ChannelVerificationError::SecretMismatch {
+                    proof_index: i,
+                    expected: expected.secret.to_string(),
+                    actual: proof.secret.to_string(),
+                });
+            }
+            if u64::from(proof.amount) != expected.amount {
+                errors.push(ChannelVerificationError::AmountMismatch {
+                    proof_index: i,
+                    expected: expected.amount,
+                    actual: u64::from(proof.amount),
+                });
+            }
         }
     }
 
