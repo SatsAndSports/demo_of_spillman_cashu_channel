@@ -224,12 +224,12 @@ Test targets automatically build/copy WASM as needed:
 
 ```bash
 make test-blossom      # Builds WASM if needed, copies to blossom-server, runs tests
-make test-server-ts    # Builds WASM if needed (cdk-wasm/examples/ascii-art uses symlink), runs tests
+make test-server-ts    # Builds WASM if needed (examples/ts-ascii-art uses symlink), runs tests
 ```
 
 ### WASM distribution
 
-- **cdk-wasm/examples/ascii-art**: Uses symlink (`src/wasm` → `../../../../web/wasm-nodejs`) - always uses latest
+- **examples/ts-ascii-art**: Uses symlink (`src/wasm` → `../../../web/wasm-nodejs`) - always uses latest
 - **blossom-server**: Gets WASM copied (separate git repo, can't use symlinks)
 
 ### From blossom-server directory

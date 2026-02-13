@@ -228,7 +228,7 @@ impl ServerProcess {
     }
 
     fn spawn_ts_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("crates/cdk-wasm/examples/ascii-art");
+        let server_dir = root.join("examples/ts-ascii-art");
 
         Command::new("npx")
             .args(["tsx", "src/index.ts", "server"])

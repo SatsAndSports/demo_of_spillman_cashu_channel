@@ -13,7 +13,7 @@ MINT_URL ?= http://localhost:3338
 PORT ?= 5001
 
 # Directories
-EXAMPLE_DIR := ./examples/ascii-art
+EXAMPLE_DIR := ../../examples/ts-ascii-art
 WASM_NODEJS_DIR := ../../web/wasm-nodejs
 WASM_WEB_DIR := ../../web/wasm-web
 
