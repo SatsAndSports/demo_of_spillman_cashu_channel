@@ -748,7 +748,7 @@ Four implementations showing the same pattern in different languages:
 
 | Language | Location | Notes |
 |----------|----------|-------|
-| TypeScript | `crates/cdk-wasm/examples/ascii-art/` | Reference implementation |
+| TypeScript | `examples/ts-ascii-art/` | Reference implementation |
 | Rust | `examples/rust-ascii-art/` | Native Rust server |
 | Python | `crates/cdk-spilman-python/examples/ascii-art/` | PyO3 bindings |
 | Go | `crates/cdk-spilman-go/examples/ascii-art/` | CGO bindings |
@@ -771,7 +771,7 @@ Note that this is in a seperate repository.
 
 ```
 # TypeScript host implementation
-crates/cdk-wasm/examples/ascii-art/src/server.ts  # Hooks inline in server
+examples/ts-ascii-art/src/server.ts  # Hooks inline in server
 web/blossom-server/src/api/bridge-hooks.ts
 
 # Rust host implementation  

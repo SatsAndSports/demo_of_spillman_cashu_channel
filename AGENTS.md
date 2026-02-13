@@ -9,7 +9,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
 - **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using core `cdk` library
-- **TypeScript ASCII Art** (`crates/cdk-wasm/examples/ascii-art/`) - Reference TypeScript server
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`crates/cdk-spilman-python/examples/ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`crates/cdk-spilman-go/examples/ascii-art/`) - Multi-language proof-of-concept
 
@@ -35,7 +35,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
 | `crates/cdk-spilman-python/examples/ascii-art/` | Python demo |
 | `crates/cdk-spilman-go/examples/ascii-art/` | Go demo |
-| `crates/cdk-wasm/examples/ascii-art/` | TypeScript demo |
+| `examples/ts-ascii-art/` | TypeScript demo |
 | `dev-mint/` | CDK mint development config |
 | `containers/` | Podman dev environment (Dockerfile, mint config) |
 
@@ -109,8 +109,8 @@ make clean-containers        # Remove containers, volumes, image
 cd web/blossom-server && npx tsc --noEmit
 
 # Run TypeScript ASCII demo (requires mint at localhost:3338)
-cd crates/cdk-wasm/examples/ascii-art && npm install && npm run server  # In one terminal
-cd crates/cdk-wasm/examples/ascii-art && npm run client -- Hello World  # In another terminal
+cd examples/ts-ascii-art && npm install && npm run server  # In one terminal
+cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 ```
 
 ### WASM Build Details
@@ -118,7 +118,7 @@ cd crates/cdk-wasm/examples/ascii-art && npm run client -- Hello World  # In ano
 The `make build-wasm` target uses **sentinel-based dependency tracking**:
 - Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
 - Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
-- Blossom server gets WASM copied (separate git repo); cdk-wasm/examples/ascii-art uses symlink
+- Blossom server gets WASM copied (separate git repo); examples/ts-ascii-art uses symlink
 
 ## Documentation Index
 

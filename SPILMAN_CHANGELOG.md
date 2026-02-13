@@ -2,6 +2,16 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 13, 2026)
+
+### Full Retry Close Tests
+- Added end-to-end tests for the close-swap retry path (swap rejected by mint due to stale keyset, refresh, retry with new keyset, mint accepts).
+- **Rust tests** (`crates/cdk/src/spilman/tests.rs`): `test_cooperative_close_full_retry_with_real_mint` and `test_unilateral_close_full_retry_with_real_mint` -- use an in-process mint with keyset rotation and a lying host.
+- **TypeScript/WASM test** (`examples/ts-ascii-art/tests/retry-close.test.ts`): Exercises the WASM async retry path with a real mint and a lying host that reports a fake keyset.
+
+### TypeScript ASCII Art Moved
+- Moved from `crates/cdk-wasm/examples/ascii-art/` to `examples/ts-ascii-art/` for consistency with other demos (`examples/rust-ascii-art/`, `examples/go-ascii-art/`).
+
 ## Completed Features (Feb 11, 2026)
 
 ### Standardized Keyset Fetching and Mockability
