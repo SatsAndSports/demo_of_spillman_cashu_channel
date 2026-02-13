@@ -327,7 +327,8 @@ All four server demos (CashuTube, TS ASCII Art, Python ASCII Art, Go ASCII Art) 
 
 ### Keyset Rotation Handling
 
-When `initializeChannelKeysets()` refreshes, deactivated keysets are removed from cache. Existing channels using those keysets will fail validation. Possible solutions:
-- Keep old keysets indefinitely
-- Store keyset info per-channel in `channelFunding`
-- Query mint on-demand for unknown keysets
+The implementation handles mint keyset rotation using a **Persistent Cache** strategy:
+
+1.  **Retention**: When the keyset cache is refreshed (e.g., after a swap failure or at startup), existing keysets are never removed from the local store, even if they are no longer returned by the mint's `/v1/keysets` endpoint.
+2.  **Validation**: This ensures that channels opened while a keyset was active remain valid and closable even after the mint deactivates that keyset.
+3.  **Active Flag**: The cache updates the `active` flag of entries. The bridge uses this flag to decide which keysets are acceptable for *new* channels, while still allowing *existing* channels to use their original keysets.
