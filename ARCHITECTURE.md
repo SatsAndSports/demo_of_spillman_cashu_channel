@@ -36,17 +36,17 @@ Both parties can compute the **same** blinded outputs for the commitment transac
 
 ### 3. Balance Updates
 
-Alice signs off-chain messages that increment Charlie's balance:
+Alice signs off-chain messages that update Charlie's cumulative balance:
 
 ```json
 {
   "channel_id": "abc123...",
-  "amount": 150,
+  "balance": 150,
   "signature": "schnorr_sig_hex"
 }
 ```
 
-The signature covers `SHA256(channel_id || amount)` using Alice's **blinded** secret key.
+The signature covers `SHA256(channel_id || balance)` using Alice's **blinded** secret key.
 
 ### 4. Channel ID
 
@@ -145,22 +145,47 @@ The bridge delegates policy decisions and cryptographic operations to the host a
 ```rust
 trait SpilmanHost {
     // Policy
-    fn receiver_key_is_acceptable(&self, pubkey: &str) -> bool;
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset: &str) -> bool;
-    fn get_amount_due(&self, channel_id: &str, context: Option<&str>) -> u64;
-    fn get_channel_policy(&self) -> ChannelPolicy;
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
+    fn get_channel_policy(&self) -> String;
     fn now_seconds(&self) -> u64;
     
     // Storage: funding and payments
-    fn get_funding(&self, channel_id: &str) -> Option<FundingData>;
-    fn save_funding(&self, channel_id: &str, data: FundingData, balance: u64, sig: &str);
-    fn record_payment(&self, channel_id: &str, balance: u64, sig: &str, context: &str);
+    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
+    fn save_funding(
+        &self,
+        channel_id: &str,
+        params_json: &str,
+        funding_proofs_json: &str,
+        channel_secret_hex: &str,
+        keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
+    );
+    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
     fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<(u64, String)>;
     
     // Channel state transitions
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
-    fn mark_channel_closing(&self, ...) -> Result<(), String>;
-    fn mark_channel_closed(&self, ...) -> Result<(), String>;
+    fn mark_channel_closing(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), String>;
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String>;
     
     // Keyset cache and mint communication
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;

@@ -128,7 +128,7 @@ Close channel cooperatively. Client sends final balance and signature.
 ## File Structure
 
 ```
-crates/cdk-wasm/examples/ascii-art/
+examples/ts-ascii-art/
 ├── package.json          # Dependencies and scripts
 ├── tsconfig.json         # TypeScript configuration
 ├── src/

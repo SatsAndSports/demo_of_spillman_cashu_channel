@@ -102,27 +102,31 @@ type SpilmanHost interface {
     // Policy
     ReceiverKeyIsAcceptable(pubkeyHex string) bool
     MintAndKeysetIsAcceptable(mint string, keysetId string) bool
-    GetAmountDue(channelId string, contextJson *string) uint64
     GetChannelPolicy() string
     NowSeconds() uint64
+    GetAmountDue(channelId string, contextJson *string) uint64
     
     // Storage
-    GetFundingAndParams(channelId string) (params, proofs, secret, keyset string, ok bool)
-    SaveFunding(channelId, params, proofs, secret, keyset string, balance uint64, sig string)
-    RecordPayment(channelId string, balance uint64, signature, context string)
-    GetBalanceAndSignatureForUnilateralExit(channelId string) (uint64, string, bool)
+    GetFundingAndParams(channelId string) (paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, ok bool)
+    SaveFunding(channelId, paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string)
+    RecordPayment(channelId string, balance uint64, signature, contextJson string)
+    GetBalanceAndSignatureForUnilateralExit(channelId string) (balance uint64, signature string, ok bool)
     
     // Channel lifecycle
     GetChannelState(channelId string) string  // "open", "closing", "closed"
-    MarkChannelClosing(channelId string, locktime, balance uint64, sig string) error
+    MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error
     GetClosingData(channelId string) *ClosingData
-    MarkChannelClosed(channelId string, ...) error
+    MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
     
     // Mint communication
     GetActiveKeysetIds(mint, unit string) []string
     GetKeysetInfo(mint, keysetId string) (string, bool)
     CallMintSwap(mintUrl, swapRequestJson string) (string, error)
     RefreshAllKeysets(mintUrl string) error
+
+    // Cryptographic operations
+    ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error)
+    SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error)
 }
 ```
 
@@ -154,7 +158,7 @@ See [host.go](spilman/host.go) for full documentation of each method.
 
 ## Examples
 
-See the [examples/ascii-art](examples/ascii-art) directory for a complete server implementation.
+See the [examples/go-ascii-art](examples/go-ascii-art) directory for a complete server implementation.
 
 ## Building from Source
 

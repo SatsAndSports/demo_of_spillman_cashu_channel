@@ -172,7 +172,7 @@ trait SpilmanHost {
     
     /// Is this receiver pubkey your server's key?
     /// Return true only for your own pubkey(s).
-    fn receiver_key_is_acceptable(&self, pubkey: &PublicKey) -> bool;
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
     
     /// Is this mint and keyset allowed?
     /// Check against your allowlist of trusted mints.
