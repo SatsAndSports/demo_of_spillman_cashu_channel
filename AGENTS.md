@@ -134,10 +134,6 @@ For detailed information, see:
 
 ## Active TODOs
 
-### Protocol
-- refresh_all_keysets is incomplete in some/all languages
-- Keyset rotation issue: deactivated keysets removed from cache break existing channels (High Priority)
-
 ### Cleanup
 - Scale back the demos, they're not really needed as we now have so many tests
 

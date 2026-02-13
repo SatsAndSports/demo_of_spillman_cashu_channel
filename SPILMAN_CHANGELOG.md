@@ -2,6 +2,20 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 11, 2026)
+
+### Standardized Keyset Fetching and Mockability
+Refactored all four host implementations (Rust, TypeScript, Go, Python) to use a consistent, test-friendly pattern for retrieving keyset information from mints. This ensures that network-heavy logic is easily mockable in unit tests without changing the core `SpilmanHost` trait.
+
+- **Standalone Helpers**: Implemented `fetchAllKeysetsFromMint` (or equivalent) as a standalone function or mockable package variable in all languages.
+- **In-Place Cache Updates**: Updated `blossom-server` and other reference hosts to perform in-place updates of existing keyset entries. This ensures that any bridge instances holding references to keyset objects immediately see `active` status changes.
+- **Persistent Keyset Strategy**: Standardized the "retain missing keysets" strategy across all languages. During a refresh, keysets that are no longer returned by the mint are kept in the local cache to ensure existing channels using those keysets remain valid until they are closed.
+- **Verification**: All four server implementations now pass the full 54-test integration suite, and `blossom-server` passes its 49-test suite.
+
+### Bug Fixes
+- **Blossom Keyset Cache**: Fixed a bug where `refreshKeysetsForMint` incorrectly dropped existing keysets or failed to update the `active` status of cached entries.
+- **TypeScript Mocking**: Implemented a self-import pattern in `channel.ts` to enable proper `vi.spyOn` mocking of internal function calls during Vitest runs.
+
 ## Completed Features (Feb 5-9, 2026)
 
 ### Secret Key Removal from Server Bridge (SpilmanBridge)

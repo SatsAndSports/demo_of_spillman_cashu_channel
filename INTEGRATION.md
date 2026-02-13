@@ -696,6 +696,17 @@ amount_due = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000
 
 Adapt the formula to your service's pricing model.
 
+### Keyset Caching Strategy
+
+For robustness and testability, it is highly recommended to follow the "Persistent Cache" pattern used in the reference implementations:
+
+1.  **Use a Mockable Helper**: Implement a standalone function (e.g., `fetchAllKeysetsFromMint`) that performs the actual HTTP calls to the mint's `/v1/keysets` and `/v1/keys/{id}` endpoints. This makes your host easy to test without a running mint.
+2.  **Merge, Don't Replace**: When refreshing keysets, **merge** the new data into your existing cache. 
+    - Update the `active` status of existing entries.
+    - Add new entries.
+    - **Crucial**: Do not delete entries that are missing from the mint's latest response. Existing channels often rely on older, deactivated keysets; removing them will cause those channels to fail validation.
+3.  **In-Place Updates**: If your language supports it (like JavaScript/TypeScript or Python), update the properties of existing keyset objects in-place rather than replacing the whole object. This ensures the Bridge sees the updated state if it holds a reference to the entry.
+
 ---
 
 ## Quick Start Checklist

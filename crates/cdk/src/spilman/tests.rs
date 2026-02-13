@@ -1484,3 +1484,826 @@ async fn test_client_bridge() {
 
     println!("✓ All client bridge tests passed!");
 }
+
+/// Test: Full automatic retry of cooperative close with a real mint
+///
+/// This exercises the complete `execute_close_for_closing_channel` retry path:
+/// 1. The host lies about which keyset is active (reports the old, now-inactive one)
+/// 2. The bridge builds a swap targeting the stale keyset
+/// 3. The real mint rejects it (InactiveKeyset)
+/// 4. The bridge calls `refresh_all_keysets` → host switches to the real active keyset
+/// 5. The bridge rebuilds the swap targeting the new keyset
+/// 6. The real mint accepts it
+/// 7. DLEQ verification passes, `mark_channel_closed` is called with real proofs
+///
+/// This is the only test that exercises the full automatic retry end-to-end
+/// with real mint rejection and real mint acceptance.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cooperative_close_full_retry_with_real_mint() {
+    use super::bindings;
+    use super::bridge::{ClosingData, ChannelState, SpilmanBridge, SpilmanHost};
+    use crate::util::unix_time;
+    use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    // ====================================================================
+    // RetryTestHost: a SpilmanHost that lies about keysets, calls real mint
+    // ====================================================================
+
+    struct RetryTestHost {
+        /// The real in-process mint for swap calls
+        mint: Arc<crate::mint::Mint>,
+        /// Active keyset IDs -- starts with [stale], switches to [fresh] after refresh
+        active_keyset_ids: RefCell<Vec<Id>>,
+        /// The fresh keyset ID to switch to after refresh
+        fresh_keyset_id: Id,
+        /// All keyset infos (both stale and fresh, real keys from the mint)
+        keyset_infos: HashMap<Id, String>,
+        /// Channel funding data
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        /// Channel state (transitions Open → Closing → Closed)
+        channel_state: RefCell<ChannelState>,
+        /// Closing data (set by mark_channel_closing, read by get_closing_data)
+        closing_data: RefCell<Option<ClosingData>>,
+        /// Stored payment for unilateral close: (balance, signature)
+        stored_payment: RefCell<Option<(u64, String)>>,
+        /// Amount due (for cooperative close balance validation)
+        amount_due: Cell<u64>,
+        /// Charlie's secret key (hex) for signing
+        charlie_secret_hex: String,
+        /// Count of swap calls (for assertions)
+        swap_call_count: Cell<u32>,
+        /// Count of refresh calls (for assertions)
+        refresh_count: Cell<u32>,
+        /// Captured data from mark_channel_closed
+        closed_data: RefCell<Option<(u64, u64, String, String)>>,
+    }
+
+    impl SpilmanHost for RetryTestHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding_and_params(
+            &self,
+            channel_id: &str,
+        ) -> Option<(String, String, String, String)> {
+            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        }
+        fn save_funding(
+            &self,
+            channel_id: &str,
+            params_json: &str,
+            funding_proofs_json: &str,
+            channel_secret_hex: &str,
+            keyset_info_json: &str,
+            _initial_balance: u64,
+            _initial_signature: &str,
+        ) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (
+                    params_json.to_string(),
+                    funding_proofs_json.to_string(),
+                    channel_secret_hex.to_string(),
+                    keyset_info_json.to_string(),
+                ),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+            self.amount_due.get()
+        }
+        fn record_payment(
+            &self,
+            channel_id: &str,
+            balance: u64,
+            signature: &str,
+            _context_json: &str,
+        ) {
+            *self.stored_payment.borrow_mut() = Some((balance, signature.to_string()));
+            let _ = channel_id;
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            self.channel_state.borrow().clone()
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            locktime: u64,
+            balance: u64,
+            signature: &str,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.closing_data.borrow_mut() = Some(ClosingData {
+                locktime,
+                balance,
+                signature: signature.to_string(),
+            });
+            Ok(())
+        }
+        fn get_closing_data(
+            &self,
+            _channel_id: &str,
+        ) -> Option<ClosingData> {
+            self.closing_data.borrow().clone()
+        }
+        fn get_channel_policy(&self) -> String {
+            serde_json::json!({
+                "min_expiry_in_seconds": 3600,
+                "pricing": { "sat": { "minCapacity": 10 } }
+            })
+            .to_string()
+        }
+        fn now_seconds(&self) -> u64 {
+            unix_time()
+        }
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<(u64, String)> {
+            self.stored_payment.borrow().clone()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
+            self.active_keyset_ids.borrow().clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            // Simulate discovering the new active keyset
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+
+            let swap_request: cdk_common::nuts::SwapRequest =
+                serde_json::from_str(swap_request_json)
+                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| {
+                // Format as JSON so the bridge can parse it (matches real mint error format)
+                serde_json::json!({"detail": e.to_string(), "code": 0}).to_string()
+            })?;
+
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _locktime: u64,
+            balance: u64,
+            receiver_proofs_json: &str,
+            sender_proofs_json: &str,
+            receiver_sum: u64,
+            sender_sum: u64,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closed;
+            *self.closed_data.borrow_mut() = Some((
+                balance,
+                receiver_sum + sender_sum,
+                receiver_proofs_json.to_string(),
+                sender_proofs_json.to_string(),
+            ));
+            let _ = (receiver_sum, sender_sum);
+            Ok(())
+        }
+        fn compute_channel_secret(
+            &self,
+            _charlie_pubkey_hex: &str,
+            alice_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                alice_pubkey_hex,
+            )
+        }
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
+    }
+
+    // ====================================================================
+    // Helper: build keyset_info JSON from mint data for a given keyset ID
+    // ====================================================================
+
+    fn keyset_info_json_from_mint(
+        mint: &crate::mint::Mint,
+        keyset_id: Id,
+    ) -> String {
+        let pubkeys = mint.keyset_pubkeys(&keyset_id).expect("keyset pubkeys");
+        let keyset = pubkeys.keysets.first().expect("keyset");
+        let keys = &keyset.keys;
+        let fee_ppk = mint
+            .keysets()
+            .keysets
+            .iter()
+            .find(|k| k.id == keyset_id)
+            .expect("keyset info")
+            .input_fee_ppk;
+
+        serde_json::json!({
+            "keysetId": keyset_id.to_string(),
+            "unit": "sat",
+            "inputFeePpk": fee_ppk,
+            "keys": keys.iter().map(|(amt, pk)| {
+                (u64::from(*amt).to_string(), pk.to_hex())
+            }).collect::<HashMap<String, String>>()
+        })
+        .to_string()
+    }
+
+    // ====================================================================
+    // Setup: create mint, mint funding proofs, rotate keyset
+    // ====================================================================
+
+    let shared_mint = Arc::new(
+        crate::test_helpers::mint::create_test_mint()
+            .await
+            .unwrap(),
+    );
+
+    // Get keyset A (the original active keyset)
+    let keyset_a_id = shared_mint
+        .get_active_keysets()
+        .get(&CurrencyUnit::Sat)
+        .cloned()
+        .expect("Should have SAT keyset");
+    let keyset_a_info_json = keyset_info_json_from_mint(&shared_mint, keyset_a_id);
+    let keyset_a_keys: Keys = {
+        let pubkeys = shared_mint.keyset_pubkeys(&keyset_a_id).unwrap();
+        pubkeys.keysets.first().unwrap().keys.clone()
+    };
+    let keyset_a_fee_ppk = shared_mint
+        .keysets()
+        .keysets
+        .iter()
+        .find(|k| k.id == keyset_a_id)
+        .unwrap()
+        .input_fee_ppk;
+
+    println!("Keyset A (original): {} (fee: {} ppk)", keyset_a_id, keyset_a_fee_ppk);
+
+    // Generate keypairs
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey = alice_secret.public_key();
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    // Build channel parameters with keyset A.
+    // We use a two-pass approach: first compute the ideal funding amount,
+    // then mint proofs, calculate the fee, and rebuild params with the
+    // post-fee funding_token_amount so everything is consistent.
+    let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
+        keyset_a_id,
+        keyset_a_keys.clone(),
+        keyset_a_fee_ppk,
+    );
+    let capacity = 10u64;
+    let locktime = unix_time() + 7200;
+
+    // We need enough funding for the capacity to survive TWO rounds of fees:
+    // the initial swap-to-P2BK fee, and later the close swap fee.
+    // Use a generous input amount so fee deduction doesn't eat into capacity.
+    let mint_amount = 100u64;
+    let input_proofs = crate::test_helpers::mint::mint_test_proofs(
+        &shared_mint, Amount::from(mint_amount),
+    )
+    .await
+    .expect("Failed to mint proofs");
+
+    let num_inputs = input_proofs.len() as u64;
+    let actual_fee = (keyset_a_fee_ppk * num_inputs).div_ceil(1000);
+    let actual_funding = mint_amount - actual_fee;
+
+    println!("Minted: {}, fee: {}, actual funding: {}", mint_amount, actual_fee, actual_funding);
+
+    // Build params with the actual post-fee funding amount
+    let sender_nonce = format!("retry-test-coop-{}", unix_time());
+    let params = ChannelParameters::new_with_secret_key(
+        alice_pubkey,
+        charlie_pubkey,
+        "http://localhost:3338".to_string(),
+        CurrencyUnit::Sat,
+        capacity,
+        actual_funding,
+        locktime,
+        unix_time(),
+        sender_nonce,
+        keyset_info_a.clone(),
+        64,
+        &alice_secret,
+    )
+    .expect("channel params");
+    let channel_id = params.get_channel_id();
+    let channel_secret = params.channel_secret;
+
+    println!("Channel ID: {}", channel_id);
+    println!("Capacity: {}, Funding: {}", capacity, actual_funding);
+
+    // Create deterministic funding outputs and swap for P2BK proofs
+    let adjusted_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        actual_funding,
+        params.clone(),
+    )
+    .expect("funding outputs");
+
+    let adjusted_messages = adjusted_outputs
+        .get_blinded_messages(None)
+        .expect("blinded messages");
+
+    let swap_request =
+        cdk_common::nuts::SwapRequest::new(input_proofs.clone(), adjusted_messages.clone());
+    let swap_response = shared_mint
+        .process_swap_request(swap_request)
+        .await
+        .expect("Initial funding swap should succeed");
+
+    // Construct P2BK funding proofs
+    let secrets_with_blinding = adjusted_outputs
+        .get_secrets_with_blinding()
+        .expect("secrets with blinding");
+    let blinding_factors: Vec<SecretKey> = secrets_with_blinding
+        .iter()
+        .map(|s| s.blinding_factor.clone())
+        .collect();
+    let secrets: Vec<crate::secret::Secret> = secrets_with_blinding
+        .iter()
+        .map(|s| s.secret.clone())
+        .collect();
+
+    let funding_proofs = cdk_common::dhke::construct_proofs(
+        swap_response.signatures,
+        blinding_factors,
+        secrets,
+        &keyset_a_keys,
+    )
+    .expect("construct proofs");
+
+    let funding_total: u64 = funding_proofs.iter().map(|p| u64::from(p.amount)).sum();
+    assert_eq!(funding_total, actual_funding, "Funding proofs should match expected amount");
+    println!("Funded channel with {} sats ({} proofs)", funding_total, funding_proofs.len());
+
+    // ====================================================================
+    // Rotate keyset at the mint: keyset A → inactive, keyset B → active
+    // ====================================================================
+
+    let keyset_b_info = shared_mint
+        .rotate_keyset(
+            CurrencyUnit::Sat,
+            vec![1, 2, 4, 8, 16, 32, 64],
+            keyset_a_fee_ppk, // Same fee structure
+        )
+        .await
+        .expect("rotate keyset");
+    let keyset_b_id = keyset_b_info.id;
+    let keyset_b_info_json = keyset_info_json_from_mint(&shared_mint, keyset_b_id);
+
+    // Verify keyset A is now inactive at the mint
+    let keysets_after = shared_mint.keysets();
+    let keyset_a_status = keysets_after.keysets.iter().find(|k| k.id == keyset_a_id).unwrap();
+    let keyset_b_status = keysets_after.keysets.iter().find(|k| k.id == keyset_b_id).unwrap();
+    assert!(!keyset_a_status.active, "Keyset A should be inactive after rotation");
+    assert!(keyset_b_status.active, "Keyset B should be active after rotation");
+    println!("Keyset B (rotated): {} -- A is now INACTIVE", keyset_b_id);
+
+    // ====================================================================
+    // Build the RetryTestHost (lies about keysets: reports A as active)
+    // ====================================================================
+
+    let params_json = params.get_channel_id_params_json();
+    let funding_proofs_json = serde_json::to_string(&funding_proofs).unwrap();
+    let channel_secret_hex = crate::util::hex::encode(channel_secret);
+    let keyset_info_json_for_storage = keyset_a_info_json.clone();
+
+    let mut keyset_infos = HashMap::new();
+    keyset_infos.insert(keyset_a_id, keyset_a_info_json.clone());
+    keyset_infos.insert(keyset_b_id, keyset_b_info_json.clone());
+
+    let mut funding_data_map = HashMap::new();
+    funding_data_map.insert(
+        channel_id.clone(),
+        (
+            params_json.clone(),
+            funding_proofs_json.clone(),
+            channel_secret_hex.clone(),
+            keyset_info_json_for_storage.clone(),
+        ),
+    );
+
+    // Create signed balance update (Alice authorizes the close balance)
+    let channel = super::EstablishedChannel::new(params.clone(), funding_proofs.clone())
+        .expect("established channel");
+    let sender = super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+    let balance = 5u64; // Charlie gets 5, Alice gets the rest
+    let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
+
+    let host = RetryTestHost {
+        mint: Arc::clone(&shared_mint),
+        active_keyset_ids: RefCell::new(vec![keyset_a_id]), // LIE: report stale keyset A
+        fresh_keyset_id: keyset_b_id,
+        keyset_infos,
+        funding_data: Mutex::new(funding_data_map),
+        channel_state: RefCell::new(ChannelState::Open),
+        closing_data: RefCell::new(None),
+        stored_payment: RefCell::new(None),
+        amount_due: Cell::new(balance),
+        charlie_secret_hex: charlie_secret.to_secret_hex(),
+        swap_call_count: Cell::new(0),
+        refresh_count: Cell::new(0),
+        closed_data: RefCell::new(None),
+    };
+
+    let bridge = SpilmanBridge::new(host);
+
+    // ====================================================================
+    // Execute cooperative close -- this should retry automatically
+    // ====================================================================
+
+    let payment_json = serde_json::json!({
+        "channel_id": channel_id,
+        "balance": balance,
+        "signature": balance_update.signature.to_string(),
+    })
+    .to_string();
+
+    println!("Executing cooperative close (expecting retry)...");
+    let result = bridge.execute_cooperative_close(&payment_json);
+
+    // ====================================================================
+    // Assertions
+    // ====================================================================
+
+    let success = result.expect("Cooperative close should succeed after retry");
+
+    println!("Close succeeded: total={}, receiver={}, sender={}",
+        success.total_value, success.receiver_sum, success.sender_sum);
+
+    // The swap was called twice: first attempt (rejected), retry (accepted)
+    assert_eq!(
+        bridge.host().swap_call_count.get(), 2,
+        "Should have called mint swap exactly twice"
+    );
+    println!("✓ call_mint_swap called exactly 2 times");
+
+    // refresh_all_keysets was called exactly once (between attempts)
+    assert_eq!(
+        bridge.host().refresh_count.get(), 1,
+        "Should have called refresh_all_keysets exactly once"
+    );
+    println!("✓ refresh_all_keysets called exactly once");
+
+    // Channel is now closed
+    assert!(
+        matches!(*bridge.host().channel_state.borrow(), ChannelState::Closed),
+        "Channel should be in Closed state"
+    );
+    println!("✓ Channel state is Closed");
+
+    // mark_channel_closed was called with real proofs
+    let closed = bridge.host().closed_data.borrow();
+    let (closed_balance, closed_total, ref receiver_proofs, ref sender_proofs) =
+        closed.as_ref().expect("mark_channel_closed should have been called");
+    assert_eq!(*closed_balance, balance, "Closed balance should match");
+    assert!(*closed_total > 0, "Total proofs value should be positive");
+    println!("✓ mark_channel_closed called with balance={}, total_proofs_value={}",
+        closed_balance, closed_total);
+
+    // Verify the proofs are parseable JSON arrays
+    let receiver: Vec<serde_json::Value> = serde_json::from_str(receiver_proofs)
+        .expect("receiver proofs should be valid JSON");
+    let sender: Vec<serde_json::Value> = serde_json::from_str(sender_proofs)
+        .expect("sender proofs should be valid JSON");
+    assert!(!receiver.is_empty(), "Receiver should get proofs (balance > 0)");
+    println!("✓ Receiver got {} proofs, sender got {} proofs", receiver.len(), sender.len());
+
+    // Verify the close returned sensible values
+    assert_eq!(success.channel_id, channel_id);
+    assert!(success.total_value > 0);
+    assert!(success.receiver_sum > 0, "Receiver sum should be > 0 (balance={balance})");
+    println!("✓ CloseSuccess: channel_id matches, total_value={}", success.total_value);
+
+    println!("✓ Full cooperative close retry with real mint PASSED!");
+}
+
+/// Test: Full automatic retry of unilateral close with a real mint
+///
+/// Same as the cooperative close test, but exercises the unilateral (server-initiated)
+/// close path. The server uses its stored highest payment to close the channel.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unilateral_close_full_retry_with_real_mint() {
+    use super::bindings;
+    use super::bridge::{ClosingData, ChannelState, SpilmanBridge, SpilmanHost};
+    use crate::util::unix_time;
+    use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    // Reuse the same RetryTestHost struct (defined inline for test isolation)
+    struct RetryTestHost {
+        mint: Arc<crate::mint::Mint>,
+        active_keyset_ids: RefCell<Vec<Id>>,
+        fresh_keyset_id: Id,
+        keyset_infos: HashMap<Id, String>,
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        channel_state: RefCell<ChannelState>,
+        closing_data: RefCell<Option<ClosingData>>,
+        stored_payment: RefCell<Option<(u64, String)>>,
+        amount_due: Cell<u64>,
+        charlie_secret_hex: String,
+        swap_call_count: Cell<u32>,
+        refresh_count: Cell<u32>,
+        closed_data: RefCell<Option<(u64, u64, String, String)>>,
+    }
+
+    impl SpilmanHost for RetryTestHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool { true }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool { true }
+        fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        }
+        fn save_funding(&self, channel_id: &str, params_json: &str, funding_proofs_json: &str,
+            channel_secret_hex: &str, keyset_info_json: &str, _initial_balance: u64, _initial_signature: &str) {
+            self.funding_data.lock().unwrap().insert(channel_id.to_string(),
+                (params_json.to_string(), funding_proofs_json.to_string(),
+                 channel_secret_hex.to_string(), keyset_info_json.to_string()));
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+            self.amount_due.get()
+        }
+        fn record_payment(&self, _channel_id: &str, balance: u64, signature: &str, _context_json: &str) {
+            *self.stored_payment.borrow_mut() = Some((balance, signature.to_string()));
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            self.channel_state.borrow().clone()
+        }
+        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, balance: u64, signature: &str) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.closing_data.borrow_mut() = Some(ClosingData { locktime, balance, signature: signature.to_string() });
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            self.closing_data.borrow().clone()
+        }
+        fn get_channel_policy(&self) -> String {
+            serde_json::json!({
+                "min_expiry_in_seconds": 3600,
+                "pricing": { "sat": { "minCapacity": 10 } }
+            }).to_string()
+        }
+        fn now_seconds(&self) -> u64 { unix_time() }
+        fn get_balance_and_signature_for_unilateral_exit(&self, _channel_id: &str) -> Option<(u64, String)> {
+            self.stored_payment.borrow().clone()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
+            self.active_keyset_ids.borrow().clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+        fn call_mint_swap(&self, _mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            let swap_request: cdk_common::nuts::SwapRequest =
+                serde_json::from_str(swap_request_json)
+                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+        fn mark_channel_closed(&self, _channel_id: &str, _locktime: u64, balance: u64,
+            receiver_proofs_json: &str, sender_proofs_json: &str,
+            receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closed;
+            *self.closed_data.borrow_mut() = Some((
+                balance, receiver_sum + sender_sum,
+                receiver_proofs_json.to_string(), sender_proofs_json.to_string(),
+            ));
+            Ok(())
+        }
+        fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, alice_pubkey_hex)
+        }
+        fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
+            bindings::sign_with_tweaked_key_util(&self.charlie_secret_hex, message_hex, tweak_scalar_hex)
+        }
+    }
+
+    fn keyset_info_json_from_mint(mint: &crate::mint::Mint, keyset_id: Id) -> String {
+        let pubkeys = mint.keyset_pubkeys(&keyset_id).expect("keyset pubkeys");
+        let keyset = pubkeys.keysets.first().expect("keyset");
+        let keys = &keyset.keys;
+        let fee_ppk = mint.keysets().keysets.iter()
+            .find(|k| k.id == keyset_id).expect("keyset info").input_fee_ppk;
+        serde_json::json!({
+            "keysetId": keyset_id.to_string(),
+            "unit": "sat",
+            "inputFeePpk": fee_ppk,
+            "keys": keys.iter().map(|(amt, pk)| {
+                (u64::from(*amt).to_string(), pk.to_hex())
+            }).collect::<HashMap<String, String>>()
+        }).to_string()
+    }
+
+    // ====================================================================
+    // Setup (same as cooperative, but with stored payment for unilateral)
+    // ====================================================================
+
+    let shared_mint = Arc::new(
+        crate::test_helpers::mint::create_test_mint().await.unwrap(),
+    );
+
+    let keyset_a_id = shared_mint.get_active_keysets()
+        .get(&CurrencyUnit::Sat).cloned().expect("SAT keyset");
+    let keyset_a_info_json = keyset_info_json_from_mint(&shared_mint, keyset_a_id);
+    let keyset_a_keys: Keys = {
+        let pubkeys = shared_mint.keyset_pubkeys(&keyset_a_id).unwrap();
+        pubkeys.keysets.first().unwrap().keys.clone()
+    };
+    let keyset_a_fee_ppk = shared_mint.keysets().keysets.iter()
+        .find(|k| k.id == keyset_a_id).unwrap().input_fee_ppk;
+
+    let alice_secret = SecretKey::generate();
+    let alice_pubkey = alice_secret.public_key();
+    let charlie_secret = SecretKey::generate();
+    let charlie_pubkey = charlie_secret.public_key();
+
+    let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
+        keyset_a_id, keyset_a_keys.clone(), keyset_a_fee_ppk,
+    );
+    let capacity = 10u64;
+    let locktime = unix_time() + 7200;
+    let mint_amount = 100u64;
+
+    let input_proofs = crate::test_helpers::mint::mint_test_proofs(
+        &shared_mint, Amount::from(mint_amount),
+    ).await.expect("mint proofs");
+
+    let num_inputs = input_proofs.len() as u64;
+    let actual_fee = (keyset_a_fee_ppk * num_inputs).div_ceil(1000);
+    let actual_funding = mint_amount - actual_fee;
+
+    let params = ChannelParameters::new_with_secret_key(
+        alice_pubkey, charlie_pubkey,
+        "http://localhost:3338".to_string(),
+        CurrencyUnit::Sat, capacity, actual_funding,
+        locktime, unix_time(),
+        format!("retry-test-unilateral-{}", unix_time()),
+        keyset_info_a.clone(), 64, &alice_secret,
+    ).expect("channel params");
+    let channel_id = params.get_channel_id();
+    let channel_secret = params.channel_secret;
+
+    let adjusted_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(), actual_funding, params.clone(),
+    ).expect("adjusted funding outputs");
+    let adjusted_messages = adjusted_outputs
+        .get_blinded_messages(None).expect("blinded messages");
+
+    let swap_request = cdk_common::nuts::SwapRequest::new(input_proofs, adjusted_messages);
+    let swap_response = shared_mint.process_swap_request(swap_request).await
+        .expect("funding swap");
+
+    let secrets_with_blinding = adjusted_outputs.get_secrets_with_blinding().expect("secrets");
+    let blinding_factors: Vec<SecretKey> = secrets_with_blinding.iter()
+        .map(|s| s.blinding_factor.clone()).collect();
+    let secrets: Vec<crate::secret::Secret> = secrets_with_blinding.iter()
+        .map(|s| s.secret.clone()).collect();
+
+    let funding_proofs = cdk_common::dhke::construct_proofs(
+        swap_response.signatures, blinding_factors, secrets, &keyset_a_keys,
+    ).expect("construct proofs");
+
+    // Create signed balance update (this is what the server stores from payments)
+    let channel = super::EstablishedChannel::new(params.clone(), funding_proofs.clone())
+        .expect("established channel");
+    let sender_obj = super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+    let balance = 5u64;
+    let (balance_update, _) = sender_obj.create_signed_balance_update(balance).unwrap();
+
+    // Rotate keyset: A → inactive, B → active
+    let keyset_b_info = shared_mint
+        .rotate_keyset(CurrencyUnit::Sat, vec![1, 2, 4, 8, 16, 32, 64], keyset_a_fee_ppk)
+        .await.expect("rotate keyset");
+    let keyset_b_id = keyset_b_info.id;
+    let keyset_b_info_json = keyset_info_json_from_mint(&shared_mint, keyset_b_id);
+
+    println!("Keyset A: {} (now inactive), Keyset B: {} (active)", keyset_a_id, keyset_b_id);
+
+    // ====================================================================
+    // Build host with stored payment (for unilateral close)
+    // ====================================================================
+
+    let mut keyset_infos = HashMap::new();
+    keyset_infos.insert(keyset_a_id, keyset_a_info_json);
+    keyset_infos.insert(keyset_b_id, keyset_b_info_json);
+
+    let mut funding_data_map = HashMap::new();
+    funding_data_map.insert(channel_id.clone(), (
+        params.get_channel_id_params_json(),
+        serde_json::to_string(&funding_proofs).unwrap(),
+        crate::util::hex::encode(channel_secret),
+        keyset_info_json_from_mint(&shared_mint, keyset_a_id),
+    ));
+
+    let host = RetryTestHost {
+        mint: Arc::clone(&shared_mint),
+        active_keyset_ids: RefCell::new(vec![keyset_a_id]), // LIE: report stale keyset
+        fresh_keyset_id: keyset_b_id,
+        keyset_infos,
+        funding_data: Mutex::new(funding_data_map),
+        channel_state: RefCell::new(ChannelState::Open),
+        closing_data: RefCell::new(None),
+        // Pre-populate stored payment (as if server recorded it during normal operation)
+        stored_payment: RefCell::new(Some((balance, balance_update.signature.to_string()))),
+        amount_due: Cell::new(balance),
+        charlie_secret_hex: charlie_secret.to_secret_hex(),
+        swap_call_count: Cell::new(0),
+        refresh_count: Cell::new(0),
+        closed_data: RefCell::new(None),
+    };
+
+    let bridge = SpilmanBridge::new(host);
+
+    // ====================================================================
+    // Execute unilateral close -- server-initiated, should retry
+    // ====================================================================
+
+    println!("Executing unilateral close (expecting retry)...");
+    let result = bridge.execute_unilateral_close(&channel_id);
+
+    // ====================================================================
+    // Assertions
+    // ====================================================================
+
+    let success = result.expect("Unilateral close should succeed after retry");
+
+    println!("Close succeeded: total={}, receiver={}, sender={}",
+        success.total_value, success.receiver_sum, success.sender_sum);
+
+    assert_eq!(bridge.host().swap_call_count.get(), 2,
+        "Should have called mint swap exactly twice");
+    println!("✓ call_mint_swap called exactly 2 times");
+
+    assert_eq!(bridge.host().refresh_count.get(), 1,
+        "Should have called refresh_all_keysets exactly once");
+    println!("✓ refresh_all_keysets called exactly once");
+
+    assert!(matches!(*bridge.host().channel_state.borrow(), ChannelState::Closed),
+        "Channel should be in Closed state");
+    println!("✓ Channel state is Closed");
+
+    let closed = bridge.host().closed_data.borrow();
+    let (closed_balance, closed_total, ref receiver_proofs, ref sender_proofs) =
+        closed.as_ref().expect("mark_channel_closed should have been called");
+    assert_eq!(*closed_balance, balance);
+    assert!(*closed_total > 0);
+    println!("✓ mark_channel_closed called with balance={}, total={}", closed_balance, closed_total);
+
+    let receiver: Vec<serde_json::Value> = serde_json::from_str(receiver_proofs).unwrap();
+    let sender: Vec<serde_json::Value> = serde_json::from_str(sender_proofs).unwrap();
+    assert!(!receiver.is_empty(), "Receiver should get proofs");
+    println!("✓ Receiver got {} proofs, sender got {} proofs", receiver.len(), sender.len());
+
+    assert_eq!(success.channel_id, channel_id);
+    assert!(success.total_value > 0);
+    assert!(success.receiver_sum > 0);
+    println!("✓ CloseSuccess values are correct");
+
+    println!("✓ Full unilateral close retry with real mint PASSED!");
+}
