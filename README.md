@@ -149,14 +149,14 @@ cdk/
 ├── crates/
 │   ├── cdk/src/spilman/           # Core protocol implementation
 │   ├── cdk-wasm/                   # WASM bindings
-│   │   └── examples/ascii-art/    # TypeScript demo server + client
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
-│   │   └── examples/ascii-art/    # Python demo server + client
 │   └── cdk-spilman-go/             # Go bindings (CGO)
-│       └── examples/ascii-art/    # Go demo server + client
 ├── containers/                     # Podman/Docker dev environment
 ├── examples/
-│   └── rust-ascii-art/             # Rust demo (native, uses core cdk)
+│   ├── rust-ascii-art/             # Rust demo (native, uses core cdk)
+│   ├── ts-ascii-art/               # TypeScript demo server + client
+│   ├── python-ascii-art/           # Python demo server + client
+│   └── go-ascii-art/               # Go demo server + client
 ├── web/
 │   └── blossom-server/             # CashuTube demo
 └── dev-mint/                       # Mint dev config

@@ -114,7 +114,7 @@ make run-server
 make run-client
 ```
 
-See `examples/ascii-art/README.md` for more details.
+See `examples/python-ascii-art/README.md` for more details.
 
 ## API Reference
 

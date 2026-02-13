@@ -157,22 +157,47 @@ The bridge delegates policy (pricing policy and data-storage policy) and cryptog
 ```rust
 trait SpilmanHost {
     // Policy
-    fn receiver_key_is_acceptable(&self, pubkey: &str) -> bool;
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset: &str) -> bool;
-    fn get_amount_due(&self, channel_id: &str, context: Option<&str>) -> u64;
-    fn get_channel_policy(&self) -> ChannelPolicy;
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
+    fn get_channel_policy(&self) -> String;
     fn now_seconds(&self) -> u64;
     
     // Storage: funding and payments
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(params, proofs, secret, keyset_info)>;
-    fn save_funding(&self, channel_id: &str, ..., initial_balance: u64, initial_signature: &str);
-    fn record_payment(&self, channel_id: &str, balance: u64, sig: &str, context: &str);
+    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
+    fn save_funding(
+        &self,
+        channel_id: &str,
+        params_json: &str,
+        funding_proofs_json: &str,
+        channel_secret_hex: &str,
+        keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
+    );
+    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
     fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<(u64, String)>;
     
     // Channel state (returns Open/Closing/Closed)
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
-    fn mark_channel_closing(&self, channel_id: &str, ...) -> Result<(), String>;
-    fn mark_channel_closed(&self, channel_id: &str, ...) -> Result<(), String>;
+    fn mark_channel_closing(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), String>;
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
+    fn mark_channel_closed(
+        &self,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), String>;
     
     // Keyset cache and mint communication
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;

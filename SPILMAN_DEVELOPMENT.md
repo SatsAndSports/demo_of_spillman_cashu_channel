@@ -438,13 +438,13 @@ cdk/
 │   ├── cdk/src/spilman/                      # Core Spilman implementation
 │   ├── cdk-spilman-server-integration-tests/ # Rust test client for all servers
 │   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
-│   │   └── examples/ascii-art/               # TypeScript demo server + client
 │   ├── cdk-spilman-python/                   # PyO3 bindings
-│   │   └── examples/ascii-art/               # Python demo server + client
 │   └── cdk-spilman-go/                       # CGO bindings
-│       └── examples/ascii-art/               # Go demo server + client
 ├── examples/
-│   └── rust-ascii-art/                       # Rust ASCII Art server (native)
+│   ├── rust-ascii-art/                       # Rust ASCII Art server (native)
+│   ├── ts-ascii-art/                         # TypeScript demo server + client
+│   ├── python-ascii-art/                     # Python demo server + client
+│   └── go-ascii-art/                         # Go demo server + client
 ├── web/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output

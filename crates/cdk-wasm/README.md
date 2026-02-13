@@ -119,7 +119,7 @@ make run-server
 make run-client
 ```
 
-See `examples/ascii-art/README.md` for more details.
+See `examples/ts-ascii-art/README.md` for more details.
 
 ## Build Outputs
 
