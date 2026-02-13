@@ -53,7 +53,7 @@ echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
 echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
-$PYTHON crates/cdk-spilman-python/examples/ascii-art/server.py > "$SERVER_LOG" 2>&1 &
+$PYTHON examples/python-ascii-art/server.py > "$SERVER_LOG" 2>&1 &
 
 # Wait for server to be ready
 echo "Waiting for server to start on port $SERVER_PORT..."
@@ -78,7 +78,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    SERVER_URL="http://localhost:$SERVER_PORT" $PYTHON crates/cdk-spilman-python/examples/ascii-art/client.py "$MSG" > "$LOG" 2>&1 &
+    SERVER_URL="http://localhost:$SERVER_PORT" $PYTHON examples/python-ascii-art/client.py "$MSG" > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 

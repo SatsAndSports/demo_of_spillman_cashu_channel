@@ -255,7 +255,7 @@ impl ServerProcess {
     }
 
     fn spawn_python_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("crates/cdk-spilman-python/examples/ascii-art");
+        let server_dir = root.join("examples/python-ascii-art");
         let venv_python = root.join("crates/cdk-spilman-python/.venv/bin/python");
 
         // Use venv python if available, otherwise system python
@@ -277,7 +277,7 @@ impl ServerProcess {
     }
 
     fn spawn_go_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("crates/cdk-spilman-go/examples/ascii-art");
+        let server_dir = root.join("examples/go-ascii-art");
         let ld_library_path = root.join("target/debug");
 
         Command::new("go")

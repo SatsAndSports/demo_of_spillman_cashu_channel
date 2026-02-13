@@ -13,7 +13,7 @@ MINT_URL ?= http://localhost:3338
 PORT ?= 5002
 
 # Directories
-EXAMPLE_DIR := ./examples/ascii-art
+EXAMPLE_DIR := ../../examples/python-ascii-art
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip

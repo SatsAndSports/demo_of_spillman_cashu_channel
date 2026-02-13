@@ -43,11 +43,11 @@ See [CASHUTUBE.md](CASHUTUBE.md) for full documentation.
 A minimal demo showing how to integrate Spilman payments into a Python service.
 
 ```bash
-cd crates/cdk-spilman-python/examples/ascii-art
+cd examples/python-ascii-art
 
 # Install dependencies
 pip install -r requirements.txt
-cd ../.. && maturin develop && cd examples/ascii-art
+cd ../../crates/cdk-spilman-python && maturin develop && cd ../../examples/python-ascii-art
 
 # Run server (in one terminal)
 python server.py
