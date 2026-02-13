@@ -36,9 +36,9 @@ COMPOSE_FILE := -f docker-compose.spilman.yml
 # Directories
 PYTHON_CRATE_DIR := crates/cdk-spilman-python
 GO_CRATE_DIR := crates/cdk-spilman-go
-GO_DEMO_DIR := crates/cdk-spilman-go/examples/ascii-art
+GO_DEMO_DIR := examples/go-ascii-art
 TS_DEMO_DIR := examples/ts-ascii-art
-PYTHON_DEMO_DIR := crates/cdk-spilman-python/examples/ascii-art
+PYTHON_DEMO_DIR := examples/python-ascii-art
 BLOSSOM_DIR := web/blossom-server
 WASM_CRATE := crates/cdk-wasm
 NUTMIX_SETUP_DIR := scripts/nutmix-setup-units

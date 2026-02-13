@@ -366,18 +366,18 @@ The server implements:
 **Note:** This is a proof-of-concept demonstrating Python bindings. For comprehensive test coverage, see the TypeScript ASCII Art tests above.
 
 ```bash
-cd crates/cdk-spilman-python/examples/ascii-art
+cd examples/python-ascii-art
 
 # Install dependencies
 pip install -r requirements.txt
 pip install maturin
 
 # Build Python bindings
-cd ../..
+cd ../../crates/cdk-spilman-python
 maturin develop
 
 # Run demo (requires mint at localhost:3338)
-cd examples/ascii-art
+cd ../../examples/python-ascii-art
 python server.py &
 python client.py
 ```

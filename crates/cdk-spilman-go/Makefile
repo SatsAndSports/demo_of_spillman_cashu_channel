@@ -14,7 +14,7 @@ SERVER_URL ?= http://localhost:5001
 
 # Directories (relative to this Makefile)
 SPILMAN_PKG := ./spilman
-EXAMPLE_DIR := ./examples/ascii-art
+EXAMPLE_DIR := ../../examples/go-ascii-art
 
 .PHONY: test test-dev test-integration test-integration-dev \
         build-lib build-lib-release \

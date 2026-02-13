@@ -9,8 +9,11 @@ This document tracks the completed features and improvements for the Spilman Cha
 - **Rust tests** (`crates/cdk/src/spilman/tests.rs`): `test_cooperative_close_full_retry_with_real_mint` and `test_unilateral_close_full_retry_with_real_mint` -- use an in-process mint with keyset rotation and a lying host.
 - **TypeScript/WASM test** (`examples/ts-ascii-art/tests/retry-close.test.ts`): Exercises the WASM async retry path with a real mint and a lying host that reports a fake keyset.
 
-### TypeScript ASCII Art Moved
-- Moved from `crates/cdk-wasm/examples/ascii-art/` to `examples/ts-ascii-art/` for consistency with other demos (`examples/rust-ascii-art/`, `examples/go-ascii-art/`).
+### All Demos Consolidated Under examples/
+- **TypeScript**: Moved from `crates/cdk-wasm/examples/ascii-art/` to `examples/ts-ascii-art/`.
+- **Python**: Moved from `crates/cdk-spilman-python/examples/ascii-art/` to `examples/python-ascii-art/`.
+- **Go**: Moved from `crates/cdk-spilman-go/examples/ascii-art/` to `examples/go-ascii-art/`.
+- All four demos now live under `examples/` with consistent naming: `rust-ascii-art`, `ts-ascii-art`, `python-ascii-art`, `go-ascii-art`.
 
 ## Completed Features (Feb 11, 2026)
 

@@ -16,7 +16,7 @@ SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
 REPO_ROOT=$(pwd)
-GO_DEMO_DIR="crates/cdk-spilman-go/examples/ascii-art"
+GO_DEMO_DIR="examples/go-ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"

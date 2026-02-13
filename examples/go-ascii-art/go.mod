@@ -3,7 +3,7 @@ module github.com/cashubtc/spilman-go/examples/ascii-art
 go 1.21
 
 // For local development, use the local spilman package
-replace github.com/cashubtc/spilman-go/spilman => ../../spilman
+replace github.com/cashubtc/spilman-go/spilman => ../../crates/cdk-spilman-go/spilman
 
 require (
 	github.com/cashubtc/spilman-go/spilman v0.0.0
