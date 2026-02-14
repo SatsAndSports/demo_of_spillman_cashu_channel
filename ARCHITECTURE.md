@@ -202,6 +202,20 @@ trait SpilmanAsyncNetworking {
 
 For hosts holding raw keys, convenience functions `compute_channel_secret_from_hex()` and `sign_with_tweaked_key_util()` are provided.
 
+### ConfigurableHost (Ready-Made Implementation)
+
+For Rust servers that don't need custom host logic, `ConfigurableHost` provides a complete `SpilmanHost` implementation driven by YAML configuration. It is feature-gated behind `configurable-host` in the `cdk` crate.
+
+Key features:
+- **Named usage variables**: Pricing is defined as a linear combination of monotonic integer counters (e.g., `"chars"`, `"requests"`, `"bytes"`) with per-unit prices
+- **YAML configuration**: Mint URL, expiry, and per-unit pricing (including `min_capacity` and `max_amount_per_output`) are all defined in a YAML file
+- **In-memory storage**: Thread-safe `RwLock<HashMap>` stores behind `Arc`; cheap `Clone` for sharing between `SpilmanBridge` and route handlers
+- **Public accessors**: `get_balance()`, `get_usage()`, `get_funding_data()`, `get_mints_units_keysets()`, etc. for route handlers
+
+Construct via `ConfigurableHost::from_yaml(yaml_str, secret_key_hex)` or `ConfigurableHost::new(config, secret_key_hex)`. See `spilman/configurable_host.rs` and the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
+
+Note: `ConfigurableHost` does **not** implement networking (`SpilmanAsyncNetworking` / `SpilmanNetworking`). Servers provide that separately.
+
 ### Language Bridges
 
 Each language implements the `SpilmanHost` trait/interface:
@@ -321,6 +335,7 @@ Alice                                Charlie                              Mint
 | `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait (server-side) |
 | `spilman/client_bridge.rs` | `SpilmanClientBridge` and `SpilmanClientHost` trait (client-side) |
 | `spilman/bindings.rs` | FFI-friendly wrapper functions (compute_channel_from_token, create_funding_swap, etc.) |
+| `spilman/configurable_host.rs` | `ConfigurableHost`: YAML-driven `SpilmanHost` implementation (feature: `configurable-host`) |
 | `spilman/tests.rs` | Integration tests against real mint |
 
 ## Transport Constraints

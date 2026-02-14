@@ -8,7 +8,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
-- **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using core `cdk` library
+- **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost` with YAML config
 - **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
 - **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
@@ -49,6 +49,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 - `spilman/balance_update.rs` - Balance updates and Schnorr signatures
 - `spilman/deterministic.rs` - Deterministic blinded output generation
 - `spilman/sender_and_receiver.rs` - `verify_valid_channel`, DLEQ verification
+- `spilman/configurable_host.rs` - `ConfigurableHost`, YAML-configurable `SpilmanHost` implementation (feature-gated: `configurable-host`)
 
 ### CashuTube Server
 - `web/blossom-server/src/api/fetch.ts` - Payment validation, 402 responses
@@ -134,6 +135,9 @@ For detailed information, see:
 
 ## Active TODOs
 
+### Closing
+- it would be nice if the 'receiver_proofs_json' included the receiver's blinded signature, (and the p2pk_e?), to make it easy for non-P2BK wallets to accept them.
+
 ### Cleanup
 - Scale back the demos, they're not really needed as we now have so many tests
 
@@ -204,6 +208,8 @@ trait SpilmanAsyncNetworking {
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
 }
 ```
+
+A ready-to-use implementation is provided: `ConfigurableHost` (feature-gated behind `configurable-host`) reads pricing and policy from YAML and tracks usage via named variables with linear pricing. See `spilman/configurable_host.rs` and the Rust ASCII Art server for a working example.
 
 See [INTEGRATION.md](INTEGRATION.md) for full method signatures and documentation.
 

@@ -343,7 +343,7 @@ The tests cover standalone functions (keypair generation, channel secret, fundin
 
 ### Rust ASCII Art Server
 
-The Rust ASCII Art server (`examples/rust-ascii-art/`) is a native implementation using the core `cdk` Spilman library directly (no WASM or FFI).
+The Rust ASCII Art server (`examples/rust-ascii-art/`) uses `ConfigurableHost` with a YAML config file — no custom `SpilmanHost` trait implementation needed. Pricing and policy are defined in `config.yaml`.
 
 ```bash
 # Build
@@ -356,10 +356,11 @@ make test-server-rust
 PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art
 ```
 
-The server implements:
-- `SpilmanHost` trait for policy (pricing, storage, keyset caching)
-- Axum HTTP handlers for all channel endpoints
-- In-memory stores for channel state
+The server consists of:
+- `config.yaml` — YAML pricing config (usage variables: `chars`)
+- `main.rs` — Loads YAML, constructs `ConfigurableHost::from_yaml()`
+- `routes.rs` — Axum HTTP handlers using `ConfigurableHost` public accessors
+- `networking.rs` — Thin `SpilmanAsyncNetworking` implementation
 
 ### Python Demo
 

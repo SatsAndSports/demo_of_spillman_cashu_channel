@@ -2,6 +2,9 @@
 //!
 //! Contains the protocol parameters for a Spilman payment channel
 
+/// Type alias for channel identifiers (hex-encoded).
+pub type ChannelId = String;
+
 use serde::{Deserialize, Serialize};
 
 use crate::nuts::{CurrencyUnit, SecretKey};
