@@ -14,6 +14,8 @@ mod balance_update;
 mod bindings;
 mod bridge;
 mod client_bridge;
+#[cfg(feature = "configurable-host")]
+pub mod configurable_host;
 mod deterministic;
 mod established_channel;
 mod keysets_and_amounts;
@@ -44,7 +46,7 @@ pub use deterministic::{
 };
 pub use established_channel::EstablishedChannel;
 pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
-pub use params::{compute_channel_secret, ChannelParameters};
+pub use params::{compute_channel_secret, ChannelId, ChannelParameters};
 pub use sender_and_receiver::{
     verify_valid_channel, ChannelVerificationError, ChannelVerificationResult,
     SpilmanChannelSender,

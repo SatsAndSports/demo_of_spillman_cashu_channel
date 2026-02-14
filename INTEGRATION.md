@@ -144,6 +144,8 @@ The Spilman implementation uses a **Bridge + Host** architecture:
 - Decides which mints and receiver keys are acceptable
 - Communicates with the mint for swaps
 
+**Shortcut for Rust servers**: `ConfigurableHost` (feature-gated behind `configurable-host`) is a ready-made `SpilmanHost` implementation that reads pricing and policy from YAML and tracks usage via named variables with linear pricing. See the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example using `ConfigurableHost::from_yaml()`.
+
 ### Transport Independence
 
 **The bridge operates on typed data, not HTTP or JSON.** It takes parameters like `channel_id: &str`, `balance: u64`, `signature: &str`, and a generic request context `&C`, then returns typed results or errors.
@@ -708,11 +710,9 @@ For robustness and testability, it is highly recommended to follow the "Persiste
    - Create a secp256k1 secret key (32 bytes, hex-encoded)
    - This is your "Charlie" key for receiving payments
 
-2. **Implement SpilmanHost**
-   - Start with in-memory stores (upgrade to database later)
-   - Implement `receiver_key_is_acceptable` to check for your pubkey
-   - Implement `mint_and_keyset_is_acceptable` with your mint allowlist
-   - Implement `get_amount_due` with your pricing logic
+2. **Implement SpilmanHost** (or use the ready-made one for Rust)
+   - **Rust shortcut**: Use `ConfigurableHost::from_yaml(yaml, secret_key_hex)` — define pricing in YAML, no custom trait impl needed. See [examples/rust-ascii-art/](examples/rust-ascii-art/) and `config.yaml`.
+   - **Custom impl**: Start with in-memory stores (upgrade to database later). Implement `receiver_key_is_acceptable` to check for your pubkey, `mint_and_keyset_is_acceptable` with your mint allowlist, and `get_amount_due` with your pricing logic.
 
 3. **Initialize keysets**
    - Fetch `/v1/keysets` and `/v1/keys/{keyset_id}` from approved mints
@@ -742,7 +742,7 @@ Four implementations showing the same pattern in different languages:
 | Language | Location | Notes |
 |----------|----------|-------|
 | TypeScript | `examples/ts-ascii-art/` | Reference implementation |
-| Rust | `examples/rust-ascii-art/` | Native Rust server |
+| Rust | `examples/rust-ascii-art/` | Uses `ConfigurableHost` with YAML config |
 | Python | `examples/python-ascii-art/` | PyO3 bindings |
 | Go | `examples/go-ascii-art/` | CGO bindings |
 
@@ -767,9 +767,9 @@ Note that this is in a seperate repository.
 examples/ts-ascii-art/src/server.ts  # Hooks inline in server
 web/blossom-server/src/api/bridge-hooks.ts
 
-# Rust host implementation  
-examples/rust-ascii-art/src/host.rs
-examples/rust-ascii-art/src/stores.rs
+# Rust host implementation (ConfigurableHost + YAML)
+examples/rust-ascii-art/config.yaml
+crates/cdk/src/spilman/configurable_host.rs
 
 # Bridge interface (Rust source)
 crates/cdk/src/spilman/bridge.rs

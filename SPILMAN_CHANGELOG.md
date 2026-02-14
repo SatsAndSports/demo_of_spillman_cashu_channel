@@ -4,6 +4,29 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features (Feb 14, 2026)
 
+### ConfigurableHost: YAML-Driven SpilmanHost Implementation
+
+Added `ConfigurableHost`, a generic, ready-to-use implementation of the `SpilmanHost` trait that eliminates the need to write custom host implementations for common use cases.
+
+- **Named usage variables**: Pricing is defined in terms of named monotonic integer counters (e.g., `"requests"`, `"bytes"`, `"chars"`) with per-unit linear pricing. The amount due is computed as `sum(accumulated[var] * price_per_unit[var])`.
+- **YAML configuration**: All pricing, mint URL, and expiry settings are defined in a YAML file. Example:
+  ```yaml
+  mint_url: "http://localhost:3338"
+  min_expiry_seconds: 3600
+  pricing:
+    sat:
+      min_capacity: 10
+      variables:
+        chars: 1
+        requests: 5
+  ```
+- **Feature-gated**: Behind `configurable-host` Cargo feature flag, using `serde_yml` (the `serde_yaml` replacement).
+- **In-memory storage**: Thread-safe `RwLock<HashMap>` stores behind `Arc`; cheap `Clone` for sharing between bridge and route handlers.
+- **Public accessors**: `get_balance()`, `get_usage()`, `get_funding_data()`, `get_closed_data()`, `get_mints_units_keysets()`, `get_active_units()` for use in route handlers.
+- **Context JSON**: Request context uses variable names as keys (e.g., `{"chars": 12, "requests": 1}`), directly matching the YAML config.
+- **30 unit tests + 1 clone-shares-state test** in `configurable_host.rs`.
+- **Rust ASCII Art server converted**: Replaced custom `AsciiArtHost` (deleted `host.rs`, `stores.rs`) with `ConfigurableHost` + `config.yaml`. New `networking.rs` provides `SpilmanAsyncNetworking`. All 54 integration tests pass.
+
 ### Bridge Modernization: Sync/Async Split + Typed Funding
 - **Networking split**: `SpilmanHost` no longer owns mint IO. New traits `SpilmanNetworking` (sync) and `SpilmanAsyncNetworking` (async) isolate swap calls and keyset refresh.
 - **Typed funding/payment**: Replaced long JSON parameter lists with `ChannelFunding` and `PaymentProof` structs.
