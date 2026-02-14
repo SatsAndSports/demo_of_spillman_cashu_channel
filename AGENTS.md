@@ -155,38 +155,23 @@ For detailed information, see:
 The bridge delegates policy (pricing policy and data-storage policy) and cryptographic operations to the host via these hooks. The bridge never holds or sees the server's secret key.
 
 ```rust
-trait SpilmanHost {
+trait SpilmanHost<C = String> {
     // Policy
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
+    fn get_amount_due(&self, channel_id: &str, context: Option<&C>) -> u64;
     fn get_channel_policy(&self) -> String;
     fn now_seconds(&self) -> u64;
-    
+
     // Storage: funding and payments
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)>;
-    fn save_funding(
-        &self,
-        channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
-    );
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str);
-    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<(u64, String)>;
-    
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding>;
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding, initial_payment: PaymentProof);
+    fn record_payment(&self, channel_id: &str, payment: PaymentProof, context: &C);
+    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<PaymentProof>;
+
     // Channel state (returns Open/Closing/Closed)
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
-    fn mark_channel_closing(
-        &self,
-        channel_id: &str,
-        locktime: u64,
-        balance: u64,
-        signature: &str,
-    ) -> Result<(), String>;
+    fn mark_channel_closing(&self, channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String>;
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
     fn mark_channel_closed(
         &self,
@@ -198,16 +183,25 @@ trait SpilmanHost {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> Result<(), String>;
-    
-    // Keyset cache and mint communication
+
+    // Keyset cache
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
-    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
-    
+
     // Cryptographic operations (host owns the secret key)
     fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String>;
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
+}
+
+trait SpilmanNetworking {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
+}
+
+#[async_trait]
+trait SpilmanAsyncNetworking {
+    async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
 }
 ```
 

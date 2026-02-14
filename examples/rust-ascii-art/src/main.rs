@@ -143,7 +143,6 @@ async fn main() {
     let state = Arc::new(AppStateInner {
         bridge,
         host: host.clone(),
-        stores: stores.clone(),
         pricing: pricing.clone(),
         figlet_font,
     });

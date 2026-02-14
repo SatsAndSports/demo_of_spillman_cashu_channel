@@ -2,6 +2,16 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 14, 2026)
+
+### Bridge Modernization: Sync/Async Split + Typed Funding
+- **Networking split**: `SpilmanHost` no longer owns mint IO. New traits `SpilmanNetworking` (sync) and `SpilmanAsyncNetworking` (async) isolate swap calls and keyset refresh.
+- **Typed funding/payment**: Replaced long JSON parameter lists with `ChannelFunding` and `PaymentProof` structs.
+- **Generic context**: `SpilmanHost<C = String>` allows passing a native request context instead of forced JSON strings.
+- **FFI alignment**: Updated WASM, Python, and Go bindings + demos to the new signatures.
+- **Close retry fix**: Ensured keyset-refresh retries finalize with the retried preparation data (prevents DLEQ mismatch).
+- **Blossom parity**: Restored missing-field error strings expected by CashuTube tests.
+
 ## Completed Features (Feb 13, 2026)
 
 ### Full Retry Close Tests

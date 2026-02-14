@@ -8,8 +8,8 @@
 
 use cdk::nuts::SecretKey;
 use cdk::spilman::{
-    self, ChannelState, ClosingData, SpilmanBridge, SpilmanClientBridge, SpilmanClientHost,
-    SpilmanHost,
+    self, ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge,
+    SpilmanClientBridge, SpilmanClientHost, SpilmanHost, SpilmanNetworking,
 };
 pub use libc::{c_char, c_int};
 use std::ffi::{CStr, CString};
@@ -161,7 +161,7 @@ struct CGoSpilmanHost {
 unsafe impl Send for CGoSpilmanHost {}
 unsafe impl Sync for CGoSpilmanHost {}
 
-impl SpilmanHost for CGoSpilmanHost {
+impl SpilmanHost<String> for CGoSpilmanHost {
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &cdk::nuts::PublicKey) -> bool {
         let hex = CString::new(receiver_pubkey.to_hex()).unwrap();
         (self.callbacks.receiver_key_is_acceptable)(self.callbacks.user_data, hex.as_ptr()) != 0
@@ -177,7 +177,7 @@ impl SpilmanHost for CGoSpilmanHost {
         ) != 0
     }
 
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
         let id_c = CString::new(channel_id).unwrap();
         let mut p_ptr: *mut c_char = ptr::null_mut();
         let mut pr_ptr: *mut c_char = ptr::null_mut();
@@ -193,35 +193,36 @@ impl SpilmanHost for CGoSpilmanHost {
             &mut k_ptr,
         );
 
-        if ok != 0 {
-            unsafe {
-                let p = CString::from_raw(p_ptr).into_string().unwrap();
-                let pr = CString::from_raw(pr_ptr).into_string().unwrap();
-                let s = CString::from_raw(s_ptr).into_string().unwrap();
-                let k = CString::from_raw(k_ptr).into_string().unwrap();
-                Some((p, pr, s, k))
-            }
-        } else {
-            None
+        if ok == 0 {
+            return None;
+        }
+
+        unsafe {
+            let params_json = CString::from_raw(p_ptr).into_string().unwrap();
+            let funding_proofs_json = CString::from_raw(pr_ptr).into_string().unwrap();
+            let channel_secret_hex = CString::from_raw(s_ptr).into_string().unwrap();
+            let keyset_info_json = CString::from_raw(k_ptr).into_string().unwrap();
+            Some(ChannelFunding {
+                params_json,
+                funding_proofs_json,
+                channel_secret_hex,
+                keyset_info_json,
+            })
         }
     }
 
     fn save_funding(
         &self,
         channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
+        funding: ChannelFunding,
+        initial_payment: PaymentProof,
     ) {
         let id_c = CString::new(channel_id).unwrap();
-        let p_c = CString::new(params_json).unwrap();
-        let pr_c = CString::new(funding_proofs_json).unwrap();
-        let s_c = CString::new(channel_secret_hex).unwrap();
-        let k_c = CString::new(keyset_info_json).unwrap();
-        let sig_c = CString::new(initial_signature).unwrap();
+        let p_c = CString::new(funding.params_json).unwrap();
+        let pr_c = CString::new(funding.funding_proofs_json).unwrap();
+        let s_c = CString::new(funding.channel_secret_hex).unwrap();
+        let k_c = CString::new(funding.keyset_info_json).unwrap();
+        let sig_c = CString::new(initial_payment.signature).unwrap();
 
         (self.callbacks.save_funding)(
             self.callbacks.user_data,
@@ -230,26 +231,26 @@ impl SpilmanHost for CGoSpilmanHost {
             pr_c.as_ptr(),
             s_c.as_ptr(),
             k_c.as_ptr(),
-            initial_balance,
+            initial_payment.balance,
             sig_c.as_ptr(),
         );
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&String>) -> u64 {
         let id_c = CString::new(channel_id).unwrap();
-        let ctx_c = context_json.map(|s| CString::new(s).unwrap());
+        let ctx_c = context_json.map(|s| CString::new(s.as_str()).unwrap());
         let ctx_ptr = ctx_c.as_ref().map(|c| c.as_ptr()).unwrap_or(ptr::null());
         (self.callbacks.get_amount_due)(self.callbacks.user_data, id_c.as_ptr(), ctx_ptr)
     }
 
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
+    fn record_payment(&self, channel_id: &str, payment: PaymentProof, context_json: &String) {
         let id_c = CString::new(channel_id).unwrap();
-        let sig_c = CString::new(signature).unwrap();
-        let ctx_c = CString::new(context_json).unwrap();
+        let sig_c = CString::new(payment.signature).unwrap();
+        let ctx_c = CString::new(context_json.as_str()).unwrap();
         (self.callbacks.record_payment)(
             self.callbacks.user_data,
             id_c.as_ptr(),
-            balance,
+            payment.balance,
             sig_c.as_ptr(),
             ctx_c.as_ptr(),
         );
@@ -273,16 +274,15 @@ impl SpilmanHost for CGoSpilmanHost {
         &self,
         channel_id: &str,
         locktime: u64,
-        balance: u64,
-        signature: &str,
+        payment: PaymentProof,
     ) -> Result<(), String> {
         let id_c = CString::new(channel_id).unwrap();
-        let sig_c = CString::new(signature).unwrap();
+        let sig_c = CString::new(payment.signature).unwrap();
         let ok = (self.callbacks.mark_channel_closing)(
             self.callbacks.user_data,
             id_c.as_ptr(),
             locktime,
-            balance,
+            payment.balance,
             sig_c.as_ptr(),
         );
         if ok != 0 {
@@ -335,7 +335,7 @@ impl SpilmanHost for CGoSpilmanHost {
     fn get_balance_and_signature_for_unilateral_exit(
         &self,
         channel_id: &str,
-    ) -> Option<(u64, String)> {
+    ) -> Option<PaymentProof> {
         let id_c = CString::new(channel_id).unwrap();
         let mut balance: u64 = 0;
         let mut sig_ptr: *mut c_char = ptr::null_mut();
@@ -347,13 +347,13 @@ impl SpilmanHost for CGoSpilmanHost {
             &mut sig_ptr,
         );
 
-        if ok != 0 {
-            unsafe {
-                let sig = CString::from_raw(sig_ptr).into_string().unwrap();
-                Some((balance, sig))
-            }
-        } else {
-            None
+        if ok == 0 {
+            return None;
+        }
+
+        unsafe {
+            let signature = CString::from_raw(sig_ptr).into_string().unwrap();
+            Some(PaymentProof { balance, signature })
         }
     }
 
@@ -395,38 +395,6 @@ impl SpilmanHost for CGoSpilmanHost {
         }
 
         unsafe { Some(CString::from_raw(json_ptr).into_string().unwrap()) }
-    }
-
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-        let mint_c = CString::new(mint_url).unwrap();
-        let req_c = CString::new(swap_request_json).unwrap();
-        let mut response_ptr: *mut c_char = ptr::null_mut();
-
-        let ok = (self.callbacks.call_mint_swap)(
-            self.callbacks.user_data,
-            mint_c.as_ptr(),
-            req_c.as_ptr(),
-            &mut response_ptr,
-        );
-
-        unsafe {
-            let response = CString::from_raw(response_ptr).into_string().unwrap();
-            if ok != 0 {
-                Ok(response)
-            } else {
-                Err(response)
-            }
-        }
-    }
-
-    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
-        let mint_c = CString::new(mint).unwrap();
-        let ok = (self.callbacks.refresh_all_keysets)(self.callbacks.user_data, mint_c.as_ptr());
-        if ok != 0 {
-            Ok(())
-        } else {
-            Err("refresh_all_keysets failed".to_string())
-        }
     }
 
     fn mark_channel_closed(
@@ -517,6 +485,40 @@ impl SpilmanHost for CGoSpilmanHost {
     }
 }
 
+impl SpilmanNetworking for CGoSpilmanHost {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        let mint_c = CString::new(mint_url).unwrap();
+        let req_c = CString::new(swap_request_json).unwrap();
+        let mut response_ptr: *mut c_char = ptr::null_mut();
+
+        let ok = (self.callbacks.call_mint_swap)(
+            self.callbacks.user_data,
+            mint_c.as_ptr(),
+            req_c.as_ptr(),
+            &mut response_ptr,
+        );
+
+        unsafe {
+            let response = CString::from_raw(response_ptr).into_string().unwrap();
+            if ok != 0 {
+                Ok(response)
+            } else {
+                Err(response)
+            }
+        }
+    }
+
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        let mint_c = CString::new(mint).unwrap();
+        let ok = (self.callbacks.refresh_all_keysets)(self.callbacks.user_data, mint_c.as_ptr());
+        if ok != 0 {
+            Ok(())
+        } else {
+            Err("refresh_all_keysets failed".to_string())
+        }
+    }
+}
+
 // ============================================================================
 // Bridge Instance
 // ============================================================================
@@ -553,9 +555,9 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
 ) -> CResult {
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
-    let context = CStr::from_ptr(context_json).to_str().unwrap();
+    let context = CStr::from_ptr(context_json).to_str().unwrap().to_string();
 
-    match instance.bridge.process_payment_via_json(payment, context) {
+    match instance.bridge.process_payment_via_json(payment, &context) {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
@@ -580,9 +582,9 @@ pub unsafe extern "C" fn spilman_bridge_validate_payment(
 ) -> CResult {
     let instance = &*ptr;
     let payment = CStr::from_ptr(payment_json).to_str().unwrap();
-    let context = CStr::from_ptr(context_json).to_str().unwrap();
+    let context = CStr::from_ptr(context_json).to_str().unwrap().to_string();
 
-    match instance.bridge.validate_payment_via_json(payment, context) {
+    match instance.bridge.validate_payment_via_json(payment, &context) {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
@@ -656,7 +658,10 @@ pub unsafe extern "C" fn spilman_bridge_execute_cooperative_close(
     let instance = &*ptr;
     let payment_str = CStr::from_ptr(payment_json).to_str().unwrap();
 
-    match instance.bridge.execute_cooperative_close(payment_str) {
+    match instance
+        .bridge
+        .execute_cooperative_close(payment_str, instance.bridge.host())
+    {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
@@ -679,7 +684,10 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
     let instance = &*ptr;
     let channel_id_str = CStr::from_ptr(channel_id).to_str().unwrap();
 
-    match instance.bridge.execute_unilateral_close(channel_id_str) {
+    match instance
+        .bridge
+        .execute_unilateral_close(channel_id_str, instance.bridge.host())
+    {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)

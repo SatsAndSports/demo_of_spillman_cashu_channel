@@ -964,7 +964,7 @@ async fn test_swap_to_funding() {
 /// updates, builds payment headers, and verifies them against the server bridge.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_client_bridge() {
-    use super::bridge::{ChannelState, SpilmanBridge, SpilmanHost};
+    use super::bridge::{ChannelFunding, ChannelState, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use super::client_bridge::{base64_decode, SpilmanClientBridge, SpilmanClientHost};
     use cdk_common::nuts::{CurrencyUnit as CU, Id, PublicKey, Token};
     use std::collections::HashMap;
@@ -1094,57 +1094,56 @@ async fn test_client_bridge() {
         keyset_ids: Vec<Id>,
         keyset_infos: HashMap<Id, String>,
         funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
-        payments: Mutex<HashMap<String, (u64, String)>>, // channel_id -> (balance, sig)
+        payments: Mutex<HashMap<String, PaymentProof>>, // channel_id -> payment proof
         charlie_secret_hex: String,
     }
 
-    impl SpilmanHost for TestServerHost {
+    impl SpilmanHost<String> for TestServerHost {
         fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
             true
         }
         fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
             true
         }
-        fn get_funding_and_params(
-            &self,
-            channel_id: &str,
-        ) -> Option<(String, String, String, String)> {
-            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(|(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                    ChannelFunding { params_json, funding_proofs_json, channel_secret_hex, keyset_info_json }
+                })
         }
         fn save_funding(
             &self,
             channel_id: &str,
-            params_json: &str,
-            funding_proofs_json: &str,
-            channel_secret_hex: &str,
-            keyset_info_json: &str,
-            _initial_balance: u64,
-            _initial_signature: &str,
+            funding: ChannelFunding,
+            _initial_payment: PaymentProof,
         ) {
             self.funding_data.lock().unwrap().insert(
                 channel_id.to_string(),
                 (
-                    params_json.to_string(),
-                    funding_proofs_json.to_string(),
-                    channel_secret_hex.to_string(),
-                    keyset_info_json.to_string(),
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
                 ),
             );
         }
-        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             0
         }
         fn record_payment(
             &self,
             channel_id: &str,
-            balance: u64,
-            signature: &str,
-            _context_json: &str,
+            payment: PaymentProof,
+            _context_json: &String,
         ) {
             self.payments
                 .lock()
                 .unwrap()
-                .insert(channel_id.to_string(), (balance, signature.to_string()));
+                .insert(channel_id.to_string(), payment);
         }
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
             ChannelState::Open
@@ -1153,8 +1152,7 @@ async fn test_client_bridge() {
             &self,
             _channel_id: &str,
             _locktime: u64,
-            _balance: u64,
-            _signature: &str,
+            _payment: PaymentProof,
         ) -> Result<(), String> {
             Ok(())
         }
@@ -1177,7 +1175,7 @@ async fn test_client_bridge() {
         fn get_balance_and_signature_for_unilateral_exit(
             &self,
             channel_id: &str,
-        ) -> Option<(u64, String)> {
+        ) -> Option<PaymentProof> {
             self.payments.lock().unwrap().get(channel_id).cloned()
         }
         fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
@@ -1185,13 +1183,6 @@ async fn test_client_bridge() {
         }
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
-        }
-        fn call_mint_swap(
-            &self,
-            _mint_url: &str,
-            _swap_request_json: &str,
-        ) -> Result<String, String> {
-            Err("not used in this test".to_string())
         }
         fn mark_channel_closed(
             &self,
@@ -1228,6 +1219,20 @@ async fn test_client_bridge() {
                 message_hex,
                 tweak_scalar_hex,
             )
+        }
+    }
+
+    impl SpilmanNetworking for TestServerHost {
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            Err("not used in this test".to_string())
+        }
+
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            Ok(())
         }
     }
 
@@ -1501,7 +1506,7 @@ async fn test_client_bridge() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cooperative_close_full_retry_with_real_mint() {
     use super::bindings;
-    use super::bridge::{ClosingData, ChannelState, SpilmanBridge, SpilmanHost};
+    use super::bridge::{ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -1528,7 +1533,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         /// Closing data (set by mark_channel_closing, read by get_closing_data)
         closing_data: RefCell<Option<ClosingData>>,
         /// Stored payment for unilateral close: (balance, signature)
-        stored_payment: RefCell<Option<(u64, String)>>,
+        stored_payment: RefCell<Option<PaymentProof>>,
         /// Amount due (for cooperative close balance validation)
         amount_due: Cell<u64>,
         /// Charlie's secret key (hex) for signing
@@ -1541,50 +1546,49 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         closed_data: RefCell<Option<(u64, u64, String, String)>>,
     }
 
-    impl SpilmanHost for RetryTestHost {
+    impl SpilmanHost<String> for RetryTestHost {
         fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
             true
         }
         fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
             true
         }
-        fn get_funding_and_params(
-            &self,
-            channel_id: &str,
-        ) -> Option<(String, String, String, String)> {
-            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(|(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                    ChannelFunding { params_json, funding_proofs_json, channel_secret_hex, keyset_info_json }
+                })
         }
         fn save_funding(
             &self,
             channel_id: &str,
-            params_json: &str,
-            funding_proofs_json: &str,
-            channel_secret_hex: &str,
-            keyset_info_json: &str,
-            _initial_balance: u64,
-            _initial_signature: &str,
+            funding: ChannelFunding,
+            _initial_payment: PaymentProof,
         ) {
             self.funding_data.lock().unwrap().insert(
                 channel_id.to_string(),
                 (
-                    params_json.to_string(),
-                    funding_proofs_json.to_string(),
-                    channel_secret_hex.to_string(),
-                    keyset_info_json.to_string(),
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
                 ),
             );
         }
-        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             self.amount_due.get()
         }
         fn record_payment(
             &self,
             channel_id: &str,
-            balance: u64,
-            signature: &str,
-            _context_json: &str,
+            payment: PaymentProof,
+            _context_json: &String,
         ) {
-            *self.stored_payment.borrow_mut() = Some((balance, signature.to_string()));
+            *self.stored_payment.borrow_mut() = Some(payment);
             let _ = channel_id;
         }
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
@@ -1594,14 +1598,14 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
             &self,
             _channel_id: &str,
             locktime: u64,
-            balance: u64,
-            signature: &str,
+            payment: PaymentProof,
         ) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.stored_payment.borrow_mut() = Some(payment.clone());
             *self.closing_data.borrow_mut() = Some(ClosingData {
                 locktime,
-                balance,
-                signature: signature.to_string(),
+                balance: payment.balance,
+                signature: payment.signature,
             });
             Ok(())
         }
@@ -1624,7 +1628,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         fn get_balance_and_signature_for_unilateral_exit(
             &self,
             _channel_id: &str,
-        ) -> Option<(u64, String)> {
+        ) -> Option<PaymentProof> {
             self.stored_payment.borrow().clone()
         }
         fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
@@ -1632,36 +1636,6 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         }
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
-        }
-        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
-            // Simulate discovering the new active keyset
-            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
-            self.refresh_count.set(self.refresh_count.get() + 1);
-            Ok(())
-        }
-        fn call_mint_swap(
-            &self,
-            _mint_url: &str,
-            swap_request_json: &str,
-        ) -> Result<String, String> {
-            self.swap_call_count.set(self.swap_call_count.get() + 1);
-
-            let swap_request: cdk_common::nuts::SwapRequest =
-                serde_json::from_str(swap_request_json)
-                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
-
-            let mint = Arc::clone(&self.mint);
-            let response = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { mint.process_swap_request(swap_request).await })
-            })
-            .map_err(|e| {
-                // Format as JSON so the bridge can parse it (matches real mint error format)
-                serde_json::json!({"detail": e.to_string(), "code": 0}).to_string()
-            })?;
-
-            serde_json::to_string(&response)
-                .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
         fn mark_channel_closed(
             &self,
@@ -1704,6 +1678,40 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
                 message_hex,
                 tweak_scalar_hex,
             )
+        }
+    }
+
+    impl SpilmanNetworking for RetryTestHost {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            // Simulate discovering the new active keyset
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+
+            let swap_request: cdk_common::nuts::SwapRequest =
+                serde_json::from_str(swap_request_json)
+                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| {
+                // Format as JSON so the bridge can parse it (matches real mint error format)
+                serde_json::json!({"detail": e.to_string(), "code": 0}).to_string()
+            })?;
+
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
     }
 
@@ -1953,7 +1961,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     .to_string();
 
     println!("Executing cooperative close (expecting retry)...");
-    let result = bridge.execute_cooperative_close(&payment_json);
+    let result = bridge.execute_cooperative_close(&payment_json, bridge.host());
 
     // ====================================================================
     // Assertions
@@ -2018,7 +2026,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unilateral_close_full_retry_with_real_mint() {
     use super::bindings;
-    use super::bridge::{ClosingData, ChannelState, SpilmanBridge, SpilmanHost};
+    use super::bridge::{ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -2034,7 +2042,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
         channel_state: RefCell<ChannelState>,
         closing_data: RefCell<Option<ClosingData>>,
-        stored_payment: RefCell<Option<(u64, String)>>,
+        stored_payment: RefCell<Option<PaymentProof>>,
         amount_due: Cell<u64>,
         charlie_secret_hex: String,
         swap_call_count: Cell<u32>,
@@ -2042,30 +2050,37 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         closed_data: RefCell<Option<(u64, u64, String, String)>>,
     }
 
-    impl SpilmanHost for RetryTestHost {
+    impl SpilmanHost<String> for RetryTestHost {
         fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool { true }
         fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool { true }
-        fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
-            self.funding_data.lock().unwrap().get(channel_id).cloned()
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(|(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                    ChannelFunding { params_json, funding_proofs_json, channel_secret_hex, keyset_info_json }
+                })
         }
-        fn save_funding(&self, channel_id: &str, params_json: &str, funding_proofs_json: &str,
-            channel_secret_hex: &str, keyset_info_json: &str, _initial_balance: u64, _initial_signature: &str) {
+        fn save_funding(&self, channel_id: &str, funding: ChannelFunding, _initial_payment: PaymentProof) {
             self.funding_data.lock().unwrap().insert(channel_id.to_string(),
-                (params_json.to_string(), funding_proofs_json.to_string(),
-                 channel_secret_hex.to_string(), keyset_info_json.to_string()));
+                (funding.params_json, funding.funding_proofs_json,
+                 funding.channel_secret_hex, funding.keyset_info_json));
         }
-        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&str>) -> u64 {
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             self.amount_due.get()
         }
-        fn record_payment(&self, _channel_id: &str, balance: u64, signature: &str, _context_json: &str) {
-            *self.stored_payment.borrow_mut() = Some((balance, signature.to_string()));
+        fn record_payment(&self, _channel_id: &str, payment: PaymentProof, _context_json: &String) {
+            *self.stored_payment.borrow_mut() = Some(payment);
         }
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
             self.channel_state.borrow().clone()
         }
-        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, balance: u64, signature: &str) -> Result<(), String> {
+        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closing;
-            *self.closing_data.borrow_mut() = Some(ClosingData { locktime, balance, signature: signature.to_string() });
+            *self.stored_payment.borrow_mut() = Some(payment.clone());
+            *self.closing_data.borrow_mut() = Some(ClosingData { locktime, balance: payment.balance, signature: payment.signature });
             Ok(())
         }
         fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
@@ -2078,7 +2093,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
             }).to_string()
         }
         fn now_seconds(&self) -> u64 { unix_time() }
-        fn get_balance_and_signature_for_unilateral_exit(&self, _channel_id: &str) -> Option<(u64, String)> {
+        fn get_balance_and_signature_for_unilateral_exit(&self, _channel_id: &str) -> Option<PaymentProof> {
             self.stored_payment.borrow().clone()
         }
         fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
@@ -2086,25 +2101,6 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         }
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
-        }
-        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
-            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
-            self.refresh_count.set(self.refresh_count.get() + 1);
-            Ok(())
-        }
-        fn call_mint_swap(&self, _mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-            self.swap_call_count.set(self.swap_call_count.get() + 1);
-            let swap_request: cdk_common::nuts::SwapRequest =
-                serde_json::from_str(swap_request_json)
-                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
-            let mint = Arc::clone(&self.mint);
-            let response = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { mint.process_swap_request(swap_request).await })
-            })
-            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
-            serde_json::to_string(&response)
-                .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
         fn mark_channel_closed(&self, _channel_id: &str, _locktime: u64, balance: u64,
             receiver_proofs_json: &str, sender_proofs_json: &str,
@@ -2121,6 +2117,29 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         }
         fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
             bindings::sign_with_tweaked_key_util(&self.charlie_secret_hex, message_hex, tweak_scalar_hex)
+        }
+    }
+
+    impl SpilmanNetworking for RetryTestHost {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+
+        fn call_mint_swap(&self, _mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            let swap_request: cdk_common::nuts::SwapRequest =
+                serde_json::from_str(swap_request_json)
+                    .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
     }
 
@@ -2250,7 +2269,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         channel_state: RefCell::new(ChannelState::Open),
         closing_data: RefCell::new(None),
         // Pre-populate stored payment (as if server recorded it during normal operation)
-        stored_payment: RefCell::new(Some((balance, balance_update.signature.to_string()))),
+        stored_payment: RefCell::new(Some(PaymentProof { balance, signature: balance_update.signature.to_string() })),
         amount_due: Cell::new(balance),
         charlie_secret_hex: charlie_secret.to_secret_hex(),
         swap_call_count: Cell::new(0),
@@ -2265,7 +2284,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     // ====================================================================
 
     println!("Executing unilateral close (expecting retry)...");
-    let result = bridge.execute_unilateral_close(&channel_id);
+    let result = bridge.execute_unilateral_close(&channel_id, bridge.host());
 
     // ====================================================================
     // Assertions
