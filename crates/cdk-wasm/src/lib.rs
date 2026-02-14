@@ -1,1291 +1,271 @@
 //! WASM bindings for Cashu payment channels
 
 use std::str::FromStr;
-
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
+use async_trait::async_trait;
 
-use cdk::nuts::{Id, PublicKey, SecretKey};
-use cdk::spilman::{ChannelParameters, ChannelState, ClosingData, SpilmanBridge, SpilmanHost};
+use cdk::nuts::{Id, PublicKey, SecretKey, Proof};
+use cdk::spilman::{ChannelParameters, ChannelState, ClosingData, SpilmanBridge, SpilmanHost, SpilmanAsyncNetworking, PaymentProof, ChannelFunding, BalanceUpdateMessage, EstablishedChannel};
 use cdk::util::hex;
 
-/// Initialize panic hook for better error messages in browser console
 #[wasm_bindgen(start)]
-pub fn init() {
-    console_error_panic_hook::set_once();
-}
+pub fn init() { console_error_panic_hook::set_once(); }
 
 #[wasm_bindgen]
 extern "C" {
     pub type JsSpilmanHost;
-
     #[wasm_bindgen(method, js_name = getFundingAndParams)]
     fn get_funding_and_params(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
-
     #[wasm_bindgen(method, js_name = receiverKeyIsAcceptable)]
     fn receiver_key_is_acceptable(this: &JsSpilmanHost, receiver_pubkey_hex: &str) -> bool;
-
     #[wasm_bindgen(method, js_name = mintAndKeysetIsAcceptable)]
     fn mint_and_keyset_is_acceptable(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> bool;
-
     #[wasm_bindgen(method, js_name = saveFunding)]
-    fn save_funding(
-        this: &JsSpilmanHost,
-        channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
-    );
-
+    fn save_funding(this: &JsSpilmanHost, channel_id: &str, params_json: &str, funding_proofs_json: &str, channel_secret_hex: &str, keyset_info_json: &str, initial_balance: u64, initial_signature: &str);
     #[wasm_bindgen(method, js_name = getAmountDue)]
     fn get_amount_due(this: &JsSpilmanHost, channel_id: &str, context_json: JsValue) -> u64;
-
     #[wasm_bindgen(method, js_name = recordPayment)]
-    fn record_payment(
-        this: &JsSpilmanHost,
-        channel_id: &str,
-        balance: u64,
-        signature: &str,
-        context_json: &str,
-    );
-
-    /// Get channel state: "open", "closing", or "closed"
+    fn record_payment(this: &JsSpilmanHost, channel_id: &str, balance: u64, signature: &str, context_json: &str);
     #[wasm_bindgen(method, js_name = getChannelState)]
     fn get_channel_state(this: &JsSpilmanHost, channel_id: &str) -> String;
-
-    /// Mark a channel as closing (pre-swap state)
-    /// Throws on error, returns nothing on success
     #[wasm_bindgen(method, catch, js_name = markChannelClosing)]
-    fn mark_channel_closing(
-        this: &JsSpilmanHost,
-        channel_id: &str,
-        locktime: u64,
-        balance: u64,
-        signature: &str,
-    ) -> Result<(), JsValue>;
-
-    /// Get closing data for a channel in CLOSING state
-    /// Returns null/undefined if not in CLOSING state, or {locktime, balance, signature}
+    fn mark_channel_closing(this: &JsSpilmanHost, channel_id: &str, locktime: u64, balance: u64, signature: &str) -> Result<(), JsValue>;
     #[wasm_bindgen(method, js_name = getClosingData)]
     fn get_closing_data(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
-
     #[wasm_bindgen(method, js_name = getChannelPolicy)]
     fn get_channel_policy(this: &JsSpilmanHost) -> String;
-
     #[wasm_bindgen(method, js_name = nowSeconds)]
     fn now_seconds(this: &JsSpilmanHost) -> u64;
-
     #[wasm_bindgen(method, js_name = getBalanceAndSignatureForUnilateralExit)]
-    fn get_balance_and_signature_for_unilateral_exit(
-        this: &JsSpilmanHost,
-        channel_id: &str,
-    ) -> JsValue;
-
+    fn get_balance_and_signature_for_unilateral_exit(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = getActiveKeysetIds)]
     fn get_active_keyset_ids(this: &JsSpilmanHost, mint: &str, unit: &str) -> JsValue;
-
     #[wasm_bindgen(method, js_name = getKeysetInfo)]
     fn get_keyset_info(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> JsValue;
-
     #[wasm_bindgen(method, js_name = callMintSwap)]
-    fn call_mint_swap(
-        this: &JsSpilmanHost,
-        mint_url: &str,
-        swap_request_json: &str,
-    ) -> js_sys::Promise;
-
-    /// Mark a channel as closed (after successful swap)
-    /// Throws on error, returns nothing on success
+    fn call_mint_swap(this: &JsSpilmanHost, mint_url: &str, swap_request_json: &str) -> js_sys::Promise;
     #[wasm_bindgen(method, catch, js_name = markChannelClosed)]
-    fn mark_channel_closed(
-        this: &JsSpilmanHost,
-        channel_id: &str,
-        locktime: u64,
-        balance: u64,
-        receiver_proofs_json: &str,
-        sender_proofs_json: &str,
-        receiver_sum: u64,
-        sender_sum: u64,
-    ) -> Result<(), JsValue>;
-
+    fn mark_channel_closed(this: &JsSpilmanHost, channel_id: &str, locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), JsValue>;
     #[wasm_bindgen(method, js_name = refreshAllKeysets)]
     fn refresh_all_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
-
-    /// Compute the ECDH-derived channel secret
     #[wasm_bindgen(method, catch, js_name = computeChannelSecret)]
-    fn compute_channel_secret(
-        this: &JsSpilmanHost,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
-    ) -> Result<String, JsValue>;
-
-    /// Sign a message with the tweaked (P2BK-blinded) key
+    fn compute_channel_secret(this: &JsSpilmanHost, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, JsValue>;
     #[wasm_bindgen(method, catch, js_name = signWithTweakedKey)]
-    fn sign_with_tweaked_key(
-        this: &JsSpilmanHost,
-        signer_pubkey_hex: &str,
-        message_hex: &str,
-        tweak_scalar_hex: &str,
-    ) -> Result<String, JsValue>;
+    fn sign_with_tweaked_key(this: &JsSpilmanHost, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, JsValue>;
 }
 
-struct WasmSpilmanHostProxy {
-    js_host: JsSpilmanHost,
-}
+struct WasmSpilmanHostProxy { js_host: JsSpilmanHost }
 
-impl SpilmanHost for WasmSpilmanHostProxy {
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+unsafe impl Send for WasmSpilmanHostProxy {}
+unsafe impl Sync for WasmSpilmanHostProxy {}
+
+impl SpilmanHost<String> for WasmSpilmanHostProxy {
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
         let val = self.js_host.get_funding_and_params(channel_id);
-        if val.is_null() || val.is_undefined() {
-            return None;
-        }
-
-        // Expecting an array [params, funding_proofs, channel_secret, keyset_info]
+        if val.is_null() || val.is_undefined() { return None; }
         let arr = js_sys::Array::from(&val);
-        if arr.length() != 4 {
-            return None;
-        }
-
-        Some((
-            arr.get(0).as_string()?,
-            arr.get(1).as_string()?,
-            arr.get(2).as_string()?,
-            arr.get(3).as_string()?,
-        ))
+        if arr.length() != 4 { return None; }
+        Some(ChannelFunding { params_json: arr.get(0).as_string()?, funding_proofs_json: arr.get(1).as_string()?, channel_secret_hex: arr.get(2).as_string()?, keyset_info_json: arr.get(3).as_string()? })
     }
-
-    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool {
-        self.js_host
-            .receiver_key_is_acceptable(&receiver_pubkey.to_hex())
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool { self.js_host.receiver_key_is_acceptable(&receiver_pubkey.to_hex()) }
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool { self.js_host.mint_and_keyset_is_acceptable(mint, &keyset_id.to_string()) }
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding, initial_payment: PaymentProof) {
+        self.js_host.save_funding(channel_id, &funding.params_json, &funding.funding_proofs_json, &funding.channel_secret_hex, &funding.keyset_info_json, initial_payment.balance, &initial_payment.signature);
     }
-
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool {
-        self.js_host
-            .mint_and_keyset_is_acceptable(mint, &keyset_id.to_string())
-    }
-
-    fn save_funding(
-        &self,
-        channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
-    ) {
-        self.js_host.save_funding(
-            channel_id,
-            params_json,
-            funding_proofs_json,
-            channel_secret_hex,
-            keyset_info_json,
-            initial_balance,
-            initial_signature,
-        );
-    }
-
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
-        let ctx_val = match context_json {
-            Some(s) => JsValue::from_str(s),
-            None => JsValue::NULL,
-        };
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&String>) -> u64 {
+        let ctx_val = match context_json { Some(s) => JsValue::from_str(s), None => JsValue::NULL };
         self.js_host.get_amount_due(channel_id, ctx_val)
     }
-
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
-        self.js_host
-            .record_payment(channel_id, balance, signature, context_json);
+    fn record_payment(&self, channel_id: &str, payment: PaymentProof, context_json: &String) {
+        self.js_host.record_payment(channel_id, payment.balance, &payment.signature, context_json);
     }
-
     fn get_channel_state(&self, channel_id: &str) -> ChannelState {
-        let state_str = self.js_host.get_channel_state(channel_id);
-        match state_str.as_str() {
-            "closed" => ChannelState::Closed,
-            "closing" => ChannelState::Closing,
-            _ => ChannelState::Open,
-        }
+        match self.js_host.get_channel_state(channel_id).as_str() { "closed" => ChannelState::Closed, "closing" => ChannelState::Closing, _ => ChannelState::Open }
     }
-
-    fn mark_channel_closing(
-        &self,
-        channel_id: &str,
-        locktime: u64,
-        balance: u64,
-        signature: &str,
-    ) -> Result<(), String> {
-        self.js_host
-            .mark_channel_closing(channel_id, locktime, balance, signature)
-            .map_err(|e| e.as_string().unwrap_or_else(|| "unknown error".to_string()))
+    fn mark_channel_closing(&self, channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
+        self.js_host.mark_channel_closing(channel_id, locktime, payment.balance, &payment.signature).map_err(|e| format!("{:?}", e))
     }
-
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
         let val = self.js_host.get_closing_data(channel_id);
-        if val.is_null() || val.is_undefined() {
-            return None;
-        }
-
-        // Expecting an object {locktime, balance, signature}
+        if val.is_null() || val.is_undefined() { return None; }
         let obj = js_sys::Object::try_from(&val)?;
-        let locktime = js_sys::Reflect::get(obj, &JsValue::from_str("locktime"))
-            .ok()?
-            .as_f64()? as u64;
-        let balance = js_sys::Reflect::get(obj, &JsValue::from_str("balance"))
-            .ok()?
-            .as_f64()? as u64;
-        let signature = js_sys::Reflect::get(obj, &JsValue::from_str("signature"))
-            .ok()?
-            .as_string()?;
-
-        Some(ClosingData {
-            locktime,
-            balance,
-            signature,
-        })
+        let locktime = js_sys::Reflect::get(obj, &JsValue::from_str("locktime")).ok()?.as_f64()? as u64;
+        let balance = js_sys::Reflect::get(obj, &JsValue::from_str("balance")).ok()?.as_f64()? as u64;
+        let signature = js_sys::Reflect::get(obj, &JsValue::from_str("signature")).ok()?.as_string()?;
+        Some(ClosingData { locktime, balance, signature })
     }
-
-    fn get_channel_policy(&self) -> String {
-        self.js_host.get_channel_policy()
-    }
-
-    fn now_seconds(&self) -> u64 {
-        self.js_host.now_seconds()
-    }
-
-    fn get_balance_and_signature_for_unilateral_exit(
-        &self,
-        channel_id: &str,
-    ) -> Option<(u64, String)> {
-        let val = self
-            .js_host
-            .get_balance_and_signature_for_unilateral_exit(channel_id);
-        if val.is_null() || val.is_undefined() {
-            return None;
-        }
-
-        // Expecting an array [balance, signature] from JS
+    fn get_channel_policy(&self) -> String { self.js_host.get_channel_policy() }
+    fn now_seconds(&self) -> u64 { self.js_host.now_seconds() }
+    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<PaymentProof> {
+        let val = self.js_host.get_balance_and_signature_for_unilateral_exit(channel_id);
+        if val.is_null() || val.is_undefined() { return None; }
         let arr = js_sys::Array::from(&val);
-        if arr.length() != 2 {
-            return None;
-        }
-
-        let balance = arr.get(0).as_f64()? as u64;
-        let signature = arr.get(1).as_string()?;
-        Some((balance, signature))
+        if arr.length() != 2 { return None; }
+        Some(PaymentProof { balance: arr.get(0).as_f64()? as u64, signature: arr.get(1).as_string()? })
     }
-
     fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
-        let unit_str = unit.to_string();
-
-        let val = self.js_host.get_active_keyset_ids(mint, &unit_str);
-        if val.is_null() || val.is_undefined() {
-            return Vec::new();
-        }
-
-        let arr = js_sys::Array::from(&val);
-        arr.iter()
-            .filter_map(|v| v.as_string())
-            .filter_map(|s| Id::from_str(&s).ok())
-            .collect()
+        let val = self.js_host.get_active_keyset_ids(mint, &unit.to_string());
+        if val.is_null() || val.is_undefined() { return Vec::new(); }
+        js_sys::Array::from(&val).iter().filter_map(|v| v.as_string()).filter_map(|s| Id::from_str(&s).ok()).collect()
     }
-
-    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
-        let val = self.js_host.get_keyset_info(mint, &keyset_id.to_string());
-        if val.is_null() || val.is_undefined() {
-            return None;
-        }
-        val.as_string()
+    fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> { self.js_host.get_keyset_info(mint, &keyset_id.to_string()).as_string() }
+    fn mark_channel_closed(&self, channel_id: &str, locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
+        self.js_host.mark_channel_closed(channel_id, locktime, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum).map_err(|e| format!("{:?}", e))
     }
+    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> { self.js_host.compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex).map_err(|e| format!("{:?}", e)) }
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> { self.js_host.sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e)) }
+}
 
-    fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {
-        Err(
-            "Synchronous call_mint_swap is not supported in WASM. Use callMintSwapViaHost."
-                .to_string(),
-        )
+#[async_trait(?Send)]
+impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
+    async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        let promise = self.js_host.call_mint_swap(mint_url, swap_request_json);
+        let result = JsFuture::from(promise).await.map_err(|e| format!("{:?}", e))?;
+        result.as_string().ok_or_else(|| "Not string".into())
     }
-
-    fn compute_channel_secret(
-        &self,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
-    ) -> Result<String, String> {
-        self.js_host
-            .compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex)
-            .map_err(|e| e.as_string().unwrap_or_else(|| "compute_channel_secret failed".to_string()))
-    }
-
-    fn sign_with_tweaked_key(
-        &self,
-        signer_pubkey_hex: &str,
-        message_hex: &str,
-        tweak_scalar_hex: &str,
-    ) -> Result<String, String> {
-        self.js_host
-            .sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex)
-            .map_err(|e| e.as_string().unwrap_or_else(|| "sign_with_tweaked_key failed".to_string()))
-    }
-
-    fn mark_channel_closed(
-        &self,
-        channel_id: &str,
-        locktime: u64,
-        balance: u64,
-        receiver_proofs_json: &str,
-        sender_proofs_json: &str,
-        receiver_sum: u64,
-        sender_sum: u64,
-    ) -> Result<(), String> {
-        self.js_host
-            .mark_channel_closed(
-                channel_id,
-                locktime,
-                balance,
-                receiver_proofs_json,
-                sender_proofs_json,
-                receiver_sum,
-                sender_sum,
-            )
-            .map_err(|e| e.as_string().unwrap_or_else(|| "unknown error".to_string()))
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        let promise = self.js_host.refresh_all_keysets(mint);
+        JsFuture::from(promise).await.map_err(|e| format!("{:?}", e))?;
+        Ok(())
     }
 }
 
 #[wasm_bindgen]
 pub struct WasmSpilmanBridge {
     bridge: SpilmanBridge<WasmSpilmanHostProxy>,
-    js_host: JsSpilmanHost,
 }
 
 #[wasm_bindgen]
 impl WasmSpilmanBridge {
-    /// Create a new WasmSpilmanBridge.
-    ///
-    /// The bridge itself is keyless — all secret key operations are delegated
-    /// to the host via `computeChannelSecret()` and `signWithTweakedKey()`.
     #[wasm_bindgen(constructor)]
     pub fn new(js_host: JsSpilmanHost) -> WasmSpilmanBridge {
-        WasmSpilmanBridge {
-            bridge: SpilmanBridge::new(WasmSpilmanHostProxy {
-                js_host: js_host.clone().unchecked_into(),
-            }),
-            js_host,
-        }
+        WasmSpilmanBridge { bridge: SpilmanBridge::new(WasmSpilmanHostProxy { js_host }) }
     }
 
-    /// Process a payment and record usage
-    ///
-    /// Validates the payment and records the usage if valid.
-    ///
-    /// # Arguments
-    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
-    ///   and optionally params + funding_proofs for unknown channels
-    /// * `context_json` - Context JSON describing the request
-    ///
-    /// # Returns
-    /// PaymentSuccess object on success, throws on error
     #[wasm_bindgen(js_name = processPayment)]
-    pub fn process_payment(
-        &self,
-        payment_json: &str,
-        context_json: &str,
-    ) -> Result<JsValue, JsValue> {
-        self.bridge
-            .process_payment_via_json(payment_json, context_json)
-            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+    pub fn process_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
+        let context_json = context_json.to_string();
+        self.bridge.process_payment_via_json(payment_json, &context_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Validate a payment without recording it
-    ///
-    /// Performs all validation (parsing, channel verification, balance checks,
-    /// signature verification) but does NOT call `record_payment`.
-    ///
-    /// For new channels, funding data IS saved (idempotent).
-    ///
-    /// # Arguments
-    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
-    ///   and optionally params + funding_proofs for unknown channels
-    /// * `context_json` - Context JSON describing the request
-    ///
-    /// # Returns
-    /// PaymentValidationResult object on success, throws on error
     #[wasm_bindgen(js_name = validatePayment)]
-    pub fn validate_payment(
-        &self,
-        payment_json: &str,
-        context_json: &str,
-    ) -> Result<JsValue, JsValue> {
-        self.bridge
-            .validate_payment_via_json(payment_json, context_json)
-            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+    pub fn validate_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
+        let context_json = context_json.to_string();
+        self.bridge.validate_payment_via_json(payment_json, &context_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Register/fund a channel without recording any usage
-    ///
-    /// Validates the channel (params, funding proofs, signature for balance=0)
-    /// and saves it to the funding store, but does NOT record any payment/usage.
-    ///
-    /// # Arguments
-    /// * `payment_json` - Payment request JSON with channel_id, balance, signature=0,
-    ///   params, and funding_proofs
-    ///
-    /// # Returns
-    /// FundChannelResult object on success, throws on error
     #[wasm_bindgen(js_name = fundChannel)]
     pub fn fund_channel(&self, payment_json: &str) -> Result<JsValue, JsValue> {
-        self.bridge
-            .fund_channel_via_json(payment_json)
-            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.fund_channel_via_json(payment_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Create data needed to close a channel
-    ///
-    /// Validates the payment signature and creates the fully-signed swap request
-    /// ready to submit to the mint, plus secrets for unblinding the response.
-    ///
-    /// # Arguments
-    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
-    ///   and optionally params + funding_proofs for unknown channels
-    /// * `keyset_info_json` - Optional keyset info JSON (required for unknown channels)
-    ///
-    /// # Returns
-    /// JSON with:
-    /// - `swap_request`: The fully-signed swap request ready for mint
-    /// - `expected_total`: Expected total output value after stage 1 fees
-    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
-    /// - `output_keyset_info`: Keyset info for the output keyset
-    ///
-    /// # Errors
-    /// Returns error JSON with same structure as processPayment 402 responses
     #[wasm_bindgen(js_name = validateAndPrepareCooperativeClose)]
-    pub fn validate_and_prepare_cooperative_close(
-        &self,
-        payment_json: &str,
-    ) -> Result<String, JsValue> {
+    pub fn validate_and_prepare_cooperative_close(&self, payment_json: &str) -> Result<String, JsValue> {
         match self.bridge.validate_and_prepare_cooperative_close(payment_json) {
             Ok(close_data) => Ok(close_data.to_json_value().to_string()),
             Err(e) => {
-                // Return error in same format as processPayment for consistency
-                let error_msg = e.to_string();
-                let mut result = serde_json::json!({
-                    "success": false,
-                    "error": error_msg
-                });
-
-                // Add extra metadata for specific errors
+                let mut result = serde_json::json!({ "success": false, "error": e.to_string() });
                 if let cdk::spilman::BridgeError::BalanceMismatch { expected, actual } = e {
                     if let Some(obj) = result.as_object_mut() {
                         obj.insert("expected".into(), serde_json::json!(expected));
                         obj.insert("actual".into(), serde_json::json!(actual));
                     }
                 }
-
                 Ok(result.to_string())
             }
         }
     }
 
-    /// Create data for a unilateral (server-initiated) channel close
-    ///
-    /// This retrieves the largest balance and signature from the host
-    /// and constructs a fully-signed swap request ready for the mint.
-    ///
-    /// # Arguments
-    /// * `channel_id` - The channel ID to close
-    ///
-    /// # Returns
-    /// JSON with same structure as validateAndPrepareCooperativeClose:
-    /// - `swap_request`: The fully-signed swap request ready for mint
-    /// - `expected_total`: Expected total output value after stage 1 fees
-    /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount, index, is_receiver}
-    /// - `output_keyset_info`: Keyset info for the output keyset
-    ///
-    /// # Errors
-    /// Returns error JSON if no payment proof stored, channel closed, or validation fails
     #[wasm_bindgen(js_name = createUnilateralCloseData)]
     pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<String, JsValue> {
         match self.bridge.create_unilateral_close_data(channel_id) {
             Ok(close_data) => Ok(close_data.to_json_value().to_string()),
-            Err(e) => {
-                let result = serde_json::json!({
-                    "success": false,
-                    "error": e.to_string()
-                });
-                Ok(result.to_string())
-            }
+            Err(e) => Ok(serde_json::json!({ "success": false, "error": e.to_string() }).to_string())
         }
     }
 
-    /// Call the mint's /v1/swap endpoint via the JS host
-    #[wasm_bindgen(js_name = callMintSwapViaHost)]
-    pub async fn call_mint_swap_via_host(
-        &self,
-        mint_url: &str,
-        swap_request_json: &str,
-    ) -> Result<String, JsValue> {
-        let promise = self.js_host.call_mint_swap(mint_url, swap_request_json);
-        let result = JsFuture::from(promise).await?;
-
-        result
-            .as_string()
-            .ok_or_else(|| JsValue::from_str("callMintSwap did not return a string"))
-    }
-
-    /// Refresh active keysets cache for a mint via the JS host
-    ///
-    /// Called when a swap fails (possibly due to stale keyset data).
-    /// The host should re-fetch keysets from the mint and update its cache.
-    #[wasm_bindgen(js_name = refreshAllKeysetsViaHost)]
-    pub async fn refresh_all_keysets_via_host(&self, mint_url: &str) -> Result<(), JsValue> {
-        let promise = self.js_host.refresh_all_keysets(mint_url);
-        JsFuture::from(promise).await?;
-        Ok(())
-    }
-
-    /// Execute a cooperative close: validate, submit swap, unblind, and mark closed.
-    ///
-    /// This async method orchestrates the full cooperative close flow:
-    /// 1. Validates the payment signature and checks balance == amount_due
-    /// 2. Creates the fully-signed swap request
-    /// 3. Submits the swap to the mint
-    /// 4. If swap fails, refreshes keyset cache and retries once
-    /// 5. Unblinds signatures and verifies DLEQ proofs
-    /// 6. Marks the channel as closed
-    ///
-    /// # Arguments
-    /// * `payment_json` - Payment request JSON with channel_id, balance, signature,
-    ///   and optionally params + funding_proofs for unknown channels
-    ///
-    /// # Returns
-    /// CloseSuccess object on success, throws CloseError on failure.
     #[wasm_bindgen(js_name = executeCooperativeClose)]
     pub async fn execute_cooperative_close(&self, payment_json: &str) -> Result<JsValue, JsValue> {
-        // 1. Sync preparation: validate payment, build swap request, get all needed data
-        let mut prepared = match self.bridge.prepare_cooperative_close_for_execution(payment_json) {
-            Ok(p) => p,
-            Err(e) => {
-                let close_error = cdk::spilman::CloseError::from_preparation_error(e);
-                return Err(serde_wasm_bindgen::to_value(&close_error)
-                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-            }
-        };
-
-        // 1.5 Mark channel as CLOSING before attempting swap
-        let params_val: serde_json::Value = serde_json::from_str(&prepared.params_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
-        let locktime = params_val["locktime"].as_u64().unwrap_or(0);
-
-        let payment_val: serde_json::Value = serde_json::from_str(payment_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid payment JSON: {}", e)))?;
-        let signature = payment_val["signature"]
-            .as_str()
-            .ok_or_else(|| JsValue::from_str("missing signature"))?;
-
-        if let Err(e) = self.bridge.host().mark_channel_closing(
-            &prepared.channel_id,
-            locktime,
-            prepared.balance,
-            signature,
-        ) {
-            let close_error = cdk::spilman::CloseError::storage_failed(e);
-            return Err(serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-        }
-
-        // 2. Submit swap to mint
-        let swap_response_str = self
-            .call_mint_swap_via_host(&prepared.mint_url, &prepared.swap_request.to_string())
-            .await?;
-
-        let mut swap_response: serde_json::Value = serde_json::from_str(&swap_response_str)
-            .map_err(|e| JsValue::from_str(&format!("Invalid swap response: {}", e)))?;
-
-        // 3. Check for mint error - if so, refresh keysets and retry once
-        if swap_response.get("error").is_some() {
-            // Try to refresh keyset cache (ignore errors - best effort)
-            let _ = self.refresh_all_keysets_via_host(&prepared.mint_url).await;
-
-            // Re-prepare with potentially updated keyset info
-            let retry_prepared = match self.bridge.prepare_cooperative_close_for_execution(payment_json) {
-                Ok(p) => p,
-                Err(e) => {
-                    let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
-                        swap_response["error"].clone(),
-                        serde_json::json!(e.reason),
-                    );
-                    return Err(serde_wasm_bindgen::to_value(&close_error)
-                        .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-                }
-            };
-
-            // Retry the swap
-            let retry_swap_response_str = self
-                .call_mint_swap_via_host(&retry_prepared.mint_url, &retry_prepared.swap_request.to_string())
-                .await?;
-
-            let retry_swap_response: serde_json::Value = serde_json::from_str(&retry_swap_response_str)
-                .map_err(|e| JsValue::from_str(&format!("Invalid retry swap response: {}", e)))?;
-
-            if let Some(retry_error) = retry_swap_response.get("error") {
-                let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
-                    swap_response["error"].clone(),
-                    retry_error.clone(),
-                );
-                return Err(serde_wasm_bindgen::to_value(&close_error)
-                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-            }
-
-            // Retry succeeded, use retry results
-            swap_response = retry_swap_response;
-            prepared = retry_prepared;
-        }
-
-        // 4. Unblind and verify DLEQ
-        let signatures_json = swap_response
-            .get("signatures")
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "[]".to_string());
-
-        let unblind_result_json = cdk::spilman::unblind_and_verify_dleq(
-            &signatures_json,
-            &prepared.secrets_with_blinding.to_string(),
-            &prepared.params_json,
-            &prepared.keyset_info_json,
-            &prepared.channel_secret,
-            prepared.balance,
-            Some(&prepared.output_keyset_info.to_string()),
-        )
-        .map_err(|e| {
-            let close_error = cdk::spilman::CloseError::unblind_failed(e);
-            serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string()))
-        })?;
-
-        let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid unblind result: {}", e)))?;
-
-        // 5. Extract results and verify
-        let receiver_sum = unblind_result["receiver_sum_after_stage1"].as_u64().unwrap_or(0);
-        let sender_sum = unblind_result["sender_sum_after_stage1"].as_u64().unwrap_or(0);
-        let actual_total = receiver_sum + sender_sum;
-
-        // 6. Mark channel as closed
-        let params: serde_json::Value = serde_json::from_str(&prepared.params_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
-        let locktime = params["locktime"].as_u64().unwrap_or(0);
-
-        if let Err(e) = self.bridge.host().mark_channel_closed(
-            &prepared.channel_id,
-            locktime,
-            prepared.balance,
-            &unblind_result["receiver_proofs"].to_string(),
-            &unblind_result["sender_proofs"].to_string(),
-            receiver_sum,
-            sender_sum,
-        ) {
-            let close_error = cdk::spilman::CloseError::storage_failed(e);
-            return Err(serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-        }
-
-        // 7. Return success response
-        let result = cdk::spilman::CloseSuccess {
-            channel_id: prepared.channel_id,
-            total_value: actual_total,
-            receiver_sum,
-            sender_sum,
-            sender_proofs: unblind_result["sender_proofs"].to_string(),
-            already_closed: false,
-        };
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        self.bridge.execute_cooperative_close_async(payment_json, self.bridge.host()).await
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| serde_wasm_bindgen::to_value(&e).unwrap_or_else(|_| JsValue::from_str(&e.to_string())))
     }
 
-    /// Execute a unilateral close: retrieve stored payment, submit swap, unblind, and mark closed.
-    ///
-    /// This async method orchestrates the full unilateral (server-initiated) close flow:
-    /// 1. Retrieves the stored balance and signature from the host
-    /// 2. Creates the fully-signed swap request
-    /// 3. Submits the swap to the mint
-    /// 4. If swap fails, refreshes keyset cache and retries once
-    /// 5. Unblinds signatures and verifies DLEQ proofs
-    /// 6. Marks the channel as closed
-    ///
-    /// # Arguments
-    /// * `channel_id` - The channel ID to close
-    ///
-    /// # Returns
-    /// CloseSuccess object on success, throws CloseError on failure.
     #[wasm_bindgen(js_name = executeUnilateralClose)]
     pub async fn execute_unilateral_close(&self, channel_id: &str) -> Result<JsValue, JsValue> {
-        // 1. Sync preparation: validate, get stored payment, build swap request
-        let mut prepared = match self.bridge.prepare_unilateral_close_for_execution(channel_id) {
-            Ok(p) => p,
-            Err(e) => {
-                let close_error = cdk::spilman::CloseError::from_preparation_error(e);
-                return Err(serde_wasm_bindgen::to_value(&close_error)
-                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-            }
-        };
-
-        // 1.5 Mark channel as CLOSING before attempting swap
-        let params_val: serde_json::Value = serde_json::from_str(&prepared.params_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
-        let locktime = params_val["locktime"].as_u64().unwrap_or(0);
-
-        let (_, signature) = self
-            .bridge
-            .host()
-            .get_balance_and_signature_for_unilateral_exit(channel_id)
-            .ok_or_else(|| JsValue::from_str("no payment proof stored"))?;
-
-        if let Err(e) = self.bridge.host().mark_channel_closing(
-            &prepared.channel_id,
-            locktime,
-            prepared.balance,
-            &signature,
-        ) {
-            let close_error = cdk::spilman::CloseError::storage_failed(e);
-            return Err(serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-        }
-
-        // 2. Submit swap to mint
-        let swap_response_str = self
-            .call_mint_swap_via_host(&prepared.mint_url, &prepared.swap_request.to_string())
-            .await?;
-
-        let mut swap_response: serde_json::Value = serde_json::from_str(&swap_response_str)
-            .map_err(|e| JsValue::from_str(&format!("Invalid swap response: {}", e)))?;
-
-        // 3. Check for mint error - if so, refresh keysets and retry once
-        if swap_response.get("error").is_some() {
-            // Try to refresh keyset cache (ignore errors - best effort)
-            let _ = self.refresh_all_keysets_via_host(&prepared.mint_url).await;
-
-            // Re-prepare with potentially updated keyset info
-            let retry_prepared = match self.bridge.prepare_unilateral_close_for_execution(channel_id) {
-                Ok(p) => p,
-                Err(e) => {
-                    let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
-                        swap_response["error"].clone(),
-                        serde_json::json!(e.reason),
-                    );
-                    return Err(serde_wasm_bindgen::to_value(&close_error)
-                        .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-                }
-            };
-
-            // Retry the swap
-            let retry_swap_response_str = self
-                .call_mint_swap_via_host(&retry_prepared.mint_url, &retry_prepared.swap_request.to_string())
-                .await?;
-
-            let retry_swap_response: serde_json::Value = serde_json::from_str(&retry_swap_response_str)
-                .map_err(|e| JsValue::from_str(&format!("Invalid retry swap response: {}", e)))?;
-
-            if let Some(retry_error) = retry_swap_response.get("error") {
-                let close_error = cdk::spilman::CloseError::mint_rejected_after_retry(
-                    swap_response["error"].clone(),
-                    retry_error.clone(),
-                );
-                return Err(serde_wasm_bindgen::to_value(&close_error)
-                    .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-            }
-
-            // Retry succeeded, use retry results
-            swap_response = retry_swap_response;
-            prepared = retry_prepared;
-        }
-
-        // 4. Unblind and verify DLEQ
-        let signatures_json = swap_response
-            .get("signatures")
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "[]".to_string());
-
-        let unblind_result_json = cdk::spilman::unblind_and_verify_dleq(
-            &signatures_json,
-            &prepared.secrets_with_blinding.to_string(),
-            &prepared.params_json,
-            &prepared.keyset_info_json,
-            &prepared.channel_secret,
-            prepared.balance,
-            Some(&prepared.output_keyset_info.to_string()),
-        )
-        .map_err(|e| {
-            let close_error = cdk::spilman::CloseError::unblind_failed(e);
-            serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string()))
-        })?;
-
-        let unblind_result: serde_json::Value = serde_json::from_str(&unblind_result_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid unblind result: {}", e)))?;
-
-        // 5. Extract results
-        let receiver_sum = unblind_result["receiver_sum_after_stage1"].as_u64().unwrap_or(0);
-        let sender_sum = unblind_result["sender_sum_after_stage1"].as_u64().unwrap_or(0);
-        let actual_total = receiver_sum + sender_sum;
-
-        // 6. Mark channel as closed
-        let params: serde_json::Value = serde_json::from_str(&prepared.params_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid params: {}", e)))?;
-        let locktime = params["locktime"].as_u64().unwrap_or(0);
-
-        if let Err(e) = self.bridge.host().mark_channel_closed(
-            &prepared.channel_id,
-            locktime,
-            prepared.balance,
-            &unblind_result["receiver_proofs"].to_string(),
-            &unblind_result["sender_proofs"].to_string(),
-            receiver_sum,
-            sender_sum,
-        ) {
-            let close_error = cdk::spilman::CloseError::storage_failed(e);
-            return Err(serde_wasm_bindgen::to_value(&close_error)
-                .unwrap_or_else(|_| JsValue::from_str(&close_error.to_string())));
-        }
-
-        // 7. Return success response
-        let result = cdk::spilman::CloseSuccess {
-            channel_id: prepared.channel_id,
-            total_value: actual_total,
-            receiver_sum,
-            sender_sum,
-            sender_proofs: unblind_result["sender_proofs"].to_string(),
-            already_closed: false,
-        };
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+        self.bridge.execute_unilateral_close_async(channel_id, self.bridge.host()).await
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| serde_wasm_bindgen::to_value(&e).unwrap_or_else(|_| JsValue::from_str(&e.to_string())))
     }
 }
 
-/// Compute ECDH shared secret from a secret key and counterparty's public key
-///
-/// Returns the x-coordinate of the shared point as a hex string (32 bytes).
 #[wasm_bindgen]
-pub fn compute_channel_secret(
-    my_secret_hex: &str,
-    their_pubkey_hex: &str,
-) -> Result<String, JsValue> {
-    cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn compute_channel_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Result<String, JsValue> {
+    cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Sign a message with a tweaked (P2BK-blinded) key
-///
-/// This is the standalone utility version that SpilmanHost implementations
-/// can call from their `signWithTweakedKey` method.
-///
-/// # Arguments
-/// * `secret_key_hex` - The signer's secret key (32 bytes, hex-encoded)
-/// * `message_hex` - SHA-256 hash of the message to sign (32 bytes, hex-encoded)
-/// * `tweak_scalar_hex` - The P2BK blinding scalar to add (32 bytes, hex-encoded)
-///
-/// # Returns
-/// The BIP-340 Schnorr signature (64 bytes, hex-encoded)
 #[wasm_bindgen]
-pub fn sign_with_tweaked_key(
-    secret_key_hex: &str,
-    message_hex: &str,
-    tweak_scalar_hex: &str,
-) -> Result<String, JsValue> {
-    cdk::spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn sign_with_tweaked_key(secret_key_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, JsValue> {
+    cdk::spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Get channel_id from params JSON, shared secret, and keyset info
-///
-/// This is effectively a method on ChannelParameters for FFI.
-/// Takes the params JSON, the pre-computed shared secret (hex), and keyset info JSON.
 #[wasm_bindgen]
-pub fn channel_parameters_get_channel_id(
-    params_json: &str,
-    channel_secret_hex: &str,
-    keyset_info_json: &str,
-) -> Result<String, JsValue> {
-    cdk::spilman::channel_parameters_get_channel_id(
-        params_json,
-        channel_secret_hex,
-        keyset_info_json,
-    )
-    .map_err(|e| JsValue::from_str(&e))
+pub fn channel_parameters_get_channel_id(params_json: &str, channel_secret_hex: &str, keyset_info_json: &str) -> Result<String, JsValue> {
+    cdk::spilman::channel_parameters_get_channel_id(params_json, channel_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Compute the minimum funding_token_amount needed for a given capacity
-///
-/// Uses the double-inverse computation to determine the minimum funding token
-/// nominal value that will yield at least `capacity` after both fee stages.
-///
-/// Clients should call this before building channel params.
 #[wasm_bindgen]
-pub fn compute_funding_token_amount(
-    capacity: u64,
-    keyset_info_json: &str,
-    maximum_amount: u64,
-) -> Result<u64, JsValue> {
-    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn compute_funding_token_amount(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
+    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Create funding outputs for a Spilman channel
-///
-/// Takes:
-/// - `params_json`: Channel parameters JSON (from get_channel_id_params_json or stored in DB)
-/// - `my_secret_hex`: Alice's secret key (hex)
-/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
-///
-/// Returns JSON with:
-/// - `funding_token_nominal`: The nominal amount to request when minting the funding token
-/// - `blinded_messages`: Array of blinded messages (ready for mint request)
-/// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount} for unblinding later
 #[wasm_bindgen]
-pub fn create_funding_outputs(
-    params_json: &str,
-    my_secret_hex: &str,
-    keyset_info_json: &str,
-) -> Result<String, JsValue> {
-    cdk::spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json)
-        .map_err(|e| JsValue::from_str(&e))
+pub fn create_funding_outputs(params_json: &str, my_secret_hex: &str, keyset_info_json: &str) -> Result<String, JsValue> {
+    cdk::spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Unblind blind signatures and verify DLEQ proofs
-///
-/// Takes blind signatures from a mint swap response, unblinds them using the
-/// secrets and blinding factors from bridge.validateAndPrepareCooperativeClose(),
-/// verifies DLEQ proofs, and returns the separated receiver/sender proofs.
-///
-/// # Arguments
-/// * `blind_signatures_json` - JSON array of blind signatures from mint's swap response
-/// * `secrets_with_blinding_json` - JSON array from validateAndPrepareCooperativeClose's secrets_with_blinding
-/// * `params_json` - Full channel parameters JSON (for keyset_info and maximum_amount)
-/// * `keyset_info_json` - KeysetInfo JSON (from fetchKeysetInfo)
-/// * `channel_secret_hex` - Pre-computed shared secret (hex) for blinded pubkey derivation
-/// * `balance` - The receiver's (Charlie's) intended balance (for verification)
-/// * `output_keyset_info_json` - Optional KeysetInfo JSON for outputs (if switched during close)
-///
-/// # Returns
-/// JSON object with:
-/// - `receiver_proofs`: Array of Charlie's P2PK proofs (DLEQ verified)
-/// - `sender_proofs`: Array of Alice's P2PK proofs (DLEQ verified)
-/// - `receiver_sum_after_stage1`: Sum of receiver proof amounts
-/// - `sender_sum_after_stage1`: Sum of sender proof amounts
 #[wasm_bindgen]
-pub fn unblind_and_verify_dleq(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    params_json: &str,
-    keyset_info_json: &str,
-    channel_secret_hex: &str,
-    balance: u64,
-    output_keyset_info_json: Option<String>,
-) -> Result<String, JsValue> {
-    cdk::spilman::unblind_and_verify_dleq(
-        blind_signatures_json,
-        secrets_with_blinding_json,
-        params_json,
-        keyset_info_json,
-        channel_secret_hex,
-        balance,
-        output_keyset_info_json.as_deref(),
-    )
-    .map_err(|e| JsValue::from_str(&e))
+pub fn unblind_and_verify_dleq(blind_signatures_json: &str, secrets_with_blinding_json: &str, params_json: &str, keyset_info_json: &str, channel_secret_hex: &str, balance: u64, output_keyset_info_json: Option<String>) -> Result<String, JsValue> {
+    cdk::spilman::unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, channel_secret_hex, balance, output_keyset_info_json.as_deref()).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Create a signed balance update from Alice (sender) to Charlie (receiver)
-///
-/// This function creates a balance update message signed by Alice, which authorizes
-/// Charlie to claim the specified balance when closing the channel.
-///
-/// # Arguments
-/// * `params_json` - Channel parameters JSON
-/// * `keyset_info_json` - Keyset info JSON with keys and fee info
-/// * `alice_secret_hex` - Alice's secret key in hex
-/// * `funding_proofs_json` - JSON array of funding proofs
-/// * `charlie_balance` - The balance to authorize for Charlie
-///
-/// # Returns
-/// JSON object with:
-/// - `channel_id`: The channel ID
-/// - `amount`: The authorized balance
-/// - `signature`: Alice's signature over the balance update
 #[wasm_bindgen]
-pub fn spilman_channel_sender_create_signed_balance_update(
-    params_json: &str,
-    keyset_info_json: &str,
-    alice_secret_hex: &str,
-    funding_proofs_json: &str,
-    charlie_balance: u64,
-) -> Result<String, JsValue> {
-    cdk::spilman::create_signed_balance_update(
-        params_json,
-        keyset_info_json,
-        alice_secret_hex,
-        funding_proofs_json,
-        charlie_balance,
-    )
-    .map_err(|e| JsValue::from_str(&e))
+pub fn spilman_channel_sender_create_signed_balance_update(params_json: &str, keyset_info_json: &str, alice_secret_hex: &str, funding_proofs_json: &str, charlie_balance: u64) -> Result<String, JsValue> {
+    cdk::spilman::create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, funding_proofs_json, charlie_balance).map_err(|e| JsValue::from_str(&e))
 }
-
-/// Verify a balance update signature from the sender (Alice)
-///
-/// Takes:
-/// - `params_json`: Channel parameters JSON
-/// - `channel_secret_hex`: Pre-computed shared secret (hex)
-/// - `funding_proofs_json`: JSON array of funding proofs
-/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
-/// - `channel_id`: The channel ID from the balance update
-/// - `balance`: The balance amount from the balance update
-/// - `signature`: Alice's Schnorr signature (hex)
-///
-/// Returns `true` if the signature is valid, or an error if invalid
 #[wasm_bindgen]
-pub fn verify_balance_update_signature(
-    params_json: &str,
-    channel_secret_hex: &str,
-    funding_proofs_json: &str,
-    keyset_info_json: &str,
-    channel_id: &str,
-    balance: u64,
-    signature: &str,
-) -> Result<bool, JsValue> {
-    use bitcoin::secp256k1::schnorr::Signature;
-    use cdk::nuts::Proof;
-    use cdk::spilman::{parse_keyset_info_from_json, BalanceUpdateMessage, EstablishedChannel};
-
-    let channel_secret_bytes = hex::decode(channel_secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let channel_secret: [u8; 32] = channel_secret_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
-
-    let keyset_info =
-        parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
-
-    let params =
-        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
-            .map_err(|e| {
-                JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
-            })?;
-
-    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
-        .map_err(|e| JsValue::from_str(&format!("Failed to parse funding proofs: {}", e)))?;
-
-    let channel = EstablishedChannel::new(params, funding_proofs)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create EstablishedChannel: {}", e)))?;
-
-    let sig = Signature::from_str(signature)
-        .map_err(|e| JsValue::from_str(&format!("Invalid signature: {}", e)))?;
-
-    let balance_update = BalanceUpdateMessage {
-        channel_id: channel_id.to_string(),
-        amount: balance,
-        signature: sig,
-    };
-
-    balance_update
-        .verify_sender_signature(&channel)
-        .map_err(|e| JsValue::from_str(&format!("Signature verification failed: {}", e)))?;
-
-    Ok(true)
+pub fn verify_balance_update_signature(params_json: &str, channel_secret_hex: &str, funding_proofs_json: &str, keyset_info_json: &str, channel_id: &str, balance: u64, signature: &str) -> Result<bool, JsValue> {
+    let secret: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
+    let params = cdk::spilman::ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let channel = EstablishedChannel::new(params, serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    BalanceUpdateMessage { channel_id: channel_id.to_string(), amount: balance, signature: signature.parse().map_err(|e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| JsValue::from_str(&e.to_string()))? }.verify_sender_signature(&channel).map(|_| true).map_err(|e| JsValue::from_str(&e.to_string()))
 }
-
-/// Verify DLEQ proof on a Proof (offline signature verification)
-///
-/// This allows anyone to verify that the mint really signed this token,
-/// without needing to contact the mint. The proof must include the DLEQ
-/// data (e, s, r) from construct_proofs.
-///
-/// Takes:
-/// - `proof_json`: A single proof with DLEQ data
-///   Format: {"amount": 1, "id": "00...", "secret": "...", "C": "02...", "dleq": {"e": "...", "s": "...", "r": "..."}}
-/// - `mint_pubkey_hex`: The mint's public key for this amount (from keyset keys)
-///
-/// Returns `true` if the DLEQ is valid, throws error otherwise
 #[wasm_bindgen]
 pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool, JsValue> {
-    use cdk::nuts::Proof;
-    let proof: Proof = serde_json::from_str(proof_json)
-        .map_err(|e| JsValue::from_str(&format!("Failed to parse proof: {}", e)))?;
-
-    let mint_pubkey = PublicKey::from_str(mint_pubkey_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid mint pubkey: {}", e)))?;
-
-    proof
-        .verify_dleq(mint_pubkey)
-        .map_err(|e| JsValue::from_str(&format!("DLEQ verification failed: {}", e)))?;
-
-    Ok(true)
+    let proof: Proof = serde_json::from_str(proof_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    proof.verify_dleq(PublicKey::from_str(mint_pubkey_hex).map_err(|e| JsValue::from_str(&e.to_string()))?).map(|_| true).map_err(|e| JsValue::from_str(&e.to_string()))
 }
-
-/// Verify that a channel is valid
-///
-/// This verifies everything about a channel that the receiver (Charlie)
-/// needs to check before accepting it:
-///
-/// 1. DLEQ proofs - the mint actually signed each funding proof
-///
-/// Takes:
-/// - `params_json`: Channel parameters JSON
-/// - `channel_secret_hex`: Pre-computed shared secret (hex)
-/// - `funding_proofs_json`: JSON array of funding proofs
-/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
-///
-/// Returns JSON: {"valid": true, "errors": []} or {"valid": false, "errors": [...]}
 #[wasm_bindgen]
-pub fn verify_channel(
-    params_json: &str,
-    channel_secret_hex: &str,
-    funding_proofs_json: &str,
-    keyset_info_json: &str,
-) -> Result<String, JsValue> {
-    use cdk::nuts::Proof;
-    use cdk::spilman::{parse_keyset_info_from_json, verify_valid_channel};
-
-    let channel_secret_bytes = hex::decode(channel_secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let channel_secret: [u8; 32] = channel_secret_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
-
-    let keyset_info =
-        parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
-
-    let params =
-        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
-            .map_err(|e| {
-                JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
-            })?;
-
-    let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)
-        .map_err(|e| JsValue::from_str(&format!("Failed to parse funding proofs: {}", e)))?;
-
-    let result = verify_valid_channel(&funding_proofs, &params);
-
-    serde_json::to_string(&result)
-        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
+pub fn verify_channel(params_json: &str, channel_secret_hex: &str, funding_proofs_json: &str, keyset_info_json: &str) -> Result<String, JsValue> {
+    let secret: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
+    let params = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let result = cdk::spilman::verify_valid_channel(&serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &params);
+    serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
-
-/// Construct proofs from blind signatures
-///
-/// Takes the blind signatures from the mint and unblinds them using the
-/// secrets and blinding factors from `create_funding_outputs`.
-///
-/// Takes:
-/// - `blind_signatures_json`: JSON array of blind signatures from mint response
-///   Format: [{"amount": 1, "id": "00...", "C_": "02..."}, ...]
-/// - `secrets_with_blinding_json`: JSON array from `create_funding_outputs`
-///   Format: [{"secret": "...", "blinding_factor": "...", "amount": 1}, ...]
-/// - `keyset_info_json`: KeysetInfo JSON (from fetchKeysetInfo)
-///
-/// Returns JSON array of proofs ready for use
 #[wasm_bindgen]
-pub fn construct_proofs(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    keyset_info_json: &str,
-) -> Result<String, JsValue> {
-    cdk::spilman::construct_proofs(
-        blind_signatures_json,
-        secrets_with_blinding_json,
-        keyset_info_json,
-    )
-    .map_err(|e| JsValue::from_str(&e))
+pub fn construct_proofs(sigs_json: &str, swb_json: &str, keyset_json: &str) -> Result<String, JsValue> {
+    cdk::spilman::construct_proofs(sigs_json, swb_json, keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))
 }
-
-/// Get Alice's blinded secret key for a specific stage 2 output
-///
-/// Alice uses this to sign when spending a specific stage 1 proof in stage 2.
-/// Each stage 1 output is P2PK locked to a UNIQUE blinded pubkey derived from (amount, index),
-/// so she needs the corresponding blinded secret key to spend each one.
-///
-/// # Arguments
-/// * `params_json` - Channel parameters JSON
-/// * `keyset_info_json` - Keyset info JSON with keys and fee info
-/// * `alice_secret_hex` - Alice's raw secret key in hex
-/// * `amount` - The proof amount
-/// * `index` - The proof index within proofs of the same amount
-///
-/// # Returns
-/// Hex string of Alice's blinded secret key for this specific output
 #[wasm_bindgen]
-pub fn get_sender_blinded_secret_key_for_stage2_output(
-    params_json: &str,
-    keyset_info_json: &str,
-    alice_secret_hex: &str,
-    amount: u64,
-    index: u32,
-) -> Result<String, JsValue> {
-    use cdk::spilman::parse_keyset_info_from_json;
-    let keyset_info =
-        parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
-    let alice_secret = SecretKey::from_hex(alice_secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid secret key: {}", e)))?;
-
-    let params =
-        ChannelParameters::from_json_with_secret_key(params_json, keyset_info, &alice_secret)
-            .map_err(|e| {
-                JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
-            })?;
-
-    let blinded_secret = params
-        .get_sender_blinded_secret_key_for_stage2_output(&alice_secret, amount, index as usize)
-        .map_err(|e| JsValue::from_str(&format!("Failed to get blinded secret key: {}", e)))?;
-
-    Ok(blinded_secret.to_secret_hex())
+pub fn get_sender_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
+    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let p = ChannelParameters::from_json_with_secret_key(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &s).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    p.get_sender_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
-
-/// Get Charlie's blinded secret key for a specific stage 2 output
-///
-/// Charlie uses this to sign when spending a specific stage 1 proof in stage 2.
-/// Each stage 1 output is P2PK locked to a UNIQUE blinded pubkey derived from (amount, index),
-/// so he needs the corresponding blinded secret key to spend each one.
-///
-/// # Arguments
-/// * `params_json` - Channel parameters JSON
-/// * `keyset_info_json` - Keyset info JSON with keys and fee info
-/// * `charlie_secret_hex` - Charlie's raw secret key in hex
-/// * `channel_secret_hex` - Pre-computed shared secret (hex)
-/// * `amount` - The proof amount
-/// * `index` - The proof index within proofs of the same amount
-///
-/// # Returns
-/// Hex string of Charlie's blinded secret key for this specific output
 #[wasm_bindgen]
-pub fn get_receiver_blinded_secret_key_for_stage2_output(
-    params_json: &str,
-    keyset_info_json: &str,
-    charlie_secret_hex: &str,
-    channel_secret_hex: &str,
-    amount: u64,
-    index: u32,
-) -> Result<String, JsValue> {
-    use cdk::spilman::parse_keyset_info_from_json;
-    let keyset_info =
-        parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e))?;
-    let charlie_secret = SecretKey::from_hex(charlie_secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid secret key: {}", e)))?;
-
-    let channel_secret_bytes = hex::decode(channel_secret_hex)
-        .map_err(|e| JsValue::from_str(&format!("Invalid shared secret hex: {}", e)))?;
-    let channel_secret: [u8; 32] = channel_secret_bytes
-        .try_into()
-        .map_err(|_| JsValue::from_str("Shared secret must be 32 bytes"))?;
-
-    let params =
-        ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret)
-            .map_err(|e| {
-                JsValue::from_str(&format!("Failed to create ChannelParameters: {}", e))
-            })?;
-
-    let blinded_secret = params
-        .get_receiver_blinded_secret_key_for_stage2_output(&charlie_secret, amount, index as usize)
-        .map_err(|e| JsValue::from_str(&format!("Failed to get blinded secret key: {}", e)))?;
-
-    Ok(blinded_secret.to_secret_hex())
+pub fn get_receiver_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, channel_secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
+    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let cs: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
+    let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    p.get_receiver_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
+pub fn compute_funding_token_nominal(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
+    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e.to_string()))
 }

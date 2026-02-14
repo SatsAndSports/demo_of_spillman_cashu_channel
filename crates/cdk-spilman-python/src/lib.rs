@@ -243,7 +243,7 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
+    fn get_funding(&self, channel_id: &str) -> Option<cdk::spilman::ChannelFunding> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -259,24 +259,20 @@ impl SpilmanHost for PySpilmanHost {
                 return None;
             }
 
-            Some((
-                tuple.get_item(0).ok()?.extract::<String>().ok()?,
-                tuple.get_item(1).ok()?.extract::<String>().ok()?,
-                tuple.get_item(2).ok()?.extract::<String>().ok()?,
-                tuple.get_item(3).ok()?.extract::<String>().ok()?,
-            ))
+            Some(cdk::spilman::ChannelFunding {
+                params_json: tuple.get_item(0).ok()?.extract::<String>().ok()?,
+                funding_proofs_json: tuple.get_item(1).ok()?.extract::<String>().ok()?,
+                channel_secret_hex: tuple.get_item(2).ok()?.extract::<String>().ok()?,
+                keyset_info_json: tuple.get_item(3).ok()?.extract::<String>().ok()?,
+            })
         })
     }
 
     fn save_funding(
         &self,
         channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
+        funding: cdk::spilman::ChannelFunding,
+        initial_payment: cdk::spilman::PaymentProof,
     ) {
         Python::with_gil(|py| {
             let _ = self.py_host.call_method1(
@@ -284,21 +280,21 @@ impl SpilmanHost for PySpilmanHost {
                 "save_funding",
                 (
                     channel_id,
-                    params_json,
-                    funding_proofs_json,
-                    channel_secret_hex,
-                    keyset_info_json,
-                    initial_balance,
-                    initial_signature,
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
+                    initial_payment.balance,
+                    initial_payment.signature,
                 ),
             );
         });
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&String>) -> u64 {
         Python::with_gil(|py| {
             let ctx = match context_json {
-                Some(s) => s.into_py(py),
+                Some(s) => s.as_str().into_py(py),
                 None => py.None(),
             };
             self.py_host
@@ -308,12 +304,22 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
+    fn record_payment(
+        &self,
+        channel_id: &str,
+        payment: cdk::spilman::PaymentProof,
+        context_json: &String,
+    ) {
         Python::with_gil(|py| {
             let _ = self.py_host.call_method1(
                 py,
                 "record_payment",
-                (channel_id, balance, signature, context_json),
+                (
+                    channel_id,
+                    payment.balance,
+                    payment.signature,
+                    context_json.as_str(),
+                ),
             );
         });
     }
@@ -341,14 +347,13 @@ impl SpilmanHost for PySpilmanHost {
         &self,
         channel_id: &str,
         locktime: u64,
-        balance: u64,
-        signature: &str,
+        payment: cdk::spilman::PaymentProof,
     ) -> Result<(), String> {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
                 py,
                 "mark_channel_closing",
-                (channel_id, locktime, balance, signature),
+                (channel_id, locktime, payment.balance, payment.signature),
             ) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
@@ -418,7 +423,7 @@ impl SpilmanHost for PySpilmanHost {
     fn get_balance_and_signature_for_unilateral_exit(
         &self,
         channel_id: &str,
-    ) -> Option<(u64, String)> {
+    ) -> Option<cdk::spilman::PaymentProof> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -438,40 +443,10 @@ impl SpilmanHost for PySpilmanHost {
                 return None;
             }
 
-            Some((
-                tuple.get_item(0).ok()?.extract::<u64>().ok()?,
-                tuple.get_item(1).ok()?.extract::<String>().ok()?,
-            ))
-        })
-    }
-
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-        Python::with_gil(|py| {
-            match self
-                .py_host
-                .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
-            {
-                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
-            }
-        })
-    }
-
-    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
-        Python::with_gil(|py| {
-            // Check if the method exists on the Python host
-            if self.py_host.getattr(py, "refresh_all_keysets").is_err() {
-                // Method not implemented, use default behavior
-                return Err("refresh_all_keysets not implemented".to_string());
-            }
-
-            match self
-                .py_host
-                .call_method1(py, "refresh_all_keysets", (mint,))
-            {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e.to_string()),
-            }
+            Some(cdk::spilman::PaymentProof {
+                balance: tuple.get_item(0).ok()?.extract::<u64>().ok()?,
+                signature: tuple.get_item(1).ok()?.extract::<String>().ok()?,
+            })
         })
     }
 
@@ -541,6 +516,38 @@ impl SpilmanHost for PySpilmanHost {
     }
 }
 
+impl cdk::spilman::SpilmanNetworking for PySpilmanHost {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        Python::with_gil(|py| {
+            match self
+                .py_host
+                .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
+            {
+                Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
+
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        Python::with_gil(|py| {
+            // Check if the method exists on the Python host
+            if self.py_host.getattr(py, "refresh_all_keysets").is_err() {
+                // Method not implemented, use default behavior
+                return Err("refresh_all_keysets not implemented".to_string());
+            }
+
+            match self
+                .py_host
+                .call_method1(py, "refresh_all_keysets", (mint,))
+            {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
+}
+
 /// Spilman payment channel bridge for servers (receivers).
 ///
 /// This validates incoming payments and manages channel state through
@@ -582,8 +589,9 @@ impl SpilmanBridge {
     ///     RuntimeError: If validation fails
     #[pyo3(signature = (payment_json, context_json))]
     fn process_payment(&self, payment_json: &str, context_json: &str) -> PyResult<PaymentSuccess> {
+        let context_json = context_json.to_string();
         self.inner
-            .process_payment_via_json(payment_json, context_json)
+            .process_payment_via_json(payment_json, &context_json)
             .map(PaymentSuccess::from)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -611,8 +619,9 @@ impl SpilmanBridge {
         payment_json: &str,
         context_json: &str,
     ) -> PyResult<PaymentValidationResult> {
+        let context_json = context_json.to_string();
         self.inner
-            .validate_payment_via_json(payment_json, context_json)
+            .validate_payment_via_json(payment_json, &context_json)
             .map(PaymentValidationResult::from)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
@@ -700,7 +709,7 @@ impl SpilmanBridge {
     ///     RuntimeError: With JSON-encoded CloseError on failure
     fn execute_cooperative_close(&self, payment_json: &str) -> PyResult<CloseSuccess> {
         self.inner
-            .execute_cooperative_close(payment_json)
+            .execute_cooperative_close(payment_json, self.inner.host())
             .map(CloseSuccess::from)
             .map_err(|e| {
                 let error_json = serde_json::to_string(&e).unwrap_or_else(|_| e.to_string());
@@ -728,7 +737,7 @@ impl SpilmanBridge {
     ///     RuntimeError: With JSON-encoded CloseError on failure
     fn execute_unilateral_close(&self, channel_id: &str) -> PyResult<CloseSuccess> {
         self.inner
-            .execute_unilateral_close(channel_id)
+            .execute_unilateral_close(channel_id, self.inner.host())
             .map(CloseSuccess::from)
             .map_err(|e| {
                 let error_json = serde_json::to_string(&e).unwrap_or_else(|_| e.to_string());

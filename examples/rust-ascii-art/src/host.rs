@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use async_trait::async_trait;
 
 use cdk::nuts::{CurrencyUnit, Id, PublicKey};
-use cdk::spilman::{ChannelState, ClosingData, SpilmanHost};
+use cdk::spilman::{ChannelState, ClosingData, SpilmanHost, SpilmanAsyncNetworking, ChannelFunding, PaymentProof};
 
 use crate::stores::{ChannelFundingData, KeysetCacheEntry, Stores, UnitPricing};
 
@@ -231,41 +232,35 @@ impl SpilmanHost for AsciiArtHost {
         mint == self.mint_url && self.stores.has_keyset(mint, &keyset_id.to_string())
     }
 
-    fn get_funding_and_params(&self, channel_id: &str) -> Option<(String, String, String, String)> {
-        self.stores.get_funding(channel_id).map(|f| {
-            (
-                f.params_json,
-                f.funding_proofs_json,
-                f.channel_secret,
-                f.keyset_info_json,
-            )
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+        self.stores.get_funding(channel_id).map(|f| ChannelFunding {
+            params_json: f.params_json,
+            funding_proofs_json: f.funding_proofs_json,
+            channel_secret_hex: f.channel_secret,
+            keyset_info_json: f.keyset_info_json,
         })
     }
 
     fn save_funding(
         &self,
         channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
+        funding: ChannelFunding,
+        initial_payment: PaymentProof,
     ) {
         self.stores.insert_funding(
             channel_id,
             ChannelFundingData {
-                params_json: params_json.to_string(),
-                funding_proofs_json: funding_proofs_json.to_string(),
-                channel_secret: channel_secret_hex.to_string(),
-                keyset_info_json: keyset_info_json.to_string(),
+                params_json: funding.params_json,
+                funding_proofs_json: funding.funding_proofs_json,
+                channel_secret: funding.channel_secret_hex,
+                keyset_info_json: funding.keyset_info_json,
             },
         );
         // Store the initial balance/signature for closing
-        self.stores.update_balance(channel_id, initial_balance, initial_signature);
+        self.stores.update_balance(channel_id, initial_payment.balance, &initial_payment.signature);
     }
 
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64 {
+    fn get_amount_due(&self, channel_id: &str, context_json: Option<&String>) -> u64 {
         // Get existing usage
         let existing_chars = self
             .stores
@@ -288,9 +283,9 @@ impl SpilmanHost for AsciiArtHost {
         (existing_chars + pending_chars) * per_char
     }
 
-    fn record_payment(&self, channel_id: &str, balance: u64, signature: &str, context_json: &str) {
+    fn record_payment(&self, channel_id: &str, payment: PaymentProof, context_json: &String) {
         // Update balance
-        self.stores.update_balance(channel_id, balance, signature);
+        self.stores.update_balance(channel_id, payment.balance, &payment.signature);
 
         // Update usage
         if let Some(chars) = serde_json::from_str::<serde_json::Value>(context_json)
@@ -315,14 +310,13 @@ impl SpilmanHost for AsciiArtHost {
         &self,
         channel_id: &str,
         locktime: u64,
-        balance: u64,
-        signature: &str,
+        payment: PaymentProof,
     ) -> Result<(), String> {
         // Check if channel is already closed
         if self.stores.is_closed(channel_id) {
             return Err("channel already closed".to_string());
         }
-        self.stores.mark_closing(channel_id, locktime, balance, signature);
+        self.stores.mark_closing(channel_id, locktime, payment.balance, &payment.signature);
         Ok(())
     }
 
@@ -368,10 +362,13 @@ impl SpilmanHost for AsciiArtHost {
     fn get_balance_and_signature_for_unilateral_exit(
         &self,
         channel_id: &str,
-    ) -> Option<(u64, String)> {
+    ) -> Option<PaymentProof> {
         self.stores
             .get_balance(channel_id)
-            .map(|b| (b.balance, b.signature))
+            .map(|b| PaymentProof {
+                balance: b.balance,
+                signature: b.signature,
+            })
     }
 
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
@@ -386,18 +383,6 @@ impl SpilmanHost for AsciiArtHost {
         self.stores
             .get_keyset(mint, &keyset_id.to_string())
             .map(|e| e.info_json)
-    }
-
-    fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
-        // In the Rust server, we handle keyset refresh at startup only.
-        // The async refresh_all_keysets_async method should be used instead.
-        Err("Use refresh_all_keysets_async for async context".to_string())
-    }
-
-    fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {
-        // In the Rust server, we call the mint swap directly in async route handlers
-        // using call_mint_swap_async instead of this sync method.
-        Err("Use call_mint_swap_async for async context".to_string())
     }
 
     fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
@@ -434,5 +419,16 @@ impl SpilmanHost for AsciiArtHost {
             sender_proofs_json,
         );
         Ok(())
+    }
+}
+
+#[async_trait]
+impl SpilmanAsyncNetworking for AsciiArtHost {
+    async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        self.call_mint_swap_async(mint_url, swap_request_json).await
+    }
+
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
+        self.refresh_all_keysets_async(mint).await
     }
 }

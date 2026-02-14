@@ -176,7 +176,7 @@ Remaining: 35 sat
 2. **AsciiArtHost** - Python class implementing the `SpilmanHost` interface:
    - `receiver_key_is_acceptable()` - validates server pubkey
    - `mint_and_keyset_is_acceptable()` - validates approved mints
-   - `get_funding_and_params()` / `save_funding()` - channel storage
+   - `get_funding()` / `save_funding()` - channel storage
    - `get_amount_due()` - calculates pricing (1 sat per char)
    - `record_payment()` - tracks usage after successful payment
 

@@ -33,10 +33,10 @@ pub use client_bridge::{
     SpilmanClientHost,
 };
 pub use bridge::{
-    unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelState,
-    CloseData, CloseError, ClosePreparationError, CloseSuccess, ClosingData, FundChannelResult,
-    PaymentSuccess, PaymentValidationResult, PreparedClose, SpilmanBridge, SpilmanHost,
-    UnblindResult,
+    unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelFunding,
+    ChannelState, CloseData, CloseError, ClosePreparationError, CloseSuccess, ClosingData,
+    FundChannelResult, PaymentProof, PaymentSuccess, PaymentValidationResult, PreparedClose,
+    SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost, SpilmanNetworking, UnblindResult,
 };
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,

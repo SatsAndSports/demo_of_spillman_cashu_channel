@@ -146,7 +146,7 @@ The Spilman implementation uses a **Bridge + Host** architecture:
 
 ### Transport Independence
 
-**The bridge operates on typed data, not HTTP or JSON.** It takes parameters like `channel_id: &str`, `balance: u64`, `signature: &str` and returns typed results or errors.
+**The bridge operates on typed data, not HTTP or JSON.** It takes parameters like `channel_id: &str`, `balance: u64`, `signature: &str`, and a generic request context `&C`, then returns typed results or errors.
 
 The convenience methods (`*_via_json`, `*_via_base64_header`) are provided for common cases, but you can call the core typed methods directly.
 
@@ -167,91 +167,77 @@ The examples in this guide use HTTP with JSON for simplicity, but adapt the patt
 You implement this interface to connect the bridge to your server's policy and storage:
 
 ```rust
-trait SpilmanHost {
+trait SpilmanHost<C = String> {
     // ==================== Policy ====================
-    
+
     /// Is this receiver pubkey your server's key?
     /// Return true only for your own pubkey(s).
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
-    
+
     /// Is this mint and keyset allowed?
     /// Check against your allowlist of trusted mints.
     /// This may include inactive keysets, but it's advised to reject
     /// keysets that are close to expiry. When the bridge requires
-    /// and active keyset for swapping, it will call 'get_active_keyset_ids'.
+    /// an active keyset for swapping, it will call `get_active_keyset_ids`.
     /// For efficiency and DOS protection, this function should *not* call
     /// the mint, instead it should use a cache of acceptable keysets for
     /// each mint.
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
-    
+
     /// Return your channel policy (pricing, limits) as JSON.
     fn get_channel_policy(&self) -> String;
-    
+
     /// Current time in seconds (for locktime validation).
     fn now_seconds(&self) -> u64;
 
     // ==================== Pricing ====================
-    
+
     /// How much is owed for this channel, including the current request?
-    /// 
-    /// `context_json` describes the current request (e.g., file size, action type).
+    ///
+    /// `context` describes the current request (e.g., file size, action type).
     /// Return the cumulative amount due based on all usage so far plus this request.
-    /// If no context_json is passed, just return based on all usage so far.
-    /// There is no schema requirement on the `context_json`, in fact it
-    /// does not need to be JSON. You provide it when calling 'process_payment'.
-    fn get_amount_due(&self, channel_id: &str, context_json: Option<&str>) -> u64;
+    /// If no context is passed, just return based on all usage so far.
+    /// The context type is yours to choose; `String` is the default for JSON.
+    fn get_amount_due(&self, channel_id: &str, context: Option<&C>) -> u64;
 
     // ==================== Storage: Funding ====================
-    
+
+    /// Retrieve stored funding data for a channel.
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding>;
+
     /// Store funding data for a new channel, including the initial payment proof.
-    /// 
+    ///
     /// Called after the bridge validates a new channel's params, proofs, and signature.
-    /// The initial_balance/initial_signature should be stored for closing the channel.
-    /// Even if initial_balance is 0, the signature is valid and can be used for closing.
+    /// The initial payment should be stored for closing the channel.
+    /// Even if initial_payment.balance is 0, the signature is valid and can be used for closing.
     fn save_funding(
         &self,
         channel_id: &str,
-        params_json: &str,
-        funding_proofs_json: &str,
-        channel_secret_hex: &str,
-        keyset_info_json: &str,
-        initial_balance: u64,
-        initial_signature: &str,
+        funding: ChannelFunding,
+        initial_payment: PaymentProof,
     );
-    
-    /// Retrieve stored funding data for a channel.
-    /// Returns (params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)
-    fn get_funding_and_params(&self, channel_id: &str) 
-        -> Option<(String, String, String, String)>;
 
     // ==================== Storage: Payments ====================
-    
+
     /// Record a successful payment.
     /// Store the balance and signature (needed for closing).
-    /// Update your usage tracking based on context_json.
-    fn record_payment(
-        &self, 
-        channel_id: &str, 
-        balance: u64, 
-        signature: &str, 
-        context_json: &str
-    );
-    
+    /// Update your usage tracking based on context.
+    fn record_payment(&self, channel_id: &str, payment: PaymentProof, context: &C);
+
     /// Get the best payment proof for unilateral close.
-    /// Returns (balance, signature) of the highest balance payment received.
-    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) 
-        -> Option<(u64, String)>;
+    fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str)
+        -> Option<PaymentProof>;
 
     // ==================== Storage: Channel State ====================
-    
+
     /// Get current channel state: Open, Closing, or Closed.
     /// Returns `Open` for unknown channels (they're implicitly open until funded).
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
-    
+
     /// Mark channel as CLOSING (before swap attempt).
     ///
     /// Called before attempting the mint swap. The host should:
-    /// - Store the closing parameters (locktime, balance, signature)
+    /// - Store the closing parameters (locktime, payment)
     /// - Return `Closing` from `get_channel_state()` for this channel
     /// - Reject further payments to this channel
     ///
@@ -276,13 +262,12 @@ trait SpilmanHost {
         &self,
         channel_id: &str,
         locktime: u64,
-        balance: u64,
-        signature: &str,
+        payment: PaymentProof,
     ) -> Result<(), String>;
-    
+
     /// Get stored closing data for retry.
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
-    
+
     /// Mark channel as CLOSED (after successful swap).
     ///
     /// Called after the mint has accepted the swap. The host should:
@@ -311,29 +296,17 @@ trait SpilmanHost {
     ) -> Result<(), String>;
 
     // ==================== Keyset Cache ====================
-    
+
     /// Get active keyset IDs for a mint and unit.
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
-    
+
     /// Get full keyset info JSON for a specific keyset.
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
-    
-    /// Refresh ALL keysets (active and inactive) from the mint.
-    /// Called on swap failure. Must retain inactive keyset data
-    /// so existing channels can still look up their keyset info.
-    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
-
-    // ==================== Mint Communication ====================
-    
-    /// Submit a swap request to the mint.
-    /// Returns the response JSON on success.
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) 
-        -> Result<String, String>;
 
     // ==================== Cryptographic Operations ====================
     // The bridge never holds the server's secret key. These callbacks
     // allow the host to perform key operations without exposing the key.
-    
+
     /// Compute the hashed ECDH channel secret.
     /// The host performs ECDH(charlie_secret, alice_pubkey) and hashes with
     /// domain separator "Cashu_Spilman_channel_secret_v1".
@@ -343,7 +316,7 @@ trait SpilmanHost {
         charlie_pubkey_hex: &str,   // Receiver's (your server's) pubkey - identifies which key
         alice_pubkey_hex: &str,     // Sender's public key
     ) -> Result<String, String>;
-    
+
     /// Sign a message with a tweaked key (BIP-340 Schnorr).
     /// The bridge computes the tweak (P2BK blinding scalar) and message hash,
     /// then asks the host to produce a signature using (secret + tweak).
@@ -351,9 +324,26 @@ trait SpilmanHost {
     fn sign_with_tweaked_key(
         &self,
         signer_pubkey_hex: &str,    // Identifies which key to use
-        message_hex: &str,           // SHA-256 hash (32 bytes, hex)
-        tweak_scalar_hex: &str,      // P2BK blinding scalar (32 bytes, hex)
+        message_hex: &str,          // SHA-256 hash (32 bytes, hex)
+        tweak_scalar_hex: &str,     // P2BK blinding scalar (32 bytes, hex)
     ) -> Result<String, String>;
+}
+
+trait SpilmanNetworking {
+    /// Submit a swap request to the mint.
+    /// Returns the response JSON on success.
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+
+    /// Refresh ALL keysets (active and inactive) from the mint.
+    /// Called on swap failure. Must retain inactive keyset data
+    /// so existing channels can still look up their keyset info.
+    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
+}
+
+#[async_trait]
+trait SpilmanAsyncNetworking {
+    async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
+    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
 }
 ```
 
@@ -481,7 +471,7 @@ let result = bridge.process_payment(
     signature,
     params,           // Option<&Value> - only needed for new channels
     funding_proofs,   // Option<&[Proof]> - only needed for new channels
-    context_json,     // Describes the current request
+    context,          // Describes the current request (type C)
 )?;
 // result.balance, result.amount_due, result.capacity
 ```
@@ -516,8 +506,11 @@ Note: The bridge accepts any balance for funding. If you want to enforce `balanc
 
 Client sends their final balance; server closes the channel:
 
+These methods require a networking provider that implements `SpilmanNetworking`.
+In most servers the host implements it, so `bridge.host()` works as the net arg.
+
 ```rust
-let result = bridge.execute_cooperative_close(payment_json)?;
+let result = bridge.execute_cooperative_close(payment_json, bridge.host())?;
 // result.channel_id, result.receiver_sum, result.sender_sum, result.sender_proofs_json
 ```
 
@@ -526,7 +519,7 @@ let result = bridge.execute_cooperative_close(payment_json)?;
 Server closes using the best stored payment:
 
 ```rust
-let result = bridge.execute_unilateral_close(channel_id)?;
+let result = bridge.execute_unilateral_close(channel_id, bridge.host())?;
 // Same fields as cooperative close
 ```
 
