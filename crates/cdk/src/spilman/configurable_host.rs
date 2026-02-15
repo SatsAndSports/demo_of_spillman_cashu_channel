@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::nuts::{CurrencyUnit, Id, PublicKey, SecretKey};
 use crate::spilman::{
-    ChannelFunding, ChannelId, ChannelState, ClosingData, PaymentProof, SpilmanHost,
+    ChannelFunding, ChannelId, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanHost,
 };
 
 // ============================================================================
@@ -598,39 +598,13 @@ impl SpilmanHost for ConfigurableHost {
             .cloned()
     }
 
-    // The 'channel policy' simply refers to:
-    //  - min_capacity
-    //  - max_amount_per_output
-    //  - min_expiry_in_seconds
-    // Many other things (acceptablbe mints and keysets, pricing, ...) are defined
-    // elsewhere and are not part of the policy returned by 'get_channel_policy'
-    
-    fn get_channel_policy(&self) -> String {
-        let active_units = self.stores.get_active_units();
-        let pricing: serde_json::Value = self
-            .config
-            .pricing
-            .iter()
-            .filter(|(unit, _)| active_units.contains(*unit))
-            .map(|(unit, cfg)| {
-                let mut obj = serde_json::json!({
-                    "minCapacity": cfg.min_capacity,
-                });
-                for (var, &price) in &cfg.variables {
-                    obj[var] = serde_json::json!(price);
-                }
-                if let Some(max) = cfg.max_amount_per_output {
-                    obj["maxAmountPerOutput"] = serde_json::json!(max);
-                }
-                (unit.clone(), obj)
-            })
-            .collect();
-
-        serde_json::json!({
-            "min_expiry_in_seconds": self.config.min_expiry_seconds,
-            "pricing": pricing,
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
+        let cfg = self.config.pricing.get(unit)?;
+        Some(ChannelPolicy {
+            min_expiry_in_seconds: self.config.min_expiry_seconds,
+            min_capacity: cfg.min_capacity,
+            max_amount_per_output: cfg.max_amount_per_output,
         })
-        .to_string()
     }
 
     fn now_seconds(&self) -> u64 {
@@ -1322,26 +1296,16 @@ pricing:
     // -- channel policy -------------------------------------------------------
 
     #[test]
-    fn test_channel_policy_filters_active_units() {
+    fn test_channel_policy_returns_per_unit() {
         let host = make_host();
 
-        host.set_keyset(
-            "http://localhost:3338",
-            "ks1",
-            KeysetCacheEntry {
-                info_json: "{}".to_string(),
-                active: true,
-                unit: "sat".to_string(),
-            },
-        );
+        let sat_policy = host.get_channel_policy("sat").unwrap();
+        assert_eq!(sat_policy.min_expiry_in_seconds, 3600);
+        assert_eq!(sat_policy.min_capacity, 10);
+        assert!(sat_policy.max_amount_per_output.is_none());
 
-        let policy: serde_json::Value = serde_json::from_str(&host.get_channel_policy()).unwrap();
-        assert_eq!(policy["min_expiry_in_seconds"], 3600);
-
-        let pricing = &policy["pricing"];
-        assert!(pricing.get("sat").is_some());
-        assert!(pricing.get("msat").is_none());
-        assert!(pricing.get("usd").is_none());
+        // Unknown unit returns None.
+        assert!(host.get_channel_policy("unknown").is_none());
     }
 
     // -- crypto ---------------------------------------------------------------

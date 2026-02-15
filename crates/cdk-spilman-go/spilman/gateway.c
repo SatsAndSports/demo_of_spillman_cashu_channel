@@ -17,7 +17,7 @@ typedef struct {
     char* (*get_channel_state)(void*, const char*);
     int (*mark_channel_closing)(void*, const char*, uint64_t, uint64_t, const char*);
     int (*get_closing_data)(void*, const char*, uint64_t*, uint64_t*, char**);
-    char* (*get_channel_policy)(void*);
+    int (*get_channel_policy)(void*, const char*, uint64_t*, uint64_t*, int64_t*);
     uint64_t (*now_seconds)(void*);
     int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
@@ -39,7 +39,7 @@ extern void go_record_payment(void*, const char*, uint64_t, const char*, const c
 extern char* go_get_channel_state(void*, const char*);
 extern int go_mark_channel_closing(void*, const char*, uint64_t, uint64_t, const char*);
 extern int go_get_closing_data(void*, const char*, uint64_t*, uint64_t*, char**);
-extern char* go_get_channel_policy(void*);
+extern int go_get_channel_policy(void*, const char*, uint64_t*, uint64_t*, int64_t*);
 extern uint64_t go_now_seconds(void*);
 extern int go_get_balance_and_signature_for_unilateral_exit(void*, const char*, uint64_t*, char**);
 extern char* go_get_active_keyset_ids(void*, const char*, const char*);

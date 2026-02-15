@@ -301,12 +301,20 @@ func (h *AsciiArtHost) GetClosingData(channelId string) *spilman.ClosingData {
 	}
 }
 
-func (h *AsciiArtHost) GetChannelPolicy() string {
-	b, _ := json.Marshal(map[string]interface{}{
-		"min_expiry_in_seconds": 3600,
-		"pricing":               getActivePricing(),
-	})
-	return string(b)
+func (h *AsciiArtHost) GetChannelPolicy(unit string) *spilman.ChannelPolicy {
+	pricing, ok := allPricing[unit]
+	if !ok {
+		return nil
+	}
+	policy := &spilman.ChannelPolicy{
+		MinExpiryInSeconds: 3600,
+		MinCapacity:        uint64(pricing.MinCapacity),
+	}
+	if pricing.MaxAmountPerOutput != nil {
+		v := uint64(*pricing.MaxAmountPerOutput)
+		policy.MaxAmountPerOutput = &v
+	}
+	return policy
 }
 
 func (h *AsciiArtHost) NowSeconds() uint64 {

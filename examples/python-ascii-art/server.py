@@ -408,17 +408,19 @@ class AsciiArtHost:
         """
         return channel_closing.get(channel_id)
     
-    def get_channel_policy(self) -> str:
+    def get_channel_policy(self, unit: str):
         """
-        Returns the server's validation policy configuration.
+        Returns the channel policy for a given unit.
 
         Returns:
-            A JSON string defining minimum expiry and per-unit pricing minimums.
+            A tuple of (min_expiry_in_seconds, min_capacity, max_amount_per_output)
+            or None if the unit is not supported. max_amount_per_output is None
+            if there is no limit.
         """
-        return json.dumps({
-            "min_expiry_in_seconds": 3600,
-            "pricing": get_active_pricing(),
-        })
+        pricing = ALL_PRICING.get(unit)
+        if pricing is None:
+            return None
+        return (3600, pricing["minCapacity"], pricing.get("maxAmountPerOutput"))
     
     def now_seconds(self) -> int:
         """

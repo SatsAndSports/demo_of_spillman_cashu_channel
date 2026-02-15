@@ -1162,12 +1162,8 @@ async fn test_client_bridge() {
         ) -> Option<super::bridge::ClosingData> {
             None
         }
-        fn get_channel_policy(&self) -> String {
-            serde_json::json!({
-                "min_expiry_in_seconds": 3600,
-                "pricing": { "sat": { "minCapacity": 10 } }
-            })
-            .to_string()
+        fn get_channel_policy(&self, _unit: &str) -> Option<super::bridge::ChannelPolicy> {
+            Some(super::bridge::ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
         }
         fn now_seconds(&self) -> u64 {
             crate::util::unix_time()
@@ -1506,7 +1502,7 @@ async fn test_client_bridge() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cooperative_close_full_retry_with_real_mint() {
     use super::bindings;
-    use super::bridge::{ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -1615,12 +1611,8 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         ) -> Option<ClosingData> {
             self.closing_data.borrow().clone()
         }
-        fn get_channel_policy(&self) -> String {
-            serde_json::json!({
-                "min_expiry_in_seconds": 3600,
-                "pricing": { "sat": { "minCapacity": 10 } }
-            })
-            .to_string()
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
         }
         fn now_seconds(&self) -> u64 {
             unix_time()
@@ -2026,7 +2018,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unilateral_close_full_retry_with_real_mint() {
     use super::bindings;
-    use super::bridge::{ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -2086,11 +2078,8 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
             self.closing_data.borrow().clone()
         }
-        fn get_channel_policy(&self) -> String {
-            serde_json::json!({
-                "min_expiry_in_seconds": 3600,
-                "pricing": { "sat": { "minCapacity": 10 } }
-            }).to_string()
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
         }
         fn now_seconds(&self) -> u64 { unix_time() }
         fn get_balance_and_signature_for_unilateral_exit(&self, _channel_id: &str) -> Option<PaymentProof> {

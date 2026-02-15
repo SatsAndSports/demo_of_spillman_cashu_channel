@@ -307,8 +307,11 @@ func (h *testServerHost) MarkChannelClosing(channelId string, locktime, balance 
 
 func (h *testServerHost) GetClosingData(channelId string) *ClosingData { return nil }
 
-func (h *testServerHost) GetChannelPolicy() string {
-	return `{"min_expiry_in_seconds":3600,"pricing":{"sat":{"minCapacity":10}}}`
+func (h *testServerHost) GetChannelPolicy(unit string) *ChannelPolicy {
+	if unit == "sat" {
+		return &ChannelPolicy{MinExpiryInSeconds: 3600, MinCapacity: 10}
+	}
+	return nil
 }
 
 func (h *testServerHost) NowSeconds() uint64 { return uint64(time.Now().Unix()) }

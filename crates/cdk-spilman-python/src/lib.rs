@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{
-    self, ChannelState, ClosingData, SpilmanBridge as RustSpilmanBridge,
+    self, ChannelPolicy, ChannelState, ClosingData, SpilmanBridge as RustSpilmanBridge,
     SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost, SpilmanHost,
 };
 
@@ -126,7 +126,7 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - get_channel_state(channel_id: str) -> str  # Returns "open", "closing", or "closed"
 /// - mark_channel_closing(channel_id: str, locktime: int, balance: int, signature: str) -> None  # Raises on error
 /// - get_closing_data(channel_id: str) -> Optional[dict]  # Returns {locktime, balance, signature} or None
-/// - get_channel_policy() -> str
+/// - get_channel_policy(unit: str) -> Optional[Tuple[int, int, Optional[int]]]  # (min_expiry_in_seconds, min_capacity, max_amount_per_output) or None
 /// - now_seconds() -> int
 /// - get_balance_and_signature_for_unilateral_exit(channel_id: str) -> Optional[Tuple[int, str]]
 /// - get_active_keyset_ids(mint: str, unit: str) -> List[str]
@@ -402,12 +402,21 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn get_channel_policy(&self) -> String {
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
         Python::with_gil(|py| {
-            self.py_host
-                .call_method0(py, "get_channel_policy")
-                .and_then(|r| r.extract::<String>(py))
-                .unwrap_or_else(|_| "{}".to_string())
+            let result = self
+                .py_host
+                .call_method1(py, "get_channel_policy", (unit,))
+                .ok()?;
+            if result.is_none(py) {
+                return None;
+            }
+            let tuple = result.extract::<(u64, u64, Option<u64>)>(py).ok()?;
+            Some(ChannelPolicy {
+                min_expiry_in_seconds: tuple.0,
+                min_capacity: tuple.1,
+                max_amount_per_output: tuple.2,
+            })
         })
     }
 

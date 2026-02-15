@@ -6,7 +6,6 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
@@ -98,8 +97,9 @@ pub trait SpilmanHost<C = String> {
     /// Get the stored closing data for a channel in CLOSING state.
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
 
-    /// Get channel policy (pricing, limits, etc.)
-    fn get_channel_policy(&self) -> String;
+    /// Get channel policy for a given unit: funding-time validation thresholds.
+    /// Returns `None` if the unit is not supported.
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy>;
 
     /// Get the current time in seconds
     fn now_seconds(&self) -> u64;
@@ -389,18 +389,15 @@ impl std::fmt::Display for CloseError {
 
 impl std::error::Error for CloseError {}
 
-#[derive(Debug, Deserialize)]
-pub struct BridgeServerConfig {
+/// Funding-time validation thresholds for a given unit, returned by
+/// [`SpilmanHost::get_channel_policy`].
+#[derive(Debug, Clone)]
+pub struct ChannelPolicy {
+    /// Minimum seconds between now and the channel locktime.
     pub min_expiry_in_seconds: u64,
-    pub pricing: BTreeMap<String, UnitPricing>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UnitPricing {
-    #[serde(default)]
-    #[serde(rename = "minCapacity")]
+    /// Minimum channel capacity (in the unit's base denomination).
     pub min_capacity: u64,
-    #[serde(rename = "maxAmountPerOutput")]
+    /// Optional cap on the largest single proof denomination.
     pub max_amount_per_output: Option<u64>,
 }
 
@@ -629,13 +626,11 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let mint = params_val["mint"].as_str().ok_or(BridgeError::InvalidRequest("Missing mint".into()))?;
         if !self.host.mint_and_keyset_is_acceptable(mint, &keyset_id) { return Err(BridgeError::MintOrKeysetNotAcceptable); }
         let keyset_info_json = self.host.get_keyset_info(mint, &keyset_id).ok_or(BridgeError::MintOrKeysetNotAcceptable)?;
-        let config: BridgeServerConfig = serde_json::from_str(&self.host.get_channel_policy()).map_err(|e| BridgeError::Internal(e.to_string()))?;
-        if let Some(pricing) = config.pricing.get(unit) {
-            if capacity < pricing.min_capacity { return Err(BridgeError::CapacityTooSmall { capacity, min_capacity: pricing.min_capacity }); }
-            if let Some(max) = pricing.max_amount_per_output { if max > 0 && maximum_amount > max { return Err(BridgeError::MaxAmountExceeded { amount: maximum_amount, max_allowed: max }); } }
-        } else { return Err(BridgeError::UnsupportedUnit(unit.to_string())); }
+        let policy = self.host.get_channel_policy(unit).ok_or(BridgeError::UnsupportedUnit(unit.to_string()))?;
+        if capacity < policy.min_capacity { return Err(BridgeError::CapacityTooSmall { capacity, min_capacity: policy.min_capacity }); }
+        if let Some(max) = policy.max_amount_per_output { if max > 0 && maximum_amount > max { return Err(BridgeError::MaxAmountExceeded { amount: maximum_amount, max_allowed: max }); } }
         let now = self.host.now_seconds();
-        if locktime < now + config.min_expiry_in_seconds { return Err(BridgeError::LocktimeTooSoon { locktime, min_locktime: now + config.min_expiry_in_seconds, now }); }
+        if locktime < now + policy.min_expiry_in_seconds { return Err(BridgeError::LocktimeTooSoon { locktime, min_locktime: now + policy.min_expiry_in_seconds, now }); }
         if balance > capacity { return Err(BridgeError::BalanceExceedsCapacity { balance, capacity }); }
         let channel_secret_hex = self.host.compute_channel_secret(params_val["charlie_pubkey"].as_str().unwrap(), params_val["alice_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing alice_pubkey".into()))?).map_err(BridgeError::ServerMisconfigured)?;
         let channel_secret: [u8; 32] = hex::decode(&channel_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?.try_into().map_err(|_| BridgeError::Internal("Invalid secret length".into()))?;
@@ -819,7 +814,7 @@ mod tests {
         fn get_channel_state(&self, _: &str) -> ChannelState { ChannelState::Open }
         fn mark_channel_closing(&self, _: &str, _: u64, _: PaymentProof) -> Result<(), String> { Ok(()) }
         fn get_closing_data(&self, _: &str) -> Option<ClosingData> { None }
-        fn get_channel_policy(&self) -> String { serde_json::json!({ "min_expiry_in_seconds": 3600, "pricing": { "sat": { "minCapacity": 100 } } }).to_string() }
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> { Some(ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 100, max_amount_per_output: None }) }
         fn now_seconds(&self) -> u64 { 1700000000 }
         fn get_balance_and_signature_for_unilateral_exit(&self, _: &str) -> Option<PaymentProof> { None }
         fn get_active_keyset_ids(&self, _: &str, _: &CurrencyUnit) -> Vec<Id> { Vec::new() }

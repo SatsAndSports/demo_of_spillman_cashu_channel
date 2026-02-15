@@ -36,7 +36,7 @@ typedef struct {
     char* (*get_channel_state)(void*, const char*);
     int (*mark_channel_closing)(void*, const char*, uint64_t, uint64_t, const char*);
     int (*get_closing_data)(void*, const char*, uint64_t*, uint64_t*, char**);
-    char* (*get_channel_policy)(void*);
+    int (*get_channel_policy)(void*, const char*, uint64_t*, uint64_t*, int64_t*);
     uint64_t (*now_seconds)(void*);
     int (*get_balance_and_signature_for_unilateral_exit)(void*, const char*, uint64_t*, char**);
     char* (*get_active_keyset_ids)(void*, const char*, const char*);
@@ -350,10 +350,21 @@ func go_get_closing_data(userData unsafe.Pointer, channelId *C.char, locktimeOut
 }
 
 //export go_get_channel_policy
-func go_get_channel_policy(userData unsafe.Pointer) *C.char {
+func go_get_channel_policy(userData unsafe.Pointer, unit *C.char, minExpiryOut *C.uint64_t, minCapacityOut *C.uint64_t, maxAmountOut *C.int64_t) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	return C.CString(host.GetChannelPolicy())
+	policy := host.GetChannelPolicy(C.GoString(unit))
+	if policy == nil {
+		return 0
+	}
+	*minExpiryOut = C.uint64_t(policy.MinExpiryInSeconds)
+	*minCapacityOut = C.uint64_t(policy.MinCapacity)
+	if policy.MaxAmountPerOutput != nil {
+		*maxAmountOut = C.int64_t(*policy.MaxAmountPerOutput)
+	} else {
+		*maxAmountOut = -1
+	}
+	return 1
 }
 
 //export go_now_seconds

@@ -48,9 +48,9 @@ type SpilmanHost interface {
 	// Returns nil if the channel is not in CLOSING state.
 	GetClosingData(channelId string) *ClosingData
 
-	// GetChannelPolicy returns the server's channel policy as a JSON string.
-	// The policy includes min_locktime, min_capacity, pricing, etc.
-	GetChannelPolicy() string
+	// GetChannelPolicy returns the channel policy for a given unit.
+	// Returns nil if the unit is not supported.
+	GetChannelPolicy(unit string) *ChannelPolicy
 
 	// NowSeconds returns the current Unix timestamp in seconds.
 	// Used for locktime validation.
@@ -110,6 +110,13 @@ type SpilmanHost interface {
 	//
 	// Returns the BIP-340 Schnorr signature (64 bytes, hex).
 	SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error)
+}
+
+// ChannelPolicy holds the funding-time validation thresholds for a given unit.
+type ChannelPolicy struct {
+	MinExpiryInSeconds uint64
+	MinCapacity        uint64
+	MaxAmountPerOutput *uint64 // nil means no limit
 }
 
 // ClosingData holds the pre-swap state for a channel in CLOSING state.
