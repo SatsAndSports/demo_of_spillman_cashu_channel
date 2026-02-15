@@ -352,6 +352,71 @@ trait SpilmanAsyncNetworking {
 
 ---
 
+## Channel Policy and Pricing
+
+### Funding Validation
+
+When a client funds a new channel, the bridge calls `get_channel_policy(unit)` to
+enforce three constraints:
+
+1. **Capacity** must be at least `min_capacity`
+2. **Locktime** must be at least `now + min_expiry_in_seconds` in the future
+3. **Denomination** of the largest proof must not exceed `max_amount_per_output` (if set)
+
+If `get_channel_policy` returns `None`, the unit is rejected entirely.
+
+### ChannelPolicy Struct
+
+```rust
+pub struct ChannelPolicy {
+    pub min_expiry_in_seconds: u64,
+    pub min_capacity: u64,
+    pub max_amount_per_output: Option<u64>,
+}
+```
+
+Example implementation:
+
+```rust
+fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
+    match unit {
+        "sat" => Some(ChannelPolicy {
+            min_expiry_in_seconds: 3600,
+            min_capacity: 100,
+            max_amount_per_output: None,
+        }),
+        "usd" => Some(ChannelPolicy {
+            min_expiry_in_seconds: 3600,
+            min_capacity: 10,
+            max_amount_per_output: Some(64),
+        }),
+        _ => None,
+    }
+}
+```
+
+**Fields:**
+
+- `min_expiry_in_seconds`: Minimum time until locktime (reject channels that expire too soon)
+- `min_capacity`: Minimum channel capacity for this unit
+- `max_amount_per_output`: Optional cap on the largest single proof denomination
+
+### Pricing
+
+The bridge calls `get_amount_due(channel_id, context)` on every request to determine
+how much the client owes. The pricing model is entirely yours. A common formula:
+
+```
+amount_due = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000)
+```
+
+Adapt the formula to your service's pricing model.
+
+`ConfigurableHost` provides a ready-made linear pricing model driven by YAML — see the
+[Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
+
+---
+
 ## State Management
 
 You need to persist several pieces of data per channel. Here's what each store contains:
@@ -651,53 +716,7 @@ Typical REST endpoints for channel management:
 
 ---
 
-## Configuration
-
-### Channel Policy
-
-The bridge calls `get_channel_policy(unit)` during channel funding to validate
-capacity and locktime. Return a `ChannelPolicy` for supported units, or `None`
-to reject the unit entirely:
-
-```rust
-pub struct ChannelPolicy {
-    pub min_expiry_in_seconds: u64,
-    pub min_capacity: u64,
-    pub max_amount_per_output: Option<u64>,
-}
-
-fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
-    match unit {
-        "sat" => Some(ChannelPolicy {
-            min_expiry_in_seconds: 3600,
-            min_capacity: 100,
-            max_amount_per_output: None,
-        }),
-        "usd" => Some(ChannelPolicy {
-            min_expiry_in_seconds: 3600,
-            min_capacity: 10,
-            max_amount_per_output: Some(64),
-        }),
-        _ => None,
-    }
-}
-```
-
-**Fields:**
-
-- `min_expiry_in_seconds`: Minimum time until locktime (reject channels that expire too soon)
-- `min_capacity`: Minimum channel capacity for this unit
-- `max_amount_per_output`: Optional cap on the largest single proof denomination
-
-### Pricing Formula
-
-```
-amount_due = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000)
-```
-
-Adapt the formula to your service's pricing model.
-
-### Keyset Caching Strategy
+## Keyset Caching Strategy
 
 For robustness and testability, it is highly recommended to follow the "Persistent Cache" pattern used in the reference implementations:
 

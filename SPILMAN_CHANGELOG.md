@@ -251,23 +251,25 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 
 ## Completed Features (Previous)
 
-### Dynamic Multi-Unit Pricing and `mints_units_keysets`
+### Protocol, Bridge, and Bindings
+
+#### Dynamic Multi-Unit Pricing and `mints_units_keysets`
 - **All three servers (TS, Python, Go) dynamically discover and advertise supported units**: `/channel/params` now returns `pricing` filtered to only units with active mint keysets, and `mints_units_keysets` (replacing the old `mint` field) mapping `{mint_url: {unit: [keyset_id, ...]}}`.
 - **`ALL_PRICING` constant with dynamic filtering**: Each server defines a superset of pricing (sat, msat, usd) and filters at request time via `getActivePricing()` / `get_active_pricing()` so keyset rotation is reflected immediately.
 - **Clients derive mint URL from `mints_units_keysets`**: Python and Go clients extract the mint URL from the new field.
 - **Test suite updated**: Channel params tests assert `mints_units_keysets` structure and all-unit pricing for all servers.
 
-### Cross-Platform Bug Fixes
+#### Cross-Platform Bug Fixes
 - **Fixed `usize` platform-dependent bug** in `params.rs`: `index.to_le_bytes()` produced 4 bytes on WASM (wasm32) but 8 bytes on native x86_64 (PyO3/CGo), causing deterministic output derivation to differ between WASM clients and native servers. Fixed by casting to `u64` before `to_le_bytes()` in `derive_blinding_scalar_for_output()` and `create_deterministic_output_with_blinding()`.
 - **Fixed Python server `json.loads` bug** in `server.py`: Cooperative close idempotent path called `json.loads()` on an already-parsed Python list (stored as parsed JSON in `mark_channel_closed`).
 - **Fixed Go server error response format** in `main.go`: Error responses returned `{"error": ...}` instead of the bridge's structured `body` containing `reason`, `capacity`, `balance`, `locktime`, `min_capacity`, `min_expiry_in_seconds`, and `validation_errors` fields. Also added missing-header guard for empty `X-Cashu-Channel`.
 
-### Cross-Server Testing
+#### Cross-Server Testing
 - **Rust test suite validates all four servers**: The 52-test Rust integration suite validates TS, Rust, Python, and Go servers via `SERVER_TYPE` env var
 - **Makefile targets**: `make test-server-ts`, `make test-server-rust`, `make test-server-python`, `make test-server-go` run the full test suite with ephemeral mints
 - **All servers pass tests**: TS, Rust, Python, and Go all pass 52/52 tests
 
-### Core Protocol
+#### Core Protocol
 - Channel ID computed and verified (WASM on both client and server)
 - Real Schnorr signatures from Alice (sender)
 - Signature verification on server (via WASM)
@@ -278,7 +280,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Integration tests verifying blinded signatures accepted by mint
 - Keyset ID validation (`InvalidKeysetId` check): Verifies keyset ID matches public keys using NUT-02 V1 derivation
 
-### Bridge Architecture
+#### Bridge Architecture
 - Structured `BridgeError` system returning detailed metadata in 402 headers
 - `SpilmanHost` hooks for early rejection of invalid receiver keys or unsupported mints
 - Validation of empty signatures early in payment processing
@@ -288,7 +290,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Automatic Closure Validation: `validate_and_prepare_cooperative_close` verifies balance matches `amount_due`
 - Consolidated `unblind_and_verify_dleq`: Core logic in `bridge.rs`, thin wrappers in WASM and Python
 
-### Channel Operations
+#### Channel Operations
 - Channel closure and settlement (server closes, submits swap to mint)
 - Stage 1 unblinding with DLEQ verification
 - Receiver proof P2PK pubkey verification (ensures proofs are locked to Charlie)
@@ -297,7 +299,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Unilateral channel closing: `get_balance_and_signature_for_unilateral_exit` host hook + `create_unilateral_close_data` bridge method
 - Full settlement flow in Python and Go: create swap request -> POST to mint -> unblind + verify DLEQ -> store proofs
 
-### Unified Channel Closing
+#### Unified Channel Closing
 - Bridge-orchestrated closing: `executeCooperativeClose` / `executeUnilateralClose` across WASM, PyO3, CGO, and native Rust
 - All five servers (CashuTube, TS ASCII Art, Rust ASCII Art, Python, Go) use identical closing patterns (call bridge, pass through result)
 - CashuTube migrated from manual close flow to bridge-based `executeCooperativeClose`
@@ -307,12 +309,12 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - BigInt-to-Number conversion at WASM hook boundary for numeric params
 - Python/Go: Removed redundant store checks from close helpers (bridge handles internally)
 
-### Native Rust Server
+#### Native Rust Server
 - **Rust ASCII Art** (`examples/rust-ascii-art/`): Reference implementation using core `cdk` library directly
 - Demonstrates `SpilmanHost` trait implementation in native Rust
 - Pricing: sat=1/char, msat=1000/char, usd=1/char (matching other demo servers)
 
-### Language Bindings
+#### Language Bindings
 - **Python demo** (`crates/cdk-spilman-python/examples/ascii-art/`): Pay-per-character ASCII art generator
 - **PyO3 bindings** (`crates/cdk-spilman-python/`): SpilmanBridge + client functions for Python
 - Python SpilmanHost implementation with all required callbacks
@@ -322,7 +324,9 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - **Go Parallel Demo** (`scripts/go-parallel-demo.sh`): Parallel testing for Go implementation
 - CLI commands in Python and Go servers: `s` (stats), `c` (close all), `q` (quit), `Ctrl+\` (quick stats)
 
-### CashuTube Video Player
+### CashuTube
+
+#### Video Player
 - Video player with HLS.js and quality selector
 - Payment headers sent with each segment request
 - Server caches channel params and funding proofs
@@ -332,7 +336,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Client-side byte tracking with post-response correction
 - Channel exhaustion handling (pauses video, shows toast, opens channel manager)
 
-### CashuTube UI/UX
+#### UI/UX
 - YouTube-style side-by-side layout (video left, list right)
 - Direct video linking via URL hash (#master_hash)
 - Share button with URL copying
@@ -357,7 +361,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Video quality preference persistence in localStorage
 - Loading spinner while buffering and during initial load
 
-### CashuTube Channel Management
+#### Channel Management
 - Multi-server/multi-unit support with (server, unit) dropdown
 - Per-unit pricing (sat, usd, eur, etc.)
 - Per-quality cost estimation displayed in video cards
@@ -375,7 +379,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Conditional header balance display (appears only when <10% capacity)
 - Highlight low funds with red pill badge in header
 
-### CashuTube Server Features
+#### Server Features
 - Video registration and listing via Blossom
 - HLS encoding tools with hash-based naming
 - Adaptive quality encoding (matches source resolution)
@@ -389,7 +393,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Active viewers count in header (polls /channel/stats every 5 seconds)
 - Resolved circular dependencies via `stores.ts` reorganization
 
-### CashuTube PWA & Mobile
+#### PWA & Mobile
 - PWA support (manifest.json, add-to-home-screen, service worker with update prompt)
 - YouTube-style tap controls (double-tap sides = +/-10s skip, double-tap middle = pause/play)
 - Touch scroll detection (prevents accidental pause/skip when scrolling on mobile)
@@ -400,7 +404,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - Auto-scroll video into view when starting playback
 - Version display toast on "active" viewers count label tap
 
-### CashuTube Misc
+#### Misc
 - Comprehensive test suite for payment flow
 - Improved client-side payment logging
 - Fixed sprite animation sizing on video card hover
