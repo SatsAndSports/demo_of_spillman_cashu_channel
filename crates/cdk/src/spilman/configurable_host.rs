@@ -114,7 +114,7 @@ pub type UsageMap = HashMap<String, u64>;
 pub struct KeysetCacheEntry {
     pub info_json: String,
     pub active: bool,
-    pub unit: String,
+    pub unit: CurrencyUnit,
 }
 
 /// Thread-safe in-memory stores.
@@ -151,7 +151,7 @@ struct Stores {
     /// The server operator is NOT required to keep the keyset information up-to-date; the
     /// bridge will explicitly request — via the host's `networking.refresh_all_keysets()` — to
     /// update the set of (active) keysets if a swap fails due to an inactive keyset.
-    keysets: RwLock<HashMap<(String, String), KeysetCacheEntry>>,
+    keysets: RwLock<HashMap<(String, Id), KeysetCacheEntry>>,
 }
 
 impl Stores {
@@ -168,8 +168,8 @@ impl Stores {
 
     // -- keyset helpers --
 
-    fn get_keyset(&self, mint: &str, keyset_id: &str) -> Option<KeysetCacheEntry> {
-        let key = (mint.to_string(), keyset_id.to_string());
+    fn get_keyset(&self, mint: &str, keyset_id: &Id) -> Option<KeysetCacheEntry> {
+        let key = (mint.to_string(), *keyset_id);
         self.keysets
             .read()
             .expect("keysets lock poisoned")
@@ -177,14 +177,14 @@ impl Stores {
             .cloned()
     }
 
-    fn set_keyset(&self, mint: &str, keyset_id: &str, entry: KeysetCacheEntry) {
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
         self.keysets
             .write()
             .expect("keysets lock poisoned")
-            .insert((mint.to_string(), keyset_id.to_string()), entry);
+            .insert((mint.to_string(), keyset_id), entry);
     }
 
-    fn get_active_keyset_ids(&self, mint: &str, unit: &str) -> Vec<String> {
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
         // There is no requirement that this be 'up-to-date'. So this is
         // the set of keysets were active the last time the server updated
         // its records of the keysets
@@ -192,8 +192,8 @@ impl Stores {
             .read()
             .expect("keysets lock poisoned")
             .iter()
-            .filter(|((m, _), entry)| m == mint && entry.unit == unit && entry.active)
-            .map(|((_, kid), _)| kid.clone())
+            .filter(|((m, _), entry)| m == mint && entry.unit == *unit && entry.active)
+            .map(|((_, kid), _)| *kid)
             .collect()
     }
 
@@ -208,9 +208,9 @@ impl Stores {
             result
                 .entry(mint.clone())
                 .or_default()
-                .entry(entry.unit.clone())
+                .entry(entry.unit.to_string())
                 .or_default()
-                .push(keyset_id.clone());
+                .push(keyset_id.to_string());
         }
         result
     }
@@ -222,7 +222,7 @@ impl Stores {
             .expect("keysets lock poisoned")
             .values()
             .filter(|e| e.active)
-            .map(|e| e.unit.clone())
+            .map(|e| e.unit.to_string())
             .collect()
     }
 }
@@ -314,7 +314,7 @@ impl ConfigurableHost {
     // -- keyset management (called by the server at startup / on refresh) -----
 
     /// Insert or update a keyset in the cache.
-    pub fn set_keyset(&self, mint: &str, keyset_id: &str, entry: KeysetCacheEntry) {
+    pub fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
         self.stores.set_keyset(mint, keyset_id, entry);
     }
 
@@ -475,8 +475,8 @@ impl SpilmanHost for ConfigurableHost {
             Some(units) => units,
             None => return false,
         };
-        match self.stores.get_keyset(mint, &keyset_id.to_string()) {
-            Some(entry) => trusted_units.iter().any(|u| u == &entry.unit),
+        match self.stores.get_keyset(mint, keyset_id) {
+            Some(entry) => trusted_units.iter().any(|u| u == &entry.unit.to_string()),
             None => false,
         }
     }
@@ -627,17 +627,11 @@ impl SpilmanHost for ConfigurableHost {
     }
 
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
-        self.stores
-            .get_active_keyset_ids(mint, &unit.to_string())
-            .into_iter()
-            .filter_map(|id_str| id_str.parse().ok())
-            .collect()
+        self.stores.get_active_keyset_ids(mint, unit)
     }
 
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
-        self.stores
-            .get_keyset(mint, &keyset_id.to_string())
-            .map(|e| e.info_json)
+        self.stores.get_keyset(mint, keyset_id).map(|e| e.info_json)
     }
 
     fn compute_channel_secret(
@@ -882,11 +876,11 @@ pricing:
 
         host.set_keyset(
             "http://localhost:3338",
-            "001b6c716bf42c7e",
+            fake_id,
             KeysetCacheEntry {
                 info_json: "{}".to_string(),
                 active: true,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
@@ -898,11 +892,11 @@ pricing:
         let fake_id: Id = "001b6c716bf42c7e".parse().unwrap();
         host.set_keyset(
             "http://localhost:3338",
-            "001b6c716bf42c7e",
+            fake_id,
             KeysetCacheEntry {
                 info_json: "{}".to_string(),
                 active: true,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         assert!(!host.mint_and_keyset_is_acceptable("http://other-mint:3338", &fake_id));
@@ -925,11 +919,11 @@ pricing:
         let fake_id: Id = "001b6c716bf42c7e".parse().unwrap();
         host.set_keyset(
             "http://localhost:3338",
-            "001b6c716bf42c7e",
+            fake_id,
             KeysetCacheEntry {
                 info_json: "{}".to_string(),
                 active: true,
-                unit: "usd".to_string(),
+                unit: CurrencyUnit::Usd,
             },
         );
         assert!(!host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
@@ -937,11 +931,11 @@ pricing:
         // But a "sat" keyset at the same mint should be accepted.
         host.set_keyset(
             "http://localhost:3338",
-            "001b6c716bf42c7e",
+            fake_id,
             KeysetCacheEntry {
                 info_json: "{}".to_string(),
                 active: true,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
@@ -1250,47 +1244,50 @@ pricing:
     #[test]
     fn test_keyset_cache() {
         let host = make_host();
+        let ks1: Id = "001b6c716bf42c7e".parse().unwrap();
+        let ks2: Id = "00ffedc2dbb87212".parse().unwrap();
+        let ks3: Id = "00818d176a78e7f0".parse().unwrap();
 
         host.set_keyset(
             "http://localhost:3338",
-            "ks1",
+            ks1,
             KeysetCacheEntry {
-                info_json: r#"{"keysetId":"ks1"}"#.to_string(),
+                info_json: r#"{"keysetId":"001b6c716bf42c7e"}"#.to_string(),
                 active: true,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         host.set_keyset(
             "http://localhost:3338",
-            "ks2",
+            ks2,
             KeysetCacheEntry {
-                info_json: r#"{"keysetId":"ks2"}"#.to_string(),
+                info_json: r#"{"keysetId":"00ffedc2dbb87212"}"#.to_string(),
                 active: false,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         host.set_keyset(
             "http://localhost:3338",
-            "ks3",
+            ks3,
             KeysetCacheEntry {
-                info_json: r#"{"keysetId":"ks3"}"#.to_string(),
+                info_json: r#"{"keysetId":"00818d176a78e7f0"}"#.to_string(),
                 active: true,
-                unit: "msat".to_string(),
+                unit: CurrencyUnit::Msat,
             },
         );
 
         let active_sat = host
             .stores
-            .get_active_keyset_ids("http://localhost:3338", "sat");
-        assert_eq!(active_sat, vec!["ks1".to_string()]);
+            .get_active_keyset_ids("http://localhost:3338", &CurrencyUnit::Sat);
+        assert_eq!(active_sat, vec![ks1]);
 
         let mints = host.get_mints_units_keysets();
-        assert!(mints["http://localhost:3338"]["sat"].contains(&"ks1".to_string()));
-        assert!(mints["http://localhost:3338"]["msat"].contains(&"ks3".to_string()));
+        assert!(mints["http://localhost:3338"]["sat"].contains(&ks1.to_string()));
+        assert!(mints["http://localhost:3338"]["msat"].contains(&ks3.to_string()));
         assert!(!mints["http://localhost:3338"]
             .get("sat")
             .unwrap()
-            .contains(&"ks2".to_string()));
+            .contains(&ks2.to_string()));
     }
 
     // -- channel policy -------------------------------------------------------
@@ -1331,13 +1328,14 @@ pricing:
 
         assert!(host.get_active_pricing().is_empty());
 
+        let ks1: Id = "001b6c716bf42c7e".parse().unwrap();
         host.set_keyset(
             "http://localhost:3338",
-            "ks1",
+            ks1,
             KeysetCacheEntry {
                 info_json: "{}".to_string(),
                 active: true,
-                unit: "sat".to_string(),
+                unit: CurrencyUnit::Sat,
             },
         );
         let pricing = host.get_active_pricing();
