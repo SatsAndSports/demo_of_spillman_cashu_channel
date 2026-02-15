@@ -6,14 +6,15 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use cdk::nuts::{CurrencyUnit, Id};
 use cdk::spilman::configurable_host::{ConfigurableHost, KeysetCacheEntry};
 use cdk::spilman::SpilmanAsyncNetworking;
 
 /// Keyset with full key data, as fetched from a mint.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MintKeysetWithKeys {
-    pub id: String,
-    pub unit: String,
+    pub id: Id,
+    pub unit: CurrencyUnit,
     pub active: bool,
     pub input_fee_ppk: u64,
     pub keys: serde_json::Value,
@@ -42,16 +43,18 @@ pub async fn fetch_all_keysets_from_mint(
 
     let mut result = Vec::new();
     for keyset in keysets {
-        let id = keyset
+        let id: Id = keyset
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or("Keyset missing id")?
-            .to_string();
-        let unit = keyset
+            .parse()
+            .map_err(|e| format!("Invalid keyset id: {e}"))?;
+        let unit: CurrencyUnit = keyset
             .get("unit")
             .and_then(|v| v.as_str())
             .ok_or("Keyset missing unit")?
-            .to_string();
+            .parse()
+            .map_err(|e| format!("Invalid unit: {e}"))?;
         let active = keyset.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
         let input_fee_ppk = keyset
             .get("input_fee_ppk")
@@ -98,7 +101,7 @@ pub async fn fetch_and_cache_keysets(
         let info_json = build_keyset_info_json(&ks.id, &ks.unit, &ks.keys, ks.input_fee_ppk);
         host.set_keyset(
             mint_url,
-            &ks.id,
+            ks.id,
             KeysetCacheEntry {
                 info_json,
                 active: ks.active,
@@ -110,14 +113,14 @@ pub async fn fetch_and_cache_keysets(
 }
 
 fn build_keyset_info_json(
-    keyset_id: &str,
-    unit: &str,
+    keyset_id: &Id,
+    unit: &CurrencyUnit,
     keys: &serde_json::Value,
     input_fee_ppk: u64,
 ) -> String {
     serde_json::json!({
-        "keysetId": keyset_id,
-        "unit": unit,
+        "keysetId": keyset_id.to_string(),
+        "unit": unit.to_string(),
         "keys": keys,
         "inputFeePpk": input_fee_ppk,
     })
