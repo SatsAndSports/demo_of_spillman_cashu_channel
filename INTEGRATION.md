@@ -186,8 +186,9 @@ trait SpilmanHost<C = String> {
     /// each mint.
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
 
-    /// Return your channel policy (pricing, limits) as JSON.
-    fn get_channel_policy(&self) -> String;
+    /// Return funding-time validation thresholds for a unit.
+    /// Returns `None` if the unit is not supported.
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy>;
 
     /// Current time in seconds (for locktime validation).
     fn now_seconds(&self) -> u64;
@@ -654,34 +655,39 @@ Typical REST endpoints for channel management:
 
 ### Channel Policy
 
-Define your policy and return it from `get_channel_policy()`:
+The bridge calls `get_channel_policy(unit)` during channel funding to validate
+capacity and locktime. Return a `ChannelPolicy` for supported units, or `None`
+to reject the unit entirely:
 
-```json
-{
-  "min_expiry_in_seconds": 3600,
-  "pricing": {
-    "sat": {
-      "minCapacity": 100,
-      "perRequestPpk": 500,
-      "perMegabytePpk": 1000,
-      "maxAmountPerOutput": 64
-    },
-    "usd": {
-      "minCapacity": 10,
-      "perRequestPpk": 100,
-      "perMegabytePpk": 200
+```rust
+pub struct ChannelPolicy {
+    pub min_expiry_in_seconds: u64,
+    pub min_capacity: u64,
+    pub max_amount_per_output: Option<u64>,
+}
+
+fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
+    match unit {
+        "sat" => Some(ChannelPolicy {
+            min_expiry_in_seconds: 3600,
+            min_capacity: 100,
+            max_amount_per_output: None,
+        }),
+        "usd" => Some(ChannelPolicy {
+            min_expiry_in_seconds: 3600,
+            min_capacity: 10,
+            max_amount_per_output: Some(64),
+        }),
+        _ => None,
     }
-  }
 }
 ```
 
 **Fields:**
 
 - `min_expiry_in_seconds`: Minimum time until locktime (reject channels that expire too soon)
-- `pricing[unit].minCapacity`: Minimum channel capacity for this unit
-- `pricing[unit].perRequestPpk`: Cost per request in parts-per-thousand
-- `pricing[unit].perMegabytePpk`: Cost per megabyte in parts-per-thousand
-- `pricing[unit].maxAmountPerOutput`: Maximum denomination (affects proof count)
+- `min_capacity`: Minimum channel capacity for this unit
+- `max_amount_per_output`: Optional cap on the largest single proof denomination
 
 ### Pricing Formula
 

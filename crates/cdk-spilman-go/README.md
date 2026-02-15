@@ -98,11 +98,17 @@ func main() {
 The `SpilmanHost` interface defines callbacks for policy and storage:
 
 ```go
+type ChannelPolicy struct {
+    MinExpiryInSeconds uint64
+    MinCapacity        uint64
+    MaxAmountPerOutput *uint64 // nil means no limit
+}
+
 type SpilmanHost interface {
     // Policy
     ReceiverKeyIsAcceptable(pubkeyHex string) bool
     MintAndKeysetIsAcceptable(mint string, keysetId string) bool
-    GetChannelPolicy() string
+    GetChannelPolicy(unit string) *ChannelPolicy  // nil = unsupported unit
     NowSeconds() uint64
     GetAmountDue(channelId string, contextJson *string) uint64
     
