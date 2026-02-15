@@ -149,7 +149,7 @@ trait SpilmanHost<C = String> {
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
     fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &Id) -> bool;
     fn get_amount_due(&self, channel_id: &str, context: Option<&C>) -> u64;
-    fn get_channel_policy(&self) -> String;
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy>;
     fn now_seconds(&self) -> u64;
 
     // Storage: funding and payments

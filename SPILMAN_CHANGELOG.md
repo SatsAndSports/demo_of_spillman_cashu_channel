@@ -2,6 +2,31 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 15, 2026)
+
+### Typed Per-Unit Channel Policy
+
+Replaced the JSON-based `get_channel_policy() -> String` with a typed, per-unit method:
+`get_channel_policy(unit: &str) -> Option<ChannelPolicy>`. The new `ChannelPolicy` struct
+has three fields: `min_expiry_in_seconds`, `min_capacity`, and `max_amount_per_output: Option<u64>`.
+
+- **Eliminated**: `BridgeServerConfig` and `UnitPricing` deserialization structs, all JSON
+  serialization/deserialization round-trips for the policy.
+- **All FFI bindings updated**: WASM (returns JS object or null), Python (returns tuple or None),
+  Go (uses out-pointers + return code, new `ChannelPolicy` Go struct).
+- **All examples and tests updated** across Rust, TypeScript, Python, and Go.
+
+### ConfigurableHost Improvements
+
+- **Keyset cache uses typed keys**: `(String, Id)` instead of `(String, String)`;
+  `KeysetCacheEntry.unit` is `CurrencyUnit` instead of `String`. Parsing happens once
+  at the boundary; internal lookups are type-safe with no string conversions.
+- **`get_balance()` returns `Option<PaymentProof>`** instead of `Option<(u64, String)>`.
+- **`get_usage()` returns `Option<UsageMap>`** (public type alias) instead of raw `Option<HashMap<String, u64>>`.
+- **`UsageMap` type alias made public** for use in return types and downstream code.
+- **`mark_channel_closed` ordering fix**: inserts into `closed` store before removing from
+  `closing` store, so `get_channel_state` never briefly reports a closing channel as `Open`.
+
 ## Completed Features (Feb 14, 2026)
 
 ### ConfigurableHost: YAML-Driven SpilmanHost Implementation
@@ -9,9 +34,10 @@ This document tracks the completed features and improvements for the Spilman Cha
 Added `ConfigurableHost`, a generic, ready-to-use implementation of the `SpilmanHost` trait that eliminates the need to write custom host implementations for common use cases.
 
 - **Named usage variables**: Pricing is defined in terms of named monotonic integer counters (e.g., `"requests"`, `"bytes"`, `"chars"`) with per-unit linear pricing. The amount due is computed as `sum(accumulated[var] * price_per_unit[var])`.
-- **YAML configuration**: All pricing, mint URL, and expiry settings are defined in a YAML file. Example:
+- **YAML configuration**: All pricing, mints, and expiry settings are defined in a YAML file. Example:
   ```yaml
-  mint_url: "http://localhost:3338"
+  mints:
+    "http://localhost:3338": [sat]
   min_expiry_seconds: 3600
   pricing:
     sat:
