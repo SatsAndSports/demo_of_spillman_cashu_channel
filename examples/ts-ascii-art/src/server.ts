@@ -183,11 +183,14 @@ export const spilmanHooks = {
     return channelClosing.get(channelId);
   },
 
-  getChannelPolicy: (): string => {
-    return JSON.stringify({
+  getChannelPolicy: (unit: string): { min_expiry_in_seconds: number; min_capacity: number; max_amount_per_output?: number } | null => {
+    const pricing = ALL_PRICING[unit];
+    if (!pricing) return null;
+    return {
       min_expiry_in_seconds: 3600,
-      pricing: getActivePricing(),
-    });
+      min_capacity: pricing.minCapacity,
+      max_amount_per_output: pricing.maxAmountPerOutput,
+    };
   },
 
   nowSeconds: (): bigint => {

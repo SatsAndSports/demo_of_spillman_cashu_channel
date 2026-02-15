@@ -7,7 +7,7 @@ use wasm_bindgen_futures::JsFuture;
 use async_trait::async_trait;
 
 use cdk::nuts::{Id, PublicKey, SecretKey, Proof};
-use cdk::spilman::{ChannelParameters, ChannelState, ClosingData, SpilmanBridge, SpilmanHost, SpilmanAsyncNetworking, PaymentProof, ChannelFunding, BalanceUpdateMessage, EstablishedChannel};
+use cdk::spilman::{ChannelParameters, ChannelPolicy, ChannelState, ClosingData, SpilmanBridge, SpilmanHost, SpilmanAsyncNetworking, PaymentProof, ChannelFunding, BalanceUpdateMessage, EstablishedChannel};
 use cdk::util::hex;
 
 #[wasm_bindgen(start)]
@@ -35,7 +35,7 @@ extern "C" {
     #[wasm_bindgen(method, js_name = getClosingData)]
     fn get_closing_data(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = getChannelPolicy)]
-    fn get_channel_policy(this: &JsSpilmanHost) -> String;
+    fn get_channel_policy(this: &JsSpilmanHost, unit: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = nowSeconds)]
     fn now_seconds(this: &JsSpilmanHost) -> u64;
     #[wasm_bindgen(method, js_name = getBalanceAndSignatureForUnilateralExit)]
@@ -96,7 +96,15 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
         let signature = js_sys::Reflect::get(obj, &JsValue::from_str("signature")).ok()?.as_string()?;
         Some(ClosingData { locktime, balance, signature })
     }
-    fn get_channel_policy(&self) -> String { self.js_host.get_channel_policy() }
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
+        let val = self.js_host.get_channel_policy(unit);
+        if val.is_null() || val.is_undefined() { return None; }
+        let obj = js_sys::Object::try_from(&val)?;
+        let min_expiry = js_sys::Reflect::get(obj, &JsValue::from_str("min_expiry_in_seconds")).ok()?.as_f64()? as u64;
+        let min_cap = js_sys::Reflect::get(obj, &JsValue::from_str("min_capacity")).ok()?.as_f64()? as u64;
+        let max_out = js_sys::Reflect::get(obj, &JsValue::from_str("max_amount_per_output")).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
+        Some(ChannelPolicy { min_expiry_in_seconds: min_expiry, min_capacity: min_cap, max_amount_per_output: max_out })
+    }
     fn now_seconds(&self) -> u64 { self.js_host.now_seconds() }
     fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<PaymentProof> {
         let val = self.js_host.get_balance_and_signature_for_unilateral_exit(channel_id);

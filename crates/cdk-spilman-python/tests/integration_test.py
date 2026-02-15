@@ -312,8 +312,10 @@ class MockServerHost:
     def get_closing_data(self, channel_id: str):
         return None
 
-    def get_channel_policy(self) -> str:
-        return '{"min_expiry_in_seconds":3600,"pricing":{"sat":{"minCapacity":10}}}'
+    def get_channel_policy(self, unit: str):
+        if unit == "sat":
+            return (3600, 10, None)
+        return None
 
     def now_seconds(self) -> int:
         return int(time.time())

@@ -230,9 +230,9 @@ describe('WASM close retry with real mint', () => {
       },
       getClosingData: (_chId: string) => closingData,
 
-      getChannelPolicy: () => JSON.stringify({
+      getChannelPolicy: (_unit: string) => ({
         min_expiry_in_seconds: 3600,
-        pricing: { sat: { minCapacity: 10 } },
+        min_capacity: 10,
       }),
       nowSeconds: () => BigInt(Math.floor(Date.now() / 1000)),
 

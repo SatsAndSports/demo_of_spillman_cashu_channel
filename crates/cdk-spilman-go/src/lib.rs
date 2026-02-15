@@ -8,7 +8,7 @@
 
 use cdk::nuts::SecretKey;
 use cdk::spilman::{
-    self, ChannelFunding, ChannelState, ClosingData, PaymentProof, SpilmanBridge,
+    self, ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge,
     SpilmanClientBridge, SpilmanClientHost, SpilmanHost, SpilmanNetworking,
 };
 pub use libc::{c_char, c_int};
@@ -100,7 +100,13 @@ pub struct SpilmanHostCallbacks {
         balance_out: *mut u64,
         signature_out: *mut *mut c_char,
     ) -> c_int,
-    pub get_channel_policy: extern "C" fn(user_data: *mut libc::c_void) -> *mut c_char,
+    pub get_channel_policy: extern "C" fn(
+        user_data: *mut libc::c_void,
+        unit: *const c_char,
+        min_expiry_out: *mut u64,
+        min_capacity_out: *mut u64,
+        max_amount_per_output_out: *mut i64,
+    ) -> c_int,
     pub now_seconds: extern "C" fn(user_data: *mut libc::c_void) -> u64,
     pub get_balance_and_signature_for_unilateral_exit: extern "C" fn(
         user_data: *mut libc::c_void,
@@ -320,12 +326,30 @@ impl SpilmanHost<String> for CGoSpilmanHost {
         }
     }
 
-    fn get_channel_policy(&self) -> String {
-        let ptr = (self.callbacks.get_channel_policy)(self.callbacks.user_data);
-        if ptr.is_null() {
-            return "{}".to_string();
+    fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
+        let c_unit = CString::new(unit).ok()?;
+        let mut min_expiry: u64 = 0;
+        let mut min_capacity: u64 = 0;
+        let mut max_amount: i64 = -1; // -1 = None
+        let found = (self.callbacks.get_channel_policy)(
+            self.callbacks.user_data,
+            c_unit.as_ptr(),
+            &mut min_expiry,
+            &mut min_capacity,
+            &mut max_amount,
+        );
+        if found == 0 {
+            return None;
         }
-        unsafe { CString::from_raw(ptr).into_string().unwrap() }
+        Some(ChannelPolicy {
+            min_expiry_in_seconds: min_expiry,
+            min_capacity,
+            max_amount_per_output: if max_amount >= 0 {
+                Some(max_amount as u64)
+            } else {
+                None
+            },
+        })
     }
 
     fn now_seconds(&self) -> u64 {

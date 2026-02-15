@@ -44,8 +44,8 @@ func (m *MockHost) GetClosingData(channelId string) *ClosingData {
 	return nil
 }
 
-func (m *MockHost) GetChannelPolicy() string {
-	return `{"min_locktime":3600,"min_capacity":10}`
+func (m *MockHost) GetChannelPolicy(unit string) *ChannelPolicy {
+	return &ChannelPolicy{MinExpiryInSeconds: 3600, MinCapacity: 10}
 }
 
 func (m *MockHost) NowSeconds() uint64 {
