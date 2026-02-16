@@ -439,6 +439,9 @@ impl SpilmanStorage for MemoryStorage {
 /// - `spilman_keysets` — cached mint keyset metadata (JSON)
 pub struct SqliteStorage {
     conn: std::sync::Mutex<rusqlite::Connection>,
+    /// Write-once cache: funding data is never updated or deleted, so cache
+    /// entries are populated lazily on first access and never invalidated.
+    funding_cache: std::sync::Mutex<HashMap<String, ChannelFunding>>,
 }
 
 impl SqliteStorage {
@@ -448,6 +451,7 @@ impl SqliteStorage {
             .map_err(|e| format!("failed to open SQLite at {path}: {e}"))?;
         let storage = Self {
             conn: std::sync::Mutex::new(conn),
+            funding_cache: std::sync::Mutex::new(HashMap::new()),
         };
         storage.init_schema()?;
         Ok(storage)
@@ -460,6 +464,7 @@ impl SqliteStorage {
             .map_err(|e| format!("failed to open in-memory SQLite: {e}"))?;
         let storage = Self {
             conn: std::sync::Mutex::new(conn),
+            funding_cache: std::sync::Mutex::new(HashMap::new()),
         };
         storage.init_schema()?;
         Ok(storage)
@@ -500,17 +505,34 @@ impl SqliteStorage {
 
 impl SpilmanStorage for SqliteStorage {
     fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+        // Check the in-memory cache first.
+        {
+            let cache = self.funding_cache.lock().expect("funding_cache lock");
+            if let Some(f) = cache.get(channel_id) {
+                return Some(f.clone());
+            }
+        }
+        // Cache miss — query SQLite and populate on hit.
         let conn = self.conn.lock().expect("sqlite lock");
-        conn.query_row(
-            "SELECT funding_json FROM spilman_channels WHERE channel_id = ?1",
-            [channel_id],
-            |row| {
-                let json: String = row.get(0)?;
-                Ok(json)
-            },
-        )
-        .ok()
-        .and_then(|json| serde_json::from_str(&json).ok())
+        let funding: Option<ChannelFunding> = conn
+            .query_row(
+                "SELECT funding_json FROM spilman_channels WHERE channel_id = ?1",
+                [channel_id],
+                |row| {
+                    let json: String = row.get(0)?;
+                    Ok(json)
+                },
+            )
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok());
+        if let Some(ref f) = funding {
+            drop(conn);
+            self.funding_cache
+                .lock()
+                .expect("funding_cache lock")
+                .insert(channel_id.to_string(), f.clone());
+        }
+        funding
     }
 
     fn save_funding(&self, channel_id: &str, funding: ChannelFunding) -> Result<(), String> {
@@ -523,6 +545,12 @@ impl SpilmanStorage for SqliteStorage {
             rusqlite::params![channel_id, json],
         )
         .map_err(|e| format!("save_funding: {e}"))?;
+        // Populate the cache (write-once, so first insert wins — matches the SQL).
+        self.funding_cache
+            .lock()
+            .expect("funding_cache lock")
+            .entry(channel_id.to_string())
+            .or_insert(funding);
         Ok(())
     }
 
@@ -1409,7 +1437,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
     }
 
@@ -1453,7 +1482,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Usd,
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
 
         // But a "sat" keyset at the same mint should be accepted.
@@ -1465,7 +1495,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
     }
 
@@ -1762,7 +1793,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        ).unwrap();
+        )
+        .unwrap();
         host.set_keyset(
             "http://localhost:3338",
             ks2,
@@ -1771,7 +1803,8 @@ pricing:
                 active: false,
                 unit: CurrencyUnit::Sat,
             },
-        ).unwrap();
+        )
+        .unwrap();
         host.set_keyset(
             "http://localhost:3338",
             ks3,
@@ -1780,7 +1813,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Msat,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let active_sat = host
             .storage()
@@ -1843,7 +1877,8 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        ).unwrap();
+        )
+        .unwrap();
         let pricing = host.get_active_pricing();
         assert_eq!(pricing.len(), 1);
         assert!(pricing.contains_key("sat"));
@@ -1961,7 +1996,8 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             assert!(s.get_balance("ch1").is_none()); // balance is 0, signature is ''
 
@@ -1971,7 +2007,8 @@ storage:
                     balance: 20,
                     signature: "sig20".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
 
             // Lower balance should NOT overwrite.
@@ -1981,7 +2018,8 @@ storage:
                     balance: 10,
                     signature: "sig10".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
             assert_eq!(s.get_balance("ch1").unwrap().signature, "sig20");
 
@@ -1992,7 +2030,8 @@ storage:
                     balance: 30,
                     signature: "sig30".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 30);
         }
 
@@ -2032,7 +2071,8 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             assert_eq!(s.get_state("ch1"), ChannelState::Open);
 
@@ -2043,7 +2083,8 @@ storage:
                     balance: 50,
                     signature: "sig50".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
             assert_eq!(s.get_state("ch1"), ChannelState::Closing);
 
             let closing = s.get_closing_data("ch1").unwrap();
@@ -2085,7 +2126,8 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             let data = ClosedDataView {
                 locktime: 1000,
@@ -2117,7 +2159,8 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             let entry = s.get_keyset("http://mint", &kid).unwrap();
             assert_eq!(entry.unit, CurrencyUnit::Sat);
@@ -2132,7 +2175,8 @@ storage:
                     active: false,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
             let entry2 = s.get_keyset("http://mint", &kid).unwrap();
             assert!(!entry2.active);
         }
@@ -2151,7 +2195,8 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
             s.set_keyset(
                 "http://mint",
                 ks2,
@@ -2160,7 +2205,8 @@ storage:
                     active: false,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             let active = s.get_active_keyset_ids("http://mint", &CurrencyUnit::Sat);
             assert_eq!(active, vec![ks1]);
@@ -2180,7 +2226,8 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
             s.set_keyset(
                 "http://mint",
                 ks2,
@@ -2189,7 +2236,8 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Msat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             let muk = s.get_mints_units_keysets();
             assert!(muk["http://mint"]["sat"].contains(&ks1.to_string()));
@@ -2211,7 +2259,8 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            ).unwrap();
+            )
+            .unwrap();
 
             let units = s.get_active_units();
             assert!(units.contains("sat"));
@@ -2266,14 +2315,16 @@ storage:
                         channel_secret_hex: "abcd".to_string(),
                         keyset_info_json: "{}".to_string(),
                     },
-                ).unwrap();
+                )
+                .unwrap();
                 s.update_balance(
                     "ch1",
                     PaymentProof {
                         balance: 42,
                         signature: "sig42".to_string(),
                     },
-                ).unwrap();
+                )
+                .unwrap();
                 let mut inc = UsageMap::new();
                 inc.insert("chars".to_string(), 100);
                 s.increment_usage("ch1", &inc).unwrap();
