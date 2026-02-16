@@ -107,7 +107,7 @@ pub async fn fetch_and_cache_keysets(
                 active: ks.active,
                 unit: ks.unit,
             },
-        );
+        )?;
     }
     Ok(())
 }
