@@ -156,7 +156,7 @@ pub trait SpilmanStorage: Send + Sync {
 
     /// Save funding data for a new channel.  Must be idempotent: if the
     /// channel already has funding, this call is a no-op.
-    fn save_funding(&self, channel_id: &str, funding: ChannelFunding);
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) -> Result<(), String>;
 
     // -- balance & payments ---------------------------------------------------
 
@@ -166,8 +166,9 @@ pub trait SpilmanStorage: Send + Sync {
 
     /// Update the balance for a channel.  Must be monotonic: only update if
     /// the new balance is strictly greater than the current one (or if no
-    /// balance has been set yet).
-    fn update_balance(&self, channel_id: &str, payment: PaymentProof);
+    /// balance has been set yet).  Returns `Ok(())` even if the balance was
+    /// not updated (monotonic no-op).
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof) -> Result<(), String>;
 
     // -- usage variables ------------------------------------------------------
 
@@ -175,15 +176,16 @@ pub trait SpilmanStorage: Send + Sync {
     fn get_usage(&self, channel_id: &str) -> Option<UsageMap>;
 
     /// Increment usage variables for a channel.
-    fn increment_usage(&self, channel_id: &str, increments: &UsageMap);
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) -> Result<(), String>;
 
     // -- channel state --------------------------------------------------------
 
     /// Get the current state (Open, Closing, Closed).
     fn get_state(&self, channel_id: &str) -> ChannelState;
 
-    /// Mark a channel as closing.
-    fn mark_closing(&self, channel_id: &str, closing: ClosingData);
+    /// Mark a channel as closing.  Returns `Err` if the channel does not
+    /// exist or is already closed.
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData) -> Result<(), String>;
 
     /// Get the data for a closing channel.
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
@@ -200,7 +202,7 @@ pub trait SpilmanStorage: Send + Sync {
     fn get_keyset(&self, mint: &str, keyset_id: &Id) -> Option<KeysetCacheEntry>;
 
     /// Insert or update a keyset in the cache.
-    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry);
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) -> Result<(), String>;
 
     /// Get all active keyset IDs for a given mint and unit.
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
@@ -243,11 +245,12 @@ impl SpilmanStorage for MemoryStorage {
             .cloned()
     }
 
-    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) {
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) -> Result<(), String> {
         let mut store = self.funding.write().expect("funding lock");
         if !store.contains_key(channel_id) {
             store.insert(channel_id.to_string(), funding);
         }
+        Ok(())
     }
 
     fn get_balance(&self, channel_id: &str) -> Option<PaymentProof> {
@@ -258,7 +261,7 @@ impl SpilmanStorage for MemoryStorage {
             .cloned()
     }
 
-    fn update_balance(&self, channel_id: &str, payment: PaymentProof) {
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof) -> Result<(), String> {
         let mut store = self.balance.write().expect("balance lock");
         let should_update = store
             .get(channel_id)
@@ -267,6 +270,7 @@ impl SpilmanStorage for MemoryStorage {
         if should_update {
             store.insert(channel_id.to_string(), payment);
         }
+        Ok(())
     }
 
     fn get_usage(&self, channel_id: &str) -> Option<UsageMap> {
@@ -279,12 +283,13 @@ impl SpilmanStorage for MemoryStorage {
         }
     }
 
-    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) {
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) -> Result<(), String> {
         let mut store = self.usage.write().expect("usage lock");
         let usage = store.entry(channel_id.to_string()).or_default();
         for (var, delta) in increments {
             *usage.entry(var.clone()).or_insert(0) += delta;
         }
+        Ok(())
     }
 
     fn get_state(&self, channel_id: &str) -> ChannelState {
@@ -307,11 +312,20 @@ impl SpilmanStorage for MemoryStorage {
         }
     }
 
-    fn mark_closing(&self, channel_id: &str, closing: ClosingData) {
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData) -> Result<(), String> {
+        if self
+            .closed
+            .read()
+            .expect("closed lock")
+            .contains_key(channel_id)
+        {
+            return Err("channel already closed".to_string());
+        }
         self.closing
             .write()
             .expect("closing lock")
             .insert(channel_id.to_string(), closing);
+        Ok(())
     }
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
@@ -361,11 +375,12 @@ impl SpilmanStorage for MemoryStorage {
             .cloned()
     }
 
-    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) -> Result<(), String> {
         self.keysets
             .write()
             .expect("keysets lock")
             .insert((mint.to_string(), keyset_id), entry);
+        Ok(())
     }
 
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
@@ -498,15 +513,17 @@ impl SpilmanStorage for SqliteStorage {
         .and_then(|json| serde_json::from_str(&json).ok())
     }
 
-    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) {
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) -> Result<(), String> {
         let conn = self.conn.lock().expect("sqlite lock");
         let json = serde_json::to_string(&funding).expect("ChannelFunding serialization failed");
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO spilman_channels (channel_id, funding_json)
              VALUES (?1, ?2)
              ON CONFLICT(channel_id) DO NOTHING",
             rusqlite::params![channel_id, json],
-        );
+        )
+        .map_err(|e| format!("save_funding: {e}"))?;
+        Ok(())
     }
 
     fn get_balance(&self, channel_id: &str) -> Option<PaymentProof> {
@@ -527,17 +544,20 @@ impl SpilmanStorage for SqliteStorage {
         .ok()
     }
 
-    fn update_balance(&self, channel_id: &str, payment: PaymentProof) {
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof) -> Result<(), String> {
         let conn = self.conn.lock().expect("sqlite lock");
         // Monotonic: only update if strictly greater, OR if this is the
         // first real balance (signature is still the empty-string default).
-        let _ = conn.execute(
+        // Returns Ok(()) even if 0 rows affected (monotonic no-op).
+        conn.execute(
             "UPDATE spilman_channels
              SET balance = ?2, signature = ?3
              WHERE channel_id = ?1
                AND (balance < ?2 OR signature = '')",
             rusqlite::params![channel_id, payment.balance as i64, payment.signature],
-        );
+        )
+        .map_err(|e| format!("update_balance: {e}"))?;
+        Ok(())
     }
 
     fn get_usage(&self, channel_id: &str) -> Option<UsageMap> {
@@ -572,22 +592,24 @@ impl SpilmanStorage for SqliteStorage {
     /// `(channel_id, var_name)`): the row is created if it doesn't exist,
     /// or its `count` is bumped by the delta if it does.  All upserts
     /// for the channel run in a single transaction.
-    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) {
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) -> Result<(), String> {
         let mut conn = self.conn.lock().expect("sqlite lock");
-        let tx = match conn.transaction() {
-            Ok(t) => t,
-            Err(_) => return,
-        };
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("increment_usage: begin transaction: {e}"))?;
         for (var, delta) in increments {
-            let _ = tx.execute(
+            tx.execute(
                 "INSERT INTO spilman_usage (channel_id, var_name, count)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT(channel_id, var_name)
                  DO UPDATE SET count = count + excluded.count",
                 rusqlite::params![channel_id, var, *delta as i64],
-            );
+            )
+            .map_err(|e| format!("increment_usage({var}): {e}"))?;
         }
-        let _ = tx.commit();
+        tx.commit()
+            .map_err(|e| format!("increment_usage: commit: {e}"))?;
+        Ok(())
     }
 
     fn get_state(&self, channel_id: &str) -> ChannelState {
@@ -609,15 +631,21 @@ impl SpilmanStorage for SqliteStorage {
         .unwrap_or(ChannelState::Open)
     }
 
-    fn mark_closing(&self, channel_id: &str, closing: ClosingData) {
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData) -> Result<(), String> {
         let conn = self.conn.lock().expect("sqlite lock");
         let json = serde_json::to_string(&closing).expect("ClosingData serialization failed");
-        let _ = conn.execute(
-            "UPDATE spilman_channels
-             SET state = 'Closing', closing_json = ?2
-             WHERE channel_id = ?1 AND state != 'Closed'",
-            rusqlite::params![channel_id, json],
-        );
+        let rows = conn
+            .execute(
+                "UPDATE spilman_channels
+                 SET state = 'Closing', closing_json = ?2
+                 WHERE channel_id = ?1 AND state != 'Closed'",
+                rusqlite::params![channel_id, json],
+            )
+            .map_err(|e| format!("mark_closing: {e}"))?;
+        if rows == 0 {
+            return Err("channel not found or already closed".to_string());
+        }
+        Ok(())
     }
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
@@ -637,25 +665,19 @@ impl SpilmanStorage for SqliteStorage {
 
     fn mark_closed(&self, channel_id: &str, data: ClosedDataView) -> Result<(), String> {
         let conn = self.conn.lock().expect("sqlite lock");
-        // Check if already closed.
-        let current_state: Option<String> = conn
-            .query_row(
-                "SELECT state FROM spilman_channels WHERE channel_id = ?1",
-                [channel_id],
-                |row| row.get(0),
-            )
-            .ok();
-        if current_state.as_deref() == Some("Closed") {
-            return Err("channel already closed".to_string());
-        }
         let json = serde_json::to_string(&data).expect("ClosedDataView serialization failed");
-        conn.execute(
-            "UPDATE spilman_channels
-             SET state = 'Closed', closed_json = ?2, closing_json = NULL
-             WHERE channel_id = ?1",
-            rusqlite::params![channel_id, json],
-        )
-        .map_err(|e| format!("SQLite error: {e}"))?;
+        // Single UPDATE with WHERE guard: only transitions non-Closed channels.
+        let rows = conn
+            .execute(
+                "UPDATE spilman_channels
+                 SET state = 'Closed', closed_json = ?2, closing_json = NULL
+                 WHERE channel_id = ?1 AND state != 'Closed'",
+                rusqlite::params![channel_id, json],
+            )
+            .map_err(|e| format!("mark_closed: {e}"))?;
+        if rows == 0 {
+            return Err("channel already closed or not found".to_string());
+        }
         Ok(())
     }
 
@@ -688,15 +710,17 @@ impl SpilmanStorage for SqliteStorage {
         .and_then(|json| serde_json::from_str(&json).ok())
     }
 
-    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) -> Result<(), String> {
         let conn = self.conn.lock().expect("sqlite lock");
         let json = serde_json::to_string(&entry).expect("KeysetCacheEntry serialization failed");
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO spilman_keysets (mint_url, keyset_id, entry_json)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(mint_url, keyset_id) DO UPDATE SET entry_json = ?3",
             rusqlite::params![mint, keyset_id.to_string(), json],
-        );
+        )
+        .map_err(|e| format!("set_keyset: {e}"))?;
+        Ok(())
     }
 
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
@@ -902,8 +926,13 @@ impl ConfigurableHost {
     // -- keyset management (called by the server at startup / on refresh) -----
 
     /// Insert or update a keyset in the cache.
-    pub fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
-        self.storage.set_keyset(mint, keyset_id, entry);
+    pub fn set_keyset(
+        &self,
+        mint: &str,
+        keyset_id: Id,
+        entry: KeysetCacheEntry,
+    ) -> Result<(), String> {
+        self.storage.set_keyset(mint, keyset_id, entry)
     }
 
     /// Returns `{ mint: { unit: [keyset_id, …] } }` for active keysets.
@@ -985,7 +1014,9 @@ impl ConfigurableHost {
             Ok(m) => m,
             Err(_) => return,
         };
-        self.storage.increment_usage(channel_id, &increments);
+        if let Err(e) = self.storage.increment_usage(channel_id, &increments) {
+            tracing::error!("increment_usage failed for {channel_id}: {e}");
+        }
     }
 
     /// Returns pricing filtered to only units with active keysets.
@@ -1045,8 +1076,13 @@ impl SpilmanHost for ConfigurableHost {
         funding: ChannelFunding,
         initial_payment: PaymentProof,
     ) {
-        self.storage.save_funding(channel_id, funding);
-        self.storage.update_balance(channel_id, initial_payment);
+        if let Err(e) = self.storage.save_funding(channel_id, funding) {
+            tracing::error!("save_funding failed for {channel_id}: {e}");
+            return;
+        }
+        if let Err(e) = self.storage.update_balance(channel_id, initial_payment) {
+            tracing::error!("update_balance (initial) failed for {channel_id}: {e}");
+        }
     }
 
     fn get_amount_due(&self, channel_id: &str, context: Option<&String>) -> u64 {
@@ -1059,7 +1095,10 @@ impl SpilmanHost for ConfigurableHost {
     /// so that the server keeps track of how much service has been provided on
     /// this channel.
     fn record_payment(&self, channel_id: &str, payment: PaymentProof, context: &String) {
-        self.storage.update_balance(channel_id, payment);
+        if let Err(e) = self.storage.update_balance(channel_id, payment) {
+            tracing::error!("update_balance failed for {channel_id}: {e}");
+            return;
+        }
         self.apply_usage_increments(channel_id, context);
     }
 
@@ -1073,9 +1112,6 @@ impl SpilmanHost for ConfigurableHost {
         locktime: u64,
         payment: PaymentProof,
     ) -> Result<(), String> {
-        if self.storage.get_state(channel_id) == ChannelState::Closed {
-            return Err("channel already closed".to_string());
-        }
         self.storage.mark_closing(
             channel_id,
             ClosingData {
@@ -1083,8 +1119,7 @@ impl SpilmanHost for ConfigurableHost {
                 balance: payment.balance,
                 signature: payment.signature,
             },
-        );
-        Ok(())
+        )
     }
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
@@ -1213,15 +1248,17 @@ pricing:
             "capacity": 1000,
         })
         .to_string();
-        host.storage().save_funding(
-            channel_id,
-            ChannelFunding {
-                params_json,
-                funding_proofs_json: "[]".to_string(),
-                channel_secret_hex: "deadbeef".to_string(),
-                keyset_info_json: "{}".to_string(),
-            },
-        );
+        host.storage()
+            .save_funding(
+                channel_id,
+                ChannelFunding {
+                    params_json,
+                    funding_proofs_json: "[]".to_string(),
+                    channel_secret_hex: "deadbeef".to_string(),
+                    keyset_info_json: "{}".to_string(),
+                },
+            )
+            .unwrap();
     }
 
     // -- config parsing -------------------------------------------------------
@@ -1372,7 +1409,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        );
+        ).unwrap();
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
     }
 
@@ -1388,8 +1425,9 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        );
-        assert!(!host.mint_and_keyset_is_acceptable("http://other-mint:3338", &fake_id));
+        )
+        .unwrap();
+        assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
     }
 
     #[test]
@@ -1415,7 +1453,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Usd,
             },
-        );
+        ).unwrap();
         assert!(!host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
 
         // But a "sat" keyset at the same mint should be accepted.
@@ -1427,7 +1465,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        );
+        ).unwrap();
         assert!(host.mint_and_keyset_is_acceptable("http://localhost:3338", &fake_id));
     }
 
@@ -1457,7 +1495,7 @@ pricing:
 
         // Seed accumulated usage: 20 chars, 2 requests.
         let usage: UsageMap = [("chars".to_string(), 20), ("requests".to_string(), 2)].into();
-        host.storage().increment_usage("ch1", &usage);
+        host.storage().increment_usage("ch1", &usage).unwrap();
 
         // Context adds 5 chars, 1 request.
         // Total: (20+5)*1 + (2+1)*5 = 25 + 15 = 40 sat
@@ -1724,7 +1762,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        );
+        ).unwrap();
         host.set_keyset(
             "http://localhost:3338",
             ks2,
@@ -1733,7 +1771,7 @@ pricing:
                 active: false,
                 unit: CurrencyUnit::Sat,
             },
-        );
+        ).unwrap();
         host.set_keyset(
             "http://localhost:3338",
             ks3,
@@ -1742,7 +1780,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Msat,
             },
-        );
+        ).unwrap();
 
         let active_sat = host
             .storage()
@@ -1805,7 +1843,7 @@ pricing:
                 active: true,
                 unit: CurrencyUnit::Sat,
             },
-        );
+        ).unwrap();
         let pricing = host.get_active_pricing();
         assert_eq!(pricing.len(), 1);
         assert!(pricing.contains_key("sat"));
@@ -1893,7 +1931,7 @@ storage:
                 channel_secret_hex: "abcd".to_string(),
                 keyset_info_json: "{}".to_string(),
             };
-            s.save_funding("ch1", funding.clone());
+            s.save_funding("ch1", funding.clone()).unwrap();
 
             let f = s.get_funding("ch1").unwrap();
             assert_eq!(f.params_json, r#"{"unit":"sat"}"#);
@@ -1906,7 +1944,7 @@ storage:
                 channel_secret_hex: "ffff".to_string(),
                 keyset_info_json: "{}".to_string(),
             };
-            s.save_funding("ch1", funding2);
+            s.save_funding("ch1", funding2).unwrap();
             let f2 = s.get_funding("ch1").unwrap();
             assert_eq!(f2.params_json, r#"{"unit":"sat"}"#); // unchanged
         }
@@ -1923,7 +1961,7 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            );
+            ).unwrap();
 
             assert!(s.get_balance("ch1").is_none()); // balance is 0, signature is ''
 
@@ -1933,7 +1971,7 @@ storage:
                     balance: 20,
                     signature: "sig20".to_string(),
                 },
-            );
+            ).unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
 
             // Lower balance should NOT overwrite.
@@ -1943,7 +1981,7 @@ storage:
                     balance: 10,
                     signature: "sig10".to_string(),
                 },
-            );
+            ).unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
             assert_eq!(s.get_balance("ch1").unwrap().signature, "sig20");
 
@@ -1954,7 +1992,7 @@ storage:
                     balance: 30,
                     signature: "sig30".to_string(),
                 },
-            );
+            ).unwrap();
             assert_eq!(s.get_balance("ch1").unwrap().balance, 30);
         }
 
@@ -1966,7 +2004,7 @@ storage:
             let mut inc1 = UsageMap::new();
             inc1.insert("chars".to_string(), 10);
             inc1.insert("requests".to_string(), 1);
-            s.increment_usage("ch1", &inc1);
+            s.increment_usage("ch1", &inc1).unwrap();
 
             let u = s.get_usage("ch1").unwrap();
             assert_eq!(u["chars"], 10);
@@ -1976,7 +2014,7 @@ storage:
             let mut inc2 = UsageMap::new();
             inc2.insert("chars".to_string(), 5);
             inc2.insert("requests".to_string(), 2);
-            s.increment_usage("ch1", &inc2);
+            s.increment_usage("ch1", &inc2).unwrap();
 
             let u2 = s.get_usage("ch1").unwrap();
             assert_eq!(u2["chars"], 15);
@@ -1994,7 +2032,7 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            );
+            ).unwrap();
 
             assert_eq!(s.get_state("ch1"), ChannelState::Open);
 
@@ -2005,7 +2043,7 @@ storage:
                     balance: 50,
                     signature: "sig50".to_string(),
                 },
-            );
+            ).unwrap();
             assert_eq!(s.get_state("ch1"), ChannelState::Closing);
 
             let closing = s.get_closing_data("ch1").unwrap();
@@ -2047,7 +2085,7 @@ storage:
                     channel_secret_hex: "aa".to_string(),
                     keyset_info_json: "{}".to_string(),
                 },
-            );
+            ).unwrap();
 
             let data = ClosedDataView {
                 locktime: 1000,
@@ -2079,7 +2117,7 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
 
             let entry = s.get_keyset("http://mint", &kid).unwrap();
             assert_eq!(entry.unit, CurrencyUnit::Sat);
@@ -2094,7 +2132,7 @@ storage:
                     active: false,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
             let entry2 = s.get_keyset("http://mint", &kid).unwrap();
             assert!(!entry2.active);
         }
@@ -2113,7 +2151,7 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
             s.set_keyset(
                 "http://mint",
                 ks2,
@@ -2122,7 +2160,7 @@ storage:
                     active: false,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
 
             let active = s.get_active_keyset_ids("http://mint", &CurrencyUnit::Sat);
             assert_eq!(active, vec![ks1]);
@@ -2142,7 +2180,7 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
             s.set_keyset(
                 "http://mint",
                 ks2,
@@ -2151,7 +2189,7 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Msat,
                 },
-            );
+            ).unwrap();
 
             let muk = s.get_mints_units_keysets();
             assert!(muk["http://mint"]["sat"].contains(&ks1.to_string()));
@@ -2173,7 +2211,7 @@ storage:
                     active: true,
                     unit: CurrencyUnit::Sat,
                 },
-            );
+            ).unwrap();
 
             let units = s.get_active_units();
             assert!(units.contains("sat"));
@@ -2228,17 +2266,17 @@ storage:
                         channel_secret_hex: "abcd".to_string(),
                         keyset_info_json: "{}".to_string(),
                     },
-                );
+                ).unwrap();
                 s.update_balance(
                     "ch1",
                     PaymentProof {
                         balance: 42,
                         signature: "sig42".to_string(),
                     },
-                );
+                ).unwrap();
                 let mut inc = UsageMap::new();
                 inc.insert("chars".to_string(), 100);
-                s.increment_usage("ch1", &inc);
+                s.increment_usage("ch1", &inc).unwrap();
             }
 
             // Session 2: reopen and verify.
