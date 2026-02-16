@@ -25,6 +25,11 @@
 //!   "http://localhost:3338": [sat, msat, usd]
 //! min_expiry_seconds: 3600
 //!
+//! # Optional: defaults to in-memory if omitted.
+//! # storage:
+//! #   type: sqlite
+//! #   path: "./spilman.db"
+//!
 //! pricing:
 //!   sat:
 //!     min_capacity: 10
@@ -76,6 +81,23 @@ pub struct UnitPricingConfig {
     pub variables: HashMap<String, u64>,
 }
 
+/// Storage backend configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum StorageConfig {
+    /// In-memory storage (default). All data lost on restart.
+    #[default]
+    #[serde(rename = "memory")]
+    Memory,
+
+    /// SQLite file-backed storage. Persists across restarts.
+    #[serde(rename = "sqlite")]
+    Sqlite {
+        /// Path to the SQLite database file.
+        path: String,
+    },
+}
+
 /// Top-level YAML configuration for [`ConfigurableHost`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigurableHostConfig {
@@ -86,6 +108,10 @@ pub struct ConfigurableHostConfig {
     /// Minimum channel expiry in seconds.
     #[serde(default = "default_min_expiry")]
     pub min_expiry_seconds: u64,
+
+    /// Storage backend. Defaults to in-memory if omitted.
+    #[serde(default)]
+    pub storage: StorageConfig,
 
     /// Per-unit pricing. Keys are unit names (`"sat"`, `"msat"`, `"usd"`, …).
     pub pricing: HashMap<String, UnitPricingConfig>,
@@ -103,84 +129,242 @@ impl ConfigurableHostConfig {
 }
 
 // ============================================================================
-// In-memory stores
+// Storage trait & types
 // ============================================================================
 
 /// Per-channel accumulated usage: `variable_name -> value`.
 pub type UsageMap = HashMap<String, u64>;
 
-/// Cached keyset entry.
-#[derive(Clone)]
+/// Cached mint keyset metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeysetCacheEntry {
     pub info_json: String,
     pub active: bool,
     pub unit: CurrencyUnit,
 }
 
-/// Thread-safe in-memory stores.
-struct Stores {
-    /// Immutable channel founding data (params, funding proofs, shared secret, keyset info).
-    /// Written once by `save_funding()`; read by payment validation and pricing lookups.
-    /// Keyed by channel ID.
+/// Storage backend for [`ConfigurableHost`].
+///
+/// All methods are synchronous. Implementations must be thread-safe
+/// (`Send + Sync`). The default implementation is [`MemoryStorage`];
+/// [`SqliteStorage`] provides persistence across restarts.
+pub trait SpilmanStorage: Send + Sync {
+    // -- channel funding ------------------------------------------------------
+
+    /// Get the stored funding data for a channel.
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding>;
+
+    /// Save funding data for a new channel.  Must be idempotent: if the
+    /// channel already has funding, this call is a no-op.
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding);
+
+    // -- balance & payments ---------------------------------------------------
+
+    /// Get the current balance for a channel.  Returns `None` if no payment
+    /// has been recorded yet.
+    fn get_balance(&self, channel_id: &str) -> Option<PaymentProof>;
+
+    /// Update the balance for a channel.  Must be monotonic: only update if
+    /// the new balance is strictly greater than the current one (or if no
+    /// balance has been set yet).
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof);
+
+    // -- usage variables ------------------------------------------------------
+
+    /// Get the accumulated usage for a channel.
+    fn get_usage(&self, channel_id: &str) -> Option<UsageMap>;
+
+    /// Increment usage variables for a channel.
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap);
+
+    // -- channel state --------------------------------------------------------
+
+    /// Get the current state (Open, Closing, Closed).
+    fn get_state(&self, channel_id: &str) -> ChannelState;
+
+    /// Mark a channel as closing.
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData);
+
+    /// Get the data for a closing channel.
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
+
+    /// Mark a channel as closed.  Returns `Err` if already closed.
+    fn mark_closed(&self, channel_id: &str, data: ClosedDataView) -> Result<(), String>;
+
+    /// Get the data for a closed channel.
+    fn get_closed_data(&self, channel_id: &str) -> Option<ClosedDataView>;
+
+    // -- keyset cache ---------------------------------------------------------
+
+    /// Get a keyset from the cache.
+    fn get_keyset(&self, mint: &str, keyset_id: &Id) -> Option<KeysetCacheEntry>;
+
+    /// Insert or update a keyset in the cache.
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry);
+
+    /// Get all active keyset IDs for a given mint and unit.
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id>;
+
+    /// Returns `{ mint_url: { unit: [keyset_id, …] } }` for all active keysets.
+    fn get_mints_units_keysets(&self) -> HashMap<String, HashMap<String, Vec<String>>>;
+
+    /// Returns the set of units that have at least one active keyset.
+    fn get_active_units(&self) -> std::collections::HashSet<String>;
+}
+
+// ============================================================================
+// MemoryStorage
+// ============================================================================
+
+/// Thread-safe in-memory storage using `RwLock<HashMap>`.
+#[derive(Default)]
+pub struct MemoryStorage {
     funding: RwLock<HashMap<ChannelId, ChannelFunding>>,
-
-    /// Highest balance the client has signed over, plus the Schnorr signature proving it.
-    /// Monotonically increasing — lower values never overwrite higher ones. This is the
-    /// server's proof-of-debt for unilateral close. Keyed by channel ID.
     balance: RwLock<HashMap<ChannelId, PaymentProof>>,
-
-    /// Accumulated per-channel resource consumption counters (e.g. {"chars": 150, "requests": 3}).
-    /// Fed into `compute_amount_due()` which applies linear pricing to determine the total owed.
-    /// Keyed by channel ID.
     usage: RwLock<HashMap<ChannelId, UsageMap>>,
-
-    /// Transient state for channels that have initiated closing but not yet completed the
-    /// mint swap — the intermediate step between Open and Closed. Payments are no longer
-    /// accepted by the server. Removed once the channel is fully closed. Keyed by channel ID.
-    /// The server and client may agree a cooperative close at any balance between 0 and 'capacity'
-    /// inclusive; this allows a refund if the client has been overpaying.
     closing: RwLock<HashMap<ChannelId, ClosingData>>,
-
-    /// Permanent final settlement records: proof distribution between sender and receiver,
-    /// balances, and locktime. Enables idempotent close responses and prevents double-closes.
-    /// Keyed by channel ID.
     closed: RwLock<HashMap<ChannelId, ClosedDataView>>,
-
-    /// Cached mint keyset metadata for validating channel funding and advertising accepted
-    /// currency units. Keyed by `(mint_url, keyset_id)`.
-    /// The server operator is NOT required to keep the keyset information up-to-date; the
-    /// bridge will explicitly request — via the host's `networking.refresh_all_keysets()` — to
-    /// update the set of (active) keysets if a swap fails due to an inactive keyset.
     keysets: RwLock<HashMap<(String, Id), KeysetCacheEntry>>,
 }
 
-impl Stores {
-    fn new() -> Self {
-        Self {
-            funding: RwLock::new(HashMap::new()),
-            balance: RwLock::new(HashMap::new()),
-            usage: RwLock::new(HashMap::new()),
-            closing: RwLock::new(HashMap::new()),
-            closed: RwLock::new(HashMap::new()),
-            keysets: RwLock::new(HashMap::new()),
+impl MemoryStorage {
+    /// Create a new, empty in-memory storage.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl SpilmanStorage for MemoryStorage {
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+        self.funding
+            .read()
+            .expect("funding lock")
+            .get(channel_id)
+            .cloned()
+    }
+
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) {
+        let mut store = self.funding.write().expect("funding lock");
+        if !store.contains_key(channel_id) {
+            store.insert(channel_id.to_string(), funding);
         }
     }
 
-    // -- keyset helpers --
+    fn get_balance(&self, channel_id: &str) -> Option<PaymentProof> {
+        self.balance
+            .read()
+            .expect("balance lock")
+            .get(channel_id)
+            .cloned()
+    }
+
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof) {
+        let mut store = self.balance.write().expect("balance lock");
+        let should_update = store
+            .get(channel_id)
+            .map(|b| payment.balance > b.balance)
+            .unwrap_or(true);
+        if should_update {
+            store.insert(channel_id.to_string(), payment);
+        }
+    }
+
+    fn get_usage(&self, channel_id: &str) -> Option<UsageMap> {
+        let store = self.usage.read().expect("usage lock");
+        let map = store.get(channel_id)?;
+        if map.is_empty() {
+            None
+        } else {
+            Some(map.clone())
+        }
+    }
+
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) {
+        let mut store = self.usage.write().expect("usage lock");
+        let usage = store.entry(channel_id.to_string()).or_default();
+        for (var, delta) in increments {
+            *usage.entry(var.clone()).or_insert(0) += delta;
+        }
+    }
+
+    fn get_state(&self, channel_id: &str) -> ChannelState {
+        if self
+            .closed
+            .read()
+            .expect("closed lock")
+            .contains_key(channel_id)
+        {
+            ChannelState::Closed
+        } else if self
+            .closing
+            .read()
+            .expect("closing lock")
+            .contains_key(channel_id)
+        {
+            ChannelState::Closing
+        } else {
+            ChannelState::Open
+        }
+    }
+
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData) {
+        self.closing
+            .write()
+            .expect("closing lock")
+            .insert(channel_id.to_string(), closing);
+    }
+
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
+        self.closing
+            .read()
+            .expect("closing lock")
+            .get(channel_id)
+            .cloned()
+    }
+
+    fn mark_closed(&self, channel_id: &str, data: ClosedDataView) -> Result<(), String> {
+        if self
+            .closed
+            .read()
+            .expect("closed lock")
+            .contains_key(channel_id)
+        {
+            return Err("channel already closed".to_string());
+        }
+        // Insert into closed before removing from closing, so that
+        // get_state (which checks closed first) never sees the channel
+        // in neither store and briefly reports it as Open.
+        self.closed
+            .write()
+            .expect("closed lock")
+            .insert(channel_id.to_string(), data);
+        self.closing
+            .write()
+            .expect("closing lock")
+            .remove(channel_id);
+        Ok(())
+    }
+
+    fn get_closed_data(&self, channel_id: &str) -> Option<ClosedDataView> {
+        self.closed
+            .read()
+            .expect("closed lock")
+            .get(channel_id)
+            .cloned()
+    }
 
     fn get_keyset(&self, mint: &str, keyset_id: &Id) -> Option<KeysetCacheEntry> {
-        let key = (mint.to_string(), *keyset_id);
         self.keysets
             .read()
-            .expect("keysets lock poisoned")
-            .get(&key)
+            .expect("keysets lock")
+            .get(&(mint.to_string(), *keyset_id))
             .cloned()
     }
 
     fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
         self.keysets
             .write()
-            .expect("keysets lock poisoned")
+            .expect("keysets lock")
             .insert((mint.to_string(), keyset_id), entry);
     }
 
@@ -190,7 +374,7 @@ impl Stores {
         // its records of the keysets
         self.keysets
             .read()
-            .expect("keysets lock poisoned")
+            .expect("keysets lock")
             .iter()
             .filter(|((m, _), entry)| m == mint && entry.unit == *unit && entry.active)
             .map(|((_, kid), _)| *kid)
@@ -200,7 +384,7 @@ impl Stores {
     /// Returns `{ mint_url: { unit: [keyset_id, …] } }` for all active keysets.
     fn get_mints_units_keysets(&self) -> HashMap<String, HashMap<String, Vec<String>>> {
         let mut result: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
-        let store = self.keysets.read().expect("keysets lock poisoned");
+        let store = self.keysets.read().expect("keysets lock");
         for ((mint, keyset_id), entry) in store.iter() {
             if !entry.active {
                 continue;
@@ -219,11 +403,393 @@ impl Stores {
     fn get_active_units(&self) -> std::collections::HashSet<String> {
         self.keysets
             .read()
-            .expect("keysets lock poisoned")
+            .expect("keysets lock")
             .values()
             .filter(|e| e.active)
             .map(|e| e.unit.to_string())
             .collect()
+    }
+}
+
+// ============================================================================
+// SqliteStorage
+// ============================================================================
+
+/// SQLite-backed persistent storage.
+///
+/// Schema:
+/// - `spilman_channels` — funding, balance, state, closing/closed JSON
+/// - `spilman_usage` — normalized: one row per (channel, variable) with atomic
+///   `INSERT ... ON CONFLICT DO UPDATE SET count = count + excluded.count`
+/// - `spilman_keysets` — cached mint keyset metadata (JSON)
+pub struct SqliteStorage {
+    conn: std::sync::Mutex<rusqlite::Connection>,
+}
+
+impl SqliteStorage {
+    /// Open (or create) a SQLite database at the given path.
+    pub fn open(path: &str) -> Result<Self, String> {
+        let conn = rusqlite::Connection::open(path)
+            .map_err(|e| format!("failed to open SQLite at {path}: {e}"))?;
+        let storage = Self {
+            conn: std::sync::Mutex::new(conn),
+        };
+        storage.init_schema()?;
+        Ok(storage)
+    }
+
+    /// Create an in-memory SQLite database (useful for testing).
+    #[cfg(test)]
+    pub fn open_in_memory() -> Result<Self, String> {
+        let conn = rusqlite::Connection::open_in_memory()
+            .map_err(|e| format!("failed to open in-memory SQLite: {e}"))?;
+        let storage = Self {
+            conn: std::sync::Mutex::new(conn),
+        };
+        storage.init_schema()?;
+        Ok(storage)
+    }
+
+    fn init_schema(&self) -> Result<(), String> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS spilman_channels (
+                channel_id    TEXT NOT NULL PRIMARY KEY,
+                funding_json  TEXT NOT NULL,
+                balance       INTEGER NOT NULL DEFAULT 0,
+                signature     TEXT NOT NULL DEFAULT '',
+                state         TEXT NOT NULL DEFAULT 'Open',
+                closing_json  TEXT,
+                closed_json   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS spilman_usage (
+                channel_id TEXT NOT NULL,
+                var_name   TEXT NOT NULL,
+                count      INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (channel_id, var_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS spilman_keysets (
+                mint_url   TEXT NOT NULL,
+                keyset_id  TEXT NOT NULL,
+                entry_json TEXT NOT NULL,
+                PRIMARY KEY (mint_url, keyset_id)
+            );
+            ",
+        )
+        .map_err(|e| format!("failed to initialize SQLite schema: {e}"))
+    }
+}
+
+impl SpilmanStorage for SqliteStorage {
+    fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT funding_json FROM spilman_channels WHERE channel_id = ?1",
+            [channel_id],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            },
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
+    fn save_funding(&self, channel_id: &str, funding: ChannelFunding) {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let json = serde_json::to_string(&funding).expect("ChannelFunding serialization failed");
+        let _ = conn.execute(
+            "INSERT INTO spilman_channels (channel_id, funding_json)
+             VALUES (?1, ?2)
+             ON CONFLICT(channel_id) DO NOTHING",
+            rusqlite::params![channel_id, json],
+        );
+    }
+
+    fn get_balance(&self, channel_id: &str) -> Option<PaymentProof> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT balance, signature FROM spilman_channels
+             WHERE channel_id = ?1 AND signature != ''",
+            [channel_id],
+            |row| {
+                let balance: i64 = row.get(0)?;
+                let signature: String = row.get(1)?;
+                Ok(PaymentProof {
+                    balance: balance as u64,
+                    signature,
+                })
+            },
+        )
+        .ok()
+    }
+
+    fn update_balance(&self, channel_id: &str, payment: PaymentProof) {
+        let conn = self.conn.lock().expect("sqlite lock");
+        // Monotonic: only update if strictly greater, OR if this is the
+        // first real balance (signature is still the empty-string default).
+        let _ = conn.execute(
+            "UPDATE spilman_channels
+             SET balance = ?2, signature = ?3
+             WHERE channel_id = ?1
+               AND (balance < ?2 OR signature = '')",
+            rusqlite::params![channel_id, payment.balance as i64, payment.signature],
+        );
+    }
+
+    fn get_usage(&self, channel_id: &str) -> Option<UsageMap> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let mut stmt =
+            match conn.prepare("SELECT var_name, count FROM spilman_usage WHERE channel_id = ?1") {
+                Ok(s) => s,
+                Err(_) => return None,
+            };
+        let map: UsageMap = stmt
+            .query_map([channel_id], |row| {
+                let var: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((var, count as u64))
+            })
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
+    }
+
+    /// Atomically increment usage counters for a channel.
+    ///
+    /// `increments` maps variable names to their deltas for this request,
+    /// e.g. `{"chars": 42, "requests": 1}`.  Each entry produces one
+    /// SQL upsert against the `spilman_usage` table (keyed by
+    /// `(channel_id, var_name)`): the row is created if it doesn't exist,
+    /// or its `count` is bumped by the delta if it does.  All upserts
+    /// for the channel run in a single transaction.
+    fn increment_usage(&self, channel_id: &str, increments: &UsageMap) {
+        let mut conn = self.conn.lock().expect("sqlite lock");
+        let tx = match conn.transaction() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        for (var, delta) in increments {
+            let _ = tx.execute(
+                "INSERT INTO spilman_usage (channel_id, var_name, count)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(channel_id, var_name)
+                 DO UPDATE SET count = count + excluded.count",
+                rusqlite::params![channel_id, var, *delta as i64],
+            );
+        }
+        let _ = tx.commit();
+    }
+
+    fn get_state(&self, channel_id: &str) -> ChannelState {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT state FROM spilman_channels WHERE channel_id = ?1",
+            [channel_id],
+            |row| {
+                let state: String = row.get(0)?;
+                Ok(state)
+            },
+        )
+        .ok()
+        .map(|s| match s.as_str() {
+            "Closing" => ChannelState::Closing,
+            "Closed" => ChannelState::Closed,
+            _ => ChannelState::Open,
+        })
+        .unwrap_or(ChannelState::Open)
+    }
+
+    fn mark_closing(&self, channel_id: &str, closing: ClosingData) {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let json = serde_json::to_string(&closing).expect("ClosingData serialization failed");
+        let _ = conn.execute(
+            "UPDATE spilman_channels
+             SET state = 'Closing', closing_json = ?2
+             WHERE channel_id = ?1 AND state != 'Closed'",
+            rusqlite::params![channel_id, json],
+        );
+    }
+
+    fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT closing_json FROM spilman_channels
+             WHERE channel_id = ?1 AND state = 'Closing'",
+            [channel_id],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            },
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
+    fn mark_closed(&self, channel_id: &str, data: ClosedDataView) -> Result<(), String> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        // Check if already closed.
+        let current_state: Option<String> = conn
+            .query_row(
+                "SELECT state FROM spilman_channels WHERE channel_id = ?1",
+                [channel_id],
+                |row| row.get(0),
+            )
+            .ok();
+        if current_state.as_deref() == Some("Closed") {
+            return Err("channel already closed".to_string());
+        }
+        let json = serde_json::to_string(&data).expect("ClosedDataView serialization failed");
+        conn.execute(
+            "UPDATE spilman_channels
+             SET state = 'Closed', closed_json = ?2, closing_json = NULL
+             WHERE channel_id = ?1",
+            rusqlite::params![channel_id, json],
+        )
+        .map_err(|e| format!("SQLite error: {e}"))?;
+        Ok(())
+    }
+
+    fn get_closed_data(&self, channel_id: &str) -> Option<ClosedDataView> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT closed_json FROM spilman_channels
+             WHERE channel_id = ?1 AND state = 'Closed'",
+            [channel_id],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            },
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
+    fn get_keyset(&self, mint: &str, keyset_id: &Id) -> Option<KeysetCacheEntry> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        conn.query_row(
+            "SELECT entry_json FROM spilman_keysets WHERE mint_url = ?1 AND keyset_id = ?2",
+            rusqlite::params![mint, keyset_id.to_string()],
+            |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            },
+        )
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
+    fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let json = serde_json::to_string(&entry).expect("KeysetCacheEntry serialization failed");
+        let _ = conn.execute(
+            "INSERT INTO spilman_keysets (mint_url, keyset_id, entry_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(mint_url, keyset_id) DO UPDATE SET entry_json = ?3",
+            rusqlite::params![mint, keyset_id.to_string(), json],
+        );
+    }
+
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let mut stmt = match conn
+            .prepare("SELECT keyset_id, entry_json FROM spilman_keysets WHERE mint_url = ?1")
+        {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+
+        let unit_str = unit.to_string();
+        stmt.query_map([mint], |row| {
+            let kid_str: String = row.get(0)?;
+            let json: String = row.get(1)?;
+            Ok((kid_str, json))
+        })
+        .ok()
+        .map(|rows| {
+            rows.filter_map(|r| r.ok())
+                .filter_map(|(kid_str, json)| {
+                    let entry: KeysetCacheEntry = serde_json::from_str(&json).ok()?;
+                    if entry.active && entry.unit.to_string() == unit_str {
+                        kid_str.parse::<Id>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn get_mints_units_keysets(&self) -> HashMap<String, HashMap<String, Vec<String>>> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let mut stmt =
+            match conn.prepare("SELECT mint_url, keyset_id, entry_json FROM spilman_keysets") {
+                Ok(s) => s,
+                Err(_) => return HashMap::new(),
+            };
+
+        let mut result: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+        if let Ok(rows) = stmt.query_map([], |row| {
+            let mint: String = row.get(0)?;
+            let kid: String = row.get(1)?;
+            let json: String = row.get(2)?;
+            Ok((mint, kid, json))
+        }) {
+            for row in rows.flatten() {
+                let (mint, kid, json) = row;
+                if let Ok(entry) = serde_json::from_str::<KeysetCacheEntry>(&json) {
+                    // Only active keysets: inactive ones still work for
+                    // existing channels, but we don't advertise them to
+                    // new clients.
+                    if entry.active {
+                        result
+                            .entry(mint)
+                            .or_default()
+                            .entry(entry.unit.to_string())
+                            .or_default()
+                            .push(kid);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn get_active_units(&self) -> std::collections::HashSet<String> {
+        let conn = self.conn.lock().expect("sqlite lock");
+        let mut stmt = match conn.prepare("SELECT entry_json FROM spilman_keysets") {
+            Ok(s) => s,
+            Err(_) => return std::collections::HashSet::new(),
+        };
+
+        stmt.query_map([], |row| {
+            let json: String = row.get(0)?;
+            Ok(json)
+        })
+        .ok()
+        .map(|rows| {
+            rows.filter_map(|r| r.ok())
+                .filter_map(|json| {
+                    let entry: KeysetCacheEntry = serde_json::from_str(&json).ok()?;
+                    if entry.active {
+                        Some(entry.unit.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -234,9 +800,10 @@ impl Stores {
 /// A generic, YAML-configurable [`SpilmanHost`] implementation.
 ///
 /// Tracks usage via named usage variables and computes pricing as a linear
-/// combination.  Storage is in-memory (`RwLock<HashMap>`).
+/// combination.  Pluggable storage: [`MemoryStorage`] (default) or
+/// [`SqliteStorage`] for persistence.
 ///
-/// `Clone` is cheap (stores are behind `Arc`), which allows passing the host
+/// `Clone` is cheap (storage is behind `Arc`), which allows passing the host
 /// by value to [`SpilmanBridge::new`] while sharing state with route handlers.
 ///
 /// Construct via [`ConfigurableHost::new`] or [`ConfigurableHost::from_yaml`].
@@ -245,13 +812,29 @@ pub struct ConfigurableHost {
     config: ConfigurableHostConfig,
     server_pubkey: PublicKey,
     server_secret_hex: String,
-    stores: Arc<Stores>,
+    storage: Arc<dyn SpilmanStorage>,
 }
 
 impl ConfigurableHost {
     /// Create a new host from an already-parsed config and a hex-encoded
-    /// secret key.
+    /// secret key.  The storage backend is determined by `config.storage`:
+    /// - `StorageConfig::Memory` (default) — in-memory, lost on restart
+    /// - `StorageConfig::Sqlite { path }` — SQLite file, persistent
     pub fn new(config: ConfigurableHostConfig, secret_key_hex: &str) -> Result<Self, String> {
+        let storage: Arc<dyn SpilmanStorage> = match &config.storage {
+            StorageConfig::Memory => Arc::new(MemoryStorage::new()),
+            StorageConfig::Sqlite { path } => Arc::new(SqliteStorage::open(path)?),
+        };
+        Self::with_storage(config, secret_key_hex, storage)
+    }
+
+    /// Create a new host with an explicit storage backend, ignoring
+    /// `config.storage`.  Useful for testing or custom backends.
+    pub fn with_storage(
+        config: ConfigurableHostConfig,
+        secret_key_hex: &str,
+        storage: Arc<dyn SpilmanStorage>,
+    ) -> Result<Self, String> {
         let secret_key =
             SecretKey::from_hex(secret_key_hex).map_err(|e| format!("invalid secret key: {e}"))?;
         let server_pubkey = secret_key.public_key();
@@ -284,7 +867,7 @@ impl ConfigurableHost {
             config,
             server_pubkey,
             server_secret_hex: secret_key_hex.to_string(),
-            stores: Arc::new(Stores::new()),
+            storage,
         })
     }
 
@@ -311,80 +894,60 @@ impl ConfigurableHost {
         &self.config.mints
     }
 
+    /// Access the underlying storage backend.
+    pub fn storage(&self) -> &dyn SpilmanStorage {
+        &*self.storage
+    }
+
     // -- keyset management (called by the server at startup / on refresh) -----
 
     /// Insert or update a keyset in the cache.
     pub fn set_keyset(&self, mint: &str, keyset_id: Id, entry: KeysetCacheEntry) {
-        self.stores.set_keyset(mint, keyset_id, entry);
+        self.storage.set_keyset(mint, keyset_id, entry);
     }
 
     /// Returns `{ mint: { unit: [keyset_id, …] } }` for active keysets.
     pub fn get_mints_units_keysets(&self) -> HashMap<String, HashMap<String, Vec<String>>> {
-        self.stores.get_mints_units_keysets()
+        self.storage.get_mints_units_keysets()
     }
 
     /// Returns the set of units that have at least one active keyset.
     pub fn get_active_units(&self) -> std::collections::HashSet<String> {
-        self.stores.get_active_units()
+        self.storage.get_active_units()
     }
 
     // -- channel data accessors (for route handlers) --------------------------
 
     /// Get the stored funding data for a channel (for status endpoints, etc.).
     pub fn get_funding_data(&self, channel_id: &str) -> Option<ChannelFunding> {
-        self.stores
-            .funding
-            .read()
-            .expect("funding lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_funding(channel_id)
     }
 
     /// Get the current balance for a channel.
     pub fn get_balance(&self, channel_id: &str) -> Option<PaymentProof> {
-        self.stores
-            .balance
-            .read()
-            .expect("balance lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_balance(channel_id)
     }
 
     /// Get the accumulated usage for a channel.
     pub fn get_usage(&self, channel_id: &str) -> Option<UsageMap> {
-        self.stores
-            .usage
-            .read()
-            .expect("usage lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_usage(channel_id)
     }
 
     /// Check whether a channel is closed.
     pub fn is_closed(&self, channel_id: &str) -> bool {
-        self.stores
-            .closed
-            .read()
-            .expect("closed lock")
-            .contains_key(channel_id)
+        self.storage.get_closed_data(channel_id).is_some()
     }
 
     /// Get the closed channel data (for idempotent close responses).
     pub fn get_closed_data(&self, channel_id: &str) -> Option<ClosedDataView> {
-        self.stores
-            .closed
-            .read()
-            .expect("closed lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_closed_data(channel_id)
     }
 
     // -- pricing helpers ------------------------------------------------------
 
     /// Get the unit for a channel from its stored params.
     fn channel_unit(&self, channel_id: &str) -> Option<String> {
-        let store = self.stores.funding.read().expect("funding lock");
-        let funding = store.get(channel_id)?;
+        let funding = self.storage.get_funding(channel_id)?;
         let params: serde_json::Value = serde_json::from_str(&funding.params_json).ok()?;
         params.get("unit")?.as_str().map(String::from)
     }
@@ -399,14 +962,7 @@ impl ConfigurableHost {
         };
 
         // Get accumulated usage.
-        let accumulated = self
-            .stores
-            .usage
-            .read()
-            .expect("usage lock")
-            .get(channel_id)
-            .cloned()
-            .unwrap_or_default();
+        let accumulated = self.storage.get_usage(channel_id).unwrap_or_default();
 
         // Parse pending increments from context.
         let pending: HashMap<String, u64> = context_json
@@ -429,17 +985,12 @@ impl ConfigurableHost {
             Ok(m) => m,
             Err(_) => return,
         };
-
-        let mut store = self.stores.usage.write().expect("usage lock");
-        let usage = store.entry(channel_id.to_string()).or_default();
-        for (var, delta) in increments {
-            *usage.entry(var).or_insert(0) += delta;
-        }
+        self.storage.increment_usage(channel_id, &increments);
     }
 
     /// Returns pricing filtered to only units with active keysets.
     pub fn get_active_pricing(&self) -> HashMap<String, &UnitPricingConfig> {
-        let active_units = self.stores.get_active_units();
+        let active_units = self.storage.get_active_units();
         self.config
             .pricing
             .iter()
@@ -450,7 +1001,7 @@ impl ConfigurableHost {
 }
 
 /// Public view of closed channel data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedDataView {
     pub locktime: u64,
     pub closed_amount: u64,
@@ -475,19 +1026,14 @@ impl SpilmanHost for ConfigurableHost {
             Some(units) => units,
             None => return false,
         };
-        match self.stores.get_keyset(mint, keyset_id) {
+        match self.storage.get_keyset(mint, keyset_id) {
             Some(entry) => trusted_units.iter().any(|u| u == &entry.unit.to_string()),
             None => false,
         }
     }
 
     fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
-        self.stores
-            .funding
-            .read()
-            .expect("funding lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_funding(channel_id)
     }
 
     /// `save_funding` is called once per channel, when it first receives the
@@ -499,21 +1045,8 @@ impl SpilmanHost for ConfigurableHost {
         funding: ChannelFunding,
         initial_payment: PaymentProof,
     ) {
-        {
-            let mut store = self.stores.funding.write().expect("funding lock");
-            if !store.contains_key(channel_id) {
-                store.insert(channel_id.to_string(), funding);
-            }
-        }
-        // Store initial balance.
-        let mut bal_store = self.stores.balance.write().expect("balance lock");
-        let should_update = bal_store
-            .get(channel_id)
-            .map(|b| initial_payment.balance > b.balance)
-            .unwrap_or(true);
-        if should_update {
-            bal_store.insert(channel_id.to_string(), initial_payment);
-        }
+        self.storage.save_funding(channel_id, funding);
+        self.storage.update_balance(channel_id, initial_payment);
     }
 
     fn get_amount_due(&self, channel_id: &str, context: Option<&String>) -> u64 {
@@ -526,41 +1059,12 @@ impl SpilmanHost for ConfigurableHost {
     /// so that the server keeps track of how much service has been provided on
     /// this channel.
     fn record_payment(&self, channel_id: &str, payment: PaymentProof, context: &String) {
-        // Update balance (monotonically increasing).
-        {
-            let mut store = self.stores.balance.write().expect("balance lock");
-            let should_update = store
-                .get(channel_id)
-                .map(|b| payment.balance > b.balance)
-                .unwrap_or(true);
-            if should_update {
-                store.insert(channel_id.to_string(), payment);
-            }
-        }
-        // Apply usage increments.
+        self.storage.update_balance(channel_id, payment);
         self.apply_usage_increments(channel_id, context);
     }
 
     fn get_channel_state(&self, channel_id: &str) -> ChannelState {
-        if self
-            .stores
-            .closed
-            .read()
-            .expect("closed lock")
-            .contains_key(channel_id)
-        {
-            ChannelState::Closed
-        } else if self
-            .stores
-            .closing
-            .read()
-            .expect("closing lock")
-            .contains_key(channel_id)
-        {
-            ChannelState::Closing
-        } else {
-            ChannelState::Open
-        }
+        self.storage.get_state(channel_id)
     }
 
     fn mark_channel_closing(
@@ -569,17 +1073,11 @@ impl SpilmanHost for ConfigurableHost {
         locktime: u64,
         payment: PaymentProof,
     ) -> Result<(), String> {
-        if self
-            .stores
-            .closed
-            .read()
-            .expect("closed lock")
-            .contains_key(channel_id)
-        {
+        if self.storage.get_state(channel_id) == ChannelState::Closed {
             return Err("channel already closed".to_string());
         }
-        self.stores.closing.write().expect("closing lock").insert(
-            channel_id.to_string(),
+        self.storage.mark_closing(
+            channel_id,
             ClosingData {
                 locktime,
                 balance: payment.balance,
@@ -590,12 +1088,7 @@ impl SpilmanHost for ConfigurableHost {
     }
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
-        self.stores
-            .closing
-            .read()
-            .expect("closing lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_closing_data(channel_id)
     }
 
     fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
@@ -618,20 +1111,17 @@ impl SpilmanHost for ConfigurableHost {
         &self,
         channel_id: &str,
     ) -> Option<PaymentProof> {
-        self.stores
-            .balance
-            .read()
-            .expect("balance lock")
-            .get(channel_id)
-            .cloned()
+        self.storage.get_balance(channel_id)
     }
 
     fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
-        self.stores.get_active_keyset_ids(mint, unit)
+        self.storage.get_active_keyset_ids(mint, unit)
     }
 
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> {
-        self.stores.get_keyset(mint, keyset_id).map(|e| e.info_json)
+        self.storage
+            .get_keyset(mint, keyset_id)
+            .map(|e| e.info_json)
     }
 
     fn compute_channel_secret(
@@ -661,20 +1151,8 @@ impl SpilmanHost for ConfigurableHost {
         receiver_sum: u64,
         sender_sum: u64,
     ) -> Result<(), String> {
-        if self
-            .stores
-            .closed
-            .read()
-            .expect("closed lock")
-            .contains_key(channel_id)
-        {
-            return Err("channel already closed".to_string());
-        }
-        // Insert into closed before removing from closing, so that
-        // get_channel_state (which checks closed first) never sees the
-        // channel in neither store and briefly reports it as Open.
-        self.stores.closed.write().expect("closed lock").insert(
-            channel_id.to_string(),
+        self.storage.mark_closed(
+            channel_id,
             ClosedDataView {
                 locktime,
                 closed_amount: balance,
@@ -684,13 +1162,7 @@ impl SpilmanHost for ConfigurableHost {
                 receiver_proofs_json: receiver_proofs_json.to_string(),
                 sender_proofs_json: sender_proofs_json.to_string(),
             },
-        );
-        self.stores
-            .closing
-            .write()
-            .expect("closing lock")
-            .remove(channel_id);
-        Ok(())
+        )
     }
 }
 
@@ -732,6 +1204,24 @@ pricing:
 
     fn make_host() -> ConfigurableHost {
         ConfigurableHost::from_yaml(TEST_YAML, TEST_SECRET_KEY).unwrap()
+    }
+
+    /// Seed a channel with funding only (no balance, no usage).
+    fn seed_channel(host: &ConfigurableHost, channel_id: &str, unit: &str) {
+        let params_json = serde_json::json!({
+            "unit": unit,
+            "capacity": 1000,
+        })
+        .to_string();
+        host.storage().save_funding(
+            channel_id,
+            ChannelFunding {
+                params_json,
+                funding_proofs_json: "[]".to_string(),
+                channel_secret_hex: "deadbeef".to_string(),
+                keyset_info_json: "{}".to_string(),
+            },
+        );
     }
 
     // -- config parsing -------------------------------------------------------
@@ -943,23 +1433,6 @@ pricing:
 
     // -- amount due (linear combination) --------------------------------------
 
-    fn seed_channel(host: &ConfigurableHost, channel_id: &str, unit: &str) {
-        let params_json = serde_json::json!({
-            "unit": unit,
-            "capacity": 1000,
-        })
-        .to_string();
-        host.stores.funding.write().unwrap().insert(
-            channel_id.to_string(),
-            ChannelFunding {
-                params_json,
-                funding_proofs_json: "[]".to_string(),
-                channel_secret_hex: "deadbeef".to_string(),
-                keyset_info_json: "{}".to_string(),
-            },
-        );
-    }
-
     #[test]
     fn test_amount_due_no_usage_no_context() {
         let host = make_host();
@@ -983,13 +1456,8 @@ pricing:
         seed_channel(&host, "ch1", "sat");
 
         // Seed accumulated usage: 20 chars, 2 requests.
-        {
-            let mut store = host.stores.usage.write().unwrap();
-            let mut usage = HashMap::new();
-            usage.insert("chars".to_string(), 20);
-            usage.insert("requests".to_string(), 2);
-            store.insert("ch1".to_string(), usage);
-        }
+        let usage: UsageMap = [("chars".to_string(), 20), ("requests".to_string(), 2)].into();
+        host.storage().increment_usage("ch1", &usage);
 
         // Context adds 5 chars, 1 request.
         // Total: (20+5)*1 + (2+1)*5 = 25 + 15 = 40 sat
@@ -1277,7 +1745,7 @@ pricing:
         );
 
         let active_sat = host
-            .stores
+            .storage()
             .get_active_keyset_ids("http://localhost:3338", &CurrencyUnit::Sat);
         assert_eq!(active_sat, vec![ks1]);
 
@@ -1355,5 +1823,435 @@ pricing:
 
         // The clone should see the same data.
         assert!(host2.get_funding("ch1").is_some());
+    }
+
+    // -- StorageConfig parsing ------------------------------------------------
+
+    #[test]
+    fn test_storage_config_defaults_to_memory() {
+        let config = ConfigurableHostConfig::from_yaml(TEST_YAML).unwrap();
+        assert!(matches!(config.storage, StorageConfig::Memory));
+    }
+
+    #[test]
+    fn test_storage_config_sqlite_parsing() {
+        let yaml = r#"
+mints:
+  "http://localhost:3338": [sat]
+pricing:
+  sat:
+    min_capacity: 10
+    variables:
+      chars: 1
+storage:
+  type: sqlite
+  path: "/tmp/test.db"
+"#;
+        let config = ConfigurableHostConfig::from_yaml(yaml).unwrap();
+        match &config.storage {
+            StorageConfig::Sqlite { path } => assert_eq!(path, "/tmp/test.db"),
+            other => panic!("expected Sqlite, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_storage_config_memory_explicit() {
+        let yaml = r#"
+mints:
+  "http://localhost:3338": [sat]
+pricing:
+  sat:
+    min_capacity: 10
+    variables:
+      chars: 1
+storage:
+  type: memory
+"#;
+        let config = ConfigurableHostConfig::from_yaml(yaml).unwrap();
+        assert!(matches!(config.storage, StorageConfig::Memory));
+    }
+
+    // =========================================================================
+    // SqliteStorage direct tests
+    // =========================================================================
+
+    mod sqlite_tests {
+        use super::*;
+
+        fn make_sqlite() -> SqliteStorage {
+            SqliteStorage::open_in_memory().unwrap()
+        }
+
+        #[test]
+        fn test_funding_roundtrip() {
+            let s = make_sqlite();
+            assert!(s.get_funding("ch1").is_none());
+
+            let funding = ChannelFunding {
+                params_json: r#"{"unit":"sat"}"#.to_string(),
+                funding_proofs_json: "[]".to_string(),
+                channel_secret_hex: "abcd".to_string(),
+                keyset_info_json: "{}".to_string(),
+            };
+            s.save_funding("ch1", funding.clone());
+
+            let f = s.get_funding("ch1").unwrap();
+            assert_eq!(f.params_json, r#"{"unit":"sat"}"#);
+            assert_eq!(f.channel_secret_hex, "abcd");
+
+            // Idempotent: second save should not overwrite.
+            let funding2 = ChannelFunding {
+                params_json: r#"{"unit":"msat"}"#.to_string(),
+                funding_proofs_json: "[1]".to_string(),
+                channel_secret_hex: "ffff".to_string(),
+                keyset_info_json: "{}".to_string(),
+            };
+            s.save_funding("ch1", funding2);
+            let f2 = s.get_funding("ch1").unwrap();
+            assert_eq!(f2.params_json, r#"{"unit":"sat"}"#); // unchanged
+        }
+
+        #[test]
+        fn test_balance_monotonic() {
+            let s = make_sqlite();
+            // Need a channel row first.
+            s.save_funding(
+                "ch1",
+                ChannelFunding {
+                    params_json: "{}".to_string(),
+                    funding_proofs_json: "[]".to_string(),
+                    channel_secret_hex: "aa".to_string(),
+                    keyset_info_json: "{}".to_string(),
+                },
+            );
+
+            assert!(s.get_balance("ch1").is_none()); // balance is 0, signature is ''
+
+            s.update_balance(
+                "ch1",
+                PaymentProof {
+                    balance: 20,
+                    signature: "sig20".to_string(),
+                },
+            );
+            assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
+
+            // Lower balance should NOT overwrite.
+            s.update_balance(
+                "ch1",
+                PaymentProof {
+                    balance: 10,
+                    signature: "sig10".to_string(),
+                },
+            );
+            assert_eq!(s.get_balance("ch1").unwrap().balance, 20);
+            assert_eq!(s.get_balance("ch1").unwrap().signature, "sig20");
+
+            // Higher balance should overwrite.
+            s.update_balance(
+                "ch1",
+                PaymentProof {
+                    balance: 30,
+                    signature: "sig30".to_string(),
+                },
+            );
+            assert_eq!(s.get_balance("ch1").unwrap().balance, 30);
+        }
+
+        #[test]
+        fn test_usage_increment() {
+            let s = make_sqlite();
+            assert!(s.get_usage("ch1").is_none());
+
+            let mut inc1 = UsageMap::new();
+            inc1.insert("chars".to_string(), 10);
+            inc1.insert("requests".to_string(), 1);
+            s.increment_usage("ch1", &inc1);
+
+            let u = s.get_usage("ch1").unwrap();
+            assert_eq!(u["chars"], 10);
+            assert_eq!(u["requests"], 1);
+
+            // Increment again.
+            let mut inc2 = UsageMap::new();
+            inc2.insert("chars".to_string(), 5);
+            inc2.insert("requests".to_string(), 2);
+            s.increment_usage("ch1", &inc2);
+
+            let u2 = s.get_usage("ch1").unwrap();
+            assert_eq!(u2["chars"], 15);
+            assert_eq!(u2["requests"], 3);
+        }
+
+        #[test]
+        fn test_channel_lifecycle() {
+            let s = make_sqlite();
+            s.save_funding(
+                "ch1",
+                ChannelFunding {
+                    params_json: "{}".to_string(),
+                    funding_proofs_json: "[]".to_string(),
+                    channel_secret_hex: "aa".to_string(),
+                    keyset_info_json: "{}".to_string(),
+                },
+            );
+
+            assert_eq!(s.get_state("ch1"), ChannelState::Open);
+
+            s.mark_closing(
+                "ch1",
+                ClosingData {
+                    locktime: 1000,
+                    balance: 50,
+                    signature: "sig50".to_string(),
+                },
+            );
+            assert_eq!(s.get_state("ch1"), ChannelState::Closing);
+
+            let closing = s.get_closing_data("ch1").unwrap();
+            assert_eq!(closing.locktime, 1000);
+            assert_eq!(closing.balance, 50);
+
+            s.mark_closed(
+                "ch1",
+                ClosedDataView {
+                    locktime: 1000,
+                    closed_amount: 50,
+                    value_after_stage1: 50,
+                    receiver_sum: 40,
+                    sender_sum: 10,
+                    receiver_proofs_json: "[]".to_string(),
+                    sender_proofs_json: "[]".to_string(),
+                },
+            )
+            .unwrap();
+            assert_eq!(s.get_state("ch1"), ChannelState::Closed);
+
+            // closing_json should be cleared
+            assert!(s.get_closing_data("ch1").is_none());
+
+            let closed = s.get_closed_data("ch1").unwrap();
+            assert_eq!(closed.closed_amount, 50);
+            assert_eq!(closed.receiver_sum, 40);
+            assert_eq!(closed.sender_sum, 10);
+        }
+
+        #[test]
+        fn test_double_close_rejected() {
+            let s = make_sqlite();
+            s.save_funding(
+                "ch1",
+                ChannelFunding {
+                    params_json: "{}".to_string(),
+                    funding_proofs_json: "[]".to_string(),
+                    channel_secret_hex: "aa".to_string(),
+                    keyset_info_json: "{}".to_string(),
+                },
+            );
+
+            let data = ClosedDataView {
+                locktime: 1000,
+                closed_amount: 50,
+                value_after_stage1: 50,
+                receiver_sum: 40,
+                sender_sum: 10,
+                receiver_proofs_json: "[]".to_string(),
+                sender_proofs_json: "[]".to_string(),
+            };
+            s.mark_closed("ch1", data.clone()).unwrap();
+            let result = s.mark_closed("ch1", data);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("already closed"));
+        }
+
+        #[test]
+        fn test_keyset_roundtrip() {
+            let s = make_sqlite();
+            let kid: Id = "001b6c716bf42c7e".parse().unwrap();
+
+            assert!(s.get_keyset("http://mint", &kid).is_none());
+
+            s.set_keyset(
+                "http://mint",
+                kid,
+                KeysetCacheEntry {
+                    info_json: r#"{"id":"001b6c716bf42c7e"}"#.to_string(),
+                    active: true,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+
+            let entry = s.get_keyset("http://mint", &kid).unwrap();
+            assert_eq!(entry.unit, CurrencyUnit::Sat);
+            assert!(entry.active);
+
+            // Update: mark inactive.
+            s.set_keyset(
+                "http://mint",
+                kid,
+                KeysetCacheEntry {
+                    info_json: r#"{"id":"001b6c716bf42c7e"}"#.to_string(),
+                    active: false,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+            let entry2 = s.get_keyset("http://mint", &kid).unwrap();
+            assert!(!entry2.active);
+        }
+
+        #[test]
+        fn test_active_keyset_ids() {
+            let s = make_sqlite();
+            let ks1: Id = "001b6c716bf42c7e".parse().unwrap();
+            let ks2: Id = "00ffedc2dbb87212".parse().unwrap();
+
+            s.set_keyset(
+                "http://mint",
+                ks1,
+                KeysetCacheEntry {
+                    info_json: "{}".to_string(),
+                    active: true,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+            s.set_keyset(
+                "http://mint",
+                ks2,
+                KeysetCacheEntry {
+                    info_json: "{}".to_string(),
+                    active: false,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+
+            let active = s.get_active_keyset_ids("http://mint", &CurrencyUnit::Sat);
+            assert_eq!(active, vec![ks1]);
+        }
+
+        #[test]
+        fn test_mints_units_keysets() {
+            let s = make_sqlite();
+            let ks1: Id = "001b6c716bf42c7e".parse().unwrap();
+            let ks2: Id = "00818d176a78e7f0".parse().unwrap();
+
+            s.set_keyset(
+                "http://mint",
+                ks1,
+                KeysetCacheEntry {
+                    info_json: "{}".to_string(),
+                    active: true,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+            s.set_keyset(
+                "http://mint",
+                ks2,
+                KeysetCacheEntry {
+                    info_json: "{}".to_string(),
+                    active: true,
+                    unit: CurrencyUnit::Msat,
+                },
+            );
+
+            let muk = s.get_mints_units_keysets();
+            assert!(muk["http://mint"]["sat"].contains(&ks1.to_string()));
+            assert!(muk["http://mint"]["msat"].contains(&ks2.to_string()));
+        }
+
+        #[test]
+        fn test_active_units() {
+            let s = make_sqlite();
+            let ks1: Id = "001b6c716bf42c7e".parse().unwrap();
+
+            assert!(s.get_active_units().is_empty());
+
+            s.set_keyset(
+                "http://mint",
+                ks1,
+                KeysetCacheEntry {
+                    info_json: "{}".to_string(),
+                    active: true,
+                    unit: CurrencyUnit::Sat,
+                },
+            );
+
+            let units = s.get_active_units();
+            assert!(units.contains("sat"));
+            assert_eq!(units.len(), 1);
+        }
+
+        #[test]
+        fn test_end_to_end_with_configurable_host() {
+            // End-to-end: construct a ConfigurableHost with SqliteStorage
+            let config = ConfigurableHostConfig::from_yaml(TEST_YAML).unwrap();
+            let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+            let host =
+                ConfigurableHost::with_storage(config, TEST_SECRET_KEY, storage.clone()).unwrap();
+
+            seed_channel(&host, "ch1", "sat");
+            assert!(host.get_funding("ch1").is_some());
+
+            let ctx = serde_json::json!({"chars": 10, "requests": 1}).to_string();
+            host.record_payment(
+                "ch1",
+                PaymentProof {
+                    balance: 15,
+                    signature: "sig15".to_string(),
+                },
+                &ctx,
+            );
+
+            assert_eq!(host.get_balance("ch1").unwrap().balance, 15);
+            assert_eq!(host.get_usage("ch1").unwrap()["chars"], 10);
+        }
+
+        #[test]
+        fn test_file_persistence() {
+            // Verify data survives across two separate SqliteStorage instances
+            // pointing at the same file.
+            let dir = std::env::temp_dir().join("spilman_test_persist");
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("test.db");
+            let path_str = path.to_str().unwrap();
+
+            // Clean up from any previous run.
+            let _ = std::fs::remove_file(&path);
+
+            // Session 1: create and populate.
+            {
+                let s = SqliteStorage::open(path_str).unwrap();
+                s.save_funding(
+                    "ch1",
+                    ChannelFunding {
+                        params_json: r#"{"unit":"sat"}"#.to_string(),
+                        funding_proofs_json: "[]".to_string(),
+                        channel_secret_hex: "abcd".to_string(),
+                        keyset_info_json: "{}".to_string(),
+                    },
+                );
+                s.update_balance(
+                    "ch1",
+                    PaymentProof {
+                        balance: 42,
+                        signature: "sig42".to_string(),
+                    },
+                );
+                let mut inc = UsageMap::new();
+                inc.insert("chars".to_string(), 100);
+                s.increment_usage("ch1", &inc);
+            }
+
+            // Session 2: reopen and verify.
+            {
+                let s = SqliteStorage::open(path_str).unwrap();
+                let f = s.get_funding("ch1").unwrap();
+                assert_eq!(f.channel_secret_hex, "abcd");
+                assert_eq!(s.get_balance("ch1").unwrap().balance, 42);
+                assert_eq!(s.get_usage("ch1").unwrap()["chars"], 100);
+            }
+
+            // Clean up.
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
