@@ -144,7 +144,7 @@ The Spilman implementation uses a **Bridge + Host** architecture:
 - Decides which mints and receiver keys are acceptable
 - Communicates with the mint for swaps
 
-**Shortcut for Rust servers**: `ConfigurableHost` (feature-gated behind `configurable-host`) is a ready-made `SpilmanHost` implementation that reads pricing and policy from YAML and tracks usage via named variables with linear pricing. See the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example using `ConfigurableHost::from_yaml()`.
+**Shortcut for Rust servers**: `ConfigurableHost` (feature-gated behind `configurable-host`) is a ready-made `SpilmanHost` implementation that reads pricing and policy from YAML and tracks usage via named variables with linear pricing. It supports pluggable storage backends: in-memory (default) or SQLite for persistence. See the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example using `ConfigurableHost::from_yaml()`.
 
 ### Transport Independence
 
@@ -414,6 +414,28 @@ Adapt the formula to your service's pricing model.
 
 `ConfigurableHost` provides a ready-made linear pricing model driven by YAML — see the
 [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
+
+### ConfigurableHost Storage
+
+`ConfigurableHost` uses a pluggable `SpilmanStorage` trait internally. Two backends are provided:
+
+- **Memory** (default): In-memory `RwLock<HashMap>` stores. Fast, but all data is lost on restart.
+- **SQLite**: File-backed persistence using `rusqlite`. Channels, balances, usage, and keyset cache survive restarts.
+
+Configure via the optional `storage` section in your YAML:
+
+```yaml
+# Default: in-memory (omit the section entirely, or specify explicitly)
+storage:
+  type: memory
+
+# Persistent: SQLite file
+storage:
+  type: sqlite
+  path: "./spilman.db"
+```
+
+You can also pass a custom storage backend via `ConfigurableHost::with_storage()`.
 
 ---
 
@@ -736,7 +758,7 @@ For robustness and testability, it is highly recommended to follow the "Persiste
    - This is your "Charlie" key for receiving payments
 
 2. **Implement SpilmanHost** (or use the ready-made one for Rust)
-   - **Rust shortcut**: Use `ConfigurableHost::from_yaml(yaml, secret_key_hex)` — define pricing in YAML, no custom trait impl needed. See [examples/rust-ascii-art/](examples/rust-ascii-art/) and `config.yaml`.
+   - **Rust shortcut**: Use `ConfigurableHost::from_yaml(yaml, secret_key_hex)` — define pricing in YAML, no custom trait impl needed. Add `storage: { type: sqlite, path: "./spilman.db" }` to your YAML for persistence. See [examples/rust-ascii-art/](examples/rust-ascii-art/) and `config.yaml`.
    - **Custom impl**: Start with in-memory stores (upgrade to database later). Implement `receiver_key_is_acceptable` to check for your pubkey, `mint_and_keyset_is_acceptable` with your mint allowlist, and `get_amount_due` with your pricing logic.
 
 3. **Initialize keysets**

@@ -11,6 +11,12 @@ mints:
   "http://localhost:3338": [sat, msat, usd]
 min_expiry_seconds: 3600
 
+# Storage backend: "memory" (default, lost on restart) or "sqlite" (persistent).
+# Uncomment below to enable SQLite persistence:
+# storage:
+#   type: sqlite
+#   path: "./spilman.db"
+
 pricing:
   sat:
     min_capacity: 10

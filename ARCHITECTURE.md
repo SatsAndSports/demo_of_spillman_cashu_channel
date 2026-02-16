@@ -208,11 +208,13 @@ For Rust servers that don't need custom host logic, `ConfigurableHost` provides 
 
 Key features:
 - **Named usage variables**: Pricing is defined as a linear combination of monotonic integer counters (e.g., `"chars"`, `"requests"`, `"bytes"`) with per-unit prices
-- **YAML configuration**: Mint URL, expiry, and per-unit pricing (including `min_capacity` and `max_amount_per_output`) are all defined in a YAML file
-- **In-memory storage**: Thread-safe `RwLock<HashMap>` stores behind `Arc`; cheap `Clone` for sharing between `SpilmanBridge` and route handlers
+- **YAML configuration**: Mint URL, expiry, per-unit pricing, and storage backend are all defined in a YAML file
+- **Pluggable storage** via an internal `SpilmanStorage` trait:
+  - `MemoryStorage` (default): Thread-safe `RwLock<HashMap>` stores behind `Arc`; cheap `Clone` for sharing between `SpilmanBridge` and route handlers
+  - `SqliteStorage`: File-backed persistence using `rusqlite` with `Mutex<Connection>`; usage counters use normalized rows with atomic SQL increments (`INSERT ... ON CONFLICT DO UPDATE SET count = count + excluded.count`)
 - **Public accessors**: `get_balance()`, `get_usage()`, `get_funding_data()`, `get_mints_units_keysets()`, etc. for route handlers
 
-Construct via `ConfigurableHost::from_yaml(yaml_str, secret_key_hex)` or `ConfigurableHost::new(config, secret_key_hex)`. See `spilman/configurable_host.rs` and the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
+Construct via `ConfigurableHost::from_yaml(yaml_str, secret_key_hex)` or `ConfigurableHost::new(config, secret_key_hex)` (both read `config.storage` to select the backend). Use `ConfigurableHost::with_storage(config, secret_key_hex, storage)` for custom backends. See `spilman/configurable_host.rs` and the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
 
 Note: `ConfigurableHost` does **not** implement networking (`SpilmanAsyncNetworking` / `SpilmanNetworking`). Servers provide that separately.
 

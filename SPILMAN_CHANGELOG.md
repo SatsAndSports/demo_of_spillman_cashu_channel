@@ -4,6 +4,29 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features (Feb 15, 2026)
 
+### SQLite Persistence for ConfigurableHost
+
+Added pluggable storage to `ConfigurableHost` via an internal `SpilmanStorage` trait,
+with two backends: `MemoryStorage` (default, identical to previous behavior) and
+`SqliteStorage` for file-backed persistence.
+
+- **`SpilmanStorage` trait**: 15-method interface covering funding, balance, usage, channel
+  state, and keyset cache. All methods are synchronous (`Send + Sync`).
+- **`MemoryStorage`**: Refactored from the previous `Stores` struct; implements the trait
+  with the same `RwLock<HashMap>` approach.
+- **`SqliteStorage`**: Uses `rusqlite` (bundled SQLite) with `Mutex<Connection>`.
+  Three tables: `spilman_channels` (funding, balance, state, closing/closed JSON),
+  `spilman_usage` (normalized: one row per variable with atomic `count = count + delta`
+  via `INSERT ... ON CONFLICT DO UPDATE`), and `spilman_keysets` (keyset entry JSON).
+- **YAML config**: New optional `storage` section (`type: memory` or `type: sqlite` +
+  `path`). Defaults to memory when omitted; existing configs are unchanged.
+- **Constructor**: `ConfigurableHost::new()` reads `config.storage` to select the backend.
+  `ConfigurableHost::with_storage()` accepts a custom `Arc<dyn SpilmanStorage>`.
+- **`rusqlite` dependency**: Added as optional, gated behind `configurable-host` feature.
+- **16 new tests** (76 total spilman tests): 3 for `StorageConfig` YAML parsing, 13 for
+  `SqliteStorage` (funding roundtrip, monotonic balance, usage increments, full channel
+  lifecycle, keyset cache, file persistence across connections).
+
 ### Typed Per-Unit Channel Policy
 
 Replaced the JSON-based `get_channel_policy() -> String` with a typed, per-unit method:
