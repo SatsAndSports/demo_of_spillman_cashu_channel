@@ -21,6 +21,7 @@ bip353 = ["dep:hickory-resolver"]
 swagger = ["mint", "dep:utoipa", "cdk-common/swagger"]
 bench = []
 configurable-host = ["dep:serde_yml", "dep:rusqlite"]
+configurable-host-reqwest = ["configurable-host", "dep:reqwest"]
 http_subscription = []
 tor = [
     "wallet",

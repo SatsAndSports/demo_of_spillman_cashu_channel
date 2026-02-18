@@ -13,9 +13,8 @@ use base64::Engine;
 use serde::Deserialize;
 
 use cdk::spilman::configurable_host::ConfigurableHost;
+use cdk::spilman::configurable_networking::ReqwestNetworking;
 use cdk::spilman::{ClosePreparationError, SpilmanBridge, SpilmanHost};
-
-use crate::networking::HostNetworking;
 
 // ============================================================================
 // Application State
@@ -26,7 +25,7 @@ pub type AppState = Arc<AppStateInner>;
 pub struct AppStateInner {
     pub bridge: SpilmanBridge<ConfigurableHost>,
     pub host: Arc<ConfigurableHost>,
-    pub networking: Arc<HostNetworking>,
+    pub networking: Arc<ReqwestNetworking>,
     pub figlet_font: figlet_rs::FIGfont,
 }
 

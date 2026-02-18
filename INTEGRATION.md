@@ -437,6 +437,44 @@ storage:
 
 You can also pass a custom storage backend via `ConfigurableHost::with_storage()`.
 
+### Networking "Batteries" (Rust)
+
+For Rust servers, you can use the built-in `ReqwestNetworking` to eliminate almost all mint-communication boilerplate. Enable the `configurable-host-reqwest` feature:
+
+```toml
+cdk = { version = "0.14", default-features = false, features = ["configurable-host-reqwest"] }
+```
+
+This provides:
+
+1.  **`host.initialize_keysets().await`**: A one-line helper that fetches and caches keysets from every mint in your config at startup.
+2.  **`ReqwestNetworking`**: A ready-made struct implementing `SpilmanAsyncNetworking` for `execute_cooperative_close_async` and `execute_unilateral_close_async`.
+
+#### Example Setup (Rust)
+
+```rust
+use cdk::spilman::configurable_host::ConfigurableHost;
+use cdk::spilman::configurable_networking::ReqwestNetworking;
+use cdk::spilman::SpilmanBridge;
+
+// 1. Load config and secret key
+let yaml = std::fs::read_to_string("config.yaml")?;
+let secret_key = "0123...def";
+
+// 2. Create host (reads storage type from YAML)
+let host = Arc::new(ConfigurableHost::from_yaml(&yaml, secret_key)?);
+
+// 3. Initialize keysets from all configured mints
+host.initialize_keysets().await?;
+
+// 4. Create bridge and networking
+let bridge = SpilmanBridge::new((*host).clone());
+let networking = Arc::new(ReqwestNetworking::new(host.clone()));
+
+// Now use bridge.process_payment_via_base64_header() and 
+// bridge.execute_cooperative_close_async(json, &*networking)
+```
+
 ---
 
 ## State Management

@@ -252,17 +252,15 @@ make clean
 ### Rust Tests
 
 ```bash
-# Quick: Spilman unit tests + Rust server integration tests
+# Quick: Spilman unit tests + Rust server integration
 make test-rust-only
 
 # Spilman-specific unit tests (includes mint integration)
-cargo test -p cdk spilman
+# Now includes all configurable-host and SQLite tests by default
+cargo test -p cdk --features configurable-host spilman
 
 # All CDK tests
 cargo test -p cdk
-
-# Clippy checks (must pass)
-cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-spilman-server-integration-tests -- -D warnings
 ```
 
 ### Blossom Server Tests

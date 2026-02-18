@@ -2,6 +2,24 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 17, 2026)
+
+### Rust Networking Batteries
+
+Introduced a "batteries-included" networking module for Rust integrators to eliminate repetitive mint-communication boilerplate.
+
+- **New Feature Flag**: `configurable-host-reqwest` (implies `configurable-host` + `reqwest`).
+- **`ReqwestNetworking`**: A production-ready `SpilmanAsyncNetworking` implementation using `reqwest`.
+- **`host.initialize_keysets()`**: A new async method on `ConfigurableHost` that fetches and caches keysets from all configured mints at startup.
+- **`fetch_and_cache_keysets`**: Shared utility for re-populating the host cache from a mint.
+- **Example Cleanup**: Deleted 171 lines of hand-rolled networking code from `examples/rust-ascii-art`, replacing it with the library provided battery.
+
+### Storage Improvements
+
+- **Lazy Funding Cache**: Added a write-once, in-memory cache to `SqliteStorage` for `ChannelFunding` lookups. This eliminates redundant JSON deserialization and disk reads for static channel parameters.
+- **Async Method Safety**: Changed `ConfigurableHost::set_keyset` to return `Result<(), String>`, and updated 30+ call sites in tests and examples to handle or unwrap the result.
+- **Makefile Integration**: Updated `test-unit-spilman` to include the `configurable-host` feature by default.
+
 ## Completed Features (Feb 15, 2026)
 
 ### SQLite Persistence for ConfigurableHost

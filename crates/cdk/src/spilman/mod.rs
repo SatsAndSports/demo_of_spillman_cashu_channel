@@ -16,6 +16,8 @@ mod bridge;
 mod client_bridge;
 #[cfg(feature = "configurable-host")]
 pub mod configurable_host;
+#[cfg(feature = "configurable-host-reqwest")]
+pub mod configurable_networking;
 mod deterministic;
 mod established_channel;
 mod keysets_and_amounts;
