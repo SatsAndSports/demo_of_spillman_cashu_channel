@@ -155,7 +155,7 @@ async fn main() {
     let mint_urls: Vec<&String> = host.mints().keys().collect();
 
     // Create bridge
-    let bridge = SpilmanBridge::new((*host).clone());
+    let bridge = Arc::new(SpilmanBridge::new((*host).clone()));
 
     // Create networking (for close operations)
     let networking = Arc::new(ReqwestNetworking::new(host.clone()));
