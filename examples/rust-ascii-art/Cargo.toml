@@ -10,13 +10,11 @@ name = "rust-ascii-art"
 path = "src/main.rs"
 
 [dependencies]
-cdk = { workspace = true, default-features = false, features = ["configurable-host"] }
+cdk = { workspace = true, default-features = false, features = ["configurable-host-reqwest"] }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-async-trait = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 figlet-rs = "0.1"

@@ -216,7 +216,30 @@ Key features:
 
 Construct via `ConfigurableHost::from_yaml(yaml_str, secret_key_hex)` or `ConfigurableHost::new(config, secret_key_hex)` (both read `config.storage` to select the backend). Use `ConfigurableHost::with_storage(config, secret_key_hex, storage)` for custom backends. See `spilman/configurable_host.rs` and the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
 
-Note: `ConfigurableHost` does **not** implement networking (`SpilmanAsyncNetworking` / `SpilmanNetworking`). Servers provide that separately.
+### Networking Batteries (Rust)
+
+For Rust servers, the library provides a "batteries-included" networking implementation behind the `configurable-host-reqwest` feature:
+
+- **`ReqwestNetworking`**: A ready-made implementation of `SpilmanAsyncNetworking` using `reqwest`.
+- **`initialize_keysets()`**: A one-line startup helper on `ConfigurableHost` that fetches and caches keysets from all configured mints.
+- **Auto-Refresh**: The bridge automatically calls `refresh_all_keysets` on swap failures (e.g., due to stale keysets), and `ReqwestNetworking` handles the HTTP re-fetching.
+
+This eliminates the need for every Rust integrator to write the same ~150 lines of HTTP boilerplate.
+
+### Persistence
+
+The `ConfigurableHost` supports pluggable storage backends via the `SpilmanStorage` trait.
+
+#### 1. SqliteStorage
+
+File-backed persistence using `rusqlite`.
+- **Schema**: Three tables for `channels` (funding/balance), `usage` (per-variable counters), and `keysets` (cached mint data).
+- **Atomic Usage**: Increments are performed in a single SQL statement using `INSERT ... ON CONFLICT DO UPDATE`, ensuring correctness even under high concurrency.
+- **Performance**: A lazy, write-once in-memory cache is used for `ChannelFunding` data to eliminate redundant disk reads for static channel parameters.
+
+#### 2. MemoryStorage (Default)
+
+Thread-safe `RwLock<HashMap>` based storage. Ideal for development, testing, or ephemeral services where persistence is not required.
 
 ### Language Bridges
 

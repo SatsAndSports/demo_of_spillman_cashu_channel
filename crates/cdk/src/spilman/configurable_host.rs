@@ -1059,6 +1059,44 @@ impl ConfigurableHost {
     }
 }
 
+#[cfg(feature = "configurable-host-reqwest")]
+impl ConfigurableHost {
+    /// Fetch and cache keysets from every configured mint.
+    ///
+    /// Iterates over [`mints()`](Self::mints) and calls
+    /// [`fetch_and_cache_keysets`](super::configurable_networking::fetch_and_cache_keysets)
+    /// for each one.  Errors from individual mints are logged and collected;
+    /// the method returns `Ok(())` if at least one mint succeeded, or `Err`
+    /// with all failures if every mint failed.
+    pub async fn initialize_keysets(&self) -> Result<(), String> {
+        use super::configurable_networking::fetch_and_cache_keysets;
+
+        let mint_urls: Vec<String> = self.mints().keys().cloned().collect();
+        let mut errors = Vec::new();
+
+        for mint_url in &mint_urls {
+            match fetch_and_cache_keysets(self, mint_url).await {
+                Ok(()) => {
+                    tracing::info!("Cached keysets from {mint_url}");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to fetch keysets from {mint_url}: {e}");
+                    errors.push(format!("{mint_url}: {e}"));
+                }
+            }
+        }
+
+        if errors.len() == mint_urls.len() && !mint_urls.is_empty() {
+            Err(format!(
+                "Failed to fetch keysets from all mints: {}",
+                errors.join("; ")
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Public view of closed channel data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedDataView {

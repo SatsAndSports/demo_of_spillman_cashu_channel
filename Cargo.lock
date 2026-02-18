@@ -6161,13 +6161,11 @@ dependencies = [
 name = "rust-ascii-art"
 version = "0.14.0"
 dependencies = [
- "async-trait",
  "axum 0.8.7",
  "base64 0.22.1",
  "cdk",
  "figlet-rs",
  "hex",
- "reqwest",
  "serde",
  "serde_json",
  "tokio",

@@ -11,7 +11,6 @@
 //!   POST /channel/:id/close           - Close channel cooperatively (client-initiated)
 //!   POST /channel/:id/unilateral-close - Close channel unilaterally (server-initiated)
 
-mod networking;
 mod routes;
 
 use std::env;
@@ -21,9 +20,9 @@ use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cdk::spilman::configurable_host::ConfigurableHost;
+use cdk::spilman::configurable_networking::ReqwestNetworking;
 use cdk::spilman::SpilmanBridge;
 
-use networking::{fetch_and_cache_keysets, HostNetworking};
 use routes::{create_router, AppStateInner};
 
 // ============================================================================
@@ -146,27 +145,20 @@ async fn main() {
             .expect("Failed to create ConfigurableHost"),
     );
 
-    let mint_urls: Vec<&String> = host.mints().keys().collect();
-
     // Fetch keysets from each configured mint at startup
-    for mint_url in &mint_urls {
-        println!("Fetching keysets from {}...", mint_url);
-        if let Err(e) = fetch_and_cache_keysets(&host, mint_url).await {
-            eprintln!("WARNING: Failed to fetch keysets from {}: {}", mint_url, e);
-            eprintln!("Payment validation may fail for new channels");
-        } else {
-            println!("Cached keysets for {}", mint_url);
-        }
+    if let Err(e) = host.initialize_keysets().await {
+        eprintln!("WARNING: {e}");
+        eprintln!("Payment validation may fail for new channels");
     }
     println!();
+
+    let mint_urls: Vec<&String> = host.mints().keys().collect();
 
     // Create bridge
     let bridge = SpilmanBridge::new((*host).clone());
 
     // Create networking (for close operations)
-    let networking = Arc::new(HostNetworking {
-        host: host.clone(),
-    });
+    let networking = Arc::new(ReqwestNetworking::new(host.clone()));
 
     // Load figlet font
     let figlet_font = figlet_rs::FIGfont::standard().expect("Failed to load figlet font");
