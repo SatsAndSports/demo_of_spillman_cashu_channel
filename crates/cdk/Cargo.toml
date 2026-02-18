@@ -22,6 +22,7 @@ swagger = ["mint", "dep:utoipa", "cdk-common/swagger"]
 bench = []
 configurable-host = ["dep:serde_yml", "dep:rusqlite"]
 configurable-host-reqwest = ["configurable-host", "dep:reqwest"]
+spilman-axum = ["configurable-host", "dep:axum"]
 http_subscription = []
 tor = [
     "wallet",
@@ -52,6 +53,7 @@ serde.workspace = true
 serde_json.workspace = true
 base64 = "0.22"
 serde_yml = { version = "0.0.12", optional = true }
+axum = { workspace = true, optional = true, features = ["macros"] }
 rusqlite = { version = "0.31", optional = true, features = ["bundled"] }
 serde_with.workspace = true
 tracing.workspace = true

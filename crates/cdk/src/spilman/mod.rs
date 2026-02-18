@@ -16,6 +16,8 @@ mod bridge;
 mod client_bridge;
 #[cfg(feature = "configurable-host")]
 pub mod configurable_host;
+#[cfg(feature = "spilman-axum")]
+pub mod axum;
 #[cfg(feature = "configurable-host-reqwest")]
 pub mod configurable_networking;
 mod deterministic;
