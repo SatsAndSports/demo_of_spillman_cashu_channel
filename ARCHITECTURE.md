@@ -226,6 +226,14 @@ For Rust servers, the library provides a "batteries-included" networking impleme
 
 This eliminates the need for every Rust integrator to write the same ~150 lines of HTTP boilerplate.
 
+### Axum Integration (Rust)
+
+For Rust servers using the `axum` framework, the library provides high-level components behind the `spilman-axum` feature:
+
+- **`SpilmanState<H, N, C>`**: A unified state container for the `SpilmanBridge`, `SpilmanHost`, and `SpilmanAsyncNetworking`.
+- **Management Router**: A pre-built `axum::Router` that handles all standard channel lifecycle endpoints (`/params`, `/register`, status, and closing). It can be nested into any application via `.nest("/channel", configurable_management_router(state))`.
+- **Error Mapping**: Standardized logic that maps `BridgeError` and `CloseError` to consistent HTTP status codes and JSON bodies expected by Spilman clients.
+
 ### Persistence
 
 The `ConfigurableHost` supports pluggable storage backends via the `SpilmanStorage` trait.

@@ -475,6 +475,36 @@ let networking = Arc::new(ReqwestNetworking::new(host.clone()));
 // bridge.execute_cooperative_close_async(json, &*networking)
 ```
 
+### Axum Management Router (Rust)
+
+For Rust servers using `axum`, you can eliminate almost all management boilerplate by nesting the library-provided router. Enable the `spilman-axum` feature:
+
+```toml
+cdk = { version = "0.14", default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
+```
+
+#### Example Router Integration (Rust)
+
+```rust
+use cdk::spilman::axum::{configurable_management_router, SpilmanState};
+
+// 1. Bundle your Spilman components
+let spilman_state = SpilmanState {
+    bridge: Arc::new(SpilmanBridge::new((*host).clone())),
+    host: host.clone(),
+    networking: Arc::new(ReqwestNetworking::new(host.clone())),
+};
+
+// 2. Nest the management routes in your Axum app
+let app = Router::new()
+    .route("/my-service", post(handle_service))
+    // Adds /channel/params, /channel/register, /channel/{id}/status, etc.
+    .nest("/channel", configurable_management_router(spilman_state))
+    .with_state(app_state);
+```
+
+This handles the mapping of `BridgeError` to 402/400/500 responses automatically and implements standard idempotency logic for closing.
+
 ---
 
 ## State Management

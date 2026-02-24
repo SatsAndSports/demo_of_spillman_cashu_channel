@@ -50,6 +50,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 - `spilman/deterministic.rs` - Deterministic blinded output generation
 - `spilman/sender_and_receiver.rs` - `verify_valid_channel`, DLEQ verification
 - `spilman/configurable_host.rs` - `ConfigurableHost`, YAML-configurable `SpilmanHost` implementation (feature-gated: `configurable-host`)
+- `spilman/axum.rs` - Axum management router and handlers (feature-gated: `spilman-axum`)
 
 ### CashuTube Server
 - `web/blossom-server/src/api/fetch.ts` - Payment validation, 402 responses
