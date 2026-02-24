@@ -797,7 +797,11 @@ func runServer() {
 			// Determine HTTP status from error type
 			status := http.StatusPaymentRequired // 402 default
 			lowerMsg := strings.ToLower(errorMsg)
-			if strings.Contains(lowerMsg, "invalid base64") ||
+			if strings.Contains(lowerMsg, "channel closed") {
+				status = http.StatusGone
+			} else if strings.Contains(lowerMsg, "channel closing") {
+				status = http.StatusConflict
+			} else if strings.Contains(lowerMsg, "invalid base64") ||
 				strings.Contains(lowerMsg, "invalid utf8") ||
 				strings.Contains(lowerMsg, "invalid json") ||
 				strings.Contains(lowerMsg, "missing field") ||
@@ -866,7 +870,11 @@ func runServer() {
 			// Determine HTTP status from error type
 			status := http.StatusPaymentRequired // 402 default
 			lowerMsg := strings.ToLower(errorMsg)
-			if strings.Contains(lowerMsg, "invalid base64") ||
+			if strings.Contains(lowerMsg, "channel closed") {
+				status = http.StatusGone
+			} else if strings.Contains(lowerMsg, "channel closing") {
+				status = http.StatusConflict
+			} else if strings.Contains(lowerMsg, "invalid base64") ||
 				strings.Contains(lowerMsg, "invalid utf8") ||
 				strings.Contains(lowerMsg, "invalid json") ||
 				strings.Contains(lowerMsg, "missing field") ||

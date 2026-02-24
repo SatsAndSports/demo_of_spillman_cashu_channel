@@ -430,7 +430,11 @@ app.post("/ascii", (req, res) => {
     // Determine HTTP status from error type
     let status = 402;
     const lowerMsg = errorMsg.toLowerCase();
-    if (lowerMsg.includes("invalid base64") ||
+    if (lowerMsg.includes("channel closed")) {
+      status = 410;
+    } else if (lowerMsg.includes("channel closing")) {
+      status = 409;
+    } else if (lowerMsg.includes("invalid base64") ||
         lowerMsg.includes("invalid utf8") ||
         lowerMsg.includes("invalid json") ||
         lowerMsg.includes("missing field") ||
@@ -672,7 +676,11 @@ app.post("/channel/register", (req, res) => {
     // Determine HTTP status from error type
     let status = 402;
     const lowerMsg = errorMsg.toLowerCase();
-    if (lowerMsg.includes("invalid base64") ||
+    if (lowerMsg.includes("channel closed")) {
+      status = 410;
+    } else if (lowerMsg.includes("channel closing")) {
+      status = 409;
+    } else if (lowerMsg.includes("invalid base64") ||
         lowerMsg.includes("invalid utf8") ||
         lowerMsg.includes("invalid json") ||
         lowerMsg.includes("missing field") ||

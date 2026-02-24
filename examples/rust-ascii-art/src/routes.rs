@@ -149,6 +149,8 @@ async fn post_ascii(
                 400 => StatusCode::BAD_REQUEST,
                 402 => StatusCode::PAYMENT_REQUIRED,
                 404 => StatusCode::NOT_FOUND,
+                409 => StatusCode::CONFLICT,
+                410 => StatusCode::GONE,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (

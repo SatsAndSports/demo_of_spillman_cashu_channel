@@ -46,6 +46,9 @@ impl<H: SpilmanHost<C>, N, C> Clone for SpilmanState<H, N, C> {
 /// - `GET /{id}/status`
 /// - `POST /{id}/close`
 /// - `POST /{id}/unilateral-close`
+///
+/// Note: this router installs its own [`SpilmanState`] via `.with_state(...)`. When nesting into an
+/// app that uses its own state, attach your app state after the `.nest()` call.
 pub fn configurable_management_router<S, N>(
     state: SpilmanState<ConfigurableHost, N, String>,
 ) -> Router<S>
@@ -87,10 +90,7 @@ where
                 "total_value": closed_data.value_after_stage1,
                 "receiver_sum": closed_data.receiver_sum,
                 "sender_sum": closed_data.sender_sum,
-                "sender_proofs": serde_json::from_str::<serde_json::Value>(
-                    &closed_data.sender_proofs_json
-                )
-                .unwrap_or(serde_json::json!([])),
+                "sender_proofs": parse_sender_proofs(&closed_data.sender_proofs_json),
                 "already_closed": true
             }))
             .into_response();
@@ -336,7 +336,18 @@ where
         .execute_cooperative_close_async(&close_body.to_string(), &*s.networking)
         .await
     {
-        Ok(result) => Json(result).into_response(),
+        Ok(result) => {
+            let sender_proofs = parse_sender_proofs(&result.sender_proofs);
+            Json(serde_json::json!({
+                "channel_id": result.channel_id,
+                "total_value": result.total_value,
+                "receiver_sum": result.receiver_sum,
+                "sender_sum": result.sender_sum,
+                "sender_proofs": sender_proofs,
+                "already_closed": result.already_closed,
+            }))
+            .into_response()
+        }
         Err(e) => (
             StatusCode::from_u16(e.status_code()).unwrap_or(StatusCode::BAD_REQUEST),
             Json(e),
@@ -388,6 +399,8 @@ fn map_bridge_error(e: BridgeError) -> impl IntoResponse {
     let status = match error_response.status {
         402 => StatusCode::PAYMENT_REQUIRED,
         404 => StatusCode::NOT_FOUND,
+        409 => StatusCode::CONFLICT,
+        410 => StatusCode::GONE,
         500 => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::BAD_REQUEST,
     };
@@ -400,4 +413,8 @@ fn map_bridge_error(e: BridgeError) -> impl IntoResponse {
             "status": error_response.status
         })),
     )
+}
+
+fn parse_sender_proofs(raw: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::json!([]))
 }

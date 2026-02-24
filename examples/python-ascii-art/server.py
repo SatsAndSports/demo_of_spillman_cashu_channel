@@ -644,7 +644,11 @@ def register_channel():
         # Determine HTTP status from error type
         status = 402  # Payment Required (default)
         lower_msg = error_msg.lower()
-        if ("invalid base64" in lower_msg or
+        if "channel closed" in lower_msg:
+            status = 410
+        elif "channel closing" in lower_msg:
+            status = 409
+        elif ("invalid base64" in lower_msg or
             "invalid utf8" in lower_msg or
             "invalid json" in lower_msg or
             "missing field" in lower_msg or
@@ -714,7 +718,11 @@ def ascii_art():
         # Determine HTTP status from error type
         status = 402  # Payment Required (default)
         lower_msg = error_msg.lower()
-        if ("invalid base64" in lower_msg or
+        if "channel closed" in lower_msg:
+            status = 410
+        elif "channel closing" in lower_msg:
+            status = 409
+        elif ("invalid base64" in lower_msg or
             "invalid utf8" in lower_msg or
             "invalid json" in lower_msg or
             "missing field" in lower_msg or

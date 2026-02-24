@@ -282,6 +282,14 @@ impl ClosePreparationError {
         Self { error: "Internal error".into(), reason: reason.into(), status: 500, extra: None }
     }
 
+    pub fn conflict(reason: impl Into<String>) -> Self {
+        Self { error: "Channel closing".into(), reason: reason.into(), status: 409, extra: None }
+    }
+
+    pub fn gone(reason: impl Into<String>) -> Self {
+        Self { error: "Channel closed".into(), reason: reason.into(), status: 410, extra: None }
+    }
+
     pub fn with_extra(mut self, extra: serde_json::Map<String, serde_json::Value>) -> Self {
         self.extra = Some(extra);
         self
@@ -290,7 +298,8 @@ impl ClosePreparationError {
     pub fn from_bridge_error(err: BridgeError) -> Self {
         let reason = err.to_string();
         match &err {
-            BridgeError::ChannelClosed => Self::payment_required(reason),
+            BridgeError::ChannelClosed => Self::gone(reason),
+            BridgeError::ChannelClosing => Self::conflict(reason),
             BridgeError::UnknownChannel => Self::not_found(reason),
             BridgeError::InvalidRequest(msg) if msg.contains("no payment proof") => Self::bad_request(reason),
             BridgeError::Internal(_) | BridgeError::ServerMisconfigured(_) => Self::internal(reason),

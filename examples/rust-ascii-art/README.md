@@ -82,7 +82,7 @@ This pulls in only the core Cashu types, Spilman implementation, Axum router, YA
 |----------|---------|-------------|
 | `MINT_URL` | `http://localhost:3338` | Cashu mint URL |
 | `PORT` | `5003` | Server port |
-| `SERVER_SECRET_KEY` | (generated) | Server's secret key (hex) |
+| `SERVER_SECRET_KEY` | fixed dev key | Server's secret key (hex) |
 
 ## Protocol
 

@@ -1273,7 +1273,7 @@ mod closing {
         let header2 = create_payment_header(&channel, cost + 1)?;
         let response = ctx.client.fetch_ascii_art(&header2, "X").await?;
 
-        assert_eq!(response.status, 402);
+        assert_eq!(response.status, 410);
         assert!(response.body["reason"].as_str().unwrap().contains("channel closed"));
         println!("Payment on closed channel rejected");
         Ok(())
@@ -1535,7 +1535,7 @@ mod unilateral_closing {
         let header2 = create_payment_header(&channel, cost + 1)?;
         let response = ctx.client.fetch_ascii_art(&header2, "X").await?;
 
-        assert_eq!(response.status, 402);
+        assert_eq!(response.status, 410);
         assert!(response.body["reason"].as_str().unwrap().contains("channel closed"));
         println!("Payment after unilateral rejected");
         Ok(())
