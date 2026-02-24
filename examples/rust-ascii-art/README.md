@@ -67,14 +67,14 @@ MINT_URL=http://my-mint:3338 make test-integration
 
 ## Minimal Dependencies
 
-This example uses `cdk` with `default-features = false` and the `configurable-host-reqwest` feature, which provides both the host implementation and the networking battery:
+This example uses `cdk` with `default-features = false` and the `spilman-axum` + `configurable-host-reqwest` features, which provides the host implementation, the networking battery, and the pre-built management router:
 
 ```toml
 [dependencies]
-cdk = { version = "0.14", default-features = false, features = ["configurable-host-reqwest"] }
+cdk = { version = "0.14", default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
 ```
 
-This pulls in only the core Cashu types, Spilman implementation, YAML config support, SQLite persistence, and `reqwest` for mint communication, without the full `wallet` or `mint` crate code.
+This pulls in only the core Cashu types, Spilman implementation, Axum router, YAML config support, SQLite persistence, and `reqwest` for mint communication, without the full `wallet` or `mint` crate code.
 
 ## Environment Variables
 

@@ -2,6 +2,18 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 18, 2026)
+
+### Axum Management Router (Rust)
+
+Introduced a "drop-in" Axum router to eliminate boilerplate for channel management endpoints.
+
+- **New Feature Flag**: `spilman-axum` (implies `configurable-host`).
+- **`SpilmanState<H, N, C>`**: A standard state struct bundling the bridge, host, and networking.
+- **`configurable_management_router()`**: A high-level builder that returns an `axum::Router` containing all necessary management endpoints (`/params`, `/register`, `/{id}/status`, `/{id}/close`, `/{id}/unilateral-close`).
+- **Automatic Error Mapping**: Standardized conversion of protocol errors to consistent JSON responses with correct HTTP status codes (400, 402, 404, 500).
+- **Example Refactoring**: Cleaned up `examples/rust-ascii-art`, deleting ~150 lines of manual route handlers by using the library-provided router.
+
 ## Completed Features (Feb 17, 2026)
 
 ### Rust Networking Batteries

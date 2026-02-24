@@ -341,7 +341,7 @@ The tests cover standalone functions (keypair generation, channel secret, fundin
 
 ### Rust ASCII Art Server
 
-The Rust ASCII Art server (`examples/rust-ascii-art/`) uses `ConfigurableHost` with a YAML config file — no custom `SpilmanHost` trait implementation needed. Pricing and policy are defined in `config.yaml`.
+The Rust ASCII Art server (`examples/rust-ascii-art/`) uses `ConfigurableHost` with a YAML config file and the library-provided Axum router — no manual route handlers for channel management are needed. Pricing and policy are defined in `config.yaml`.
 
 ```bash
 # Build
@@ -356,9 +356,8 @@ PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art
 
 The server consists of:
 - `config.yaml` — YAML pricing config (usage variables: `chars`)
-- `main.rs` — Loads YAML, constructs `ConfigurableHost::from_yaml()`
-- `routes.rs` — Axum HTTP handlers using `ConfigurableHost` public accessors
-- `networking.rs` — Thin `SpilmanAsyncNetworking` implementation
+- `main.rs` — Loads YAML, constructs `ConfigurableHost`, and merges the management router.
+- `routes.rs` — Contains only the business logic (`/ascii`) and the `nest()` call for the library router.
 
 ### Python Demo
 
