@@ -182,6 +182,38 @@ class Spilman:
         app.register_blueprint(bp)
         app.extensions["spilman"] = self
 
+    def process_request_payment(self, context_json: str = "{}"):
+        """Extracts and processes payment from the current Flask request.
+        
+        Returns:
+            PaymentSuccess object.
+            
+        Raises:
+            Exception that should be handled by the caller or caught by Flask.
+            Specifically, it might raise errors that map to 400 or 402.
+        """
+        header_b64 = request.headers.get("X-Cashu-Channel")
+        if not header_b64:
+            raise ValueError("Missing X-Cashu-Channel header")
+        
+        try:
+            payment_json = base64.b64decode(header_b64).decode()
+        except Exception:
+            raise ValueError("invalid base64")
+        
+        return self.bridge.process_payment(payment_json, context_json)
+
+    def attach_payment_header(self, response, payment_result):
+        """Attaches the confirmation header to a Flask response."""
+        payment_info = {
+            "channel_id": payment_result.channel_id,
+            "balance": payment_result.balance,
+            "amount_due": payment_result.amount_due,
+            "capacity": payment_result.capacity,
+        }
+        response.headers["X-Cashu-Channel"] = json.dumps(payment_info)
+        return response
+
     def payment_required(self, f=None, context_provider=None, precheck=None):
         if f is None:
             return lambda func: self.payment_required(func, context_provider, precheck)
@@ -193,21 +225,6 @@ class Spilman:
                 if precheck_result is not None:
                     return precheck_result
 
-            header_b64 = request.headers.get("X-Cashu-Channel")
-            if not header_b64:
-                return jsonify({
-                    "error": "Payment required",
-                    "reason": "Missing X-Cashu-Channel header"
-                }), 402
-            
-            try:
-                payment_json = base64.b64decode(header_b64).decode()
-            except:
-                return jsonify({
-                    "error": "Invalid payment header",
-                    "reason": "invalid base64"
-                }), 400
-            
             context = "{}"
             if context_provider:
                 try:
@@ -216,37 +233,30 @@ class Spilman:
                     print(f"  [Spilman] Context provider failed: {e}")
             
             try:
-                result = self.bridge.process_payment(payment_json, context)
+                result = self.process_request_payment(context)
                 request.spilman_payment = result
                 
                 resp = f(*args, **kwargs)
                 
-                # Handle different return types
+                # Handle different return types (flask common patterns)
                 if isinstance(resp, tuple):
                     r_obj, status = resp
                 else:
                     r_obj, status = resp, 200
                 
-                if status == 200:
-                    payment_info = {
-                        "channel_id": result.channel_id,
-                        "balance": result.balance,
-                        "amount_due": result.amount_due,
-                        "capacity": result.capacity,
-                    }
-                    # If it's a Response object, add the header
-                    if hasattr(r_obj, "headers"):
-                        r_obj.headers["X-Cashu-Channel"] = json.dumps(payment_info)
+                if status == 200 and hasattr(r_obj, "headers"):
+                    self.attach_payment_header(r_obj, result)
                 
                 return resp
             except Exception as e:
                 msg = str(e)
+                status_code = map_error_status(msg)
                 response = jsonify({
                     "success": False,
                     "error": "Payment failed",
                     "reason": msg
                 })
                 response.headers["X-Cashu-Channel"] = json.dumps({"error": msg})
-                return response, map_error_status(msg)
+                return response, status_code
         
         return decorated

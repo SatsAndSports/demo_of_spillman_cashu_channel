@@ -187,39 +187,21 @@ class Spilman:
 
         return router
 
-    def payment_dependency(self, context_provider: Optional[Callable[[Request], str]] = None, precheck: Optional[Callable[[Request], Any]] = None):
-        async def dependency(request: Request, x_cashu_channel: Optional[str] = Header(None)):
-            return await self._process_payment(request, x_cashu_channel, context_provider, precheck)
-
-        return dependency
-
-    async def payment_required(self, request: Request, x_cashu_channel: Optional[str] = Header(None)):
-        return await self._process_payment(request, x_cashu_channel)
-
-    async def _process_payment(
-        self,
-        request: Request,
-        x_cashu_channel: Optional[str],
-        context_provider: Optional[Callable[[Request], str]] = None,
-        precheck: Optional[Callable[[Request], Any]] = None,
-    ):
-        if precheck:
-            precheck_result = precheck(request)
-            if precheck_result is not None:
-                if isinstance(precheck_result, HTTPException):
-                    raise precheck_result
-                if isinstance(precheck_result, tuple) and len(precheck_result) == 2:
-                    status_code, detail = precheck_result
-                else:
-                    status_code, detail = 400, precheck_result
-                raise HTTPException(status_code=status_code, detail=detail)
-
+    async def process_request_payment(self, request: Request, x_cashu_channel: Optional[str] = Header(None), context_json: str = "{}"):
+        """Extracts and processes payment from the current FastAPI request.
+        
+        Returns:
+            PaymentSuccess object.
+            
+        Raises:
+            HTTPException with 400 or 402 status.
+        """
         if not x_cashu_channel:
             raise HTTPException(status_code=402, detail={
                 "error": "Payment required",
                 "reason": "Missing X-Cashu-Channel header",
             })
-
+        
         try:
             payment_json = base64.b64decode(x_cashu_channel).decode()
         except:
@@ -227,20 +209,9 @@ class Spilman:
                 "error": "Invalid payment header",
                 "reason": "invalid base64",
             })
-
-        if context_provider:
-            try:
-                context = context_provider(request)
-            except Exception as e:
-                print(f"  [Spilman] Context provider failed: {e}")
-                context = "{}"
-        else:
-            context = getattr(request.state, "spilman_context", "{}")
-
+            
         try:
-            result = self.bridge.process_payment(payment_json, context)
-            request.state.spilman_payment = result
-            return result
+            return self.bridge.process_payment(payment_json, context_json)
         except Exception as e:
             msg = str(e)
             raise HTTPException(
@@ -253,12 +224,47 @@ class Spilman:
                 headers={"X-Cashu-Channel": json.dumps({"error": msg})},
             )
 
-def add_payment_confirmation_header(response: Response, payment_result: Any):
-    if payment_result:
-        payment_info = {
-            "channel_id": payment_result.channel_id,
-            "balance": payment_result.balance,
-            "amount_due": payment_result.amount_due,
-            "capacity": payment_result.capacity,
-        }
-        response.headers["X-Cashu-Channel"] = json.dumps(payment_info)
+    def add_payment_confirmation_header(self, response: Response, payment_result: Any):
+        """Attaches the confirmation header to a FastAPI response."""
+        if payment_result:
+            payment_info = {
+                "channel_id": payment_result.channel_id,
+                "balance": payment_result.balance,
+                "amount_due": payment_result.amount_due,
+                "capacity": payment_result.capacity,
+            }
+            response.headers["X-Cashu-Channel"] = json.dumps(payment_info)
+        return response
+
+    def payment_dependency(self, context_provider: Optional[Callable[[Request], str]] = None, precheck: Optional[Callable[[Request], Any]] = None):
+        async def dependency(request: Request, x_cashu_channel: Optional[str] = Header(None)):
+            if precheck:
+                precheck_result = precheck(request)
+                if precheck_result is not None:
+                    if isinstance(precheck_result, HTTPException):
+                        raise precheck_result
+                    if isinstance(precheck_result, tuple) and len(precheck_result) == 2:
+                        status_code, detail = precheck_result
+                    else:
+                        status_code, detail = 400, precheck_result
+                    raise HTTPException(status_code=status_code, detail=detail)
+
+            context = "{}"
+            if context_provider:
+                try:
+                    context = context_provider(request)
+                except Exception as e:
+                    print(f"  [Spilman] Context provider failed: {e}")
+            else:
+                context = getattr(request.state, "spilman_context", "{}")
+
+            result = await self.process_request_payment(request, x_cashu_channel, context)
+            request.state.spilman_payment = result
+            return result
+
+        return dependency
+
+    async def payment_required(self, request: Request, x_cashu_channel: Optional[str] = Header(None)):
+        result = await self.process_request_payment(request, x_cashu_channel)
+        request.state.spilman_payment = result
+        return result

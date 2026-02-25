@@ -51,28 +51,30 @@ stores = SpilmanStores()
 host = AsciiArtHost(SECRET_KEY, MINT_URL, PRICING, stores)
 spilman = Spilman(app, host)
 
-def get_ascii_context():
-    data = request.get_json() or {}
-    return json.dumps({"message_length": len(data.get("message", ""))})
-
-def validate_ascii_request():
-    data = request.get_json() or {}
-    if not data.get("message"):
-        return jsonify({"error": "Missing 'message'"}), 400
-    return None
-
 @app.route("/ascii", methods=["POST"])
-@spilman.payment_required(context_provider=get_ascii_context, precheck=validate_ascii_request)
 def generate_ascii():
+    # 1. Validate request body FIRST (no charge for 400s)
     data = request.get_json() or {}
     message = data.get("message", "")
+    if not message:
+        return jsonify({"error": "Missing 'message'"}), 400
     
-    # decorator injected spilman_payment after validation
-    payment = request.spilman_payment
+    # 2. Build context for pricing
+    context = json.dumps({"message_length": len(message)})
     
+    # 3. Explicitly process payment
+    try:
+        payment = spilman.process_request_payment(context)
+    except Exception as e:
+        msg = str(e)
+        from cdk_spilman_kit.ext.flask import map_error_status
+        return jsonify({"error": "Payment failed", "reason": msg}), map_error_status(msg)
+    
+    # 4. Generate content
     art = pyfiglet.figlet_format(message)
     
-    return jsonify({
+    # 5. Return response with confirmation header
+    resp = jsonify({
         "art": art,
         "message": message,
         "payment": {
@@ -82,6 +84,7 @@ def generate_ascii():
             "capacity": payment.capacity,
         }
     })
+    return spilman.attach_payment_header(resp, payment)
 
 if __name__ == "__main__":
     refresh_keyset_cache(stores, MINT_URL, list(PRICING.keys()))
