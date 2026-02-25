@@ -228,10 +228,22 @@ impl ServerProcess {
     }
 
     fn spawn_ts_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("examples/ts-ascii-art");
+        let server_dir = root.join("integration-kits/ts");
+
+        let node_modules = server_dir.join("node_modules");
+        if !node_modules.exists() {
+            let status = Command::new("npm")
+                .args(["install", "--no-package-lock", "--no-fund", "--no-audit"])
+                .current_dir(&server_dir)
+                .status()
+                .context("Failed to run npm install for TypeScript kit")?;
+            if !status.success() {
+                return Err(anyhow!("npm install failed for TypeScript kit"));
+            }
+        }
 
         Command::new("npx")
-            .args(["tsx", "src/index.ts", "server"])
+            .args(["tsx", "src/example_server.ts"])
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(&server_dir)

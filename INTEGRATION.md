@@ -146,6 +146,8 @@ The Spilman implementation uses a **Bridge + Host** architecture:
 
 **Shortcut for Rust servers**: `ConfigurableHost` (feature-gated behind `configurable-host`) is a ready-made `SpilmanHost` implementation that reads pricing and policy from YAML and tracks usage via named variables with linear pricing. It supports pluggable storage backends: in-memory (default) or SQLite for persistence. See the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example using `ConfigurableHost::from_yaml()`.
 
+**Shortcut for TypeScript/Express servers**: The [TypeScript Integration Kit](integration-kits/ts/) provides a drop-in management router and in-memory host for Express applications. It handles keyset caching, registration, and closing endpoints out of the box.
+
 ### Transport Independence
 
 **The bridge operates on typed data, not HTTP or JSON.** It takes parameters like `channel_id: &str`, `balance: u64`, `signature: &str`, and a generic request context `&C`, then returns typed results or errors.
@@ -856,7 +858,8 @@ Four implementations showing the same pattern in different languages:
 
 | Language | Location | Notes |
 |----------|----------|-------|
-| TypeScript | `examples/ts-ascii-art/` | Reference implementation |
+| TypeScript | `integration-kits/ts/` | **Recommended** - Modular kit for Express |
+| TypeScript | `examples/ts-ascii-art/` | Legacy demo server |
 | Rust | `examples/rust-ascii-art/` | Uses `ConfigurableHost` with YAML config |
 | Python | `examples/python-ascii-art/` | PyO3 bindings |
 | Go | `examples/go-ascii-art/` | CGO bindings |

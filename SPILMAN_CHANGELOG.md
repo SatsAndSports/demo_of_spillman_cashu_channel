@@ -2,6 +2,18 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 25, 2026)
+
+### TypeScript Integration Kit
+
+Modularized the TypeScript implementation into a reusable kit for Express.js servers.
+
+- **Modular Design**: Extracted core host and routing logic from examples into a standalone kit in `integration-kits/ts/`.
+- **Express Management Router**: `createSpilmanManagementRouter` provides a drop-in router for all necessary management endpoints (`/params`, `/register`, `/:id/status`, `/:id/close`, `/:id/unilateral-close`).
+- **Standard Host & Stores**: Added `createSpilmanHost` and `createInMemoryStores` to simplify server implementation.
+- **Build Automation**: Updated the root `Makefile` to automatically synchronize WASM artifacts to the integration kit during `make build-wasm`.
+- **Test Orchestration**: Updated server integration tests to use the kit's example server, ensuring the kit is always validated.
+
 ## Completed Features (Feb 18, 2026)
 
 ### Axum Management Router (Rust)

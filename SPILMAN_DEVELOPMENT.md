@@ -230,6 +230,7 @@ make test-server-ts    # Builds WASM if needed (examples/ts-ascii-art uses symli
 ### WASM distribution
 
 - **examples/ts-ascii-art**: Uses symlink (`src/wasm` → `../../../web/wasm-nodejs`) - always uses latest
+- **integration-kits/ts**: Gets WASM copied automatically by `make build-wasm` or `make build-ts-wasm`
 - **blossom-server**: Gets WASM copied (separate git repo, can't use symlinks)
 
 ### From blossom-server directory
@@ -438,6 +439,8 @@ cdk/
 │   ├── cdk-wasm/                             # WASM bindings (browser + Node.js)
 │   ├── cdk-spilman-python/                   # PyO3 bindings
 │   └── cdk-spilman-go/                       # CGO bindings
+├── integration-kits/
+│   └── ts/                                   # TypeScript integration kit
 ├── examples/
 │   ├── rust-ascii-art/                       # Rust ASCII Art server (native)
 │   ├── ts-ascii-art/                         # TypeScript demo server + client

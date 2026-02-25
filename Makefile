@@ -146,7 +146,7 @@ WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src -name '*.rs' 2>/
 	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
 
 # Build WASM bindings
-build-wasm: .wasm-built
+build-wasm: .wasm-built $(TS_KIT_WASM)
 
 # Build WASM and copy to blossom-server
 BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
@@ -156,10 +156,17 @@ $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	cp web/wasm-web/cdk_wasm* web/blossom-server/public/wasm/
 	@echo "WASM copied to blossom-server"
 
+# Build WASM and copy to TS integration kit
+TS_KIT_WASM := integration-kits/ts/wasm/cdk_wasm_bg.wasm
+$(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
+	@mkdir -p integration-kits/ts/wasm
+	cp web/wasm-nodejs/cdk_wasm* integration-kits/ts/wasm/
+	@echo "WASM copied to TS integration kit"
+
 build-blossom-wasm: .wasm-built $(BLOSSOM_WASM)
 
 # Build WASM for TS ASCII Art (uses symlink, just needs WASM built)
-build-ts-wasm: .wasm-built
+build-ts-wasm: .wasm-built $(TS_KIT_WASM)
 
 # --- Container/NutMix Builds ---
 

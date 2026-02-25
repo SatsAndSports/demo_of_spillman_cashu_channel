@@ -81,6 +81,7 @@ The core Spilman logic lives in Rust (`crates/cdk/src/spilman/`) and is exposed 
 | Binding | Location | Use Case |
 |---------|----------|----------|
 | **WASM** | `crates/cdk-wasm/` | Browser clients, Node.js servers |
+| **TS Kit** | `integration-kits/ts/` | Express.js servers (drop-in router) |
 | **Python** | `crates/cdk-spilman-python/` | Python services |
 | **Go** | `crates/cdk-spilman-go/` | Go services |
 
@@ -151,6 +152,8 @@ cdk/
 │   ├── cdk-wasm/                   # WASM bindings
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
 │   └── cdk-spilman-go/             # Go bindings (CGO)
+├── integration-kits/
+│   └── ts/                         # TypeScript/Express integration kit
 ├── containers/                     # Podman/Docker dev environment
 ├── examples/
 │   ├── rust-ascii-art/             # Rust demo (native, uses core cdk)
