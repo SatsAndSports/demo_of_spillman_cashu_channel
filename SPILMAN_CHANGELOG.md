@@ -4,6 +4,18 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 ## Completed Features (Feb 25, 2026)
 
+### Python Integration Kit
+
+Modularized the Python implementation into a reusable kit for Flask and FastAPI servers.
+
+- **Modular Package**: Created `cdk_spilman_kit` with reusable components for storage, host implementation, and keyset management.
+- **Flask Extension**: Provided a `Spilman` extension class with a standard management Blueprint and a `@payment_required` decorator that supports dynamic pricing context.
+- **FastAPI Support**: Provided an `APIRouter` and a `PaymentRequired` dependency for elegant route protection.
+- **Standardized Error Mapping**: Aligned Python error responses and status codes with the Rust and TypeScript implementations (400, 402, 409, 410, 500).
+- **Idempotent Closing**: Built-in support for idempotent cooperative and unilateral closing at the kit level.
+- **Example Refactoring**: Cleaned up `examples/python-ascii-art`, reducing manual state management by ~800 lines.
+- **Full Test Coverage**: The kit-based Python server passes the entire 54-test integration suite.
+
 ### TypeScript Integration Kit
 
 Modularized the TypeScript implementation into a reusable kit for Express.js servers.

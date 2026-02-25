@@ -46,6 +46,7 @@ maturin develop
 ```bash
 cd examples/python-ascii-art
 pip install -r requirements.txt
+pip install -e ../../integration-kits/python
 ```
 
 ## Running the Demo

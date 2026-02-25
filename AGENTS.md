@@ -32,6 +32,8 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `crates/cdk-wasm/` | WASM bindings for browser/Node.js |
 | `crates/cdk-spilman-python/` | PyO3 bindings |
 | `crates/cdk-spilman-go/` | CGO bindings |
+| `integration-kits/ts/` | TypeScript Integration Kit (Express) |
+| `integration-kits/python/` | Python Integration Kit (Flask/FastAPI) |
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
 | `examples/python-ascii-art/` | Python demo |
 | `examples/go-ascii-art/` | Go demo |

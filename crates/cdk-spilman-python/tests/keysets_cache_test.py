@@ -2,54 +2,53 @@ import sys
 from pathlib import Path
 
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[3] / "examples" / "python-ascii-art"
-sys.path.insert(0, str(EXAMPLE_DIR))
+KIT_DIR = Path(__file__).resolve().parents[3] / "integration-kits" / "python"
+sys.path.insert(0, str(KIT_DIR))
 
-import server as ascii_server  # noqa: E402
-
-
-def reset_keyset_cache():
-    ascii_server.keyset_cache.clear()
+from cdk_spilman_kit import SpilmanStores  # noqa: E402
+from cdk_spilman_kit.keysets import refresh_keyset_cache  # noqa: E402
+from cdk_spilman_kit.stores import KeysetCacheEntry  # noqa: E402
+import cdk_spilman_kit.keysets as keysets  # noqa: E402
 
 
 def test_refresh_retains_inactive(monkeypatch):
-    reset_keyset_cache()
+    stores = SpilmanStores()
     mint_url = "http://mint.test"
-    ascii_server.keyset_cache[(mint_url, "A")] = {
-        "info_json": "infoA",
-        "active": True,
-        "unit": "sat",
-    }
+    stores.keyset_cache[(mint_url, "A")] = KeysetCacheEntry(
+        info_json="infoA",
+        active=True,
+        unit="sat",
+    )
 
     entries = [
         {"id": "A", "unit": "sat", "active": False, "info_json": "infoA"},
         {"id": "B", "unit": "sat", "active": True, "info_json": "infoB"},
     ]
 
-    monkeypatch.setattr(ascii_server, "fetch_all_keysets_from_mint", lambda _url: entries)
+    monkeypatch.setattr(keysets, "fetch_all_keysets_from_mint", lambda _url, _units: entries)
 
-    ascii_server.refresh_all_keysets(mint_url)
+    refresh_keyset_cache(stores, mint_url, ["sat"])
 
-    assert ascii_server.keyset_cache[(mint_url, "A")]["active"] is False
-    assert (mint_url, "B") in ascii_server.keyset_cache
+    assert stores.keyset_cache[(mint_url, "A")].active is False
+    assert (mint_url, "B") in stores.keyset_cache
 
 
 def test_refresh_does_not_drop_missing(monkeypatch):
-    reset_keyset_cache()
+    stores = SpilmanStores()
     mint_url = "http://mint.test"
-    ascii_server.keyset_cache[(mint_url, "A")] = {
-        "info_json": "infoA",
-        "active": True,
-        "unit": "sat",
-    }
+    stores.keyset_cache[(mint_url, "A")] = KeysetCacheEntry(
+        info_json="infoA",
+        active=True,
+        unit="sat",
+    )
 
     entries = [
         {"id": "B", "unit": "sat", "active": True, "info_json": "infoB"},
     ]
 
-    monkeypatch.setattr(ascii_server, "fetch_all_keysets_from_mint", lambda _url: entries)
+    monkeypatch.setattr(keysets, "fetch_all_keysets_from_mint", lambda _url, _units: entries)
 
-    ascii_server.refresh_all_keysets(mint_url)
+    refresh_keyset_cache(stores, mint_url, ["sat"])
 
-    assert (mint_url, "A") in ascii_server.keyset_cache
-    assert (mint_url, "B") in ascii_server.keyset_cache
+    assert (mint_url, "A") in stores.keyset_cache
+    assert (mint_url, "B") in stores.keyset_cache

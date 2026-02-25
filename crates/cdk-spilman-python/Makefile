@@ -56,6 +56,7 @@ check-venv:
 		$(PIP) install --upgrade pip; \
 		$(PIP) install maturin patchelf pytest requests; \
 		$(PIP) install -r $(EXAMPLE_DIR)/requirements.txt; \
+		$(PIP) install -e ../../integration-kits/python; \
 	fi
 
 venv: check-venv
