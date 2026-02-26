@@ -432,6 +432,11 @@ clean: clean-nutmix-setup clean-logs
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(PYTHON_VENV)
 	rm -f .wasm-built
+	rm -rf web/wasm-web web/wasm-nodejs
+	rm -rf integration-kits/ts/node_modules examples/ts-ascii-art/node_modules
+	rm -rf integration-kits/ts/wasm
+	rm -f examples/*-ascii-art/*.db
+	@if [ -d $(BLOSSOM_DIR) ]; then $(MAKE) -C $(BLOSSOM_DIR) clean; fi
 
 # ===========================================================================
 # Utility Targets
