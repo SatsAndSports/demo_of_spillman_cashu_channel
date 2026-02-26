@@ -8,7 +8,6 @@ import { createInMemoryStores, getActivePricing, PricingTable, SpilmanStores } f
 import { createSqliteStores } from "./sqlite_stores.js";
 import { fetchAndCacheKeysetsForMint } from "./keysets.js";
 import { Spilman } from "./express.js";
-import { init } from "../wasm/cdk_wasm.js";
 
 export interface SpilmanConfig {
   mints: Record<string, string[]>;
@@ -31,9 +30,6 @@ export class ConfigurableSpilman {
   ) {}
 
   static async fromYaml(configPath: string, secretKeyHex: string): Promise<ConfigurableSpilman> {
-    // Initialize WASM
-    init();
-
     const yamlContent = readFileSync(configPath, "utf8");
     const config = parse(yamlContent) as SpilmanConfig;
 
