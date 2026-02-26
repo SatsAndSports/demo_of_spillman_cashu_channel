@@ -22,7 +22,7 @@ base64 = "0.22"
 hex = "0.4"
 
 [dev-dependencies]
-# reqwest with blocking for tests (already in deps, but explicit for clarity)
+reqwest = { version = "0.12", features = ["blocking", "json"] }
 
 [[test]]
 name = "integration"

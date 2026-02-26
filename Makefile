@@ -243,31 +243,11 @@ test-integration-python: build-python build-mintd
 test-integration-ts: build-wasm build-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(WASM_CRATE) test-integration
 
-# ===========================================================================
-# Test Targets - Server Integration Tests (52-test Rust client suite)
-# ===========================================================================
-
-# Test TypeScript server
-test-server-ts: build-mintd build-ts-wasm
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Test Rust server
-test-server-rust: build-mintd build-rust-server
-	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Test Python server
-test-server-python: build-mintd build-python
-	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Test Go server
-test-server-go: build-mintd build-go
-	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
-
-# Test all servers
-test-server-all: test-server-ts test-server-rust test-server-python test-server-go
+# Run all integration tests (Go, Python, TS, Rust)
+test-integration-all: test-integration-rust test-integration-go test-integration-python test-integration-ts
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
+	@echo "  ALL INTEGRATION TESTS PASSED"
 	@echo "========================================="
 
 # ===========================================================================
@@ -284,6 +264,14 @@ test-demo-go: build-go build-mintd
 
 test-demo-ts: build-wasm build-mintd
 	@bash scripts/ts-parallel-demo.sh cdk
+
+# Test all demos
+test-demo-all: test-demo-python test-demo-go test-demo-ts
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL DEMO TESTS PASSED"
+	@echo "========================================="
+
 
 # --- Demo Tests with NutMix (Docker Compose) ---
 
@@ -334,14 +322,14 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "========================================="
 
 # All tests with CDK mint (does not require blossom-server repo)
-test-all: test-unit-spilman test-integration-go test-integration-python test-server-all
+test-all: test-unit-spilman test-integration-all test-server-all test-demo-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint)"
 	@echo "========================================="
 
 # All tests including blossom (requires web/blossom-server repo)
-test-all-with-blossom: test-unit-spilman test-integration-go test-integration-python test-blossom test-server-all
+test-all-with-blossom: test-unit-spilman test-integration-all test-blossom test-server-all test-demo-all
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL TESTS PASSED (CDK mint + blossom)"

@@ -42,3 +42,6 @@ testing/
 
 # WASM build sentinel
 .wasm-built
+
+# Go artifacts
+examples/go-ascii-art/main

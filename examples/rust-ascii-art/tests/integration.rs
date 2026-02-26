@@ -77,8 +77,8 @@ fn fetch_active_keyset_json(mint_url: &str, unit: &str) -> Option<(String, serde
         "keys": keys_obj,
         "inputFeePpk": input_fee_ppk,
         "amounts": keys_obj.keys()
-            .filter_map(|k| k.parse::<u64>().ok())
-            .collect::<Vec<_>>()
+            .filter_map(|k: &String| k.parse::<u64>().ok())
+            .collect::<Vec<u64>>()
     });
 
     Some((keyset_id.to_string(), keyset_info))
