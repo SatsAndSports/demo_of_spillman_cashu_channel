@@ -4,10 +4,11 @@ import { PricingTable, SpilmanStores } from "./stores.js";
 
 export interface SpilmanHostOptions {
   secretKeyHex: string;
-  mintUrl: string;
+  mints: Record<string, string[]>;
   pricing: PricingTable;
   stores: SpilmanStores;
   refreshKeysets?: (mint: string) => Promise<void>;
+  minExpirySeconds?: number;
 }
 
 export function getServerPubkey(secretKeyHex: string): string {
@@ -17,18 +18,30 @@ export function getServerPubkey(secretKeyHex: string): string {
 }
 
 export function createSpilmanHost(options: SpilmanHostOptions) {
-  const { secretKeyHex, mintUrl, pricing, stores, refreshKeysets } = options;
+  const { secretKeyHex, pricing, stores, refreshKeysets } = options;
   const receiverPubkey = getServerPubkey(secretKeyHex);
-  const normalizedMint = mintUrl.replace(/\/$/, "");
+  const minExpirySeconds = options.minExpirySeconds ?? 3600;
+
+  // Pre-normalize mint URLs in the trusted map
+  const trustedMints: Record<string, string[]> = {};
+  for (const [url, units] of Object.entries(options.mints)) {
+    trustedMints[url.replace(/\/$/, "")] = units;
+  }
 
   return {
+    serverPubkey: receiverPubkey,
+
     receiverKeyIsAcceptable: (pubkeyHex: string): boolean => {
       return pubkeyHex.toLowerCase() === receiverPubkey.toLowerCase();
     },
 
     mintAndKeysetIsAcceptable: (mint: string, keysetId: string): boolean => {
       const normMint = mint.replace(/\/$/, "");
-      return normMint === normalizedMint && stores.keysetCache.has(mint, keysetId);
+      const trustedUnits = trustedMints[normMint];
+      if (!trustedUnits) return false;
+      
+      const entry = stores.keysetCache.get(mint, keysetId);
+      return entry !== null && trustedUnits.includes(entry.unit);
     },
 
     getFundingAndParams: (channelId: string): [string, string, string, string] | null => {
@@ -61,13 +74,8 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
     },
 
     getAmountDue: (channelId: string, contextJson: string | null): bigint => {
-      const usage = stores.channelUsage.get(channelId);
-      let totalChars = usage?.charsServed ?? 0;
-
-      if (contextJson) {
-        const context = JSON.parse(contextJson);
-        totalChars += context.message_length || 0;
-      }
+      const accumulated = stores.channelUsage.getUsage(channelId) ?? {};
+      const pending: Record<string, number> = contextJson ? JSON.parse(contextJson) : {};
 
       const funding = stores.channelFunding.get(channelId);
       if (!funding) return BigInt(0);
@@ -76,13 +84,19 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       const unitPricing = pricing[params.unit];
       if (!unitPricing) return BigInt(0);
 
-      return BigInt(totalChars * unitPricing.per_char);
+      let total = 0;
+      for (const [varName, price] of Object.entries(unitPricing.variables)) {
+        const acc = accumulated[varName] ?? 0;
+        const pend = pending[varName] ?? 0;
+        total += (acc + pend) * price;
+      }
+
+      return BigInt(total);
     },
 
     recordPayment: (channelId: string, balance: number, signature: string, contextJson: string): void => {
-      const context = JSON.parse(contextJson);
-      const messageLength = context.message_length || 0;
-      stores.channelUsage.recordCharsServed(channelId, messageLength);
+      const increments: Record<string, number> = JSON.parse(contextJson);
+      stores.channelUsage.incrementUsage(channelId, increments);
       stores.channelBalance.update(channelId, Number(balance), signature);
     },
 
@@ -93,15 +107,17 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
     },
 
     markChannelClosing: (
-      channelId: string,
+      channel_id: string,
       locktime: number,
       balance: number,
       signature: string
     ): void => {
-      if (stores.channelClosed.isClosed(channelId)) {
+      if (stores.channelClosed.isClosed(channel_id)) {
         throw new Error("channel already closed");
       }
-      stores.channelClosing.markClosing(channelId, Number(locktime), Number(balance), signature);
+      // Also update balance store so it's available for unilateral exit logic during retry
+      stores.channelBalance.update(channel_id, Number(balance), signature);
+      stores.channelClosing.markClosing(channel_id, Number(locktime), Number(balance), signature);
     },
 
     getClosingData: (channelId: string): { locktime: number; balance: number; signature: string } | null => {
@@ -112,9 +128,9 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       const unitPricing = pricing[unit];
       if (!unitPricing) return null;
       return {
-        min_expiry_in_seconds: 3600,
-        min_capacity: unitPricing.minCapacity,
-        max_amount_per_output: unitPricing.maxAmountPerOutput,
+        min_expiry_in_seconds: minExpirySeconds,
+        min_capacity: unitPricing.min_capacity ?? unitPricing.minCapacity ?? 0,
+        max_amount_per_output: unitPricing.max_amount_per_output ?? unitPricing.maxAmountPerOutput,
       };
     },
 
@@ -143,11 +159,11 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
         headers: { "Content-Type": "application/json" },
         body: swapRequestJson,
       });
+      const text = await response.text();
       if (!response.ok) {
-        const text = await response.text();
-        return JSON.stringify({ error: `Mint rejected swap: ${text}` });
+        throw new Error(text || `Mint rejected swap with status ${response.status}`);
       }
-      return await response.text();
+      return text;
     },
 
     markChannelClosed: (

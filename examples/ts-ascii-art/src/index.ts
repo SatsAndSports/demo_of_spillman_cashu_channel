@@ -6,7 +6,7 @@
  *   tsx src/index.ts client [messages]   # Run the client
  */
 
-import { init } from "./wasm/cdk_wasm.js";
+import { init } from "cdk-spilman-kit";
 
 // Initialize WASM panic hook for better error messages
 init();

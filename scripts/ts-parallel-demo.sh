@@ -38,6 +38,7 @@ trap cleanup EXIT
 
 # 3. Install npm dependencies
 echo "--- Installing npm dependencies ---"
+(cd "integration-kits/ts" && npm install --silent)
 (cd "$TS_DEMO_DIR" && npm install --silent)
 
 # 4. Find two distinct free ports

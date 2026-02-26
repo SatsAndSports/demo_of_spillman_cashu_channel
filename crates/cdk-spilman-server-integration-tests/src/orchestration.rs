@@ -228,13 +228,15 @@ impl ServerProcess {
     }
 
     fn spawn_ts_server(root: &Path, port: u16, mint_url: &str) -> Result<GroupChild> {
-        let server_dir = root.join("integration-kits/ts");
+        let server_dir = root.join("examples/ts-ascii-art");
+        let kit_dir = root.join("integration-kits/ts");
 
-        let node_modules = server_dir.join("node_modules");
-        if !node_modules.exists() {
+        // Ensure kit dependencies are installed
+        let kit_node_modules = kit_dir.join("node_modules");
+        if !kit_node_modules.exists() {
             let status = Command::new("npm")
                 .args(["install", "--no-package-lock", "--no-fund", "--no-audit"])
-                .current_dir(&server_dir)
+                .current_dir(&kit_dir)
                 .status()
                 .context("Failed to run npm install for TypeScript kit")?;
             if !status.success() {
@@ -242,8 +244,20 @@ impl ServerProcess {
             }
         }
 
+        let node_modules = server_dir.join("node_modules");
+        if !node_modules.exists() {
+            let status = Command::new("npm")
+                .args(["install", "--no-package-lock", "--no-fund", "--no-audit"])
+                .current_dir(&server_dir)
+                .status()
+                .context("Failed to run npm install for TypeScript demo")?;
+            if !status.success() {
+                return Err(anyhow!("npm install failed for TypeScript demo"));
+            }
+        }
+
         Command::new("npx")
-            .args(["tsx", "src/example_server.ts"])
+            .args(["tsx", "src/index.ts", "server"])
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(&server_dir)

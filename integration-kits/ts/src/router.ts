@@ -1,5 +1,6 @@
 import express from "express";
 import { getChannelStatus, PricingTable, SpilmanStores } from "./stores.js";
+import { mapBridgeErrorStatus } from "./express.js";
 
 export interface ManagementRouterDeps {
   bridge: {
@@ -22,26 +23,6 @@ function parseSenderProofs(raw: unknown): unknown {
     }
   }
   return raw ?? [];
-}
-
-function mapBridgeErrorStatus(errorMsg: string): number {
-  const lowerMsg = errorMsg.toLowerCase();
-  if (lowerMsg.includes("channel closed")) return 410;
-  if (lowerMsg.includes("channel closing")) return 409;
-  if (
-    lowerMsg.includes("invalid base64") ||
-    lowerMsg.includes("invalid utf8") ||
-    lowerMsg.includes("invalid json") ||
-    lowerMsg.includes("missing field") ||
-    lowerMsg.includes("missing channel_id") ||
-    lowerMsg.includes("missing signature") ||
-    (lowerMsg.includes("expected") &&
-      (lowerMsg.includes("string") || lowerMsg.includes("integer") || lowerMsg.includes("u64")))
-  ) {
-    return 400;
-  }
-  if (lowerMsg.includes("internal") || lowerMsg.includes("misconfigured")) return 500;
-  return 402;
 }
 
 function parseCloseError(e: unknown): { status: number; reason: string; extra: Record<string, unknown> } {
@@ -75,7 +56,24 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
   const router = express.Router();
 
   router.get("/params", (_req, res) => {
-    const pricing = deps.getActivePricing ? deps.getActivePricing() : deps.pricing;
+    const rawPricing = deps.getActivePricing ? deps.getActivePricing() : deps.pricing;
+    
+    // Compatibility layer: include per_char if chars variable exists
+    const pricing: Record<string, any> = {};
+    for (const [unit, entry] of Object.entries(rawPricing)) {
+      const min_cap = entry.min_capacity ?? entry.minCapacity;
+      const max_output = entry.max_amount_per_output ?? entry.maxAmountPerOutput;
+      
+      pricing[unit] = {
+        ...entry,
+        min_capacity: min_cap,
+        minCapacity: min_cap, // For Rust test client
+        max_amount_per_output: max_output,
+        maxAmountPerOutput: max_output,
+        per_char: entry.variables?.chars ?? 0
+      };
+    }
+
     res.json({
       receiver_pubkey: deps.receiverPubkey,
       pricing,

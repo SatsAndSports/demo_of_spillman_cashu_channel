@@ -10,9 +10,7 @@ export interface ChannelBalance {
   signature: string;
 }
 
-export interface ChannelUsage {
-  charsServed: number;
-}
+export type UsageMap = Record<string, number>;
 
 export interface ClosingChannelData {
   locktime: number;
@@ -37,9 +35,11 @@ export interface KeysetCacheEntry {
 }
 
 export interface PricingEntry {
-  per_char: number;
-  minCapacity: number;
-  maxAmountPerOutput?: number;
+  min_capacity: number;
+  minCapacity?: number; // Optional for code-created entries
+  max_amount_per_output?: number;
+  maxAmountPerOutput?: number; // Optional
+  variables: UsageMap;
 }
 
 export type PricingTable = Record<string, PricingEntry>;
@@ -56,8 +56,8 @@ export interface ChannelBalanceStore {
 }
 
 export interface ChannelUsageStore {
-  get(channelId: string): ChannelUsage | null;
-  recordCharsServed(channelId: string, chars: number): void;
+  getUsage(channelId: string): UsageMap | null;
+  incrementUsage(channelId: string, increments: UsageMap): void;
 }
 
 export interface ChannelClosingStore {
@@ -104,7 +104,7 @@ export interface SpilmanStores {
 export function createInMemoryStores(): SpilmanStores {
   const channelFundingStore = new Map<string, ChannelFundingData>();
   const channelBalanceStore = new Map<string, ChannelBalance>();
-  const channelUsageStore = new Map<string, ChannelUsage>();
+  const channelUsageStore = new Map<string, UsageMap>();
   const channelClosingStore = new Map<string, ClosingChannelData>();
   const channelClosedStore = new Map<string, ClosedChannelData>();
   const keysetCacheStore = new Map<string, KeysetCacheEntry>();
@@ -136,16 +136,18 @@ export function createInMemoryStores(): SpilmanStores {
   };
 
   const channelUsage: ChannelUsageStore = {
-    get(channelId) {
+    getUsage(channelId) {
       return channelUsageStore.get(channelId) ?? null;
     },
-    recordCharsServed(channelId, chars) {
+    incrementUsage(channelId, increments) {
       let usage = channelUsageStore.get(channelId);
       if (!usage) {
-        usage = { charsServed: 0 };
+        usage = {};
         channelUsageStore.set(channelId, usage);
       }
-      usage.charsServed += chars;
+      for (const [varName, delta] of Object.entries(increments)) {
+        usage[varName] = (usage[varName] ?? 0) + delta;
+      }
     },
   };
 
@@ -257,7 +259,7 @@ export interface ChannelStatus {
   channel_id: string;
   capacity: number;
   balance: number;
-  chars_served: number;
+  usage: UsageMap;
   amount_due: number;
   closed: boolean;
   closed_amount?: number;
@@ -275,19 +277,23 @@ export function getChannelStatus(
 
   const params = JSON.parse(funding.paramsJson);
   const balance = stores.channelBalance.get(channelId);
-  const usage = stores.channelUsage.get(channelId);
+  const usage = stores.channelUsage.getUsage(channelId) ?? {};
   const closedData = stores.channelClosed.get(channelId);
 
-  const charsServed = usage?.charsServed ?? 0;
   const unitPricing = pricing[params.unit];
-  const pricePerChar = unitPricing?.per_char ?? 0;
-  const amountDue = charsServed * pricePerChar;
+  let amountDue = 0;
+  if (unitPricing) {
+    for (const [varName, price] of Object.entries(unitPricing.variables)) {
+      amountDue += (usage[varName] ?? 0) * price;
+    }
+  }
 
   return {
     channel_id: channelId,
     capacity: params.capacity,
     balance: balance?.balance ?? 0,
-    chars_served: charsServed,
+    usage,
+    chars_served: usage.chars ?? 0, // Compatibility
     amount_due: amountDue,
     closed: closedData !== null,
     ...(closedData && { closed_amount: closedData.closedAmount }),

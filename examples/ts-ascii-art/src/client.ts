@@ -21,7 +21,7 @@ import {
   create_funding_outputs,
   construct_proofs,
   spilman_channel_sender_create_signed_balance_update,
-} from "./wasm/cdk_wasm.js";
+} from "cdk-spilman-kit/wasm";
 
 // ============================================================================
 // Configuration

@@ -226,6 +226,7 @@ describe('WASM close retry with real mint', () => {
       getChannelState: (_chId: string) => channelState,
       markChannelClosing: (_chId: string, lt: number, bal: number, sig: string) => {
         channelState = 'closing';
+        storedPayment = [Number(bal), sig];
         closingData = { locktime: Number(lt), balance: Number(bal), signature: sig };
       },
       getClosingData: (_chId: string) => closingData,
@@ -262,11 +263,11 @@ describe('WASM close retry with real mint', () => {
           headers: { 'Content-Type': 'application/json' },
           body: swapRequestJson,
         });
+        const text = await response.text();
         if (!response.ok) {
-          const text = await response.text();
-          return JSON.stringify({ error: `Mint rejected swap: ${text}` });
+          throw new Error(text || `Mint rejected swap with status ${response.status}`);
         }
-        return await response.text();
+        return text;
       },
 
       markChannelClosed: (
