@@ -9,11 +9,11 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Pay-per-segment video streaming (47 tests)
 - **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost` with YAML config
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server
-- **Python ASCII Art** (`examples/python-ascii-art/`) - Multi-language proof-of-concept
-- **Go ASCII Art** (`examples/go-ascii-art/`) - Multi-language proof-of-concept
+- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server using `ConfigurableSpilman` with YAML config
+- **Python ASCII Art** (`examples/python-ascii-art/`) - Python server using `ConfigurableSpilman` with YAML config
+- **Go ASCII Art** (`examples/go-ascii-art/`) - Standalone Go implementation (manual config)
 
-**Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (52 tests)
+**Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (54 tests)
 
 ## Baseline Commits (for diffing)
 
@@ -83,7 +83,7 @@ cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -p cdk-s
 # Build WASM (uses sentinel-based dependency tracking - instant when nothing changed)
 make build-wasm
 
-# Run server integration tests (52-test Rust client suite)
+# Run server integration tests (54-test Rust client suite)
 make test-server-ts          # Test TypeScript server
 make test-server-rust        # Test Rust server
 make test-server-python      # Test Python server
@@ -150,7 +150,7 @@ For detailed information, see:
 - Remember volume preference in localStorage
 
 ### Lower Priority
-- Python/Go demos: Add client-initiated closing (currently server-only CLI close). TS is the reference for this.
+- Go demo: Add client-initiated closing (currently server-only CLI close). TS is the reference for this.
 
 ## Conventions
 

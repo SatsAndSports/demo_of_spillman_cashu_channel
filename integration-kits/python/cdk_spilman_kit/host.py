@@ -2,7 +2,7 @@ import json
 import time
 import requests
 from typing import Optional, Tuple, List, Dict, Any
-from .stores import SpilmanStores, ChannelClosedData
+from .stores import SpilmanStores, ChannelClosedData, UsageMap
 from .keysets import refresh_keyset_cache
 
 DEFAULT_TIMEOUT = 10
@@ -17,22 +17,35 @@ except ImportError:
     sign_with_tweaked_key_util = None
 
 class BaseSpilmanHost:
-    def __init__(self, secret_key: str, mint_url: str, pricing: Dict[str, Any], stores: SpilmanStores):
+    def __init__(
+        self, 
+        secret_key: str, 
+        mints: Dict[str, List[str]], 
+        pricing: Dict[str, Any], 
+        stores: SpilmanStores,
+        min_expiry_seconds: int = 3600
+    ):
         if secret_key_to_pubkey is None:
             raise RuntimeError("cdk_spilman is required to use cdk_spilman_kit")
         self.secret_key = secret_key
-        self.mint_url = mint_url
+        # Normalize mint URLs
+        self.mints = {url.rstrip("/"): units for url, units in mints.items()}
         self.pricing = pricing
         self.stores = stores
         self.pubkey = secret_key_to_pubkey(secret_key)
+        self.min_expiry_seconds = min_expiry_seconds
 
     def receiver_key_is_acceptable(self, pubkey_hex: str) -> bool:
-        return pubkey_hex == self.pubkey
+        return pubkey_hex.lower() == self.pubkey.lower()
 
     def mint_and_keyset_is_acceptable(self, mint: str, keyset_id: str) -> bool:
-        if mint != self.mint_url:
+        norm_mint = mint.rstrip("/")
+        trusted_units = self.mints.get(norm_mint)
+        if not trusted_units:
             return False
-        return (mint, keyset_id) in self.stores.keyset_cache
+        
+        entry = self.stores.keyset_cache.get((mint, keyset_id))
+        return entry is not None and entry.unit in trusted_units
 
     def get_funding_and_params(self, channel_id: str) -> Optional[Tuple[str, str, str, str]]:
         data = self.stores.channel_funding.get(channel_id)
@@ -52,27 +65,39 @@ class BaseSpilmanHost:
             "channel_secret": secret,
             "keyset_info": keyset
         }
-        current = self.stores.channel_largest_payment.get(channel_id)
-        if not current or initial_balance > current.get("balance", 0):
-            self.stores.channel_largest_payment[channel_id] = {
-                "balance": initial_balance,
-                "signature": initial_signature
-            }
+        # Also update balance store
+        self.stores.channel_largest_payment[channel_id] = {
+            "balance": initial_balance,
+            "signature": initial_signature
+        }
 
     def get_amount_due(self, channel_id: str, context_json: Optional[str]) -> int:
-        # Default implementation assumes pricing based on the channel's unit
-        # Users should override this or provide a custom context handler
+        accumulated = self.stores.get_usage(channel_id)
+        pending: UsageMap = json.loads(context_json) if context_json else {}
+
         funding = self.stores.channel_funding.get(channel_id)
-        unit = "sat"
-        if funding:
-            params = json.loads(funding["params"])
-            unit = params.get("unit", "sat")
+        if not funding:
+            return 0
         
-        # This is service-specific. By default, we might just return 0 
-        # unless the user overrides this.
-        return 0 
+        params = json.loads(funding["params"])
+        unit = params.get("unit")
+        unit_pricing = self.pricing.get(unit)
+        if not unit_pricing:
+            return 0
+        
+        total = 0
+        variables = unit_pricing.get("variables", {})
+        for var_name, price in variables.items():
+            acc = accumulated.get(var_name, 0)
+            pend = pending.get(var_name, 0)
+            total += (acc + pend) * price
+            
+        return total
 
     def record_payment(self, channel_id: str, balance: int, signature: str, context_json: str):
+        increments: UsageMap = json.loads(context_json) if context_json else {}
+        self.stores.increment_usage(channel_id, increments)
+        
         current = self.stores.channel_largest_payment.get(channel_id, {})
         if balance > current.get("balance", 0):
             self.stores.channel_largest_payment[channel_id] = {
@@ -90,6 +115,13 @@ class BaseSpilmanHost:
     def mark_channel_closing(self, channel_id, locktime, balance, signature):
         if channel_id in self.stores.channel_closed:
             raise ValueError("channel already closed")
+        
+        # Mirror TS fix: Update balance store during closing
+        self.stores.channel_largest_payment[channel_id] = {
+            "balance": balance,
+            "signature": signature
+        }
+        
         self.stores.channel_closing[channel_id] = {
             "locktime": locktime,
             "balance": balance,
@@ -103,7 +135,9 @@ class BaseSpilmanHost:
         p = self.pricing.get(unit)
         if not p:
             return None
-        return (3600, p.get("minCapacity", 10), p.get("maxAmountPerOutput"))
+        min_cap = p.get("min_capacity") or p.get("minCapacity") or 10
+        max_output = p.get("max_amount_per_output") or p.get("maxAmountPerOutput")
+        return (self.min_expiry_seconds, min_cap, max_output)
 
     def now_seconds(self) -> int:
         return int(time.time())
@@ -128,7 +162,8 @@ class BaseSpilmanHost:
             json=json.loads(swap_request_json),
             timeout=DEFAULT_TIMEOUT,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise RuntimeError(f"Mint rejected swap ({resp.status_code}): {resp.text}")
         return resp.text
 
     def refresh_all_keysets(self, mint: str):

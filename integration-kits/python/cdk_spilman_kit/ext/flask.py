@@ -1,7 +1,8 @@
 import base64
 import json
 from functools import wraps
-from flask import Blueprint, request, jsonify, current_app
+from typing import Optional, Any, Dict, List, Union
+from flask import Blueprint, request, jsonify, Flask
 from cdk_spilman import SpilmanBridge
 from ..host import BaseSpilmanHost
 from ..stores import SpilmanStores
@@ -11,8 +12,30 @@ def map_error_status(error_msg: str) -> int:
     if "channel closed" in lower_msg: return 410
     if "channel closing" in lower_msg: return 409
     
+    # Payment Required (402) cases
+    is_payment_required = any(x in lower_msg for x in [
+        "missing x-cashu-channel", 
+        "invalid signature", 
+        "missing header",
+        "signature verification failed",
+        "channel_id mismatch",
+        "insufficient balance",
+        "balance exceeds capacity",
+        "locktime too soon",
+        "mint or keyset not acceptable",
+        "max_amount_per_output exceeded"
+    ])
+    if is_payment_required: return 402
+
     # Standard 400 Bad Request cases (parsing/malformed request)
-    is_bad_request = any(x in lower_msg for x in ["invalid base64", "invalid utf8", "invalid json", "missing field", "missing signature", "missing channel_id"])
+    is_bad_request = any(x in lower_msg for x in [
+        "invalid base64", 
+        "invalid utf8", 
+        "invalid json", 
+        "missing field", 
+        "missing channel_id",
+        "missing signature"
+    ])
     
     # Bridge often uses "expected ..." for type errors
     if not is_bad_request:
@@ -24,7 +47,8 @@ def map_error_status(error_msg: str) -> int:
         
     if "internal" in lower_msg or "misconfigured" in lower_msg:
         return 500
-    return 402
+    
+    return 402 # Default
 
 def map_error_name(error_msg: str) -> str:
     if map_error_status(error_msg) == 400:
@@ -32,29 +56,44 @@ def map_error_name(error_msg: str) -> str:
     return "Registration failed"
 
 class Spilman:
-    def __init__(self, app=None, host: BaseSpilmanHost = None):
+    def __init__(self, app: Optional[Flask] = None, host: Optional[BaseSpilmanHost] = None, bridge: Optional[SpilmanBridge] = None):
         self.host = host
-        self.bridge = None
+        self.bridge = bridge
         if app is not None:
             self.init_app(app)
 
-    def init_app(self, app, host: BaseSpilmanHost = None):
+    def init_app(self, app: Flask, host: Optional[BaseSpilmanHost] = None, bridge: Optional[SpilmanBridge] = None):
         if host:
             self.host = host
+        if bridge:
+            self.bridge = bridge
         
         if not self.host:
             raise RuntimeError("Spilman host must be provided either in constructor or init_app")
+        if not self.bridge:
+            self.bridge = SpilmanBridge(self.host)
             
-        self.bridge = SpilmanBridge(self.host)
-        
         # Register management blueprint
         bp = Blueprint("spilman_management", __name__, url_prefix="/channel")
         
         @bp.route("/params")
         def get_params():
+            raw_pricing = self.host.pricing
+            # Compatibility layer: include per_char if chars variable exists
+            pricing = {}
+            for unit, entry in raw_pricing.items():
+                pricing[unit] = dict(entry)
+                # Ensure snake_case and camelCase compatibility
+                if "min_capacity" in entry: pricing[unit]["minCapacity"] = entry["min_capacity"]
+                if "max_amount_per_output" in entry: pricing[unit]["maxAmountPerOutput"] = entry["max_amount_per_output"]
+                
+                vars_dict = entry.get("variables", {})
+                if "chars" in vars_dict:
+                    pricing[unit]["per_char"] = vars_dict["chars"]
+
             return jsonify({
                 "receiver_pubkey": self.host.pubkey,
-                "pricing": self.host.stores.get_active_pricing(self.host.pricing),
+                "pricing": pricing,
                 "mints_units_keysets": self.host.stores.get_mints_units_keysets(),
                 "min_expiry_in_seconds": 3600,
             })
@@ -94,11 +133,14 @@ class Spilman:
             params = json.loads(funding["params"])
             payment = self.host.stores.channel_largest_payment.get(channel_id, {})
             closed_info = self.host.stores.channel_closed.get(channel_id)
+            usage = self.host.stores.get_usage(channel_id)
             
             return jsonify({
                 "channel_id": channel_id,
                 "capacity": params.get("capacity", 0),
                 "balance": payment.get("balance", 0),
+                "usage": usage,
+                "chars_served": usage.get("chars", 0), # Compatibility
                 "amount_due": self.host.get_amount_due(channel_id, None),
                 "closed": closed_info is not None,
                 "closed_amount": closed_info.balance if closed_info else None,
@@ -112,8 +154,8 @@ class Spilman:
                 return jsonify({"error": "missing balance"}), 400
             
             # Check if already closed - return idempotent response
-            closed_info = self.host.stores.channel_closed.get(channel_id)
-            if closed_info:
+            if channel_id in self.host.stores.channel_closed:
+                closed_info = self.host.stores.channel_closed[channel_id]
                 if closed_info.balance == balance:
                     return jsonify({
                         "success": True,
@@ -154,8 +196,8 @@ class Spilman:
         @bp.route("/<channel_id>/unilateral-close", methods=["POST"])
         def unilateral_close(channel_id):
             # Check if already closed - return idempotent response
-            closed_info = self.host.stores.channel_closed.get(channel_id)
-            if closed_info:
+            if channel_id in self.host.stores.channel_closed:
+                closed_info = self.host.stores.channel_closed[channel_id]
                 return jsonify({
                     "success": True,
                     "channel_id": channel_id,
@@ -182,7 +224,7 @@ class Spilman:
         app.register_blueprint(bp)
         app.extensions["spilman"] = self
 
-    def process_request_payment(self, context_json: str = "{}"):
+    def process_request_payment(self, context: Union[str, Dict[str, Any]] = "{}"):
         """Extracts and processes payment from the current Flask request.
         
         Returns:
@@ -201,6 +243,7 @@ class Spilman:
         except Exception:
             raise ValueError("invalid base64")
         
+        context_json = context if isinstance(context, str) else json.dumps(context)
         return self.bridge.process_payment(payment_json, context_json)
 
     def attach_payment_header(self, response, payment_result):

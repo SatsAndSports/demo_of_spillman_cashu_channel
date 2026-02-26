@@ -251,6 +251,33 @@ test-integration-all: test-integration-rust test-integration-go test-integration
 	@echo "========================================="
 
 # ===========================================================================
+# Test Targets - Server Integration Tests (common Rust suite against all servers)
+# ===========================================================================
+
+# Test TypeScript server
+test-server-ts: build-mintd build-wasm
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Rust server
+test-server-rust: build-mintd build-rust-server
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Python server
+test-server-python: build-mintd build-python
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test Go server
+test-server-go: build-mintd build-go
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+
+# Test all servers
+test-server-all: test-server-ts test-server-rust test-server-python test-server-go
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL SERVER INTEGRATION TESTS PASSED"
+	@echo "========================================="
+
+# ===========================================================================
 # Test Targets - Demo Tests (simple client/server sanity check)
 # ===========================================================================
 

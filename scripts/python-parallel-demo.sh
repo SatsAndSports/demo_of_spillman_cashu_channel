@@ -53,6 +53,7 @@ echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
 echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
+export CONFIG_PATH="examples/python-ascii-art/config.yaml"
 $PYTHON examples/python-ascii-art/server.py > "$SERVER_LOG" 2>&1 &
 
 # Wait for server to be ready
