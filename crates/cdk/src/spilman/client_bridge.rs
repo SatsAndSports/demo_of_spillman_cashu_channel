@@ -452,6 +452,49 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         self.host.delete_channel(channel_id);
     }
 
+    /// Create a cooperative close request for a channel.
+    ///
+    /// This creates a signed balance update for the `final_balance` and
+    /// returns a JSON string ready to be sent to the server's close endpoint.
+    pub fn create_cooperative_close_request(
+        &self,
+        channel_id: &str,
+        final_balance: u64,
+    ) -> Result<String, String> {
+        // Sign the final balance update
+        let update_json = self.sign_balance_update(channel_id, final_balance)?;
+
+        let update: serde_json::Value = serde_json::from_str(&update_json)
+            .map_err(|e| format!("Failed to parse balance update: {}", e))?;
+
+        // Build the close request JSON
+        let request = serde_json::json!({
+            "balance": update["amount"],
+            "signature": update["signature"]
+        });
+
+        Ok(request.to_string())
+    }
+
+    /// Process a cooperative close response from the server.
+    ///
+    /// This marks the channel as closed locally and removes it from storage.
+    pub fn process_cooperative_close_response(&self, response_json: &str) -> Result<(), String> {
+        // Parse the response to verify it's valid JSON
+        let response: serde_json::Value = serde_json::from_str(response_json)
+            .map_err(|e| format!("Failed to parse close response: {}", e))?;
+
+        let channel_id = response["channel_id"]
+            .as_str()
+            .ok_or("Missing 'channel_id' in close response")?;
+
+        // For now, we just delete the channel locally.
+        // In the future, we might want to store the refund proofs.
+        self.host.delete_channel(channel_id);
+
+        Ok(())
+    }
+
     // ========================================================================
     // Internal helpers
     // ========================================================================
