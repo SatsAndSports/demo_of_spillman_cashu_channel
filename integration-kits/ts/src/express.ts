@@ -16,7 +16,11 @@ export function decodePaymentHeader(header: string): string {
   return Buffer.from(header, "base64").toString("utf-8");
 }
 
-export function mapErrorStatus(errorMsg: string): number {
+export function mapErrorStatus(errorMsg: string | any): number {
+  if (!errorMsg || typeof errorMsg !== "string") {
+    return 500;
+  }
+  
   const lowerMsg = errorMsg.toLowerCase();
   if (lowerMsg.includes("channel closed")) return 410;
   if (lowerMsg.includes("channel closing")) return 409;
@@ -32,6 +36,7 @@ export function mapErrorStatus(errorMsg: string): number {
     lowerMsg.includes("balance exceeds capacity") ||
     lowerMsg.includes("locktime too soon") ||
     lowerMsg.includes("mint or keyset not acceptable") ||
+    lowerMsg.includes("capacity too small") ||
     lowerMsg.includes("max_amount_per_output exceeded");
 
   if (isPaymentRequired) return 402;

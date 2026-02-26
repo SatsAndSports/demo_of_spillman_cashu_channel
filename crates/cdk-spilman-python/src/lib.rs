@@ -1300,6 +1300,36 @@ impl ClientBridge {
             .map_err(PyRuntimeError::new_err)
     }
 
+    /// Create a cooperative close request for a channel.
+    ///
+    /// Args:
+    ///     channel_id: The channel ID
+    ///     final_balance: Final cumulative balance
+    ///
+    /// Returns:
+    ///     JSON string with balance and signature
+    #[pyo3(signature = (channel_id, final_balance))]
+    fn create_cooperative_close_request(
+        &self,
+        channel_id: &str,
+        final_balance: u64,
+    ) -> PyResult<String> {
+        self.inner
+            .create_cooperative_close_request(channel_id, final_balance)
+            .map_err(PyRuntimeError::new_err)
+    }
+
+    /// Process a cooperative close response from the server.
+    ///
+    /// Args:
+    ///     response_json: The server's close response JSON
+    #[pyo3(signature = (response_json))]
+    fn process_cooperative_close_response(&self, response_json: &str) -> PyResult<()> {
+        self.inner
+            .process_cooperative_close_response(response_json)
+            .map_err(PyRuntimeError::new_err)
+    }
+
     /// Get information about a stored channel.
     ///
     /// Args:

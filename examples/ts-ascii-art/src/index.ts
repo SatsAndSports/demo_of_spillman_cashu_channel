@@ -14,13 +14,10 @@ await init();
 const mode = process.argv[2];
 
 if (mode === "server") {
-  const { startServer } = await import("./server.js");
-  await startServer();
+  const { runServer } = await import("./server.js");
+  await runServer();
 } else if (mode === "client") {
   const messages = process.argv.slice(3);
-  if (messages.length === 0) {
-    messages.push("Hello", "Cashu", "World");
-  }
   const { runClient } = await import("./client.js");
   await runClient(messages);
 } else {

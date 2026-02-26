@@ -15,6 +15,7 @@ LOG_DIR="./testing/python-demo-$MINT_TYPE"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
+REPO_ROOT=$(pwd)
 PYTHON="crates/cdk-spilman-python/.venv/bin/python"
 
 # Create log directory
@@ -54,6 +55,7 @@ echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
 export CONFIG_PATH="examples/python-ascii-art/config.yaml"
+export PYTHONPATH="$REPO_ROOT/integration-kits/python:$REPO_ROOT/crates/cdk-spilman-python"
 $PYTHON examples/python-ascii-art/server.py > "$SERVER_LOG" 2>&1 &
 
 # Wait for server to be ready
@@ -79,7 +81,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    SERVER_URL="http://localhost:$SERVER_PORT" $PYTHON examples/python-ascii-art/client.py "$MSG" > "$LOG" 2>&1 &
+    SERVER_URL="http://localhost:$SERVER_PORT" PYTHONPATH="$REPO_ROOT/integration-kits/python:$REPO_ROOT/crates/cdk-spilman-python" $PYTHON examples/python-ascii-art/client.py "$MSG" --close > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 
@@ -96,41 +98,24 @@ for i in "${!PIDS[@]}"; do
     fi
 done
 
-# 8. Close all channels via unilateral-close endpoint
+# 8. Verify closure on server
 echo ""
-echo "--- Closing all channels ---"
-# Get channel IDs from client logs (each client prints "Channel ID: <hex>...")
-CLOSE_COUNT=0
-CLOSE_FAILED=0
-
+echo "--- Verifying channel closure on server ---"
 for i in $(seq 1 $CLIENT_COUNT); do
     LOG="$LOG_DIR/client_$i.log"
-    # Extract full channel ID from client log
     CHANNEL_ID=$(grep -oP 'Full channel ID: \K[a-f0-9]+' "$LOG" | head -1 || true)
     
     if [ -n "$CHANNEL_ID" ]; then
-        echo "Closing channel ${CHANNEL_ID:0:16}... (from client $i)"
-        CLOSE_RESULT=$(curl -s -X POST "http://localhost:$SERVER_PORT/channel/$CHANNEL_ID/unilateral-close" 2>/dev/null || echo '{"success":false}')
-        if echo "$CLOSE_RESULT" | grep -q '"success":\s*true'; then
-            EARNED=$(echo "$CLOSE_RESULT" | grep -oP '"earnedBeforeStage2Fees":\s*\K[0-9]+' || echo "?")
-            echo "  Closed! Earned $EARNED sat"
-            CLOSE_COUNT=$((CLOSE_COUNT + 1))
+        STATUS=$(curl -s "http://localhost:$SERVER_PORT/channel/$CHANNEL_ID/status")
+        if echo "$STATUS" | grep -q '"closed":\s*true'; then
+            echo "  Channel ${CHANNEL_ID:0:16} is closed. OK."
         else
-            echo "  Failed: $CLOSE_RESULT"
-            CLOSE_FAILED=$((CLOSE_FAILED + 1))
+            echo "  ERROR: Channel ${CHANNEL_ID:0:16} is NOT closed!"
+            echo "  Status: $STATUS"
+            SUCCESS=false
         fi
-    else
-        echo "  No channel ID found in client $i log"
     fi
 done
-
-echo ""
-echo "Closed $CLOSE_COUNT/$CLIENT_COUNT channels ($CLOSE_FAILED failed)"
-
-# If any closes failed, mark test as failed
-if [ $CLOSE_FAILED -gt 0 ]; then
-    SUCCESS=false
-fi
 
 # 9. Final Result
 if [ "$SUCCESS" = true ]; then

@@ -86,6 +86,17 @@ export class ConfigurableSpilman {
     return instance;
   }
 
+  /**
+   * Registers the management router with an Express app.
+   * 
+   * @param app Express application
+   * @returns Spilman instance for processing requests
+   */
+  initExpress(app: express.Application): Spilman {
+    app.use("/channel", this.router);
+    return this.spilman;
+  }
+
   async initializeKeysets(): Promise<void> {
     const mintUrls = Object.keys(this.config.mints);
     const results = await Promise.allSettled(

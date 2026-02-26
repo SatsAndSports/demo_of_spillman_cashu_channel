@@ -39,7 +39,7 @@ trap cleanup EXIT
 # 3. Install npm dependencies
 echo "--- Installing npm dependencies ---"
 (cd "integration-kits/ts" && npm install --silent)
-(cd "$TS_DEMO_DIR" && npm install --silent)
+(cd "$TS_DEMO_DIR" && rm -rf node_modules/cdk-spilman-kit && npm install --silent)
 
 # 4. Find two distinct free ports
 echo "--- Finding free ports ---"

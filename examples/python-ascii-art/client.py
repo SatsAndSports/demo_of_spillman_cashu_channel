@@ -1,367 +1,101 @@
 """
-ASCII Art Client - Creates channel and makes paid requests
-
-Demonstrates the Spilman payment channel client in Python.
-
-Usage:
-    python client.py [messages...]
-    
-Examples:
-    python client.py Hello World Cashu
-    python client.py "Hello World"
-
-Environment variables:
-    MINT_URL - Mint URL (default: http://localhost:3338)
-    SERVER_URL - ASCII art server URL (default: http://localhost:5000)
+ASCII Art Client - High-level Spilman client using the Integration Kit.
 """
 
 import sys
 import json
 import time
-import base64
 import requests
 import os
-
-# Optional QR code support
-try:
-    import qrcode
-except ImportError:
-    qrcode = None
-
 from cdk_spilman import (
     generate_keypair,
     compute_channel_secret,
-    compute_funding_token_amount,
     channel_parameters_get_channel_id,
     create_funding_outputs,
     construct_proofs,
-    create_signed_balance_update,
+    compute_funding_token_amount,
 )
+from cdk_spilman_kit import SpilmanClient, BaseSpilmanClientHost
+from cdk_spilman_kit.demo import fetch_active_keyset_info, mint_funding_token
 
 MINT_URL = os.environ.get("MINT_URL", "http://localhost:3338")
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
 
-
-def encode_payment_header(payment: dict) -> str:
-    """Encode payment object to base64 for X-Cashu-Channel header."""
-    return base64.b64encode(json.dumps(payment).encode()).decode()
-
-
-def get_mint_version(mint_url: str) -> str:
-    """Fetch mint version from /v1/info endpoint."""
-    try:
-        resp = requests.get(f"{mint_url}/v1/info", timeout=2)
-        if resp.ok:
-            return resp.json().get("version", "unknown")
-    except Exception:
-        pass
-    return "unknown"
-
-
-def fetch_active_keyset_info(mint_url: str) -> dict:
-    """Fetch active keyset info from mint."""
-    print(f"  Fetching keysets from {mint_url}...")
-    
-    # Get keysets
-    keysets_resp = requests.get(f"{mint_url}/v1/keysets")
-    keysets_resp.raise_for_status()
-    keysets = keysets_resp.json()["keysets"]
-    
-    # Find active sat keyset
-    active = None
-    for k in keysets:
-        if k["unit"] == "sat" and k["active"]:
-            active = k
-            break
-    
-    if not active:
-        raise Exception("No active sat keyset found")
-    
-    keyset_id = active["id"]
-    unit = active["unit"]
-    print(f"  Found keyset: {keyset_id} ({unit})")
-    
-    # Get keys for this keyset
-    keys_resp = requests.get(f"{mint_url}/v1/keys/{keyset_id}")
-    keys_resp.raise_for_status()
-    keys_data = keys_resp.json()["keysets"][0]
-    
-    return {
-        "keysetId": keyset_id,
-        "unit": "sat",
-        "inputFeePpk": active.get("input_fee_ppk", 0),
-        "keys": keys_data["keys"]
-    }
-
-
-def mint_funding_token(mint_url: str, amount: int, blinded_messages: list) -> list:
-    """Mint tokens by requesting a Lightning invoice and waiting for payment."""
-    print(f"  Requesting mint quote for {amount} sat...")
-    
-    # 1. Request quote
-    quote_resp = requests.post(
-        f"{mint_url}/v1/mint/quote/bolt11",
-        json={"amount": amount, "unit": "sat"}
-    )
-    quote_resp.raise_for_status()
-    quote = quote_resp.json()
-    quote_id = quote["quote"]
-    invoice = quote.get("request", "").strip()
-    
-    print(f"  Quote ID: {quote_id[:24]}...")
-    
-    # 2. Display invoice and QR code
-    if invoice:
-        print()
-        print("  " + "=" * 56)
-        print("  PAY THIS INVOICE TO FUND THE CHANNEL")
-        print("  " + "=" * 56)
-        print()
-        print(f"  {invoice}")
-        print()
-        
-        # Display QR code if qrcode library is available
-        if qrcode:
-            print("  Scan this QR code with your Lightning wallet:")
-            print()
-            qr = qrcode.QRCode(
-                error_correction=qrcode.constants.ERROR_CORRECT_M,  # Medium error correction for better scanning
-                box_size=1,
-                border=4,  # Larger quiet zone for reliable scanning
-            )
-            qr.add_data(invoice.upper())  # BOLT11 invoices are case-insensitive, uppercase is more compact
-            qr.make(fit=True)
-            qr.print_ascii(invert=True)
-            print()
-        else:
-            print("  (Install 'qrcode' package to see QR code: pip install qrcode)")
-            print()
-        
-        print("  " + "=" * 56)
-        print()
-    
-    # 3. Wait for quote to be paid (60 seconds timeout for manual payment)
-    print("  Waiting for payment (Nutshell test mint may auto-pay)...")
-    for attempt in range(120):  # 60 seconds total
-        check_resp = requests.get(f"{mint_url}/v1/mint/quote/bolt11/{quote_id}")
-        check_resp.raise_for_status()
-        status = check_resp.json()
-        
-        state = status.get("state", status.get("paid"))
-        if state == "PAID" or state is True:
-            print("  Payment received!")
-            break
-        
-        # Show progress every 5 seconds
-        if attempt > 0 and attempt % 10 == 0:
-            print(f"  Still waiting... ({attempt // 2}s)")
-        
-        time.sleep(0.5)
-    else:
-        raise Exception("Quote was not paid in time (60s timeout)")
-    
-    # 4. Mint tokens
-    print("  Minting tokens...")
-    mint_resp = requests.post(
-        f"{mint_url}/v1/mint/bolt11",
-        json={"quote": quote_id, "outputs": blinded_messages}
-    )
-    mint_resp.raise_for_status()
-    
-    signatures = mint_resp.json()["signatures"]
-    print(f"  Got {len(signatures)} blind signatures")
-    
-    return signatures
-
-
 def main():
-    global MINT_URL
-    # Get messages from command line or use defaults
-    messages = sys.argv[1:] if len(sys.argv) > 1 else ["Hello", "Cashu", "World"]
-    
-    print()
-    print("=" * 60)
-    print("ASCII Art Client - Spilman Payment Channel Demo")
-    print("=" * 60)
-    print()
-    print(f"Mint URL:   {MINT_URL}")
-    print(f"Server URL: {SERVER_URL}")
-    print(f"Messages:   {messages}")
-    print()
-    
-    # 1. Get server params
-    print("[1/8] Fetching server params...")
-    try:
-        server_params = requests.get(f"{SERVER_URL}/channel/params").json()
-    except requests.exceptions.ConnectionError:
-        print(f"\nERROR: Cannot connect to server at {SERVER_URL}")
-        print("Make sure the server is running: python server.py")
-        sys.exit(1)
-    
-    # Use mint from server params
-    MINT_URL = next(iter(server_params["mints_units_keysets"]))
-    print(f"  Using mint from server: {MINT_URL}")
-    
-    charlie_pubkey = server_params["receiver_pubkey"]
-    print(f"  Server pubkey: {charlie_pubkey[:24]}...")
-    print()
-    
-    # 2. Generate Alice keypair
-    print("[2/8] Generating keypair...")
-    alice_secret, alice_pubkey = generate_keypair()
-    print(f"  Alice pubkey: {alice_pubkey[:24]}...")
-    print()
-    
-    # 3. Fetch keyset info
-    print("[3/8] Fetching keyset info from mint...")
-    print(f"  Mint version: {get_mint_version(MINT_URL)}")
-    try:
-        keyset_info = fetch_active_keyset_info(MINT_URL)
-    except requests.exceptions.ConnectionError:
-        print(f"\nERROR: Cannot connect to mint at {MINT_URL}")
-        print("Make sure Nutshell mint is running at localhost:3338")
-        sys.exit(1)
-    print()
-    
-    # 4. Compute shared secret
-    print("[4/8] Computing shared secret...")
-    channel_secret = compute_channel_secret(alice_secret, charlie_pubkey)
-    print(f"  Shared secret: {channel_secret[:24]}...")
-    print()
-    
-    # 5. Calculate capacity and build channel params
-    print("[5/8] Building channel parameters...")
-    total_chars = sum(len(m) for m in messages)
-    capacity = max(total_chars + 20, 50)  # Some headroom
-    
-    # Compute the minimum funding_token_amount for the desired capacity
-    funding_token_amount = compute_funding_token_amount(
-        capacity, json.dumps(keyset_info), 64
-    )
-    
-    channel_params = {
-        "alice_pubkey": alice_pubkey,
-        "charlie_pubkey": charlie_pubkey,
-        "mint": MINT_URL,
-        "unit": "sat",
-        "capacity": capacity,
-        "funding_token_amount": funding_token_amount,
-        "maximum_amount": 64,
-        "locktime": int(time.time()) + 7200,  # 2 hours
-        "setup_timestamp": int(time.time()),
-        "sender_nonce": f"demo-{int(time.time())}",
-        "keyset_id": keyset_info["keysetId"],
-        "input_fee_ppk": keyset_info["inputFeePpk"],
-    }
-    
-    # Get channel ID
-    channel_id = channel_parameters_get_channel_id(
-        json.dumps(channel_params),
-        channel_secret,
-        json.dumps(keyset_info)
-    )
-    print(f"  Channel ID: {channel_id[:24]}...")
-    print(f"  Full channel ID: {channel_id}")
-    print(f"  Capacity:   {capacity} sat")
-    print()
-    
-    # 6. Create funding outputs
-    print("[6/8] Creating funding outputs...")
-    funding = json.loads(create_funding_outputs(
-        json.dumps(channel_params),
-        alice_secret,
-        json.dumps(keyset_info)
-    ))
-    print(f"  Funding amount: {funding['funding_token_nominal']} sat")
-    print(f"  Blinded messages: {len(funding['blinded_messages'])}")
-    print()
-    
-    # 7. Mint the funding token
-    print("[7/8] Minting funding token...")
-    signatures = mint_funding_token(
-        MINT_URL,
-        funding["funding_token_nominal"],
-        funding["blinded_messages"]
-    )
-    print()
-    
-    # 8. Construct proofs
-    print("[8/8] Constructing proofs...")
-    proofs = json.loads(construct_proofs(
-        json.dumps(signatures),
-        json.dumps(funding["secrets_with_blinding"]),
-        json.dumps(keyset_info)
-    ))
-    print(f"  Got {len(proofs)} proofs")
-    print()
-    
-    print("=" * 60)
-    print("Channel funded! Making requests...")
-    print("=" * 60)
-    print()
-    
-    # Make paid requests
-    balance = 0
-    first_request = True
-    total_cost = 0
-    
-    for i, msg in enumerate(messages, 1):
-        cost = len(msg)
-        balance += cost
-        total_cost += cost
-        
-        print(f"[Request {i}/{len(messages)}] '{msg}' ({cost} sat)")
-        
-        # Create signed balance update
-        update = json.loads(create_signed_balance_update(
-            json.dumps(channel_params),
-            json.dumps(keyset_info),
-            alice_secret,
-            json.dumps(proofs),
-            balance
-        ))
-        
-        # Build payment header
-        payment = {
-            "channel_id": channel_id,
-            "balance": balance,
-            "signature": update["signature"],
-        }
-        
-        # Include params and proofs on first request
-        if first_request:
-            payment["params"] = channel_params
-            payment["funding_proofs"] = proofs
-            first_request = False
-        
-        # Make request
-        response = requests.post(
-            f"{SERVER_URL}/ascii",
-            json={"message": msg},
-            headers={"X-Cashu-Channel": encode_payment_header(payment)}
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            payment_info = result.get("payment", {})
-            print(f"  Payment accepted! Balance: {balance}/{capacity} sat")
-            print("-" * 40)
-            print(result["art"])
-        else:
-            print(f"  FAILED! Status: {response.status_code}")
-            try:
-                error = response.json()
-                print(f"  Error: {error}")
-            except:
-                print(f"  Response: {response.text}")
-            break
-    
-    print("=" * 60)
-    print(f"Done! Total spent: {total_cost} sat")
-    print(f"Channel balance: {balance}/{capacity} sat")
-    print(f"Remaining: {capacity - balance} sat")
-    print("=" * 60)
+    # 1. Parse arguments
+    args = sys.argv[1:]
+    should_close = "--close" in args
+    messages = [a for a in args if a != "--close"]
+    if not messages: messages = ["Hello", "Cashu", "World"]
 
+    # 2. Setup Client
+    alice_secret, alice_pubkey = generate_keypair()
+    host = BaseSpilmanClientHost(alice_secret)
+    client = SpilmanClient(host)
+
+    # 3. Get Server Params & Keyset
+    print(f"Connecting to {SERVER_URL}...")
+    server_params = requests.get(f"{SERVER_URL}/channel/params").json()
+    charlie_pubkey = server_params["receiver_pubkey"]
+    mint_url = next(iter(server_params["mints_units_keysets"]))
+    keyset_info = fetch_active_keyset_info(mint_url)
+
+    # 4. Fund Channel (Manual for demo, using low-level bridge functions)
+    print("Funding channel...")
+    capacity = max(sum(len(m) for m in messages) + 20, 50)
+    fta = compute_funding_token_amount(capacity, json.dumps(keyset_info), 64)
+    ss = compute_channel_secret(alice_secret, charlie_pubkey)
+    
+    cp = {
+        "alice_pubkey": alice_pubkey, "charlie_pubkey": charlie_pubkey,
+        "mint": mint_url, "unit": "sat", "capacity": capacity,
+        "funding_token_amount": fta, "maximum_amount": 64,
+        "locktime": int(time.time()) + 7200, "setup_timestamp": int(time.time()),
+        "sender_nonce": f"demo-py-{int(time.time())}",
+        "keyset_id": keyset_info["keysetId"], "input_fee_ppk": keyset_info["inputFeePpk"],
+    }
+    cid = channel_parameters_get_channel_id(json.dumps(cp), ss, json.dumps(keyset_info))
+    print(f"Full channel ID: {cid}")
+    print(f"Capacity:   {capacity} sat")
+    
+    funding = json.loads(create_funding_outputs(json.dumps(cp), alice_secret, json.dumps(keyset_info)))
+    sigs = mint_funding_token(mint_url, funding["funding_token_nominal"], funding["blinded_messages"])
+    proofs = construct_proofs(json.dumps(sigs), json.dumps(funding["secrets_with_blinding"]), json.dumps(keyset_info))
+    
+    # Save to local host so bridge can see it
+    host.save_channel(cid, json.dumps({
+        "channel_id": cid, "params_json": json.dumps(cp), "keyset_info_json": json.dumps(keyset_info),
+        "funding_proofs_json": proofs, "capacity": capacity, "funding_token_amount": fta,
+        "mint_url": mint_url, "alice_pubkey_hex": alice_pubkey,
+    }), ss)
+
+    # 5. Make Requests
+    balance = 0
+    print(f"Channel {cid[:8]} ready! Sending requests...")
+    for i, msg in enumerate(messages):
+        balance += len(msg)
+        header = client.build_payment_header(cid, balance, i == 0)
+        
+        resp = requests.post(f"{SERVER_URL}/ascii", json={"message": msg}, headers={"X-Cashu-Channel": header})
+        if resp.ok:
+            print(f"\n[{i+1}/{len(messages)}] Accepted:\n{resp.json()['art']}")
+        else:
+            print(f"Request failed: {resp.status_code} {resp.text}")
+            break
+
+    # 6. Optional Close
+    if should_close:
+        print("\nClosing channel...")
+        status = requests.get(f"{SERVER_URL}/channel/{cid}/status").json()
+        close_req = client.create_cooperative_close_request(cid, status["amount_due"])
+        
+        c_resp = requests.post(f"{SERVER_URL}/channel/{cid}/close", json=json.loads(close_req))
+        if c_resp.ok:
+            client.process_cooperative_close_response(c_resp.text)
+            res = c_resp.json()
+            print(f"Closed! Earned by server: {res['receiver_sum']}, Refunded: {res['sender_sum']}")
+        else:
+            print(f"Close failed: {c_resp.text}")
 
 if __name__ == "__main__":
     main()

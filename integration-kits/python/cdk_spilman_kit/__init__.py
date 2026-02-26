@@ -2,6 +2,7 @@ from .stores import SpilmanStores, SqliteSpilmanStores, ChannelClosedData, Usage
 from .host import BaseSpilmanHost
 from .keysets import fetch_all_keysets_from_mint, refresh_keyset_cache
 from .configurable import ConfigurableSpilman
+from .client import SpilmanClient, BaseSpilmanClientHost
 
 __all__ = [
     "SpilmanStores",
@@ -12,4 +13,6 @@ __all__ = [
     "fetch_all_keysets_from_mint",
     "refresh_keyset_cache",
     "ConfigurableSpilman",
+    "SpilmanClient",
+    "BaseSpilmanClientHost",
 ]

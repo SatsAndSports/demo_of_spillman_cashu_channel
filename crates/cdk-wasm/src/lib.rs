@@ -2,16 +2,29 @@
 
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use async_trait::async_trait;
 
-use cdk::nuts::{Id, PublicKey, SecretKey, Proof};
-use cdk::spilman::{ChannelParameters, ChannelPolicy, ChannelState, ClosingData, SpilmanBridge, SpilmanHost, SpilmanAsyncNetworking, PaymentProof, ChannelFunding, BalanceUpdateMessage, EstablishedChannel};
+use cdk::nuts::{Id, PublicKey, SecretKey, Proof, CurrencyUnit};
+use cdk::spilman::{
+    channel_parameters_get_channel_id as rust_channel_parameters_get_channel_id,
+    compute_channel_secret_from_hex as rust_compute_channel_secret_from_hex,
+    compute_funding_token_amount as rust_compute_funding_token_amount,
+    construct_proofs as rust_construct_proofs,
+    create_funding_outputs as rust_create_funding_outputs,
+    create_signed_balance_update as rust_create_signed_balance_update,
+    unblind_and_verify_dleq as rust_unblind_and_verify_dleq, BalanceUpdateMessage,
+    ChannelFunding, ChannelParameters, ChannelPolicy, ChannelState, ClosingData,
+    EstablishedChannel, PaymentProof, SpilmanAsyncNetworking, SpilmanBridge,
+    SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost as RustSpilmanClientHost,
+    SpilmanHost,
+};
 use cdk::util::hex;
 
 #[wasm_bindgen(start)]
-pub fn start() { console_error_panic_hook::set_once(); }
+pub fn start() {
+    console_error_panic_hook::set_once();
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -23,15 +36,36 @@ extern "C" {
     #[wasm_bindgen(method, js_name = mintAndKeysetIsAcceptable)]
     fn mint_and_keyset_is_acceptable(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> bool;
     #[wasm_bindgen(method, js_name = saveFunding)]
-    fn save_funding(this: &JsSpilmanHost, channel_id: &str, params_json: &str, funding_proofs_json: &str, channel_secret_hex: &str, keyset_info_json: &str, initial_balance: u64, initial_signature: &str);
+    fn save_funding(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        params_json: &str,
+        funding_proofs_json: &str,
+        channel_secret_hex: &str,
+        keyset_info_json: &str,
+        initial_balance: u64,
+        initial_signature: &str,
+    );
     #[wasm_bindgen(method, js_name = getAmountDue)]
     fn get_amount_due(this: &JsSpilmanHost, channel_id: &str, context_json: JsValue) -> u64;
     #[wasm_bindgen(method, js_name = recordPayment)]
-    fn record_payment(this: &JsSpilmanHost, channel_id: &str, balance: u64, signature: &str, context_json: &str);
+    fn record_payment(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        context_json: &str,
+    );
     #[wasm_bindgen(method, js_name = getChannelState)]
     fn get_channel_state(this: &JsSpilmanHost, channel_id: &str) -> String;
     #[wasm_bindgen(method, catch, js_name = markChannelClosing)]
-    fn mark_channel_closing(this: &JsSpilmanHost, channel_id: &str, locktime: u64, balance: u64, signature: &str) -> Result<(), JsValue>;
+    fn mark_channel_closing(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        signature: &str,
+    ) -> Result<(), JsValue>;
     #[wasm_bindgen(method, js_name = getClosingData)]
     fn get_closing_data(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = getChannelPolicy)]
@@ -39,25 +73,78 @@ extern "C" {
     #[wasm_bindgen(method, js_name = nowSeconds)]
     fn now_seconds(this: &JsSpilmanHost) -> u64;
     #[wasm_bindgen(method, js_name = getBalanceAndSignatureForUnilateralExit)]
-    fn get_balance_and_signature_for_unilateral_exit(this: &JsSpilmanHost, channel_id: &str) -> JsValue;
+    fn get_balance_and_signature_for_unilateral_exit(this: &JsSpilmanHost, channel_id: &str)
+        -> JsValue;
     #[wasm_bindgen(method, js_name = getActiveKeysetIds)]
     fn get_active_keyset_ids(this: &JsSpilmanHost, mint: &str, unit: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = getKeysetInfo)]
     fn get_keyset_info(this: &JsSpilmanHost, mint: &str, keyset_id: &str) -> JsValue;
     #[wasm_bindgen(method, js_name = callMintSwap)]
-    fn call_mint_swap(this: &JsSpilmanHost, mint_url: &str, swap_request_json: &str) -> js_sys::Promise;
+    fn call_mint_swap(this: &JsSpilmanHost, mint_url: &str, swap_request_json: &str)
+        -> js_sys::Promise;
     #[wasm_bindgen(method, catch, js_name = markChannelClosed)]
-    fn mark_channel_closed(this: &JsSpilmanHost, channel_id: &str, locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), JsValue>;
+    fn mark_channel_closed(
+        this: &JsSpilmanHost,
+        channel_id: &str,
+        locktime: u64,
+        balance: u64,
+        receiver_proofs_json: &str,
+        sender_proofs_json: &str,
+        receiver_sum: u64,
+        sender_sum: u64,
+    ) -> Result<(), JsValue>;
     #[wasm_bindgen(method, js_name = refreshAllKeysets)]
     fn refresh_all_keysets(this: &JsSpilmanHost, mint: &str) -> js_sys::Promise;
     #[wasm_bindgen(method, catch, js_name = computeChannelSecret)]
-    fn compute_channel_secret(this: &JsSpilmanHost, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, JsValue>;
+    fn compute_channel_secret_host(
+        this: &JsSpilmanHost,
+        charlie_pubkey_hex: &str,
+        alice_pubkey_hex: &str,
+    ) -> Result<String, JsValue>;
     #[wasm_bindgen(method, catch, js_name = signWithTweakedKey)]
-    fn sign_with_tweaked_key(this: &JsSpilmanHost, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, JsValue>;
+    fn sign_with_tweaked_key_host(
+        this: &JsSpilmanHost,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, JsValue>;
+
+    pub type JsSpilmanClientHost;
+    #[wasm_bindgen(method, js_name = callMintSwap)]
+    fn client_call_mint_swap(
+        this: &JsSpilmanClientHost,
+        mint_url: &str,
+        swap_request_json: &str,
+    ) -> js_sys::Promise;
+    #[wasm_bindgen(method, js_name = saveChannel)]
+    fn save_channel(
+        this: &JsSpilmanClientHost,
+        channel_id: &str,
+        channel_json: &str,
+        channel_secret_hex: &str,
+    );
+    #[wasm_bindgen(method, js_name = getChannel)]
+    fn get_channel(this: &JsSpilmanClientHost, channel_id: &str) -> JsValue;
+    #[wasm_bindgen(method, js_name = listChannelIds)]
+    fn list_channel_ids(this: &JsSpilmanClientHost) -> JsValue;
+    #[wasm_bindgen(method, js_name = deleteChannel)]
+    fn delete_channel(this: &JsSpilmanClientHost, channel_id: &str);
+    #[wasm_bindgen(method, catch, js_name = signWithTweakedKey)]
+    fn client_sign_with_tweaked_key(
+        this: &JsSpilmanClientHost,
+        signer_pubkey_hex: &str,
+        message_hex: &str,
+        tweak_scalar_hex: &str,
+    ) -> Result<String, JsValue>;
+    #[wasm_bindgen(method, catch, js_name = computeChannelSecret)]
+    fn client_compute_channel_secret(
+        this: &JsSpilmanClientHost,
+        alice_pubkey_hex: &str,
+        charlie_pubkey_hex: &str,
+    ) -> Result<String, JsValue>;
 }
 
 struct WasmSpilmanHostProxy { js_host: JsSpilmanHost }
-
 unsafe impl Send for WasmSpilmanHostProxy {}
 unsafe impl Sync for WasmSpilmanHostProxy {}
 
@@ -100,10 +187,10 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
         let val = self.js_host.get_channel_policy(unit);
         if val.is_null() || val.is_undefined() { return None; }
         let obj = js_sys::Object::try_from(&val)?;
-        let min_expiry = js_sys::Reflect::get(obj, &JsValue::from_str("min_expiry_in_seconds")).ok()?.as_f64()? as u64;
-        let min_cap = js_sys::Reflect::get(obj, &JsValue::from_str("min_capacity")).ok()?.as_f64()? as u64;
-        let max_out = js_sys::Reflect::get(obj, &JsValue::from_str("max_amount_per_output")).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
-        Some(ChannelPolicy { min_expiry_in_seconds: min_expiry, min_capacity: min_cap, max_amount_per_output: max_out })
+        let min_expiry_in_seconds = js_sys::Reflect::get(obj, &JsValue::from_str("min_expiry_in_seconds")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("minExpiryInSeconds")).ok())?.as_f64()? as u64;
+        let min_capacity = js_sys::Reflect::get(obj, &JsValue::from_str("min_capacity")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("minCapacity")).ok())?.as_f64()? as u64;
+        let max_amount_per_output = js_sys::Reflect::get(obj, &JsValue::from_str("max_amount_per_output")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("maxAmountPerOutput")).ok()).and_then(|v| v.as_f64()).map(|v| v as u64);
+        Some(ChannelPolicy { min_expiry_in_seconds, min_capacity, max_amount_per_output })
     }
     fn now_seconds(&self) -> u64 { self.js_host.now_seconds() }
     fn get_balance_and_signature_for_unilateral_exit(&self, channel_id: &str) -> Option<PaymentProof> {
@@ -113,36 +200,62 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
         if arr.length() != 2 { return None; }
         Some(PaymentProof { balance: arr.get(0).as_f64()? as u64, signature: arr.get(1).as_string()? })
     }
-    fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
+    fn get_active_keyset_ids(&self, mint: &str, unit: &CurrencyUnit) -> Vec<Id> {
         let val = self.js_host.get_active_keyset_ids(mint, &unit.to_string());
-        if val.is_null() || val.is_undefined() { return Vec::new(); }
-        js_sys::Array::from(&val).iter().filter_map(|v| v.as_string()).filter_map(|s| Id::from_str(&s).ok()).collect()
+        js_sys::Array::from(&val).iter().filter_map(|v| v.as_string().and_then(|s| Id::from_str(&s).ok())).collect()
     }
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> { self.js_host.get_keyset_info(mint, &keyset_id.to_string()).as_string() }
     fn mark_channel_closed(&self, channel_id: &str, locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
         self.js_host.mark_channel_closed(channel_id, locktime, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum).map_err(|e| format!("{:?}", e))
     }
-    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> { self.js_host.compute_channel_secret(charlie_pubkey_hex, alice_pubkey_hex).map_err(|e| format!("{:?}", e)) }
-    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> { self.js_host.sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e)) }
+    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> { self.js_host.compute_channel_secret_host(charlie_pubkey_hex, alice_pubkey_hex).map_err(|e| format!("{:?}", e)) }
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> { self.js_host.sign_with_tweaked_key_host(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e)) }
 }
 
 #[async_trait(?Send)]
 impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
     async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-        let promise = self.js_host.call_mint_swap(mint_url, swap_request_json);
-        let result = JsFuture::from(promise).await.map_err(|e| format!("{:?}", e))?;
-        result.as_string().ok_or_else(|| "Not string".into())
+        JsFuture::from(self.js_host.call_mint_swap(mint_url, swap_request_json)).await.map_err(|e| format!("{:?}", e))?.as_string().ok_or_else(|| "Result not a string".to_string())
     }
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
-        let promise = self.js_host.refresh_all_keysets(mint);
-        JsFuture::from(promise).await.map_err(|e| format!("{:?}", e))?;
+        let _ = JsFuture::from(self.js_host.refresh_all_keysets(mint)).await.map_err(|e| format!("{:?}", e))?;
         Ok(())
+    }
+}
+
+struct WasmSpilmanClientHostProxy { js_host: JsSpilmanClientHost }
+unsafe impl Send for WasmSpilmanClientHostProxy {}
+unsafe impl Sync for WasmSpilmanClientHostProxy {}
+
+impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
+    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+        // This is a dummy because the core bridge methods we use from WASM currently don't need it or we'll wrap them.
+        Err("call_mint_swap not supported in sync WASM context".to_string())
+    }
+    fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
+        self.js_host.save_channel(channel_id, channel_json, channel_secret_hex);
+    }
+    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
+        let val = self.js_host.get_channel(channel_id);
+        if val.is_null() || val.is_undefined() { return None; }
+        let arr = js_sys::Array::from(&val);
+        Some(cdk::spilman::ChannelData { channel_json: arr.get(0).as_string()?, channel_secret_hex: arr.get(1).as_string()? })
+    }
+    fn list_channel_ids(&self) -> Vec<String> {
+        js_sys::Array::from(&self.js_host.list_channel_ids()).iter().filter_map(|v| v.as_string()).collect()
+    }
+    fn delete_channel(&self, channel_id: &str) { self.js_host.delete_channel(channel_id); }
+    fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
+        self.js_host.client_sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e))
+    }
+    fn compute_channel_secret(&self, alice_pubkey_hex: &str, charlie_pubkey_hex: &str) -> Result<String, String> {
+        self.js_host.client_compute_channel_secret(alice_pubkey_hex, charlie_pubkey_hex).map_err(|e| format!("{:?}", e))
     }
 }
 
 #[wasm_bindgen]
 pub struct WasmSpilmanBridge {
-    bridge: SpilmanBridge<WasmSpilmanHostProxy>,
+    bridge: SpilmanBridge<WasmSpilmanHostProxy, String>,
 }
 
 #[wasm_bindgen]
@@ -154,44 +267,17 @@ impl WasmSpilmanBridge {
 
     #[wasm_bindgen(js_name = processPayment)]
     pub fn process_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
-        let context_json = context_json.to_string();
-        self.bridge.process_payment_via_json(payment_json, &context_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.process_payment_via_json(payment_json, &context_json.to_string()).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen(js_name = validatePayment)]
     pub fn validate_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
-        let context_json = context_json.to_string();
-        self.bridge.validate_payment_via_json(payment_json, &context_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.validate_payment_via_json(payment_json, &context_json.to_string()).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen(js_name = fundChannel)]
     pub fn fund_channel(&self, payment_json: &str) -> Result<JsValue, JsValue> {
         self.bridge.fund_channel_via_json(payment_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    #[wasm_bindgen(js_name = validateAndPrepareCooperativeClose)]
-    pub fn validate_and_prepare_cooperative_close(&self, payment_json: &str) -> Result<String, JsValue> {
-        match self.bridge.validate_and_prepare_cooperative_close(payment_json) {
-            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
-            Err(e) => {
-                let mut result = serde_json::json!({ "success": false, "error": e.to_string() });
-                if let cdk::spilman::BridgeError::BalanceMismatch { expected, actual } = e {
-                    if let Some(obj) = result.as_object_mut() {
-                        obj.insert("expected".into(), serde_json::json!(expected));
-                        obj.insert("actual".into(), serde_json::json!(actual));
-                    }
-                }
-                Ok(result.to_string())
-            }
-        }
-    }
-
-    #[wasm_bindgen(js_name = createUnilateralCloseData)]
-    pub fn create_unilateral_close_data(&self, channel_id: &str) -> Result<String, JsValue> {
-        match self.bridge.create_unilateral_close_data(channel_id) {
-            Ok(close_data) => Ok(close_data.to_json_value().to_string()),
-            Err(e) => Ok(serde_json::json!({ "success": false, "error": e.to_string() }).to_string())
-        }
     }
 
     #[wasm_bindgen(js_name = executeCooperativeClose)]
@@ -210,6 +296,41 @@ impl WasmSpilmanBridge {
 }
 
 #[wasm_bindgen]
+pub struct WasmSpilmanClientBridge {
+    bridge: RustSpilmanClientBridge<WasmSpilmanClientHostProxy>,
+}
+
+#[wasm_bindgen]
+impl WasmSpilmanClientBridge {
+    #[wasm_bindgen(constructor)]
+    pub fn new(js_host: JsSpilmanClientHost) -> WasmSpilmanClientBridge {
+        WasmSpilmanClientBridge { bridge: RustSpilmanClientBridge::new(WasmSpilmanClientHostProxy { js_host }) }
+    }
+
+    #[wasm_bindgen(js_name = openChannelFromToken)]
+    pub fn open_channel_from_token(&self, token_string: &str, charlie_pubkey_hex: &str, alice_pubkey_hex: &str, locktime: u64, keyset_info_json: &str, max_amount: u64) -> Result<JsValue, JsValue> {
+        self.bridge.open_channel_from_token(token_string, charlie_pubkey_hex, alice_pubkey_hex, locktime, keyset_info_json, max_amount)
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen(js_name = buildPaymentHeader)]
+    pub fn build_payment_header(&self, channel_id: &str, balance: u64, include_funding: bool) -> Result<String, JsValue> {
+        self.bridge.build_payment_header(channel_id, balance, include_funding).map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen(js_name = createCooperativeCloseRequest)]
+    pub fn create_cooperative_close_request(&self, channel_id: &str, final_balance: u64) -> Result<String, JsValue> {
+        self.bridge.create_cooperative_close_request(channel_id, final_balance).map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen(js_name = processCooperativeCloseResponse)]
+    pub fn process_cooperative_close_response(&self, response_json: &str) -> Result<(), JsValue> {
+        self.bridge.process_cooperative_close_response(response_json).map_err(|e| JsValue::from_str(&e))
+    }
+}
+
+#[wasm_bindgen]
 pub fn compute_channel_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Result<String, JsValue> {
     cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex).map_err(|e| JsValue::from_str(&e))
 }
@@ -223,11 +344,33 @@ pub fn channel_parameters_get_channel_id(params_json: &str, channel_secret_hex: 
 }
 #[wasm_bindgen]
 pub fn compute_funding_token_amount(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
-    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e))
+    rust_compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn compute_funding_token_nominal(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
+    rust_compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn create_funding_outputs(params_json: &str, my_secret_hex: &str, keyset_info_json: &str) -> Result<String, JsValue> {
     cdk::spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
+}
+#[wasm_bindgen]
+pub fn construct_proofs(sigs_json: &str, swb_json: &str, keyset_json: &str) -> Result<String, JsValue> {
+    cdk::spilman::construct_proofs(sigs_json, swb_json, keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
+pub fn get_sender_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
+    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let p = ChannelParameters::from_json_with_secret_key(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &s).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    p.get_sender_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+#[wasm_bindgen]
+pub fn get_receiver_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, channel_secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
+    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let cs: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
+    let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    p.get_receiver_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn unblind_and_verify_dleq(blind_signatures_json: &str, secrets_with_blinding_json: &str, params_json: &str, keyset_info_json: &str, channel_secret_hex: &str, balance: u64, output_keyset_info_json: Option<String>) -> Result<String, JsValue> {
@@ -255,25 +398,4 @@ pub fn verify_channel(params_json: &str, channel_secret_hex: &str, funding_proof
     let params = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let result = cdk::spilman::verify_valid_channel(&serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &params);
     serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn construct_proofs(sigs_json: &str, swb_json: &str, keyset_json: &str) -> Result<String, JsValue> {
-    cdk::spilman::construct_proofs(sigs_json, swb_json, keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn get_sender_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
-    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let p = ChannelParameters::from_json_with_secret_key(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &s).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    p.get_sender_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn get_receiver_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, channel_secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
-    let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let cs: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
-    let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    p.get_receiver_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn compute_funding_token_nominal(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
-    cdk::spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount).map_err(|e| JsValue::from_str(&e.to_string()))
 }
