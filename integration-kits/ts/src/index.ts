@@ -1,6 +1,5 @@
 export {
   WasmSpilmanBridge,
-  WasmSpilmanClientBridge,
   compute_channel_secret,
   compute_funding_token_amount,
   channel_parameters_get_channel_id,
@@ -33,6 +32,7 @@ export { fetchAllKeysetsFromMint, fetchAndCacheKeysetsForMint } from "./keysets.
 export { Spilman, mapErrorStatus, decodePaymentHeader } from "./express.js";
 export { ConfigurableSpilman, type SpilmanConfig } from "./config.js";
 export { demoFetchActiveKeysetInfo, demoMintFundingToken } from "./demo.js";
+export { SpilmanClientBridge, type SpilmanClientHost } from "./client_bridge.js";
 
 /**
  * Initializes the WASM module for Node.js environment.
@@ -43,5 +43,4 @@ export async function init() {
   const wasmBytes = readFileSync(wasmPath);
   return await wasmInit({ module_or_path: wasmBytes });
 }
-
 

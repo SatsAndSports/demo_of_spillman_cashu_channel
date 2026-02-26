@@ -8,7 +8,7 @@ import {
   create_funding_outputs,
   construct_proofs,
   sign_with_tweaked_key,
-  WasmSpilmanClientBridge,
+  SpilmanClientBridge,
 } from "cdk-spilman-kit";
 import * as secp from "@noble/secp256k1";
 
@@ -45,7 +45,7 @@ export async function runClient(args: string[]) {
   const aliceSecret = Buffer.from(secp.utils.randomPrivateKey()).toString("hex");
   const alicePub = Buffer.from(secp.getPublicKey(aliceSecret, true)).toString("hex");
   const host = new DemoClientHost(aliceSecret);
-  const bridge = new WasmSpilmanClientBridge(host);
+  const bridge = new SpilmanClientBridge(host);
 
   console.log("Funding channel...");
   const cap = Math.max(messages.reduce((a, b) => a + b.length, 0) + 20, 50);

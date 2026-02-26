@@ -7,14 +7,8 @@ use async_trait::async_trait;
 
 use cdk::nuts::{Id, PublicKey, SecretKey, Proof, CurrencyUnit};
 use cdk::spilman::{
-    channel_parameters_get_channel_id as rust_channel_parameters_get_channel_id,
-    compute_channel_secret_from_hex as rust_compute_channel_secret_from_hex,
     compute_funding_token_amount as rust_compute_funding_token_amount,
-    construct_proofs as rust_construct_proofs,
-    create_funding_outputs as rust_create_funding_outputs,
-    create_signed_balance_update as rust_create_signed_balance_update,
-    unblind_and_verify_dleq as rust_unblind_and_verify_dleq, BalanceUpdateMessage,
-    ChannelFunding, ChannelParameters, ChannelPolicy, ChannelState, ClosingData,
+    BalanceUpdateMessage, ChannelFunding, ChannelParameters, ChannelPolicy, ChannelState, ClosingData,
     EstablishedChannel, PaymentProof, SpilmanAsyncNetworking, SpilmanBridge,
     SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost as RustSpilmanClientHost,
     SpilmanHost,
@@ -228,8 +222,8 @@ unsafe impl Send for WasmSpilmanClientHostProxy {}
 unsafe impl Sync for WasmSpilmanClientHostProxy {}
 
 impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
-        // This is a dummy because the core bridge methods we use from WASM currently don't need it or we'll wrap them.
+    fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {
+        // This is a dummy because the core bridge methods we use from WASM currently don't need it.
         Err("call_mint_swap not supported in sync WASM context".to_string())
     }
     fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
