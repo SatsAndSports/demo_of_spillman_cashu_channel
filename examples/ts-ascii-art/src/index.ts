@@ -9,7 +9,7 @@
 import { init } from "cdk-spilman-kit";
 
 // Initialize WASM panic hook for better error messages
-init();
+await init();
 
 const mode = process.argv[2];
 

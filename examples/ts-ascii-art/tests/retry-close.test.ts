@@ -14,11 +14,12 @@
  * with real mint rejection and real mint acceptance.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { randomBytes } from 'crypto';
 import * as secp from '@noble/secp256k1';
 
 import {
+  init,
   WasmSpilmanBridge,
   compute_channel_secret,
   compute_funding_token_amount,
@@ -27,7 +28,11 @@ import {
   construct_proofs,
   spilman_channel_sender_create_signed_balance_update,
   sign_with_tweaked_key,
-} from '../src/wasm/cdk_wasm.js';
+} from 'cdk-spilman-kit';
+
+beforeAll(async () => {
+  await init();
+});
 
 const MINT_URL = process.env.MINT_URL || 'http://localhost:3338';
 

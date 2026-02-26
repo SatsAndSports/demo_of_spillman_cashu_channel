@@ -6,15 +6,20 @@
  * Run with: MINT_URL=http://localhost:3338 npm test
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { randomBytes } from "crypto";
 import * as secp from "@noble/secp256k1";
 import {
+  init,
   compute_channel_secret,
   compute_funding_token_amount,
   channel_parameters_get_channel_id,
   create_funding_outputs,
-} from "../src/wasm/cdk_wasm.js";
+} from "cdk-spilman-kit";
+
+beforeAll(async () => {
+  await init();
+});
 
 const MINT_URL = process.env.MINT_URL || "http://localhost:3338";
 
