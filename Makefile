@@ -135,13 +135,17 @@ build-rust-server:
 
 # --- WASM Bindings ---
 
+# WASM build artifacts
+BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
+TS_KIT_WASM := integration-kits/ts/wasm/cdk_wasm_bg.wasm
+
 # Source files that WASM depends on
 WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src -name '*.rs' 2>/dev/null)
 
 # Sentinel file tracks when WASM was last built
 .wasm-built: $(WASM_SOURCES) crates/cdk-wasm/Cargo.toml crates/cdk/Cargo.toml Cargo.lock
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target nodejs --out-dir ../../web/wasm-nodejs
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-nodejs
 	@touch .wasm-built
 	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
 
@@ -149,7 +153,6 @@ WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src -name '*.rs' 2>/
 build-wasm: .wasm-built $(TS_KIT_WASM)
 
 # Build WASM and copy to blossom-server
-BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
 $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	@mkdir -p web/blossom-server/src/wasm web/blossom-server/public/wasm
 	cp web/wasm-nodejs/cdk_wasm* web/blossom-server/src/wasm/
@@ -157,7 +160,6 @@ $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	@echo "WASM copied to blossom-server"
 
 # Build WASM and copy to TS integration kit
-TS_KIT_WASM := integration-kits/ts/wasm/cdk_wasm_bg.wasm
 $(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	@mkdir -p integration-kits/ts/wasm
 	cp web/wasm-nodejs/cdk_wasm* integration-kits/ts/wasm/

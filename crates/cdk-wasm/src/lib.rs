@@ -11,7 +11,7 @@ use cdk::spilman::{ChannelParameters, ChannelPolicy, ChannelState, ClosingData, 
 use cdk::util::hex;
 
 #[wasm_bindgen(start)]
-pub fn init() { console_error_panic_hook::set_once(); }
+pub fn start() { console_error_panic_hook::set_once(); }
 
 #[wasm_bindgen]
 extern "C" {
