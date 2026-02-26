@@ -19,6 +19,8 @@ CResult spilman_client_bridge_sign_balance_update(void* ptr, const char* channel
 CResult spilman_client_bridge_build_payment_header(void* ptr, const char* channel_id, uint64_t balance, int include_funding);
 CResult spilman_client_bridge_get_channel_info(void* ptr, const char* channel_id);
 CResult spilman_client_bridge_list_channels(void* ptr);
+CResult spilman_client_bridge_create_cooperative_close_request(void* ptr, const char* channel_id, uint64_t final_balance);
+CResult spilman_client_bridge_process_cooperative_close_response(void* ptr, const char* response_json);
 CResult spilman_sign_with_tweaked_key_util(const char* secret_key_hex, const char* message_hex, const char* tweak_scalar_hex);
 void spilman_free_cresult(CResult res);
 */
@@ -121,6 +123,34 @@ func clientBridgeListChannels(ptr unsafe.Pointer) []string {
 		return nil
 	}
 	return channels
+}
+
+// clientBridgeCreateCooperativeCloseRequest calls the Rust FFI and returns the JSON request.
+func clientBridgeCreateCooperativeCloseRequest(ptr unsafe.Pointer, channelID string, finalBalance uint64) (string, error) {
+	cID := C.CString(channelID)
+	defer C.free(unsafe.Pointer(cID))
+
+	res := C.spilman_client_bridge_create_cooperative_close_request(ptr, cID, C.uint64_t(finalBalance))
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return "", errors.New(C.GoString(res.error))
+	}
+	return C.GoString(res.data), nil
+}
+
+// clientBridgeProcessCooperativeCloseResponse calls the Rust FFI to finalize the channel closure.
+func clientBridgeProcessCooperativeCloseResponse(ptr unsafe.Pointer, responseJSON string) error {
+	cRes := C.CString(responseJSON)
+	defer C.free(unsafe.Pointer(cRes))
+
+	res := C.spilman_client_bridge_process_cooperative_close_response(ptr, cRes)
+	defer C.spilman_free_cresult(res)
+
+	if res.error != nil {
+		return errors.New(C.GoString(res.error))
+	}
+	return nil
 }
 
 // SignWithTweakedKeyUtil is a convenience function for SpilmanClientHost implementations.

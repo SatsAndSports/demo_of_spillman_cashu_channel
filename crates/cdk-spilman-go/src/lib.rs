@@ -1249,6 +1249,38 @@ pub unsafe extern "C" fn spilman_client_bridge_list_channels(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_create_cooperative_close_request(
+    ptr: *mut ClientBridgeInstance,
+    channel_id: *const c_char,
+    final_balance: u64,
+) -> CResult {
+    let instance = &*ptr;
+    let id = CStr::from_ptr(channel_id).to_str().unwrap();
+
+    match instance
+        .bridge
+        .create_cooperative_close_request(id, final_balance)
+    {
+        Ok(json) => CResult::success(json),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn spilman_client_bridge_process_cooperative_close_response(
+    ptr: *mut ClientBridgeInstance,
+    response_json: *const c_char,
+) -> CResult {
+    let instance = &*ptr;
+    let json = CStr::from_ptr(response_json).to_str().unwrap();
+
+    match instance.bridge.process_cooperative_close_response(json) {
+        Ok(_) => CResult::success("ok".to_string()),
+        Err(e) => CResult::error(e),
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn spilman_client_bridge_remove_channel(
     ptr: *mut ClientBridgeInstance,
     channel_id: *const c_char,

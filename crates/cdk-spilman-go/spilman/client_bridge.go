@@ -115,6 +115,16 @@ func (b *ClientBridge) RemoveChannel(channelID string) {
 	C.spilman_client_bridge_remove_channel(b.ptr, cID)
 }
 
+// CreateCooperativeCloseRequest creates a JSON request for cooperative closing.
+func (b *ClientBridge) CreateCooperativeCloseRequest(channelID string, finalBalance uint64) (string, error) {
+	return clientBridgeCreateCooperativeCloseRequest(b.ptr, channelID, finalBalance)
+}
+
+// ProcessCooperativeCloseResponse finalizes the channel closure based on server response.
+func (b *ClientBridge) ProcessCooperativeCloseResponse(responseJSON string) error {
+	return clientBridgeProcessCooperativeCloseResponse(b.ptr, responseJSON)
+}
+
 // --- Client Host Callbacks Implementation ---
 // These are exported to C and called by the Rust client bridge via client_gateway.c
 
