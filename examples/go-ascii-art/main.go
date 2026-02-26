@@ -1,101 +1,30 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
+	spilmankit "github.com/cashubtc/cdk-spilman-kit-go"
 	"github.com/cashubtc/spilman-go/spilman"
 	"github.com/common-nighthawk/go-figure"
 	"github.com/skip2/go-qrcode"
 )
 
 // ============================================================================
-// Configuration & Common
+// Configuration
 // ============================================================================
 
-const (
-	MINT_URL_DEFAULT   = "http://localhost:3338"
-	SERVER_URL_DEFAULT = "http://localhost:5001"
-	PORT               = 5001
-)
-
-// Pricing per character for each unit (superset — filtered dynamically by active mint keysets)
-// usd has MaxAmountPerOutput to test enforcement of maximum_amount policy
-type UnitPricing struct {
-	PerChar            int  `json:"per_char"`
-	MinCapacity        int  `json:"minCapacity"`
-	MaxAmountPerOutput *int `json:"maxAmountPerOutput,omitempty"`
-}
-
-var maxAmountPerOutputUsd = 64
-var allPricing = map[string]UnitPricing{
-	"sat":  {PerChar: 1, MinCapacity: 10},
-	"msat": {PerChar: 1000, MinCapacity: 10000},                                       // 1 sat = 1000 msat
-	"usd":  {PerChar: 1, MinCapacity: 10, MaxAmountPerOutput: &maxAmountPerOutputUsd}, // 1 cent per char, max 64 per output
-}
-
-// getActivePricing returns pricing filtered to only units with active keysets
-func getActivePricing() map[string]UnitPricing {
-	keysetCacheMu.RLock()
-	defer keysetCacheMu.RUnlock()
-	activeUnits := map[string]bool{}
-	for _, entry := range keysetCache {
-		if entry.Active {
-			activeUnits[entry.Unit] = true
-		}
-	}
-	result := map[string]UnitPricing{}
-	for unit, pricing := range allPricing {
-		if activeUnits[unit] {
-			result[unit] = pricing
-		}
-	}
-	return result
-}
-
-// getMintsUnitsKeysets returns {mintUrl: {unit: [keysetId, ...]}} for all active keysets
-func getMintsUnitsKeysets() map[string]map[string][]string {
-	keysetCacheMu.RLock()
-	defer keysetCacheMu.RUnlock()
-	result := map[string]map[string][]string{}
-	for kid, entry := range keysetCache {
-		if !entry.Active {
-			continue
-		}
-		// keysetCache key is just keysetId; we need to find the mint
-		// Since we only support one mint, use MINT_URL
-		mint := MINT_URL
-		if result[mint] == nil {
-			result[mint] = map[string][]string{}
-		}
-		result[mint][entry.Unit] = append(result[mint][entry.Unit], kid)
-	}
-	return result
-}
-
-// getPricePerChar returns the per_char price for a given unit
-func getPricePerChar(unit string) uint64 {
-	if p, ok := allPricing[unit]; ok {
-		return uint64(p.PerChar)
-	}
-	return uint64(allPricing["sat"].PerChar)
-}
-
 var (
-	MINT_URL          = getEnv("MINT_URL", MINT_URL_DEFAULT)
-	SERVER_URL        = getEnv("SERVER_URL", SERVER_URL_DEFAULT)
-	SERVER_PORT       = getEnv("PORT", "5001")
 	SERVER_SECRET_KEY = getEnv("SERVER_SECRET_KEY", "0000000000000000000000000000000000000000000000000000000000000001")
+	CONFIG_PATH       = getEnv("CONFIG_PATH", "config.yaml")
+	SERVER_PORT       = getEnv("PORT", "5001")
+	SERVER_URL        = getEnv("SERVER_URL", "http://localhost:5001")
 )
 
 func getEnv(key, fallback string) string {
@@ -105,1103 +34,302 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func normalizeUrl(url string) string {
-	return strings.TrimSuffix(url, "/")
-}
-
 // ============================================================================
-// Server State & Storage
+// Server Implementation
 // ============================================================================
-
-type KeysetCacheEntry struct {
-	InfoJson string
-	Active   bool
-	Unit     string
-}
-
-// ClosingChannelData holds the pre-swap state for a channel in CLOSING state
-type ClosingChannelData struct {
-	Locktime  uint64
-	Balance   uint64
-	Signature string
-}
-
-var (
-	// In-memory data stores
-	channelFunding = make(map[string]map[string]string)
-	channelBalance = make(map[string]map[string]interface{})
-	channelUsage   = make(map[string]map[string]uint64)
-	channelClosing = make(map[string]*ClosingChannelData)
-	channelClosed  = make(map[string]interface{})
-	keysetCache    = make(map[string]KeysetCacheEntry)
-	keysetCacheMu  sync.RWMutex
-	mu             sync.Mutex
-)
-
-// ============================================================================
-// Spilman Host Implementation
-// ============================================================================
-
-type AsciiArtHost struct {
-	pubkey    string
-	secretKey string
-}
-
-func (h *AsciiArtHost) ReceiverKeyIsAcceptable(pubkeyHex string) bool {
-	result := strings.ToLower(pubkeyHex) == strings.ToLower(h.pubkey)
-	log.Printf("  [Host] ReceiverKeyIsAcceptable: received=%s, expected=%s, result=%v\n",
-		pubkeyHex[:16], h.pubkey[:16], result)
-	return result
-}
-
-func (h *AsciiArtHost) MintAndKeysetIsAcceptable(mint string, keysetId string) bool {
-	normMint := normalizeUrl(mint)
-	normConfig := normalizeUrl(MINT_URL)
-	log.Printf("  [Host] MintAndKeysetIsAcceptable: mint=%s (norm=%s), configured=%s (norm=%s)\n", mint, normMint, MINT_URL, normConfig)
-	return normMint == normConfig
-}
-
-func (h *AsciiArtHost) GetFundingAndParams(channelId string) (string, string, string, string, bool) {
-	log.Printf("  [Host] GetFundingAndParams for %s\n", channelId[:8])
-	mu.Lock()
-	defer mu.Unlock()
-	data, ok := channelFunding[channelId]
-	if !ok {
-		return "", "", "", "", false
-	}
-	return data["params"], data["proofs"], data["secret"], data["keyset"], true
-}
-
-func (h *AsciiArtHost) SaveFunding(channelId, paramsJson, proofsJson, channelSecretHex, keysetInfoJson string, initialBalance uint64, initialSignature string) {
-	log.Printf("  [Host] SaveFunding for %s\n", channelId[:8])
-	mu.Lock()
-	defer mu.Unlock()
-	channelFunding[channelId] = map[string]string{
-		"params": paramsJson,
-		"proofs": proofsJson,
-		"secret": channelSecretHex,
-		"keyset": keysetInfoJson,
-	}
-	// Store the initial balance/signature for closing
-	current := channelBalance[channelId]
-	if current == nil || initialBalance > current["balance"].(uint64) {
-		channelBalance[channelId] = map[string]interface{}{
-			"balance":   initialBalance,
-			"signature": initialSignature,
-		}
-	}
-	log.Printf("  [Host] Saved funding for channel %s\n", channelId[:8])
-}
-
-func (h *AsciiArtHost) GetAmountDue(channelId string, contextJson *string) uint64 {
-	log.Printf("  [Host] GetAmountDue for %s\n", channelId[:8])
-	mu.Lock()
-	defer mu.Unlock()
-
-	usage := channelUsage[channelId]
-	if usage == nil {
-		usage = make(map[string]uint64)
-	}
-
-	totalChars := usage["chars"]
-
-	if contextJson != nil {
-		var context struct {
-			MessageLength int `json:"message_length"`
-		}
-		json.Unmarshal([]byte(*contextJson), &context)
-		totalChars += uint64(context.MessageLength)
-	}
-
-	// Look up unit from stored channel params
-	pricePerChar := uint64(allPricing["sat"].PerChar) // default
-	if funding, ok := channelFunding[channelId]; ok {
-		var params struct {
-			Unit string `json:"unit"`
-		}
-		json.Unmarshal([]byte(funding["params"]), &params)
-		if params.Unit != "" {
-			pricePerChar = getPricePerChar(params.Unit)
-		}
-	}
-	return totalChars * pricePerChar
-}
-
-func (h *AsciiArtHost) RecordPayment(channelId string, balance uint64, signature, contextJson string) {
-	log.Printf("  [Host] RecordPayment for %s, balance=%d\n", channelId[:8], balance)
-	mu.Lock()
-	defer mu.Unlock()
-
-	var context struct {
-		MessageLength int `json:"message_length"`
-	}
-	json.Unmarshal([]byte(contextJson), &context)
-
-	current := channelBalance[channelId]
-	if current == nil || balance > current["balance"].(uint64) {
-		channelBalance[channelId] = map[string]interface{}{
-			"balance":   balance,
-			"signature": signature,
-		}
-	}
-
-	usage := channelUsage[channelId]
-	if usage == nil {
-		usage = make(map[string]uint64)
-		channelUsage[channelId] = usage
-	}
-	usage["requests"]++
-	usage["chars"] += uint64(context.MessageLength)
-
-	log.Printf("  [Host] Recorded payment: %d sats for %s\n", balance, channelId[:8])
-}
-
-// GetChannelState returns: "open", "closing", or "closed"
-func (h *AsciiArtHost) GetChannelState(channelId string) string {
-	mu.Lock()
-	defer mu.Unlock()
-	if _, ok := channelClosed[channelId]; ok {
-		return "closed"
-	}
-	if _, ok := channelClosing[channelId]; ok {
-		return "closing"
-	}
-	return "open"
-}
-
-// MarkChannelClosing marks a channel as CLOSING (pre-swap state)
-func (h *AsciiArtHost) MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error {
-	log.Printf("  [Host] MarkChannelClosing: channel=%s balance=%d\n", channelId[:8], balance)
-	mu.Lock()
-	defer mu.Unlock()
-	// Check if channel is already closed
-	if _, ok := channelClosed[channelId]; ok {
-		return fmt.Errorf("channel already closed")
-	}
-	channelClosing[channelId] = &ClosingChannelData{
-		Locktime:  locktime,
-		Balance:   balance,
-		Signature: signature,
-	}
-	return nil
-}
-
-// GetClosingData returns the closing data for a channel in CLOSING state, or nil if not closing
-func (h *AsciiArtHost) GetClosingData(channelId string) *spilman.ClosingData {
-	mu.Lock()
-	defer mu.Unlock()
-	data, ok := channelClosing[channelId]
-	if !ok {
-		return nil
-	}
-	return &spilman.ClosingData{
-		Locktime:  data.Locktime,
-		Balance:   data.Balance,
-		Signature: data.Signature,
-	}
-}
-
-func (h *AsciiArtHost) GetChannelPolicy(unit string) *spilman.ChannelPolicy {
-	pricing, ok := allPricing[unit]
-	if !ok {
-		return nil
-	}
-	policy := &spilman.ChannelPolicy{
-		MinExpiryInSeconds: 3600,
-		MinCapacity:        uint64(pricing.MinCapacity),
-	}
-	if pricing.MaxAmountPerOutput != nil {
-		v := uint64(*pricing.MaxAmountPerOutput)
-		policy.MaxAmountPerOutput = &v
-	}
-	return policy
-}
-
-func (h *AsciiArtHost) NowSeconds() uint64 {
-	return uint64(time.Now().Unix())
-}
-
-func (h *AsciiArtHost) GetBalanceAndSignatureForUnilateralExit(channelId string) (uint64, string, bool) {
-	mu.Lock()
-	defer mu.Unlock()
-	data, ok := channelBalance[channelId]
-	if !ok {
-		return 0, "", false
-	}
-	return data["balance"].(uint64), data["signature"].(string), true
-}
-
-func (h *AsciiArtHost) GetActiveKeysetIds(mint, unit string) []string {
-	keysetCacheMu.RLock()
-	defer keysetCacheMu.RUnlock()
-	var ids []string
-	for id, entry := range keysetCache {
-		if entry.Active && entry.Unit == unit {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-func (h *AsciiArtHost) GetKeysetInfo(mint, keysetId string) (string, bool) {
-	keysetCacheMu.RLock()
-	defer keysetCacheMu.RUnlock()
-	entry, ok := keysetCache[keysetId]
-	if !ok {
-		return "", false
-	}
-	return entry.InfoJson, true
-}
-
-func (h *AsciiArtHost) CallMintSwap(mintUrl, swapRequestJson string) (string, error) {
-	log.Printf("  [Host] CallMintSwap to %s\n", mintUrl)
-	resp, err := http.Post(mintUrl+"/v1/swap", "application/json", bytes.NewBufferString(swapRequestJson))
-	if err != nil {
-		return "", fmt.Errorf("failed to contact mint: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("mint rejected swap: %s", string(body))
-	}
-
-	var swapResp struct {
-		Signatures []interface{} `json:"signatures"`
-	}
-	json.Unmarshal(body, &swapResp)
-	log.Printf("  [Host] Got %d blind signatures\n", len(swapResp.Signatures))
-
-	return string(body), nil
-}
-
-func (h *AsciiArtHost) RefreshAllKeysets(mintUrl string) error {
-	log.Printf("  [Host] RefreshAllKeysets for %s\n", mintUrl)
-	refreshAllKeysets(mintUrl)
-	return nil
-}
-
-func (h *AsciiArtHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
-	log.Printf("  [Host] MarkChannelClosed: channel=%s receiver=%d sender=%d\n", channelId[:8], receiverSum, senderSum)
-	mu.Lock()
-	defer mu.Unlock()
-	// Check if channel is already closed
-	if _, ok := channelClosed[channelId]; ok {
-		return fmt.Errorf("channel already closed")
-	}
-	channelClosed[channelId] = map[string]interface{}{
-		"locktime":        locktime,
-		"balance":         balance,
-		"receiver_proofs": receiverProofsJson,
-		"sender_proofs":   senderProofsJson,
-		"receiver_sum":    receiverSum,
-		"sender_sum":      senderSum,
-	}
-	return nil
-}
-
-func (h *AsciiArtHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
-	log.Printf("  [Host] ComputeChannelSecret: alice=%s... charlie=%s...\n", alicePubkeyHex[:16], charliePubkeyHex[:16])
-	return spilman.ComputeChannelSecret(h.secretKey, alicePubkeyHex)
-}
-
-func (h *AsciiArtHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
-	log.Printf("  [Host] SignWithTweakedKey: signer=%s...\n", signerPubkeyHex[:16])
-	return spilman.SignWithTweakedKeyUtil(h.secretKey, messageHex, tweakScalarHex)
-}
-
-// ============================================================================
-// Initialization & Server Helpers
-// ============================================================================
-
-type MintKeysetWithKeys struct {
-	Id          string
-	Unit        string
-	Active      bool
-	InputFeePpk uint64
-	Keys        map[string]string
-}
-
-var fetchAllKeysetsFromMint = func(mintUrl string) ([]MintKeysetWithKeys, error) {
-	resp, err := http.Get(mintUrl + "/v1/keysets")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var data struct {
-		Keysets []struct {
-			Id          string `json:"id"`
-			Unit        string `json:"unit"`
-			Active      bool   `json:"active"`
-			InputFeePpk uint64 `json:"input_fee_ppk"`
-		} `json:"keysets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-
-	var result []MintKeysetWithKeys
-	for _, k := range data.Keysets {
-		if _, ok := allPricing[k.Unit]; !ok {
-			continue
-		}
-		keys, err := fetchKeysetKeys(mintUrl, k.Id)
-		if err != nil || len(keys) == 0 {
-			continue
-		}
-		result = append(result, MintKeysetWithKeys{
-			Id:          k.Id,
-			Unit:        k.Unit,
-			Active:      k.Active,
-			InputFeePpk: k.InputFeePpk,
-			Keys:        keys,
-		})
-	}
-
-	return result, nil
-}
-
-func fetchKeysetKeys(mintUrl, keysetId string) (map[string]string, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, keysetId))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var data struct {
-		Keysets []struct {
-			Keys map[string]string `json:"keys"`
-		} `json:"keysets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
-	}
-	if len(data.Keysets) == 0 {
-		return nil, fmt.Errorf("no keysets returned")
-	}
-
-	return data.Keysets[0].Keys, nil
-}
-
-func buildKeysetInfoJson(keysetId, unit string, keys map[string]string, inputFeePpk uint64) string {
-	var amounts []uint64
-	for k := range keys {
-		var val uint64
-		fmt.Sscanf(k, "%d", &val)
-		amounts = append(amounts, val)
-	}
-	sort.Slice(amounts, func(i, j int) bool { return amounts[i] > amounts[j] })
-
-	info := map[string]interface{}{
-		"keysetId":    keysetId,
-		"unit":        unit,
-		"keys":        keys,
-		"inputFeePpk": inputFeePpk,
-		"amounts":     amounts,
-	}
-	infoJson, _ := json.Marshal(info)
-	return string(infoJson)
-}
-
-func mergeKeysetEntry(keysetId string, entry KeysetCacheEntry) {
-	keysetCacheMu.Lock()
-	defer keysetCacheMu.Unlock()
-
-	if existing, ok := keysetCache[keysetId]; ok {
-		existing.Active = entry.Active
-		existing.Unit = entry.Unit
-		if entry.InfoJson != "" {
-			existing.InfoJson = entry.InfoJson
-		}
-		keysetCache[keysetId] = existing
-		return
-	}
-
-	keysetCache[keysetId] = entry
-}
-
-func getMintVersion(mintUrl string) string {
-	resp, err := http.Get(mintUrl + "/v1/info")
-	if err != nil {
-		return "unknown"
-	}
-	defer resp.Body.Close()
-
-	var info struct{ Version string }
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return "unknown"
-	}
-	if info.Version == "" {
-		return "unknown"
-	}
-	return info.Version
-}
-
-func initializeKeysets() {
-	log.Printf("Fetching keysets from %s...\n", MINT_URL)
-	keysets, err := fetchAllKeysetsFromMint(MINT_URL)
-	if err != nil {
-		log.Printf("WARNING: Failed to fetch keysets: %v", err)
-		return
-	}
-
-	for _, k := range keysets {
-		infoJson := buildKeysetInfoJson(k.Id, k.Unit, k.Keys, k.InputFeePpk)
-		mergeKeysetEntry(k.Id, KeysetCacheEntry{
-			InfoJson: infoJson,
-			Active:   k.Active,
-			Unit:     k.Unit,
-		})
-	}
-	log.Printf("Cached %d keysets\n", len(keysetCache))
-}
-
-func refreshAllKeysets(mintUrl string) {
-	log.Printf("  [Keyset] Refreshing keysets from %s...\n", mintUrl)
-	keysets, err := fetchAllKeysetsFromMint(mintUrl)
-	if err != nil {
-		log.Printf("  [Keyset] Refresh failed: %v\n", err)
-		return
-	}
-
-	for _, k := range keysets {
-		infoJson := buildKeysetInfoJson(k.Id, k.Unit, k.Keys, k.InputFeePpk)
-		mergeKeysetEntry(k.Id, KeysetCacheEntry{
-			InfoJson: infoJson,
-			Active:   k.Active,
-			Unit:     k.Unit,
-		})
-	}
-	log.Printf("  [Keyset] Refresh complete, %d keysets cached\n", len(keysetCache))
-}
-
-// ============================================================================
-// Client Helpers
-// ============================================================================
-
-func clientFetchActiveKeysetInfo(mintUrl string) (map[string]interface{}, error) {
-	log.Printf("  Fetching keysets from %s...\n", mintUrl)
-	resp, err := http.Get(fmt.Sprintf("%s/v1/keysets", mintUrl))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var keysetsData struct {
-		Keysets []struct {
-			Id          string `json:"id"`
-			Unit        string `json:"unit"`
-			Active      bool   `json:"active"`
-			InputFeePpk uint64 `json:"input_fee_ppk"`
-		} `json:"keysets"`
-	}
-	json.NewDecoder(resp.Body).Decode(&keysetsData)
-
-	var activeId string
-	var inputFeePpk uint64
-	for _, k := range keysetsData.Keysets {
-		if k.Unit == "sat" && k.Active {
-			activeId = k.Id
-			inputFeePpk = k.InputFeePpk
-			break
-		}
-	}
-	if activeId == "" {
-		return nil, fmt.Errorf("no active sat keyset found")
-	}
-
-	resp, err = http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, activeId))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var keysData struct {
-		Keysets []struct {
-			Keys map[string]string `json:"keys"`
-		} `json:"keysets"`
-	}
-	json.NewDecoder(resp.Body).Decode(&keysData)
-
-	return map[string]interface{}{
-		"keysetId":    activeId,
-		"unit":        "sat",
-		"inputFeePpk": inputFeePpk,
-		"keys":        keysData.Keysets[0].Keys,
-	}, nil
-}
-
-func mintFundingToken(mintUrl string, amount uint64, blindedMessages []interface{}) ([]interface{}, error) {
-	log.Printf("  Requesting mint quote for %d sat...\n", amount)
-	quoteReq, _ := json.Marshal(map[string]interface{}{"amount": amount, "unit": "sat"})
-	resp, err := http.Post(fmt.Sprintf("%s/v1/mint/quote/bolt11", mintUrl), "application/json", bytes.NewBuffer(quoteReq))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var quote struct {
-		Quote   string `json:"quote"`
-		Request string `json:"request"`
-	}
-	json.NewDecoder(resp.Body).Decode(&quote)
-
-	if quote.Request != "" {
-		fmt.Println("\n  " + strings.Repeat("=", 56))
-		fmt.Println("  PAY THIS INVOICE TO FUND THE CHANNEL")
-		fmt.Println("  " + strings.Repeat("=", 56))
-		fmt.Printf("\n  %s\n\n", quote.Request)
-
-		qr, err := qrcode.New(strings.ToUpper(quote.Request), qrcode.Medium)
-		if err == nil {
-			fmt.Println("  Scan this QR code with your Lightning wallet:")
-			fmt.Print(qr.ToSmallString(false))
-		}
-		fmt.Println("\n  " + strings.Repeat("=", 56) + "\n")
-	}
-
-	log.Println("  Waiting for payment (Nutshell test mint may auto-pay)...")
-	for i := 0; i < 120; i++ {
-		r, _ := http.Get(fmt.Sprintf("%s/v1/mint/quote/bolt11/%s", mintUrl, quote.Quote))
-		var status struct {
-			State string `json:"state"`
-			Paid  bool   `json:"paid"`
-		}
-		json.NewDecoder(r.Body).Decode(&status)
-		r.Body.Close()
-
-		if status.State == "PAID" || status.Paid {
-			log.Println("  Payment received!")
-			break
-		}
-		if i%10 == 0 && i > 0 {
-			log.Printf("  Still waiting... (%ds)\n", i/2)
-		}
-		time.Sleep(500 * time.Millisecond)
-		if i == 119 {
-			return nil, fmt.Errorf("timeout waiting for payment")
-		}
-	}
-
-	mintReq, _ := json.Marshal(map[string]interface{}{"quote": quote.Quote, "outputs": blindedMessages})
-	resp, err = http.Post(fmt.Sprintf("%s/v1/mint/bolt11", mintUrl), "application/json", bytes.NewBuffer(mintReq))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var mintResp struct {
-		Signatures []interface{} `json:"signatures"`
-	}
-	json.NewDecoder(resp.Body).Decode(&mintResp)
-	return mintResp.Signatures, nil
-}
-
-// ============================================================================
-// Runners
-// ============================================================================
-
-func closeChannel(id string, bridge *spilman.Bridge) (*spilman.CloseSuccess, error) {
-	log.Printf("\n[Close] Attempting to close channel %s...\n", id[:16])
-
-	// Execute unilateral close via bridge (handles swap, retry, unblind, mark closed)
-	// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure
-	result, err := bridge.ExecuteUnilateralClose(id)
-	if err != nil {
-		log.Printf("  [Close] Failed: %s\n", err.Error())
-		return nil, err
-	}
-
-	log.Printf("  [Close] SUCCESS! Channel %s closed. Earned %d sat\n", id[:8], result.ReceiverSum)
-	return result, nil
-}
 
 func runServer() {
-	initializeKeysets()
-	log.Printf("Starting server with MINT_URL: %s\n", MINT_URL)
-	log.Printf("Mint version: %s\n", getMintVersion(MINT_URL))
+	// 1. Bootstrap Spilman components from YAML
+	ctx, err := spilmankit.LoadFromYaml(CONFIG_PATH, SERVER_SECRET_KEY)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	defer ctx.Free()
 
-	pubkey, _ := spilman.SecretKeyToPubkey(SERVER_SECRET_KEY)
-	host := &AsciiArtHost{pubkey: pubkey, secretKey: SERVER_SECRET_KEY}
-	bridge := spilman.NewBridge(host)
-	defer bridge.Free()
+	// 2. Attach management routes
+	setupManagementRoutes(ctx)
 
-	http.HandleFunc("/channel/params", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"receiver_pubkey":       host.pubkey,
-			"pricing":               getActivePricing(),
-			"mints_units_keysets":   getMintsUnitsKeysets(),
-			"min_expiry_in_seconds": 3600,
-		})
-	})
-
-	http.HandleFunc("/channel/register", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req struct {
-			ChannelId     string      `json:"channel_id"`
-			Balance       int         `json:"balance"`
-			Signature     string      `json:"signature"`
-			Params        interface{} `json:"params"`
-			FundingProofs interface{} `json:"funding_proofs"`
-		}
-		json.NewDecoder(r.Body).Decode(&req)
-
-		// Validate required fields
-		if req.ChannelId == "" || req.Signature == "" || req.Params == nil || req.FundingProofs == nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error":  "Bad request",
-				"reason": "missing required fields: channel_id, signature, params, funding_proofs",
-			})
-			return
-		}
-
-		// balance must be 0 for registration
-		if req.Balance != 0 {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error":  "Bad request",
-				"reason": fmt.Sprintf("funding requires balance=0, got %d", req.Balance),
-			})
-			return
-		}
-
-		shortId := req.ChannelId
-		if len(shortId) > 16 {
-			shortId = shortId[:16]
-		}
-		log.Printf("\n[Register] Channel %s...\n", shortId)
-
-		// Build request body in the same format as payment
-		registerBody := map[string]interface{}{
-			"channel_id":     req.ChannelId,
-			"balance":        0,
-			"signature":      req.Signature,
-			"params":         req.Params,
-			"funding_proofs": req.FundingProofs,
-		}
-		registerJson, _ := json.Marshal(registerBody)
-
-		// Use FundChannel to validate and store the channel
-		// FundChannel now returns (*FundChannelResult, error)
-		result, err := bridge.FundChannel(string(registerJson))
-		if err != nil {
-			errorMsg := err.Error()
-			log.Printf("  [Register] REJECTED: %s\n", errorMsg)
-
-			// Determine HTTP status from error type
-			status := http.StatusPaymentRequired // 402 default
-			lowerMsg := strings.ToLower(errorMsg)
-			if strings.Contains(lowerMsg, "channel closed") {
-				status = http.StatusGone
-			} else if strings.Contains(lowerMsg, "channel closing") {
-				status = http.StatusConflict
-			} else if strings.Contains(lowerMsg, "invalid base64") ||
-				strings.Contains(lowerMsg, "invalid utf8") ||
-				strings.Contains(lowerMsg, "invalid json") ||
-				strings.Contains(lowerMsg, "missing field") ||
-				strings.Contains(lowerMsg, "missing channel_id") ||
-				strings.Contains(lowerMsg, "missing signature") ||
-				(strings.Contains(lowerMsg, "expected") && (strings.Contains(lowerMsg, "string") || strings.Contains(lowerMsg, "integer") || strings.Contains(lowerMsg, "u64"))) {
-				status = http.StatusBadRequest
-			} else if strings.Contains(lowerMsg, "internal") || strings.Contains(lowerMsg, "misconfigured") {
-				status = http.StatusInternalServerError
-			}
-
-			w.WriteHeader(status)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"error":   "Registration failed",
-				"reason":  errorMsg,
-				"status":  status,
-			})
-			return
-		}
-
-		log.Printf("  [Register] SUCCESS! channel=%s capacity=%d already_known=%v\n",
-			result.ChannelID[:16], result.Capacity, result.AlreadyKnown)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":       true,
-			"channel_id":    result.ChannelID,
-			"capacity":      result.Capacity,
-			"already_known": result.AlreadyKnown,
-		})
-	})
-
+	// 3. Application route: POST /ascii
 	http.HandleFunc("/ascii", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Received request to /ascii")
 		if r.Method != http.MethodPost {
 			return
 		}
-		paymentHeaderB64 := r.Header.Get("X-Cashu-Channel")
-
-		// Check for missing header
-		if paymentHeaderB64 == "" {
-			w.WriteHeader(http.StatusPaymentRequired)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Payment required", "reason": "Missing X-Cashu-Channel header"})
-			return
-		}
-
-		// Decode base64-encoded payment header
-		paymentHeaderBytes, err := base64.StdEncoding.DecodeString(paymentHeaderB64)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid payment header", "reason": "invalid base64 encoding"})
-			return
-		}
-		paymentHeader := string(paymentHeaderBytes)
 
 		var req struct{ Message string }
 		json.NewDecoder(r.Body).Decode(&req)
-
-		ctxJson, _ := json.Marshal(map[string]interface{}{"message_length": len(req.Message)})
-
-		// ProcessPayment now returns (*PaymentSuccess, error)
-		result, err := bridge.ProcessPayment(paymentHeader, string(ctxJson))
-		if err != nil {
-			errorMsg := err.Error()
-			log.Printf("  [Error] ProcessPayment failed: %s", errorMsg)
-
-			// Determine HTTP status from error type
-			status := http.StatusPaymentRequired // 402 default
-			lowerMsg := strings.ToLower(errorMsg)
-			if strings.Contains(lowerMsg, "channel closed") {
-				status = http.StatusGone
-			} else if strings.Contains(lowerMsg, "channel closing") {
-				status = http.StatusConflict
-			} else if strings.Contains(lowerMsg, "invalid base64") ||
-				strings.Contains(lowerMsg, "invalid utf8") ||
-				strings.Contains(lowerMsg, "invalid json") ||
-				strings.Contains(lowerMsg, "missing field") ||
-				strings.Contains(lowerMsg, "missing channel_id") ||
-				strings.Contains(lowerMsg, "missing signature") ||
-				(strings.Contains(lowerMsg, "expected") && (strings.Contains(lowerMsg, "string") || strings.Contains(lowerMsg, "integer") || strings.Contains(lowerMsg, "u64"))) {
-				status = http.StatusBadRequest
-			} else if strings.Contains(lowerMsg, "internal") || strings.Contains(lowerMsg, "misconfigured") {
-				status = http.StatusInternalServerError
-			}
-
-			w.Header().Set("X-Cashu-Channel", fmt.Sprintf(`{"error":"%s"}`, errorMsg))
-			w.WriteHeader(status)
-			json.NewEncoder(w).Encode(map[string]string{"error": "Payment failed", "reason": errorMsg})
+		if req.Message == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Missing 'message'"})
 			return
 		}
+
+		log.Printf("\n[Request] ASCII art for '%s' (%d chars)\n", req.Message, len(req.Message))
+
+		// Process payment using the helper
+		payment, err := ctx.ProcessRequestPayment(r, map[string]uint64{"chars": uint64(len(req.Message))})
+		if err != nil {
+			log.Printf("  [Payment] REJECTED: %v\n", err)
+			ctx.HandleError(w, err)
+			return
+		}
+
+		log.Printf("  [Payment] ACCEPTED: balance=%d/%d\n", payment.Balance, payment.Capacity)
 
 		art := figure.NewFigure(req.Message, "", true).String()
 
-		// Calculate cost based on message length and unit pricing
-		channelId := result.ChannelID
-		mu.Lock()
-		funding := channelFunding[channelId]
-		mu.Unlock()
-
-		pricePerChar := uint64(1) // default sat
-		if funding != nil {
-			var params struct {
-				Unit string `json:"unit"`
-			}
-			json.Unmarshal([]byte(funding["params"]), &params)
-			if params.Unit != "" {
-				pricePerChar = getPricePerChar(params.Unit)
-			}
-		}
-		cost := uint64(len(req.Message)) * pricePerChar
-
-		// Build header data from result
-		headerData := map[string]interface{}{
-			"channel_id": result.ChannelID,
-			"balance":    result.Balance,
-			"amount_due": result.AmountDue,
-			"capacity":   result.Capacity,
-		}
-		headerJson, _ := json.Marshal(headerData)
-		w.Header().Set("X-Cashu-Channel", string(headerJson))
+		ctx.AttachPaymentHeader(w, payment)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"art":     art,
 			"message": req.Message,
-			"cost":    cost,
-			"payment": headerData,
+			"payment": payment,
 		})
 	})
 
+	log.Printf("Go ASCII Art Server listening on :%s\n", SERVER_PORT)
+	log.Printf("Server pubkey: %s\n", getServerPubkey(SERVER_SECRET_KEY))
+	fmt.Println("Server is ready.")
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", SERVER_PORT), nil))
+}
+
+func getServerPubkey(sk string) string {
+	p, _ := spilman.SecretKeyToPubkey(sk)
+	return p
+}
+
+func setupManagementRoutes(ctx *spilmankit.ConfigurableSpilman) {
 	http.HandleFunc("/channel/", func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) < 3 {
+		path := r.URL.Path
+		if path == "/channel/register" {
+			handleRegister(w, r, ctx)
+			return
+		}
+		if path == "/channel/params" {
+			handleParams(w, r, ctx)
+			return
+		}
+
+		parts := strings.Split(strings.TrimPrefix(path, "/channel/"), "/")
+		if len(parts) < 2 {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		channelId := parts[2]
-		action := ""
-		if len(parts) >= 4 {
-			action = parts[3]
-		}
+		id := parts[0]
+		action := parts[1]
 
 		switch action {
 		case "status":
-			// GET /channel/{id}/status
-			mu.Lock()
-			funding, hasFunding := channelFunding[channelId]
-			payment := channelBalance[channelId]
-			closedInfoRaw, isClosed := channelClosed[channelId]
-			mu.Unlock()
-
-			if !hasFunding {
-				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
-				return
-			}
-
-			var params struct {
-				Capacity uint64 `json:"capacity"`
-			}
-			json.Unmarshal([]byte(funding["params"]), &params)
-
-			balance := uint64(0)
-			if payment != nil {
-				if b, ok := payment["balance"].(uint64); ok {
-					balance = b
-				}
-			}
-
-			var closedAmount interface{} = nil
-			if isClosed {
-				if closedInfo, ok := closedInfoRaw.(map[string]interface{}); ok {
-					closedAmount = closedInfo["balance"]
-				}
-			}
-
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"channel_id":    channelId,
-				"capacity":      params.Capacity,
-				"balance":       balance,
-				"amount_due":    host.GetAmountDue(channelId, nil),
-				"closed":        isClosed,
-				"closed_amount": closedAmount,
-			})
-
+			handleStatus(w, r, ctx, id)
 		case "close":
-			// POST /channel/{id}/close - Cooperative close
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			var req struct {
-				Balance       uint64      `json:"balance"`
-				Signature     string      `json:"signature"`
-				Params        interface{} `json:"params"`
-				FundingProofs interface{} `json:"funding_proofs"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-
-			if req.Signature == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "missing signature"})
-				return
-			}
-
-			log.Printf("\n[CooperativeClose] Channel %s... balance=%d\n", channelId[:min(16, len(channelId))], req.Balance)
-
-			// Check if already closed
-			mu.Lock()
-			closedInfoRaw, isClosed := channelClosed[channelId]
-			mu.Unlock()
-
-			if isClosed {
-				closedInfo, _ := closedInfoRaw.(map[string]interface{})
-				if closedInfo["balance"] == req.Balance {
-					log.Printf("  [CooperativeClose] Already closed at same balance, returning cached result\n")
-					json.NewEncoder(w).Encode(map[string]interface{}{
-						"success":        true,
-						"channel_id":     channelId,
-						"already_closed": true,
-						"total_value":    closedInfo["receiver_sum"].(uint64) + closedInfo["sender_sum"].(uint64),
-						"receiver_sum":   closedInfo["receiver_sum"],
-						"sender_sum":     closedInfo["sender_sum"],
-						"sender_proofs":  json.RawMessage(closedInfo["sender_proofs"].(string)),
-					})
-					return
-				}
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":            "channel already closed at different balance",
-					"closed_amount":    closedInfo["balance"],
-					"requested_amount": req.Balance,
-				})
-				return
-			}
-
-			// Build payment request for bridge
-			paymentRequest := map[string]interface{}{
-				"channel_id": channelId,
-				"balance":    req.Balance,
-				"signature":  req.Signature,
-			}
-			if req.Params != nil {
-				paymentRequest["params"] = req.Params
-			}
-			if req.FundingProofs != nil {
-				paymentRequest["funding_proofs"] = req.FundingProofs
-			}
-			paymentRequestJson, _ := json.Marshal(paymentRequest)
-
-			// Execute cooperative close via bridge (handles swap, retry, unblind, mark closed)
-			// Returns CloseSuccess on success, error (with JSON-encoded CloseError) on failure
-			result, err := bridge.ExecuteCooperativeClose(string(paymentRequestJson))
-			if err != nil {
-				// Try to parse CloseError from error message
-				var closeError struct {
-					Type   string `json:"type"`
-					Reason string `json:"reason"`
-					Status int    `json:"status"`
-				}
-				if json.Unmarshal([]byte(err.Error()), &closeError) == nil {
-					status := closeError.Status
-					if status == 0 {
-						status = http.StatusPaymentRequired
-					}
-					w.WriteHeader(status)
-					json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": closeError.Reason, "reason": closeError.Reason})
-				} else {
-					w.WriteHeader(http.StatusInternalServerError)
-					json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
-				}
-				return
-			}
-
-			log.Printf("  [CooperativeClose] SUCCESS!\n")
-
-			// Return CloseSuccess result
-			var senderProofs interface{}
-			json.Unmarshal([]byte(result.SenderProofs), &senderProofs)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":        true,
-				"channel_id":     result.ChannelID,
-				"total_value":    result.TotalValue,
-				"receiver_sum":   result.ReceiverSum,
-				"sender_sum":     result.SenderSum,
-				"sender_proofs":  senderProofs,
-				"already_closed": result.AlreadyClosed,
-			})
-
+			handleClose(w, r, ctx, id)
 		case "unilateral-close":
-			// POST /channel/{id}/unilateral-close - Server-initiated close
-			if r.Method != http.MethodPost {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			log.Printf("\n[UnilateralClose] Channel %s...\n", channelId[:min(16, len(channelId))])
-
-			// Check if already closed
-			mu.Lock()
-			closedInfoRaw, isClosed := channelClosed[channelId]
-			_, hasFunding := channelFunding[channelId]
-			mu.Unlock()
-
-			if isClosed {
-				closedInfo, _ := closedInfoRaw.(map[string]interface{})
-				log.Printf("  [UnilateralClose] Already closed, returning cached result\n")
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"success":                true,
-					"channel_id":             channelId,
-					"already_closed":         true,
-					"earnedBeforeStage2Fees": closedInfo["receiver_sum"],
-				})
-				return
-			}
-
-			if !hasFunding {
-				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
-				return
-			}
-
-			result, err := closeChannel(channelId, bridge)
-			if err != nil {
-				// Try to parse CloseError from error message to get status
-				var closeError struct {
-					Status int `json:"status"`
-				}
-				status := http.StatusBadRequest
-				if json.Unmarshal([]byte(err.Error()), &closeError) == nil && closeError.Status != 0 {
-					status = closeError.Status
-				}
-				w.WriteHeader(status)
-				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
-				return
-			}
-
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success":                true,
-				"channel_id":             channelId,
-				"already_closed":         false,
-				"earnedBeforeStage2Fees": result.ReceiverSum,
-			})
-
+			handleUnilateralClose(w, r, ctx, id)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
-
-	log.Printf("Go ASCII Art Server listening on :%s\n", SERVER_PORT)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", SERVER_PORT), nil))
 }
 
+func handleParams(w http.ResponseWriter, r *http.Request, ctx *spilmankit.ConfigurableSpilman) {
+	activeUnits := ctx.Stores.GetActiveUnits()
+	compPricing := make(map[string]interface{})
+	for unit, entry := range ctx.Config.Pricing {
+		if _, ok := activeUnits[unit]; !ok {
+			continue
+		}
+		data := map[string]interface{}{
+			"min_capacity": entry.MinCapacity,
+			"minCapacity":  entry.MinCapacity,
+			"variables":    entry.Variables,
+		}
+		if entry.MaxAmountPerOutput != nil {
+			data["max_amount_per_output"] = *entry.MaxAmountPerOutput
+			data["maxAmountPerOutput"] = *entry.MaxAmountPerOutput
+		}
+		if p, ok := entry.Variables["chars"]; ok {
+			data["per_char"] = p
+		}
+		compPricing[unit] = data
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"receiver_pubkey":       getServerPubkey(SERVER_SECRET_KEY),
+		"pricing":               compPricing,
+		"mints_units_keysets":   ctx.Stores.GetMintsUnitsKeysets(),
+		"min_expiry_in_seconds": ctx.Config.MinExpirySeconds,
+	})
+}
+
+func handleRegister(w http.ResponseWriter, r *http.Request, ctx *spilmankit.ConfigurableSpilman) {
+	if r.Method != http.MethodPost {
+		return
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if b, ok := body["balance"].(float64); ok && b != 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Bad request", "reason": fmt.Sprintf("funding requires balance=0, got %v", b),
+		})
+		return
+	}
+
+	jsonStr, _ := json.Marshal(body)
+	result, err := ctx.Bridge.FundChannel(string(jsonStr))
+	if err != nil {
+		ctx.HandleError(w, err)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "channel_id": result.ChannelID, "capacity": result.Capacity, "already_known": result.AlreadyKnown,
+	})
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request, ctx *spilmankit.ConfigurableSpilman, id string) {
+	funding, ok := ctx.Stores.GetFunding(id)
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
+		return
+	}
+	var params struct{ Capacity uint64 }
+	json.Unmarshal([]byte(funding.ParamsJson), &params)
+	balance, _ := ctx.Stores.GetBalance(id)
+	closedData, isClosed := ctx.Stores.GetClosedData(id)
+	usage := ctx.Stores.GetUsage(id)
+
+	res := map[string]interface{}{
+		"channel_id": id, "capacity": params.Capacity, "balance": uint64(0),
+		"usage": usage, "chars_served": usage["chars"], "amount_due": ctx.Host.GetAmountDue(id, nil),
+		"closed": isClosed,
+	}
+	if balance != nil {
+		res["balance"] = balance.Balance
+	}
+	if isClosed {
+		res["closed_amount"] = closedData.ClosedAmount
+	}
+	json.NewEncoder(w).Encode(res)
+}
+
+func handleClose(w http.ResponseWriter, r *http.Request, ctx *spilmankit.ConfigurableSpilman, id string) {
+	var data map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	balanceRaw, ok := data["balance"]
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing balance"})
+		return
+	}
+	balance := uint64(balanceRaw.(float64))
+
+	// Check if already closed
+	if closedInfo, ok := ctx.Stores.GetClosedData(id); ok {
+		if closedInfo.ClosedAmount == balance {
+			var sp interface{}
+			json.Unmarshal([]byte(closedInfo.SenderProofsJson), &sp)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true, "channel_id": id, "already_closed": true,
+				"total_value":  closedInfo.ReceiverSum + closedInfo.SenderSum,
+				"receiver_sum": closedInfo.ReceiverSum, "sender_sum": closedInfo.SenderSum,
+				"sender_proofs": sp,
+			})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":         "channel already closed at different balance",
+			"closed_amount": closedInfo.ClosedAmount, "requested_amount": balance,
+		})
+		return
+	}
+
+	data["channel_id"] = id
+	jsonStr, _ := json.Marshal(data)
+	res, err := ctx.Bridge.ExecuteCooperativeClose(string(jsonStr))
+	if err != nil {
+		ctx.HandleError(w, err)
+		return
+	}
+	var sp interface{}
+	json.Unmarshal([]byte(res.SenderProofs), &sp)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "channel_id": res.ChannelID, "total_value": res.TotalValue,
+		"receiver_sum": res.ReceiverSum, "sender_sum": res.SenderSum, "sender_proofs": sp,
+		"already_closed": res.AlreadyClosed,
+	})
+}
+
+func handleUnilateralClose(w http.ResponseWriter, r *http.Request, ctx *spilmankit.ConfigurableSpilman, id string) {
+	// Check if already closed
+	if closedInfo, ok := ctx.Stores.GetClosedData(id); ok {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "channel_id": id, "earnedBeforeStage2Fees": closedInfo.ReceiverSum, "already_closed": true,
+		})
+		return
+	}
+
+	if _, ok := ctx.Stores.GetFunding(id); !ok {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unknown channel"})
+		return
+	}
+
+	res, err := ctx.Bridge.ExecuteUnilateralClose(id)
+	if err != nil {
+		ctx.HandleError(w, err)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "channel_id": id, "earnedBeforeStage2Fees": res.ReceiverSum, "already_closed": res.AlreadyClosed,
+	})
+}
+
+// ============================================================================
+// Client Implementation (simplified)
+// ============================================================================
+
 func runClient(messages []string) {
-	log.Printf("\n[1/8] Fetching server params from %s...\n", SERVER_URL)
+	log.Printf("Fetching server params from %s...\n", SERVER_URL)
 	resp, err := http.Get(SERVER_URL + "/channel/params")
 	if err != nil {
 		log.Fatalf("Server not found: %v", err)
 	}
 	var sp struct {
-		Receiver_pubkey     string                         `json:"receiver_pubkey"`
-		Mints_units_keysets map[string]map[string][]string `json:"mints_units_keysets"`
+		ReceiverPubkey string                         `json:"receiver_pubkey"`
+		Mints          map[string]map[string][]string `json:"mints_units_keysets"`
 	}
 	json.NewDecoder(resp.Body).Decode(&sp)
 	resp.Body.Close()
 
-	// Derive mint URL from mints_units_keysets
-	var clientMintUrl string
-	for m := range sp.Mints_units_keysets {
-		clientMintUrl = m
+	var mintUrl string
+	for m := range sp.Mints {
+		mintUrl = m
 		break
 	}
-	log.Printf("  Using mint: %s\n", clientMintUrl)
 
-	log.Println("[2/8] Generating keypair...")
-	aliceSecret, alicePubkey, err := spilman.GenerateKeypair()
-	if err != nil {
-		log.Fatalf("GenerateKeypair failed: %v", err)
-	}
-	alice := struct{ Secret, Pubkey string }{aliceSecret, alicePubkey}
-	log.Printf("  Alice pubkey: %s...\n\n", alice.Pubkey[:24])
-
-	log.Println("[3/8] Fetching keyset info...")
-	log.Printf("  Mint version: %s\n", getMintVersion(clientMintUrl))
-	ki, _ := clientFetchActiveKeysetInfo(clientMintUrl)
+	aliceSecret, alicePub, _ := spilman.GenerateKeypair()
+	ki, _ := clientFetchActiveKeysetInfo(mintUrl)
 	kiJson, _ := json.Marshal(ki)
-	log.Printf("  Found keyset: %s (%s)\n", ki["keysetId"], ki["unit"])
+	ss, _ := spilman.ComputeChannelSecret(aliceSecret, sp.ReceiverPubkey)
 
-	log.Println("[4/8] Computing shared secret...")
-	ss, _ := spilman.ComputeChannelSecret(alice.Secret, sp.Receiver_pubkey)
-
-	log.Println("[5/8] Building channel parameters...")
-	total := 0
+	var total uint64
 	for _, m := range messages {
-		total += len(m)
+		total += uint64(len(m))
 	}
-	cap := uint64(total + 50)
-	// Compute the minimum funding_token_amount for the desired capacity
+	cap := total + 50
 	fta, _ := spilman.ComputeFundingTokenAmount(cap, string(kiJson), 64)
+
 	params := map[string]interface{}{
-		"alice_pubkey": alice.Pubkey, "charlie_pubkey": sp.Receiver_pubkey,
-		"mint": clientMintUrl, "unit": "sat", "capacity": cap,
+		"alice_pubkey": alicePub, "charlie_pubkey": sp.ReceiverPubkey,
+		"mint": mintUrl, "unit": "sat", "capacity": cap,
 		"funding_token_amount": fta, "maximum_amount": 64,
 		"locktime": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
 		"sender_nonce": fmt.Sprintf("demo-go-%d", time.Now().Unix()),
@@ -1209,32 +337,32 @@ func runClient(messages []string) {
 	}
 	pJson, _ := json.Marshal(params)
 	cid, _ := spilman.ChannelParametersGetChannelId(string(pJson), ss, string(kiJson))
-	log.Printf("  Full channel ID: %s\n", cid)
 
-	log.Println("[6/8] Creating funding outputs...")
-	fJson, _ := spilman.CreateFundingOutputs(string(pJson), alice.Secret, string(kiJson))
+	fJson, _ := spilman.CreateFundingOutputs(string(pJson), aliceSecret, string(kiJson))
 	var f struct {
 		Funding_token_nominal uint64
 		Blinded_messages      []interface{}
-		Secrets_with_blinding []interface{}
 	}
 	json.Unmarshal([]byte(fJson), &f)
 
-	log.Println("[7/8] Minting funding token...")
-	sigs, _ := mintFundingToken(clientMintUrl, f.Funding_token_nominal, f.Blinded_messages)
-
-	log.Println("[8/8] Constructing proofs...")
+	sigs, _ := mintFundingToken(mintUrl, f.Funding_token_nominal, f.Blinded_messages)
 	sigsJ, _ := json.Marshal(sigs)
-	swbJ, _ := json.Marshal(f.Secrets_with_blinding)
+
+	// Create swbJ correctly
+	var fFull struct{ Secrets_with_blinding []interface{} }
+	json.Unmarshal([]byte(fJson), &fFull)
+	swbJ, _ := json.Marshal(fFull.Secrets_with_blinding)
+
 	proofsJ, _ := spilman.ConstructProofs(string(sigsJ), string(swbJ), string(kiJson))
 	var proofs []interface{}
 	json.Unmarshal([]byte(proofsJ), &proofs)
 
-	log.Printf("\nChannel %s funded! Making requests...\n\n", cid[:8])
+	log.Printf("Full channel ID: %s\n", cid)
+	log.Printf("Channel %s funded! Making requests...\n", cid[:8])
 	balance := uint64(0)
 	for i, msg := range messages {
 		balance += uint64(len(msg))
-		updJ, _ := spilman.CreateSignedBalanceUpdate(string(pJson), string(kiJson), alice.Secret, proofsJ, balance)
+		updJ, _ := spilman.CreateSignedBalanceUpdate(string(pJson), string(kiJson), aliceSecret, proofsJ, balance)
 		var upd struct{ Signature string }
 		json.Unmarshal([]byte(updJ), &upd)
 
@@ -1246,25 +374,81 @@ func runClient(messages []string) {
 		payH, _ := json.Marshal(pay)
 
 		reqB, _ := json.Marshal(map[string]string{"message": msg})
-		req, _ := http.NewRequest("POST", SERVER_URL+"/ascii", bytes.NewBuffer(reqB))
+		req, _ := http.NewRequest("POST", SERVER_URL+"/ascii", strings.NewReader(string(reqB)))
 		req.Header.Set("X-Cashu-Channel", base64.StdEncoding.EncodeToString(payH))
 		req.Header.Set("Content-Type", "application/json")
 
-		r, err := (&http.Client{}).Do(req)
-		if err != nil {
-			log.Fatalf("Request failed: %v", err)
-		}
+		r, _ := (&http.Client{}).Do(req)
 		if r.StatusCode == 200 {
 			var res struct{ Art string }
 			json.NewDecoder(r.Body).Decode(&res)
-			r.Body.Close()
-			fmt.Printf("[%d/%d] '%s' (%d sat) -> Accepted!\n%s\n", i+1, len(messages), msg, len(msg), res.Art)
+			fmt.Printf("[%d/%d] Accepted!\n%s\n", i+1, len(messages), res.Art)
 		} else {
-			body, _ := io.ReadAll(r.Body)
-			r.Body.Close()
-			log.Fatalf("[%d/%d] '%s' -> FAILED (Status %d): %s", i+1, len(messages), msg, r.StatusCode, string(body))
+			log.Fatalf("FAILED: %d", r.StatusCode)
+		}
+		r.Body.Close()
+	}
+}
+
+// Reuse existing helpers but local to main for simplicity in demo
+func clientFetchActiveKeysetInfo(mintUrl string) (map[string]interface{}, error) {
+	resp, _ := http.Get(mintUrl + "/v1/keysets")
+	defer resp.Body.Close()
+	var d struct {
+		Keysets []struct {
+			Id, Unit    string
+			Active      bool
+			InputFeePpk uint64 `json:"input_fee_ppk"`
 		}
 	}
+	json.NewDecoder(resp.Body).Decode(&d)
+	for _, k := range d.Keysets {
+		if k.Unit == "sat" && k.Active {
+			rk, _ := http.Get(fmt.Sprintf("%s/v1/keys/%s", mintUrl, k.Id))
+			var kd struct {
+				Keysets []struct{ Keys map[string]string }
+			}
+			json.NewDecoder(rk.Body).Decode(&kd)
+			rk.Body.Close()
+			return map[string]interface{}{"keysetId": k.Id, "unit": "sat", "inputFeePpk": k.InputFeePpk, "keys": kd.Keysets[0].Keys}, nil
+		}
+	}
+	return nil, fmt.Errorf("no keyset")
+}
+
+func mintFundingToken(mintUrl string, amount uint64, blinded []interface{}) ([]interface{}, error) {
+	qreq, _ := json.Marshal(map[string]interface{}{"amount": amount, "unit": "sat"})
+	resp, _ := http.Post(mintUrl+"/v1/mint/quote/bolt11", "application/json", strings.NewReader(string(qreq)))
+	var q struct{ Quote, Request string }
+	json.NewDecoder(resp.Body).Decode(&q)
+	resp.Body.Close()
+
+	if q.Request != "" {
+		fmt.Printf("\nPAY INVOICE: %s\n\n", q.Request)
+		qr, _ := qrcode.New(q.Request, qrcode.Medium)
+		fmt.Println(qr.ToSmallString(false))
+	}
+
+	for i := 0; i < 60; i++ {
+		r, _ := http.Get(fmt.Sprintf("%s/v1/mint/quote/bolt11/%s", mintUrl, q.Quote))
+		var s struct {
+			State string
+			Paid  bool
+		}
+		json.NewDecoder(r.Body).Decode(&s)
+		r.Body.Close()
+		if s.State == "PAID" || s.Paid {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	mreq, _ := json.Marshal(map[string]interface{}{"quote": q.Quote, "outputs": blinded})
+	resp, _ = http.Post(mintUrl+"/v1/mint/bolt11", "application/json", strings.NewReader(string(mreq)))
+	var mr struct{ Signatures []interface{} }
+	json.NewDecoder(resp.Body).Decode(&mr)
+	resp.Body.Close()
+	return mr.Signatures, nil
 }
 
 func main() {
