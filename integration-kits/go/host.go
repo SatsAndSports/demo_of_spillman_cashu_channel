@@ -21,8 +21,8 @@ type PricingEntry struct {
 type PricingTable map[string]PricingEntry
 
 type BaseSpilmanHost struct {
-	secretKey        string
-	pubkey           string
+	SecretKey        string
+	Pubkey           string
 	mints            map[string][]string
 	pricing          PricingTable
 	stores           SpilmanStores
@@ -39,8 +39,8 @@ func NewBaseSpilmanHost(secretKey string, mints map[string][]string, pricing Pri
 	}
 
 	return &BaseSpilmanHost{
-		secretKey:        secretKey,
-		pubkey:           pubkey,
+		SecretKey:        secretKey,
+		Pubkey:           pubkey,
 		mints:            normMints,
 		pricing:          pricing,
 		stores:           stores,
@@ -49,7 +49,7 @@ func NewBaseSpilmanHost(secretKey string, mints map[string][]string, pricing Pri
 }
 
 func (h *BaseSpilmanHost) ReceiverKeyIsAcceptable(pubkeyHex string) bool {
-	return strings.ToLower(pubkeyHex) == strings.ToLower(h.pubkey)
+	return strings.ToLower(pubkeyHex) == strings.ToLower(h.Pubkey)
 }
 
 func (h *BaseSpilmanHost) MintAndKeysetIsAcceptable(mint string, keysetId string) bool {
@@ -248,11 +248,11 @@ func (h *BaseSpilmanHost) MarkChannelClosed(channelId string, locktime, balance 
 }
 
 func (h *BaseSpilmanHost) ComputeChannelSecret(alicePub, charliePub string) (string, error) {
-	return spilman.ComputeChannelSecret(h.secretKey, alicePub)
+	return spilman.ComputeChannelSecret(h.SecretKey, alicePub)
 }
 
 func (h *BaseSpilmanHost) SignWithTweakedKey(signerPub, msg, tweak string) (string, error) {
-	return spilman.SignWithTweakedKeyUtil(h.secretKey, msg, tweak)
+	return spilman.SignWithTweakedKeyUtil(h.SecretKey, msg, tweak)
 }
 
 // Keyset fetching logic
