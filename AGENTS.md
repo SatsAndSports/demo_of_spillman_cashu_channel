@@ -11,7 +11,7 @@ This is an extension of CDK that adds **Spilman-style unidirectional payment cha
 - **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost` with YAML config
 - **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Reference TypeScript server using `ConfigurableSpilman` with YAML config
 - **Python ASCII Art** (`examples/python-ascii-art/`) - Python server using `ConfigurableSpilman` with YAML config
-- **Go ASCII Art** (`examples/go-ascii-art/`) - Standalone Go implementation (manual config)
+- **Go ASCII Art** (`examples/go-ascii-art/`) - Go server using `ConfigurableSpilman` with YAML config
 
 **Server integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client that tests all four server implementations (54 tests)
 
@@ -34,6 +34,7 @@ To see all Spilman channel changes, compare ('git diff') against these pre-chann
 | `crates/cdk-spilman-go/` | CGO bindings |
 | `integration-kits/ts/` | TypeScript Integration Kit (Express) |
 | `integration-kits/python/` | Python Integration Kit (Flask/FastAPI) |
+| `integration-kits/go/` | Go Integration Kit (Standard Library) |
 | `web/blossom-server/` (different git repo) | CashuTube (TypeScript server + HTML player) |
 | `examples/python-ascii-art/` | Python demo |
 | `examples/go-ascii-art/` | Go demo |
@@ -139,7 +140,9 @@ For detailed information, see:
 ## Active TODOs
 
 - [Client-side Opening] the function that swaps an input token into a funding (compute_channel_from_token) should prefer to swap into an active keyset, even if the input token is from a stale keyset.
-
+- P2BK, follow the standard. Maybe include the ephemeral key *and* the signature
+- a standard method, with no side effects, which tests if a given payment is large enough (for a given context)
+- optional in-memory cache of the funding token
 ### Closing
 - it would be nice if the 'receiver_proofs_json' included the receiver's blinded signature, (and the p2pk_e?), to make it easy for non-P2BK wallets to accept them.
 
