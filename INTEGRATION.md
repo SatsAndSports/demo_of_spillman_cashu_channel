@@ -859,10 +859,10 @@ Four implementations showing the same pattern in different languages:
 | Language | Location | Notes |
 |----------|----------|-------|
 | TypeScript | `integration-kits/ts/` | **Recommended** - Modular kit for Express |
-| TypeScript | `examples/ts-ascii-art/` | Legacy demo server |
+| TypeScript | `examples/ts-ascii-art/` | Golden template demo (ConfigurableSpilman + SpilmanClientBridge) |
 | Rust | `examples/rust-ascii-art/` | Uses `ConfigurableHost` with YAML config |
-| Python | `examples/python-ascii-art/` | PyO3 bindings |
-| Go | `examples/go-ascii-art/` | CGO bindings |
+| Python | `examples/python-ascii-art/` | Golden template demo (ConfigurableSpilman + SpilmanClient) |
+| Go | `examples/go-ascii-art/` | Golden template demo (ConfigurableSpilman + ClientBridge) |
 
 Each demo implements a simple service: pay per character of ASCII art. Study the `SpilmanHost` implementation in each.
 
@@ -882,7 +882,7 @@ Note that this is in a seperate repository.
 
 ```
 # TypeScript host implementation
-examples/ts-ascii-art/src/server.ts  # Hooks inline in server
+examples/ts-ascii-art/src/server.ts  # ConfigurableSpilman + Express routes
 web/blossom-server/src/api/bridge-hooks.ts
 
 # Rust host implementation (ConfigurableHost + YAML)

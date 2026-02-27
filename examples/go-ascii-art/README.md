@@ -1,75 +1,48 @@
-# ASCII Art Server Example
+# Go ASCII Art - Spilman Payment Channel Demo
 
-This example demonstrates a complete Spilman payment channel server implementation in Go.
-It's a simple ASCII art generator that charges per character.
+This example demonstrates a Go server and client using the Go integration kit.
 
-## Features
+## Overview
 
-- Full SpilmanHost implementation with in-memory storage
-- HTTP server with payment channel endpoints
-- Client mode for testing payments
-- Support for multiple currency units (sat, msat, usd)
-- Cooperative and unilateral channel closing
+- **Server**: Standard library HTTP server + `RegisterManagementRoutes`
+- **Client**: Uses `ClientBridge` to build payment headers and close the channel
 
-## Running
+## Prerequisites
 
-### Prerequisites
+1. A running Cashu mint (default `http://localhost:3338`)
+2. Go toolchain and Rust bindings built (see repo root)
 
-1. A running Cashu mint (default: `http://localhost:3338`)
-2. The spilman-go library built (see main README)
-
-### Start the Server
+## Run the Demo
 
 ```bash
-# From this directory
+# Start the server
 go run -tags spilman_dev . server
 
-# Or with custom settings
-MINT_URL=http://localhost:3338 PORT=5001 go run -tags spilman_dev . server
+# In another terminal
+go run -tags spilman_dev . client "Hello World" --close
 ```
 
-### Run the Client
+## Environment Variables
 
-In a separate terminal:
-
-```bash
-# Generate some ASCII art
-go run -tags spilman_dev . client "Hello World"
-
-# Multiple messages use the same channel
-go run -tags spilman_dev . client "First" "Second" "Third"
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MINT_URL` | `http://localhost:3338` | Cashu mint URL |
+| `PORT` | `5001` | Server port |
+| `SERVER_URL` | `http://localhost:5001` | Client target URL |
+| `SERVER_SECRET_KEY` | `00..01` | Server secret key |
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/channel/params` | GET | Get server's channel parameters (receiver pubkey, pricing, policy) |
-| `/channel/register` | POST | Pre-register a channel (optional, for explicit funding) |
-| `/channel/{id}/status` | GET | Get channel status (balance, amount_due) |
-| `/channel/{id}/close` | POST | Initiate cooperative close |
-| `/channel/{id}/unilateral-close` | POST | Server-initiated unilateral close |
-| `/ascii` | POST | Generate ASCII art (requires X-Cashu-Channel header) |
+| `/channel/params` | GET | Server parameters (pubkey, pricing, keysets) |
+| `/channel/register` | POST | Pre-register a channel |
+| `/channel/{id}/status` | GET | Channel status |
+| `/channel/{id}/close` | POST | Cooperative close |
+| `/channel/{id}/unilateral-close` | POST | Unilateral close |
+| `/ascii` | POST | Paid ASCII art endpoint |
 
-## Payment Flow
+## Notes
 
-1. Client fetches `/channel/params` to get receiver pubkey and pricing
-2. Client creates channel parameters and funds the channel via mint swap
-3. Client sends requests to `/ascii` with `X-Cashu-Channel` header containing:
-   - `channel_id` - identifies the channel
-   - `balance` - cumulative amount spent
-   - `signature` - Schnorr signature over the balance
-   - `params` and `funding_proofs` - on first request only
-4. Server validates payment and returns the ASCII art
-5. Client can close channel via `/channel/{id}/close` to get refund
-
-## Code Structure
-
-The `main.go` file contains:
-
-- `AsciiArtHost` - implements `SpilmanHost` interface
-- Server HTTP handlers for all endpoints
-- Client logic for channel creation and payments
-- In-memory stores for channel data
-
-This example is a good starting point for building your own payment channel server.
+- The demo uses `spilmankit.DemoFetchActiveKeysetInfo` and `DemoMintFundingToken`.
+- Add `--close` to cooperatively close the channel at the end of the run.

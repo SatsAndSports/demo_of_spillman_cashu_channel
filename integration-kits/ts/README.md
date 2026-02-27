@@ -1,57 +1,59 @@
 # Spilman TypeScript Integration Kit
 
-Drop-in channel management router and in-memory host for Express.
+Drop-in management router and helpers for Express servers, plus a lightweight
+client bridge wrapper for Node.js.
 
 ## Quick start
 
+For a runnable demo, use the reference server/client:
+
 ```bash
+cd examples/ts-ascii-art
 npm install
 npm run server
 ```
 
-Environment variables:
-
-- `MINT_URL` (default `http://localhost:3338`)
-- `PORT` (default `5002`)
-- `SERVER_SECRET_KEY` (hex-encoded 32-byte secret key)
-
-The server mounts management routes under `/channel` and a demo `/ascii` endpoint.
-
-## Using the management router
+## Server usage (Express)
 
 ```ts
 import express from "express";
-import { WasmSpilmanBridge } from "../wasm/cdk_wasm.js";
-import { createInMemoryStores, getActivePricing } from "./stores.js";
-import { createSpilmanHost, getServerPubkey } from "./host.js";
-import { createSpilmanManagementRouter } from "./router.js";
+import { ConfigurableSpilman, init, mapErrorStatus } from "cdk-spilman-kit";
 
-const stores = createInMemoryStores();
-const pricing = { sat: { per_char: 1, minCapacity: 10 } };
-const host = createSpilmanHost({
-  secretKeyHex: "...",
-  mintUrl: "http://localhost:3338",
-  pricing,
-  stores,
-});
+await init();
+const ctx = await ConfigurableSpilman.fromYaml("config.yaml", secretKeyHex);
 
-const bridge = new WasmSpilmanBridge(host);
 const app = express();
 app.use(express.json());
+const spilman = ctx.initExpress(app);
 
-app.use(
-  "/channel",
-  createSpilmanManagementRouter({
-    bridge,
-    receiverPubkey: getServerPubkey("..."),
-    pricing,
-    stores,
-    getActivePricing: () => getActivePricing(pricing, stores.keysetCache),
-  })
-);
-
-// Ensure JSON parsing middleware is installed before the router.
+app.post("/ascii", (req, res) => {
+  const { message } = req.body;
+  try {
+    const payment = spilman.processRequestPayment(req, { chars: message.length });
+    spilman.attachPaymentHeader(res, payment);
+    res.json({ art: message, payment });
+  } catch (e: any) {
+    const msg = typeof e === "string" ? e : (e.message || String(e));
+    res.status(mapErrorStatus(msg)).json({ error: "Payment failed", reason: msg });
+  }
+});
 ```
+
+## Client usage (Node.js)
+
+```ts
+import { SpilmanClientBridge, init } from "cdk-spilman-kit";
+
+await init();
+const bridge = new SpilmanClientBridge(host);
+
+const header = bridge.buildPaymentHeader(channelId, BigInt(balance), true);
+const closeReq = bridge.createCooperativeCloseRequest(channelId, BigInt(finalBalance));
+bridge.processCooperativeCloseResponse(closeResponseJson);
+```
+
+Note: `openChannelFromToken` is not exposed in the JS wrapper yet because the
+WASM client host does not support async mint swaps.
 
 ## WASM artifacts
 

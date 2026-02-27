@@ -123,7 +123,7 @@ cd examples/ts-ascii-art && npm run client -- Hello World  # In another terminal
 The `make build-wasm` target uses **sentinel-based dependency tracking**:
 - Only rebuilds if Rust source files (`crates/cdk/src/**/*.rs`, `crates/cdk-wasm/src/**/*.rs`), `Cargo.toml`, or `Cargo.lock` changed
 - Instant (~0.02s) when nothing changed, ~3-6s when rebuild needed
-- Blossom server gets WASM copied (separate git repo); examples/ts-ascii-art uses symlink
+- Blossom server gets WASM copied (separate git repo); integration-kits/ts/wasm is populated by `make build-wasm`
 
 ## Documentation Index
 
@@ -143,6 +143,7 @@ For detailed information, see:
 - P2BK, follow the standard. Maybe include the ephemeral key *and* the signature
 - a standard method, with no side effects, which tests if a given payment is large enough (for a given context)
 - optional in-memory cache of the funding token
+
 ### Closing
 - it would be nice if the 'receiver_proofs_json' included the receiver's blinded signature, (and the p2pk_e?), to make it easy for non-P2BK wallets to accept them.
 
@@ -153,7 +154,7 @@ For detailed information, see:
 - Remember volume preference in localStorage
 
 ### Lower Priority
-- Go demo: Add client-initiated closing (currently server-only CLI close). TS is the reference for this.
+- (none currently)
 
 ## Conventions
 

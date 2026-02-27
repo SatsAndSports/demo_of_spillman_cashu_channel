@@ -4,10 +4,10 @@ Standard components for integrating Spilman payment channels into Python web app
 
 ## Features
 
-- **Standard Management Routes**: Pre-built endpoints for `/params`, `/register`, `/close`, etc.
-- **Flask & FastAPI Support**: Built-in extensions and decorators/dependencies.
-- **In-Memory Storage**: Default storage for development (extensible).
-- **Automatic Keyset Management**: Handles fetching and refreshing mint keysets.
+- **Management Routes**: Pre-built endpoints for `/params`, `/register`, `/close`, etc.
+- **Flask & FastAPI Support**: Built-in helpers for common frameworks.
+- **ConfigurableSpilman**: YAML-driven configuration and storage selection.
+- **Client Bridge Wrapper**: `SpilmanClient` for building payment headers and cooperative close.
 
 ## Installation
 
@@ -19,53 +19,53 @@ pip install cdk-spilman-kit[flask]  # or [fastapi]
 
 ```python
 from flask import Flask, request, jsonify
-from cdk_spilman_kit import SpilmanStores, BaseSpilmanHost
-from cdk_spilman_kit.ext.flask import Spilman
+from cdk_spilman_kit import ConfigurableSpilman
+from cdk_spilman_kit.ext.flask import map_error_status
 
 app = Flask(__name__)
-stores = SpilmanStores()
-host = BaseSpilmanHost(SECRET_KEY, MINT_URL, PRICING, stores)
-spilman = Spilman(app, host)
+ctx = ConfigurableSpilman.from_yaml("config.yaml", SECRET_KEY)
+spilman = ctx.init_flask(app)
 
-@app.route("/api/data", methods=["POST"])
-@spilman.payment_required
-def get_data():
-    return jsonify({"data": "Protected content"})
-
-# Optional: pass context or precheck before charging
-@spilman.payment_required(
-    context_provider=lambda: "{\"message_length\": 5}",
-    precheck=lambda: None,
-)
-def get_data_with_context():
-    return jsonify({"data": "Protected content"})
+@app.route("/ascii", methods=["POST"])
+def ascii_art():
+    data = request.get_json() or {}
+    msg = data.get("message", "")
+    try:
+        payment = spilman.process_request_payment({"chars": len(msg)})
+        resp = jsonify({"art": msg, "payment": payment.__dict__})
+        return spilman.attach_payment_header(resp, payment)
+    except Exception as e:
+        reason = str(e)
+        return jsonify({"error": "Payment failed", "reason": reason}), map_error_status(reason)
 ```
 
 ## Usage (FastAPI)
 
 ```python
 from fastapi import FastAPI, Depends
-from cdk_spilman_kit import SpilmanStores, BaseSpilmanHost
+from cdk_spilman_kit import ConfigurableSpilman
 from cdk_spilman_kit.ext.fastapi import Spilman
 
-app = FastAPI()
-stores = SpilmanStores()
-host = BaseSpilmanHost(SECRET_KEY, MINT_URL, PRICING, stores)
-spilman = Spilman(host)
+ctx = ConfigurableSpilman.from_yaml("config.yaml", SECRET_KEY)
+spilman = Spilman(ctx)
 
+app = FastAPI()
 app.include_router(spilman.router)
 
-@app.post("/api/data")
-async def get_data(payment=Depends(spilman.payment_required)):
-    return {"data": "Protected content"}
+@app.post("/ascii")
+async def ascii_art(payment=Depends(spilman.payment_required)):
+    return {"ok": True}
+```
 
-# Optional: pass context or precheck before charging
-context_dep = spilman.payment_dependency(
-    context_provider=lambda request: "{\"message_length\": 5}",
-    precheck=lambda request: None,
-)
+## Client usage
 
-@app.post("/api/data-with-context")
-async def get_data_with_context(payment=Depends(context_dep)):
-    return {"data": "Protected content"}
+```python
+from cdk_spilman_kit import SpilmanClient, BaseSpilmanClientHost
+
+host = BaseSpilmanClientHost(alice_secret_hex)
+client = SpilmanClient(host)
+
+header = client.build_payment_header(channel_id, balance, include_funding=True)
+close_req = client.create_cooperative_close_request(channel_id, final_balance)
+client.process_cooperative_close_response(close_response_json)
 ```

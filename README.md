@@ -38,40 +38,45 @@ make wasm && npx pnpm install && npx pnpm start
 
 See [CASHUTUBE.md](CASHUTUBE.md) for full documentation.
 
-### Python ASCII Art (PyO3)
+### ASCII Art Demos (Rust/TypeScript/Python/Go)
 
-A minimal demo showing how to integrate Spilman payments into a Python service.
+Minimal pay-per-character demos across all four languages. Each has a server
+and a client. The client supports `--close` to cooperatively close the channel.
+
+Rust (port 5003):
 
 ```bash
-cd examples/python-ascii-art
-
-# Install dependencies
-pip install -r requirements.txt
-cd ../../crates/cdk-spilman-python && maturin develop && cd ../../examples/python-ascii-art
-
-# Run server (in one terminal)
-python server.py
-
-# Run client (in another terminal)
-python client.py
+PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art
 ```
 
-The server charges per character of ASCII art generated. The client:
-1. Creates a channel with the server
-2. Funds it via Lightning invoice
-3. Makes multiple requests, paying incrementally
-4. Closes the channel when done
-
-### Go Demo (CGO)
-
-Feature-complete Go implementation with the same capabilities as Python.
+TypeScript (port 5001):
 
 ```bash
-# Build Go bindings
-make build-go
+make build-wasm
+cd examples/ts-ascii-art
+npm install
+npm run server
+npm run client -- "Hello World" --close
+```
 
-# Run parallel test
-make test-go-parallel
+Python (port 5000):
+
+```bash
+make -C crates/cdk-spilman-python build
+cd examples/python-ascii-art
+pip install -r requirements.txt
+pip install -e ../../integration-kits/python
+python server.py
+python client.py "Hello World" --close
+```
+
+Go (port 5001):
+
+```bash
+cargo build -p cdk-spilman-go
+cd examples/go-ascii-art
+go run -tags spilman_dev . server
+go run -tags spilman_dev . client "Hello World" --close
 ```
 
 ## Architecture
@@ -82,8 +87,10 @@ The core Spilman logic lives in Rust (`crates/cdk/src/spilman/`) and is exposed 
 |---------|----------|----------|
 | **WASM** | `crates/cdk-wasm/` | Browser clients, Node.js servers |
 | **TS Kit** | `integration-kits/ts/` | Express.js servers (drop-in router) |
-| **Python** | `crates/cdk-spilman-python/` | Python services |
-| **Go** | `crates/cdk-spilman-go/` | Go services |
+| **Python Kit** | `integration-kits/python/` | Flask/FastAPI servers |
+| **Go Kit** | `integration-kits/go/` | Standard library HTTP servers |
+| **Python Bindings** | `crates/cdk-spilman-python/` | PyO3 bindings |
+| **Go Bindings** | `crates/cdk-spilman-go/` | CGO bindings |
 
 Each binding implements a **SpilmanHost** interface that handles:
 - Storage (channel state, proofs)
@@ -153,7 +160,9 @@ cdk/
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
 │   └── cdk-spilman-go/             # Go bindings (CGO)
 ├── integration-kits/
-│   └── ts/                         # TypeScript/Express integration kit
+│   ├── ts/                         # TypeScript/Express integration kit
+│   ├── python/                     # Python integration kit
+│   └── go/                         # Go integration kit
 ├── containers/                     # Podman/Docker dev environment
 ├── examples/
 │   ├── rust-ascii-art/             # Rust demo (native, uses core cdk)
@@ -187,7 +196,7 @@ cdk/
 ## Status
 
 This is experimental software. The protocol works but:
-- Server-side state is in-memory only (no persistence)
+- Storage is pluggable (in-memory or SQLite); demos default to memory
 - Some edge cases around keyset rotation need handling
 
 See the TODO section in [AGENTS.md](AGENTS.md) for active work items.

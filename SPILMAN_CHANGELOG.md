@@ -2,6 +2,22 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Feb 27, 2026)
+
+### Golden Template Demos
+
+Standardized the ASCII art demos across TypeScript, Python, and Go into minimal
+"golden templates" that use the integration kits and client bridge helpers.
+
+- **Unified CLI**: `server` and `client` modes with a shared `--close` flag
+- **Demo helpers**: Added kit-level demo helpers (funding + keyset fetch) to keep examples small
+- **Consistent errors**: Aligned TS error responses with the server integration tests
+
+### WASM Client Bridge (TypeScript)
+
+- **WASM bindings**: Added `WasmSpilmanClientBridge` for client-side flows in Node.js
+- **JS wrapper**: Added `SpilmanClientBridge` wrapper in the TS kit (hides `openChannelFromToken`)
+
 ## Completed Features (Feb 25, 2026)
 
 ### Python Integration Kit
