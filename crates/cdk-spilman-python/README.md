@@ -49,6 +49,21 @@ result = bridge.process_payment(payment_json, context_json)
 print(f"Payment accepted: balance={result.balance}, channel={result.channel_id}")
 ```
 
+#### Error handling
+
+Payment/validation errors raise `RuntimeError` with a JSON payload containing
+`error`, `reason`, `status`, `code`, and optional `extra`.
+
+```python
+import json
+
+try:
+    result = bridge.process_payment(payment_json, context_json)
+except RuntimeError as e:
+    err = json.loads(str(e))
+    print(err["status"], err["reason"], err.get("code"))
+```
+
 ### Client-Side (Sender)
 
 ```python

@@ -17,7 +17,7 @@ npm run server
 
 ```ts
 import express from "express";
-import { ConfigurableSpilman, init, mapErrorStatus } from "cdk-spilman-kit";
+import { ConfigurableSpilman, init, mapErrorStatus, getBridgeErrorReason } from "cdk-spilman-kit";
 
 await init();
 const ctx = await ConfigurableSpilman.fromYaml("config.yaml", secretKeyHex);
@@ -33,8 +33,8 @@ app.post("/ascii", (req, res) => {
     spilman.attachPaymentHeader(res, payment);
     res.json({ art: message, payment });
   } catch (e: any) {
-    const msg = typeof e === "string" ? e : (e.message || String(e));
-    res.status(mapErrorStatus(msg)).json({ error: "Payment failed", reason: msg });
+    const reason = getBridgeErrorReason(e);
+    res.status(mapErrorStatus(e)).json({ error: "Payment failed", reason });
   }
 });
 ```

@@ -8,8 +8,9 @@
 
 use cdk::nuts::SecretKey;
 use cdk::spilman::{
-    self, ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge,
-    SpilmanClientBridge, SpilmanClientHost, SpilmanHost, SpilmanNetworking,
+    self, BridgeError, BridgeErrorResponse, ChannelFunding, ChannelPolicy, ChannelState,
+    ClosingData, PaymentProof, SpilmanBridge, SpilmanClientBridge, SpilmanClientHost, SpilmanHost,
+    SpilmanNetworking,
 };
 pub use libc::{c_char, c_int};
 use std::ffi::{CStr, CString};
@@ -39,6 +40,11 @@ impl CResult {
             error: CString::new(err).unwrap().into_raw(),
         }
     }
+}
+
+fn bridge_error_response_json(err: &BridgeError) -> String {
+    serde_json::to_string(&BridgeErrorResponse::from_bridge_error(err))
+        .unwrap_or_else(|_| err.to_string())
 }
 
 #[repr(C)]
@@ -586,7 +592,7 @@ pub unsafe extern "C" fn spilman_bridge_process_payment(
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
         }
-        Err(e) => CResult::error(e.to_string()),
+        Err(e) => CResult::error(bridge_error_response_json(&e)),
     }
 }
 
@@ -613,7 +619,7 @@ pub unsafe extern "C" fn spilman_bridge_validate_payment(
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
         }
-        Err(e) => CResult::error(e.to_string()),
+        Err(e) => CResult::error(bridge_error_response_json(&e)),
     }
 }
 
@@ -636,7 +642,7 @@ pub unsafe extern "C" fn spilman_bridge_fund_channel(
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)
         }
-        Err(e) => CResult::error(e.to_string()),
+        Err(e) => CResult::error(bridge_error_response_json(&e)),
     }
 }
 
@@ -653,7 +659,7 @@ pub unsafe extern "C" fn spilman_bridge_validate_and_prepare_cooperative_close(
         .validate_and_prepare_cooperative_close(payment)
     {
         Ok(close_data) => CResult::success(close_data.to_json_value().to_string()),
-        Err(e) => CResult::error(e.to_string()),
+        Err(e) => CResult::error(bridge_error_response_json(&e)),
     }
 }
 
@@ -667,7 +673,7 @@ pub unsafe extern "C" fn spilman_bridge_create_unilateral_close_data(
 
     match instance.bridge.create_unilateral_close_data(id) {
         Ok(close_data) => CResult::success(close_data.to_json_value().to_string()),
-        Err(e) => CResult::error(e.to_string()),
+        Err(e) => CResult::error(bridge_error_response_json(&e)),
     }
 }
 

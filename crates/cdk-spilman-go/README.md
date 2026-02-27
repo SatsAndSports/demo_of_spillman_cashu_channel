@@ -31,6 +31,8 @@ To accept payments, implement the `SpilmanHost` interface and create a `Bridge`:
 package main
 
 import (
+    "encoding/json"
+
     "github.com/cashubtc/spilman-go/spilman"
 )
 
@@ -60,7 +62,17 @@ func main() {
     // Process incoming payment
     result, err := bridge.ProcessPayment(paymentJson, contextJson)
     if err != nil {
-        // Payment failed - return 402 Payment Required
+        var berr struct {
+            Error  string         `json:"error"`
+            Reason string         `json:"reason"`
+            Status int            `json:"status"`
+            Code   string         `json:"code"`
+            Extra  map[string]any `json:"extra"`
+        }
+        if json.Unmarshal([]byte(err.Error()), &berr) == nil && berr.Status != 0 {
+            // Structured bridge error: use berr.Status, berr.Reason, berr.Code
+        }
+        // Fallback: treat err.Error() as plain text
     }
     // Payment succeeded - serve the content
 }

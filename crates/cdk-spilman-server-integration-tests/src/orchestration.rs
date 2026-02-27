@@ -11,6 +11,7 @@
 //! any child processes spawned by shell scripts or `go run`).
 
 use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -245,7 +246,24 @@ impl ServerProcess {
         }
 
         let node_modules = server_dir.join("node_modules");
-        if !node_modules.exists() {
+        let kit_module = node_modules.join("cdk-spilman-kit");
+        let mut needs_install = !node_modules.exists();
+
+        if !needs_install {
+            if !kit_module.exists() {
+                needs_install = true;
+            } else {
+                let is_symlink = fs::symlink_metadata(&kit_module)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+                if !is_symlink {
+                    let _ = fs::remove_dir_all(&kit_module);
+                    needs_install = true;
+                }
+            }
+        }
+
+        if needs_install {
             let status = Command::new("npm")
                 .args(["install", "--no-package-lock", "--no-fund", "--no-audit"])
                 .current_dir(&server_dir)

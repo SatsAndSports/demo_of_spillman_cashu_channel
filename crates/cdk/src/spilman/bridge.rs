@@ -314,6 +314,97 @@ impl ClosePreparationError {
     }
 }
 
+/// HTTP-friendly error for payment/validation failures.
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeErrorResponse {
+    pub error: String,
+    pub reason: String,
+    pub status: u16,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl BridgeErrorResponse {
+    pub fn from_bridge_error(err: &BridgeError) -> Self {
+        let reason = err.to_string();
+        let mut extra: Option<serde_json::Map<String, serde_json::Value>> = None;
+
+        let (status, error, code) = match err {
+            BridgeError::InvalidRequest(_) => (400, "Bad request", "invalid_request"),
+            BridgeError::UnknownChannel => (404, "Not found", "unknown_channel"),
+            BridgeError::ChannelClosing => (409, "Channel closing", "channel_closing"),
+            BridgeError::ChannelClosed => (410, "Channel closed", "channel_closed"),
+            BridgeError::ServerMisconfigured(_) => (500, "Internal error", "server_misconfigured"),
+            BridgeError::Internal(_) => (500, "Internal error", "internal"),
+            BridgeError::BalanceMismatch { expected, actual } => {
+                let mut map = serde_json::Map::new();
+                map.insert("expected".into(), serde_json::json!(expected));
+                map.insert("actual".into(), serde_json::json!(actual));
+                extra = Some(map);
+                (402, "Payment required", "balance_mismatch")
+            }
+            BridgeError::BalanceExceedsCapacity { balance, capacity } => {
+                let mut map = serde_json::Map::new();
+                map.insert("balance".into(), serde_json::json!(balance));
+                map.insert("capacity".into(), serde_json::json!(capacity));
+                extra = Some(map);
+                (402, "Payment required", "balance_exceeds_capacity")
+            }
+            BridgeError::InsufficientBalance { balance, amount_due } => {
+                let mut map = serde_json::Map::new();
+                map.insert("balance".into(), serde_json::json!(balance));
+                map.insert("amount_due".into(), serde_json::json!(amount_due));
+                extra = Some(map);
+                (402, "Payment required", "insufficient_balance")
+            }
+            BridgeError::CapacityTooSmall { capacity, min_capacity } => {
+                let mut map = serde_json::Map::new();
+                map.insert("capacity".into(), serde_json::json!(capacity));
+                map.insert("min_capacity".into(), serde_json::json!(min_capacity));
+                extra = Some(map);
+                (402, "Payment required", "capacity_too_small")
+            }
+            BridgeError::LocktimeTooSoon { locktime, min_locktime, now } => {
+                let mut map = serde_json::Map::new();
+                map.insert("locktime".into(), serde_json::json!(locktime));
+                map.insert("min_locktime".into(), serde_json::json!(min_locktime));
+                map.insert("now".into(), serde_json::json!(now));
+                extra = Some(map);
+                (402, "Payment required", "locktime_too_soon")
+            }
+            BridgeError::MaxAmountExceeded { amount, max_allowed } => {
+                let mut map = serde_json::Map::new();
+                map.insert("amount".into(), serde_json::json!(amount));
+                map.insert("max_allowed".into(), serde_json::json!(max_allowed));
+                extra = Some(map);
+                (402, "Payment required", "max_amount_exceeded")
+            }
+            BridgeError::UnsupportedUnit(_) => (402, "Payment required", "unsupported_unit"),
+            BridgeError::ChannelIdMismatch => (402, "Payment required", "channel_id_mismatch"),
+            BridgeError::ValidationFailed(_) => (402, "Payment required", "validation_failed"),
+            BridgeError::InvalidSignature(_) => (402, "Payment required", "invalid_signature"),
+            BridgeError::ReceiverKeyNotAcceptable => (402, "Payment required", "receiver_key_not_acceptable"),
+            BridgeError::MintOrKeysetNotAcceptable => (402, "Payment required", "mint_or_keyset_not_acceptable"),
+        };
+
+        Self {
+            error: error.to_string(),
+            reason,
+            status,
+            code: code.to_string(),
+            extra,
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| {
+            "{\"error\":\"Internal error\",\"reason\":\"failed to serialize bridge error\",\"status\":500,\"code\":\"internal\"}"
+                .to_string()
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PaymentValidationResult {
     pub channel_id: String,
@@ -445,6 +536,16 @@ impl std::fmt::Display for BridgeError {
             Self::ReceiverKeyNotAcceptable => write!(f, "receiver key not acceptable"),
             Self::MintOrKeysetNotAcceptable => write!(f, "mint or keyset not acceptable"),
         }
+    }
+}
+
+impl BridgeError {
+    pub fn to_response(&self) -> BridgeErrorResponse {
+        BridgeErrorResponse::from_bridge_error(self)
+    }
+
+    pub fn to_response_json(&self) -> String {
+        self.to_response().to_json()
     }
 }
 

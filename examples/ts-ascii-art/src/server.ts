@@ -1,5 +1,5 @@
 import express from "express";
-import { ConfigurableSpilman, init, mapErrorStatus } from "cdk-spilman-kit";
+import { ConfigurableSpilman, init, mapErrorStatus, getBridgeErrorReason } from "cdk-spilman-kit";
 import figlet from "figlet";
 
 const CONFIG_PATH = process.env.CONFIG_PATH || "config.yaml";
@@ -26,10 +26,10 @@ export async function runServer() {
       spilman.attachPaymentHeader(res, payment);
       res.json({ art, message, payment });
     } catch (e: any) {
-      const msg = typeof e === "string" ? e : (e.message || String(e));
-      console.log(`  [Payment] REJECTED: ${msg}`);
-      const status = mapErrorStatus(msg);
-      res.status(status).json({ error: "Payment failed", reason: msg, status });
+      const reason = getBridgeErrorReason(e);
+      console.log(`  [Payment] REJECTED: ${reason}`);
+      const status = mapErrorStatus(e);
+      res.status(status).json({ error: "Payment failed", reason, status });
     }
   });
 

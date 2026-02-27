@@ -10,7 +10,34 @@ import (
 	"github.com/cashubtc/spilman-go/spilman"
 )
 
+type bridgeErrorPayload struct {
+	Status int    `json:"status"`
+	Reason string `json:"reason"`
+	Error  string `json:"error"`
+}
+
+func parseBridgeErrorJSON(errorMsg string) (int, string, bool) {
+	if errorMsg == "" {
+		return 0, "", false
+	}
+	var payload bridgeErrorPayload
+	if err := json.Unmarshal([]byte(errorMsg), &payload); err != nil {
+		return 0, "", false
+	}
+	if payload.Status == 0 {
+		return 0, "", false
+	}
+	reason := payload.Reason
+	if reason == "" {
+		reason = payload.Error
+	}
+	return payload.Status, reason, true
+}
+
 func MapErrorStatus(errorMsg string) int {
+	if status, _, ok := parseBridgeErrorJSON(errorMsg); ok {
+		return status
+	}
 	lower := strings.ToLower(errorMsg)
 	if strings.Contains(lower, "unknown channel") {
 		return 404
@@ -106,6 +133,10 @@ func (c *ConfigurableSpilman) AttachPaymentHeader(w http.ResponseWriter, p *spil
 func (c *ConfigurableSpilman) HandleError(w http.ResponseWriter, err error) {
 	msg := err.Error()
 	status := MapErrorStatus(msg)
+	reason := msg
+	if _, parsedReason, ok := parseBridgeErrorJSON(msg); ok && parsedReason != "" {
+		reason = parsedReason
+	}
 
 	errorName := "Payment failed"
 	if status == 400 {
@@ -114,12 +145,12 @@ func (c *ConfigurableSpilman) HandleError(w http.ResponseWriter, err error) {
 		errorName = "Not found"
 	}
 
-	w.Header().Set("X-Cashu-Channel", fmt.Sprintf(`{"error":"%s"}`, msg))
+	w.Header().Set("X-Cashu-Channel", fmt.Sprintf(`{"error":"%s"}`, reason))
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": false,
 		"error":   errorName,
-		"reason":  msg,
+		"reason":  reason,
 		"status":  status,
 	})
 }

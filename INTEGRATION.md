@@ -702,30 +702,64 @@ bridge.process_payment_via_base64_header(base64_header, context_json)
 
 ## Error Handling
 
-The bridge returns typed errors. Map them to your transport's error format:
+The bridge returns typed errors. For payment/validation, prefer the structured
+`BridgeErrorResponse` (via `BridgeError::to_response()` / `to_response_json()`),
+then map or forward its status and fields. If you are mapping manually, use the
+table below.
 
 ### BridgeError Types
 
 | Error | Meaning | Suggested HTTP Status |
 |-------|---------|----------------------|
 | `InvalidRequest` | Malformed input | 400 Bad Request |
-| `UnknownChannel` | No funding data, params not provided | 402 Payment Required |
+| `UnknownChannel` | No funding data, params not provided | 404 Not Found |
 | `InsufficientBalance` | balance < amount_due | 402 Payment Required |
-| `InvalidSignature` | Signature verification failed | 400 Bad Request |
+| `InvalidSignature` | Signature verification failed | 402 Payment Required |
 | `ChannelClosed` | Channel already closed | 410 Gone |
 | `ChannelClosing` | Swap in progress | 409 Conflict |
-| `BalanceExceedsCapacity` | balance > capacity | 400 Bad Request |
-| `CapacityTooSmall` | Below minimum | 400 Bad Request |
-| `LocktimeTooSoon` | Expires too soon | 400 Bad Request |
-| `UnsupportedUnit` | Currency not accepted | 400 Bad Request |
-| `ReceiverKeyNotAcceptable` | Wrong server pubkey | 400 Bad Request |
-| `MintOrKeysetNotAcceptable` | Mint not in allowlist | 400 Bad Request |
+| `BalanceExceedsCapacity` | balance > capacity | 402 Payment Required |
+| `CapacityTooSmall` | Below minimum | 402 Payment Required |
+| `LocktimeTooSoon` | Expires too soon | 402 Payment Required |
+| `UnsupportedUnit` | Currency not accepted | 402 Payment Required |
+| `ReceiverKeyNotAcceptable` | Wrong server pubkey | 402 Payment Required |
+| `MintOrKeysetNotAcceptable` | Mint not in allowlist | 402 Payment Required |
+| `ChannelIdMismatch` | Channel ID mismatch | 402 Payment Required |
+| `ValidationFailed` | DLEQ or validation failure | 402 Payment Required |
+| `BalanceMismatch` | Balance does not match expected | 402 Payment Required |
+| `MaxAmountExceeded` | Output amount exceeds policy | 402 Payment Required |
+| `ServerMisconfigured` | Host is misconfigured | 500 Internal Server Error |
+| `Internal` | Unexpected internal failure | 500 Internal Server Error |
+
+### BridgeErrorResponse (structured)
+
+The bridge produces a JSON-friendly error payload with a stable shape:
+
+```json
+{
+  "error": "Payment required",
+  "reason": "insufficient balance: balance 10 < amount due 20",
+  "status": 402,
+  "code": "insufficient_balance",
+  "extra": { "balance": 10, "amount_due": 20 }
+}
+```
+
+Bindings surface this as:
+
+- **WASM**: throws a JS object with the fields above
+- **Python/Go**: raises/returns an error string containing that JSON
+
+Prefer `status` when present, and fall back to string matching only when the
+payload is not structured.
 
 ### Error Response Pattern
 
 ```typescript
 function handlePaymentError(error: BridgeError): Response {
-  if (error.type === "InsufficientBalance" || error.type === "UnknownChannel") {
+  if (error.type === "UnknownChannel") {
+    return new Response(JSON.stringify({ error: "unknown channel" }), { status: 404 });
+  }
+  if (error.type === "InsufficientBalance") {
     return new Response(JSON.stringify({
       error: error.message,
       amount_due: error.amount_due,  // Include so client knows how much to pay
@@ -734,8 +768,14 @@ function handlePaymentError(error: BridgeError): Response {
   if (error.type === "ChannelClosed") {
     return new Response(JSON.stringify({ error: "channel closed" }), { status: 410 });
   }
+  if (error.type === "InvalidRequest") {
+    return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  }
+  if (error.type === "Internal" || error.type === "ServerMisconfigured") {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  }
   // ... other cases
-  return new Response(JSON.stringify({ error: error.message }), { status: 400 });
+  return new Response(JSON.stringify({ error: error.message }), { status: 402 });
 }
 ```
 

@@ -42,6 +42,27 @@ const result = bridge.process_payment(paymentJson, contextJson);
 console.log(`Payment accepted: balance=${result.balance}`);
 ```
 
+#### Error handling
+
+Payment/validation errors throw a structured object with fields
+`error`, `reason`, `status`, `code`, and optional `extra`.
+
+```typescript
+try {
+  const result = bridge.process_payment(paymentJson, contextJson);
+  console.log(`Payment accepted: balance=${result.balance}`);
+} catch (e) {
+  const info = e as {
+    status?: number;
+    reason?: string;
+    code?: string;
+    error?: string;
+    extra?: Record<string, unknown>;
+  };
+  console.error(info.status, info.reason ?? info.error ?? "Unknown error");
+}
+```
+
 ### Client-Side (Sender)
 
 ```typescript

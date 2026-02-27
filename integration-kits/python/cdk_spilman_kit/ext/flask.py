@@ -7,8 +7,30 @@ from cdk_spilman import SpilmanBridge
 from ..host import BaseSpilmanHost
 from ..stores import SpilmanStores
 
+def parse_bridge_error(error_msg: str):
+    if not error_msg:
+        return None, None, None
+    try:
+        data = json.loads(error_msg)
+        if isinstance(data, dict) and "status" in data:
+            status = data.get("status")
+            reason = data.get("reason") if isinstance(data.get("reason"), str) else None
+            code = data.get("code") if isinstance(data.get("code"), str) else None
+            return int(status) if status is not None else None, reason, code
+    except Exception:
+        pass
+    return None, None, None
+
 def map_error_status(error_msg: str) -> int:
-    lower_msg = error_msg.lower()
+    status, reason, _ = parse_bridge_error(error_msg)
+    if status:
+        return status
+
+    msg = reason or error_msg
+    if not msg:
+        return 500
+
+    lower_msg = msg.lower()
     if "channel closed" in lower_msg: return 410
     if "channel closing" in lower_msg: return 409
     
@@ -54,6 +76,11 @@ def map_error_name(error_msg: str) -> str:
     if map_error_status(error_msg) == 400:
         return "Bad request"
     return "Registration failed"
+
+def normalize_bridge_error(error_msg: str):
+    status = map_error_status(error_msg)
+    _, reason, _ = parse_bridge_error(error_msg)
+    return status, reason or error_msg
 
 class Spilman:
     def __init__(self, app: Optional[Flask] = None, host: Optional[BaseSpilmanHost] = None, bridge: Optional[SpilmanBridge] = None):
@@ -117,12 +144,13 @@ class Spilman:
                 })
             except Exception as e:
                 msg = str(e)
+                status, reason = normalize_bridge_error(msg)
                 return jsonify({
                     "success": False,
                     "error": map_error_name(msg),
-                    "reason": msg,
-                    "status": map_error_status(msg)
-                }), map_error_status(msg)
+                    "reason": reason,
+                    "status": status,
+                }), status
 
         @bp.route("/<channel_id>/status")
         def channel_status(channel_id):
@@ -293,13 +321,13 @@ class Spilman:
                 return resp
             except Exception as e:
                 msg = str(e)
-                status_code = map_error_status(msg)
+                status_code, reason = normalize_bridge_error(msg)
                 response = jsonify({
                     "success": False,
                     "error": "Payment failed",
-                    "reason": msg
+                    "reason": reason,
                 })
-                response.headers["X-Cashu-Channel"] = json.dumps({"error": msg})
+                response.headers["X-Cashu-Channel"] = json.dumps({"error": reason})
                 return response, status_code
         
         return decorated

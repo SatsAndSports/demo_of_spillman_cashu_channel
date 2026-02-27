@@ -8,6 +8,12 @@ export interface SpilmanPaymentResult {
   capacity: number;
 }
 
+export interface BridgeErrorInfo {
+  status?: number;
+  reason?: string;
+  code?: string;
+}
+
 export function decodePaymentHeader(header: string): string {
   // Validate base64 format
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(header)) {
@@ -16,12 +22,66 @@ export function decodePaymentHeader(header: string): string {
   return Buffer.from(header, "base64").toString("utf-8");
 }
 
-export function mapErrorStatus(errorMsg: string | any): number {
-  if (!errorMsg || typeof errorMsg !== "string") {
+export function parseBridgeError(error: unknown): BridgeErrorInfo {
+  if (!error) return {};
+  if (typeof error === "string") {
+    try {
+      const parsed = JSON.parse(error);
+      if (parsed && typeof parsed === "object") {
+        const obj = parsed as any;
+        if (typeof obj.status === "number" || typeof obj.reason === "string" || typeof obj.code === "string") {
+          return {
+            status: typeof obj.status === "number" ? obj.status : undefined,
+            reason: typeof obj.reason === "string" ? obj.reason : undefined,
+            code: typeof obj.code === "string" ? obj.code : undefined,
+          };
+        }
+      }
+    } catch {
+      // Not JSON
+    }
+    return { reason: error };
+  }
+
+  if (typeof error === "object") {
+    const obj = error as any;
+    if (typeof obj.status === "number" || typeof obj.reason === "string" || typeof obj.code === "string") {
+      return {
+        status: typeof obj.status === "number" ? obj.status : undefined,
+        reason: typeof obj.reason === "string" ? obj.reason : undefined,
+        code: typeof obj.code === "string" ? obj.code : undefined,
+      };
+    }
+    if (typeof obj.message === "string") {
+      return parseBridgeError(obj.message);
+    }
+  }
+
+  return {};
+}
+
+export function getBridgeErrorReason(error: unknown): string {
+  const info = parseBridgeError(error);
+  if (info.reason) return info.reason;
+  if (typeof error === "string") return error;
+  if (error && typeof (error as any).message === "string") {
+    return (error as any).message;
+  }
+  return "Unknown error";
+}
+
+export function mapErrorStatus(errorMsg: unknown): number {
+  const info = parseBridgeError(errorMsg);
+  if (typeof info.status === "number") {
+    return info.status;
+  }
+
+  const message = info.reason || (typeof errorMsg === "string" ? errorMsg : "");
+  if (!message) {
     return 500;
   }
   
-  const lowerMsg = errorMsg.toLowerCase();
+  const lowerMsg = message.toLowerCase();
   if (lowerMsg.includes("channel closed")) return 410;
   if (lowerMsg.includes("channel closing")) return 409;
   

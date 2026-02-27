@@ -5,7 +5,7 @@ import pyfiglet
 from typing import Optional
 from flask import Flask, request, jsonify
 from cdk_spilman_kit import ConfigurableSpilman
-from cdk_spilman_kit.ext.flask import map_error_status
+from cdk_spilman_kit.ext.flask import map_error_status, parse_bridge_error
 
 # Configuration
 SECRET_KEY = os.environ.get("SERVER_SECRET_KEY") or secrets.token_hex(32)
@@ -36,8 +36,10 @@ def generate_ascii():
         payment = spilman.process_request_payment({"chars": len(message)})
     except Exception as e:
         msg = str(e)
-        print(f"  [Payment] REJECTED: {msg}")
-        return jsonify({"error": "Payment failed", "reason": msg}), map_error_status(msg)
+        status = map_error_status(msg)
+        _, reason, _ = parse_bridge_error(msg)
+        print(f"  [Payment] REJECTED: {reason or msg}")
+        return jsonify({"error": "Payment failed", "reason": reason or msg}), status
     
     print(f"  [Payment] ACCEPTED: balance={payment.balance}/{payment.capacity}")
 

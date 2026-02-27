@@ -29,7 +29,13 @@ export {
   type UsageMap,
 } from "./stores.js";
 export { fetchAllKeysetsFromMint, fetchAndCacheKeysetsForMint } from "./keysets.js";
-export { Spilman, mapErrorStatus, decodePaymentHeader } from "./express.js";
+export {
+  Spilman,
+  mapErrorStatus,
+  decodePaymentHeader,
+  parseBridgeError,
+  getBridgeErrorReason,
+} from "./express.js";
 export { ConfigurableSpilman, type SpilmanConfig } from "./config.js";
 export { demoFetchActiveKeysetInfo, demoMintFundingToken } from "./demo.js";
 export { SpilmanClientBridge, type SpilmanClientHost } from "./client_bridge.js";
@@ -43,4 +49,3 @@ export async function init() {
   const wasmBytes = readFileSync(wasmPath);
   return await wasmInit({ module_or_path: wasmBytes });
 }
-

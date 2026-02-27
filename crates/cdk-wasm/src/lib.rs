@@ -8,8 +8,9 @@ use async_trait::async_trait;
 use cdk::nuts::{Id, PublicKey, SecretKey, Proof, CurrencyUnit};
 use cdk::spilman::{
     compute_funding_token_amount as rust_compute_funding_token_amount,
-    BalanceUpdateMessage, ChannelFunding, ChannelParameters, ChannelPolicy, ChannelState, ClosingData,
-    EstablishedChannel, PaymentProof, SpilmanAsyncNetworking, SpilmanBridge,
+    BalanceUpdateMessage, BridgeError, BridgeErrorResponse, ChannelFunding, ChannelParameters,
+    ChannelPolicy, ChannelState, ClosingData, EstablishedChannel, PaymentProof,
+    SpilmanAsyncNetworking, SpilmanBridge,
     SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost as RustSpilmanClientHost,
     SpilmanHost,
 };
@@ -247,6 +248,11 @@ impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
     }
 }
 
+fn bridge_error_to_js_value(err: BridgeError) -> JsValue {
+    serde_wasm_bindgen::to_value(&BridgeErrorResponse::from_bridge_error(&err))
+        .unwrap_or_else(|_| JsValue::from_str(&err.to_string()))
+}
+
 #[wasm_bindgen]
 pub struct WasmSpilmanBridge {
     bridge: SpilmanBridge<WasmSpilmanHostProxy, String>,
@@ -261,17 +267,23 @@ impl WasmSpilmanBridge {
 
     #[wasm_bindgen(js_name = processPayment)]
     pub fn process_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
-        self.bridge.process_payment_via_json(payment_json, &context_json.to_string()).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.process_payment_via_json(payment_json, &context_json.to_string())
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(bridge_error_to_js_value)
     }
 
     #[wasm_bindgen(js_name = validatePayment)]
     pub fn validate_payment(&self, payment_json: &str, context_json: &str) -> Result<JsValue, JsValue> {
-        self.bridge.validate_payment_via_json(payment_json, &context_json.to_string()).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.validate_payment_via_json(payment_json, &context_json.to_string())
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(bridge_error_to_js_value)
     }
 
     #[wasm_bindgen(js_name = fundChannel)]
     pub fn fund_channel(&self, payment_json: &str) -> Result<JsValue, JsValue> {
-        self.bridge.fund_channel_via_json(payment_json).map(|r| serde_wasm_bindgen::to_value(&r).unwrap()).map_err(|e| JsValue::from_str(&e.to_string()))
+        self.bridge.fund_channel_via_json(payment_json)
+            .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
+            .map_err(bridge_error_to_js_value)
     }
 
     #[wasm_bindgen(js_name = executeCooperativeClose)]

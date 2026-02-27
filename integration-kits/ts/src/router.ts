@@ -1,6 +1,6 @@
 import express from "express";
 import { getChannelStatus, PricingTable, SpilmanStores } from "./stores.js";
-import { mapBridgeErrorStatus } from "./express.js";
+import { getBridgeErrorReason, mapBridgeErrorStatus } from "./express.js";
 
 export interface ManagementRouterDeps {
   bridge: {
@@ -227,12 +227,12 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
         already_known: result.already_known,
       });
     } catch (e) {
-      const errorMsg = (e as Error).message || String(e);
-      const status = mapBridgeErrorStatus(errorMsg);
+      const reason = getBridgeErrorReason(e);
+      const status = mapBridgeErrorStatus(e);
       res.status(status).json({
         success: false,
         error: "Registration failed",
-        reason: errorMsg,
+        reason,
         status,
       });
     }

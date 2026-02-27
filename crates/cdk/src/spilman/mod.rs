@@ -40,10 +40,10 @@ pub use client_bridge::{
 };
 pub use bridge::{
     unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelFunding,
-    ChannelPolicy, ChannelState, CloseData, CloseError, ClosePreparationError, CloseSuccess,
-    ClosingData, FundChannelResult, PaymentProof, PaymentSuccess, PaymentValidationResult,
-    PreparedClose, SpilmanAsyncNetworking, SpilmanBridge, SpilmanHost, SpilmanNetworking,
-    UnblindResult,
+    BridgeErrorResponse, ChannelPolicy, ChannelState, CloseData, CloseError,
+    ClosePreparationError, CloseSuccess, ClosingData, FundChannelResult, PaymentProof,
+    PaymentSuccess, PaymentValidationResult, PreparedClose, SpilmanAsyncNetworking,
+    SpilmanBridge, SpilmanHost, SpilmanNetworking, UnblindResult,
 };
 pub use deterministic::{
     CommitmentOutputs, DeterministicOutputsForOneContext, DeterministicSecretWithBlinding,

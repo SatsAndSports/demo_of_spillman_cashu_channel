@@ -6,8 +6,30 @@ from cdk_spilman import SpilmanBridge
 from ..host import BaseSpilmanHost
 from ..stores import SpilmanStores
 
+def parse_bridge_error(error_msg: str):
+    if not error_msg:
+        return None, None, None
+    try:
+        data = json.loads(error_msg)
+        if isinstance(data, dict) and "status" in data:
+            status = data.get("status")
+            reason = data.get("reason") if isinstance(data.get("reason"), str) else None
+            code = data.get("code") if isinstance(data.get("code"), str) else None
+            return int(status) if status is not None else None, reason, code
+    except Exception:
+        pass
+    return None, None, None
+
 def map_error_status(error_msg: str) -> int:
-    lower_msg = error_msg.lower()
+    status, reason, _ = parse_bridge_error(error_msg)
+    if status:
+        return status
+
+    msg = reason or error_msg
+    if not msg:
+        return 500
+
+    lower_msg = msg.lower()
     if "channel closed" in lower_msg:
         return 410
     if "channel closing" in lower_msg:
@@ -41,6 +63,11 @@ def map_error_name(error_msg: str) -> str:
     if map_error_status(error_msg) == 400:
         return "Bad request"
     return "Registration failed"
+
+def normalize_bridge_error(error_msg: str):
+    status = map_error_status(error_msg)
+    _, reason, _ = parse_bridge_error(error_msg)
+    return status, reason or error_msg
 
 class Spilman:
     def __init__(self, host: BaseSpilmanHost):
@@ -81,13 +108,13 @@ class Spilman:
                 }
             except Exception as e:
                 msg = str(e)
-                status = map_error_status(msg)
+                status, reason = normalize_bridge_error(msg)
                 raise HTTPException(
                     status_code=status,
                     detail={
                         "success": False,
                         "error": map_error_name(msg),
-                        "reason": msg,
+                        "reason": reason,
                         "status": status,
                     },
                 )
@@ -214,14 +241,15 @@ class Spilman:
             return self.bridge.process_payment(payment_json, context_json)
         except Exception as e:
             msg = str(e)
+            status, reason = normalize_bridge_error(msg)
             raise HTTPException(
-                status_code=map_error_status(msg),
+                status_code=status,
                 detail={
                     "success": False,
                     "error": "Payment failed",
-                    "reason": msg,
+                    "reason": reason,
                 },
-                headers={"X-Cashu-Channel": json.dumps({"error": msg})},
+                headers={"X-Cashu-Channel": json.dumps({"error": reason})},
             )
 
     def add_payment_confirmation_header(self, response: Response, payment_result: Any):

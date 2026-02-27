@@ -14,13 +14,19 @@ use std::str::FromStr;
 
 use cdk::nuts::{Id, PublicKey, SecretKey};
 use cdk::spilman::{
-    self, ChannelPolicy, ChannelState, ClosingData, SpilmanBridge as RustSpilmanBridge,
-    SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost, SpilmanHost,
+    self, BridgeError, BridgeErrorResponse, ChannelPolicy, ChannelState, ClosingData,
+    SpilmanBridge as RustSpilmanBridge, SpilmanClientBridge as RustSpilmanClientBridge,
+    SpilmanClientHost, SpilmanHost,
 };
 
 // ============================================================================
 // Result types for Python
 // ============================================================================
+
+fn bridge_error_response_json(err: &BridgeError) -> String {
+    serde_json::to_string(&BridgeErrorResponse::from_bridge_error(err))
+        .unwrap_or_else(|_| err.to_string())
+}
 
 /// Result of a successful payment
 #[pyclass(get_all)]
@@ -602,7 +608,7 @@ impl SpilmanBridge {
         self.inner
             .process_payment_via_json(payment_json, &context_json)
             .map(PaymentSuccess::from)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
     }
 
     /// Validate a payment without recording it.
@@ -632,7 +638,7 @@ impl SpilmanBridge {
         self.inner
             .validate_payment_via_json(payment_json, &context_json)
             .map(PaymentValidationResult::from)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
     }
 
     /// Register/fund a channel without recording any usage.
@@ -654,7 +660,7 @@ impl SpilmanBridge {
         self.inner
             .fund_channel_via_json(payment_json)
             .map(FundChannelResult::from)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+            .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
     }
 
     #[pyo3(signature = (payment_json))]

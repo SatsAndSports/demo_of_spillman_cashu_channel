@@ -20,7 +20,7 @@ pip install cdk-spilman-kit[flask]  # or [fastapi]
 ```python
 from flask import Flask, request, jsonify
 from cdk_spilman_kit import ConfigurableSpilman
-from cdk_spilman_kit.ext.flask import map_error_status
+from cdk_spilman_kit.ext.flask import normalize_bridge_error
 
 app = Flask(__name__)
 ctx = ConfigurableSpilman.from_yaml("config.yaml", SECRET_KEY)
@@ -35,8 +35,8 @@ def ascii_art():
         resp = jsonify({"art": msg, "payment": payment.__dict__})
         return spilman.attach_payment_header(resp, payment)
     except Exception as e:
-        reason = str(e)
-        return jsonify({"error": "Payment failed", "reason": reason}), map_error_status(reason)
+        status, reason = normalize_bridge_error(str(e))
+        return jsonify({"error": "Payment failed", "reason": reason}), status
 ```
 
 ## Usage (FastAPI)

@@ -13,6 +13,12 @@ Standardized the ASCII art demos across TypeScript, Python, and Go into minimal
 - **Demo helpers**: Added kit-level demo helpers (funding + keyset fetch) to keep examples small
 - **Consistent errors**: Aligned TS error responses with the server integration tests
 
+### Structured Bridge Errors
+
+- **BridgeErrorResponse**: Centralized status/code/reason mapping in the Rust bridge for payment and validation errors
+- **Bindings**: WASM throws structured error objects; Python/Go surface JSON error strings
+- **Kits**: Integration kits parse structured errors before falling back to string matching
+
 ### WASM Client Bridge (TypeScript)
 
 - **WASM bindings**: Added `WasmSpilmanClientBridge` for client-side flows in Node.js
