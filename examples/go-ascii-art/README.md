@@ -41,6 +41,7 @@ go run -tags spilman_dev . client "Hello World" --close
 | `/channel/{id}/close` | POST | Cooperative close |
 | `/channel/{id}/unilateral-close` | POST | Unilateral close |
 | `/ascii` | POST | Paid ASCII art endpoint |
+| `/ascii/preflight` | POST | Preflight payment check (no side effects) |
 
 ## Notes
 

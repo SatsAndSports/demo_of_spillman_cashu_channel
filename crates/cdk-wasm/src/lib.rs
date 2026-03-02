@@ -279,6 +279,18 @@ impl WasmSpilmanBridge {
             .map_err(bridge_error_to_js_value)
     }
 
+    #[wasm_bindgen(js_name = paymentCoversAmountDue)]
+    pub fn payment_covers_amount_due(&self, payment_json: &str, context_json: &str) -> Result<bool, JsValue> {
+        self.bridge.payment_covers_amount_due_via_json(payment_json, &context_json.to_string())
+            .map_err(bridge_error_to_js_value)
+    }
+
+    #[wasm_bindgen(js_name = verifyPaymentCoversAmountDue)]
+    pub fn verify_payment_covers_amount_due(&self, payment_json: &str, context_json: &str) -> Result<u64, JsValue> {
+        self.bridge.verify_payment_covers_amount_due_via_json(payment_json, &context_json.to_string())
+            .map_err(bridge_error_to_js_value)
+    }
+
     #[wasm_bindgen(js_name = fundChannel)]
     pub fn fund_channel(&self, payment_json: &str) -> Result<JsValue, JsValue> {
         self.bridge.fund_channel_via_json(payment_json)

@@ -700,6 +700,117 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         self.validate_payment(&p.channel_id, p.balance, &p.signature, p.params.as_ref(), p.funding_proofs.as_deref(), context)
     }
 
+    /// Verify that a payment covers the current amount due.
+    ///
+    /// This performs full validation (including signature checks) and returns the
+    /// computed amount_due on success. It does NOT record usage, but may save
+    /// funding data for new channels (same behavior as validate_payment).
+    pub fn verify_payment_covers_amount_due(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
+        context: &C,
+    ) -> Result<u64, BridgeError> {
+        let val = self.validate_payment(channel_id, balance, signature, params, funding_proofs, context)?;
+        Ok(val.amount_due)
+    }
+
+    pub fn verify_payment_covers_amount_due_via_json(
+        &self,
+        payment_json: &str,
+        context: &C,
+    ) -> Result<u64, BridgeError> {
+        let p: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        self.verify_payment_covers_amount_due(
+            &p.channel_id,
+            p.balance,
+            &p.signature,
+            p.params.as_ref(),
+            p.funding_proofs.as_deref(),
+            context,
+        )
+    }
+
+    pub fn verify_payment_covers_amount_due_via_base64_header(
+        &self,
+        base64_header: &str,
+        context: &C,
+    ) -> Result<u64, BridgeError> {
+        let p = Self::decode_payment_header(base64_header)?;
+        self.verify_payment_covers_amount_due(
+            &p.channel_id,
+            p.balance,
+            &p.signature,
+            p.params.as_ref(),
+            p.funding_proofs.as_deref(),
+            context,
+        )
+    }
+
+    /// Return true if the payment covers the amount due.
+    ///
+    /// Returns Ok(false) only for insufficient balance. Other validation errors
+    /// are returned as Err.
+    pub fn payment_covers_amount_due(
+        &self,
+        channel_id: &str,
+        balance: u64,
+        signature: &str,
+        params: Option<&serde_json::Value>,
+        funding_proofs: Option<&[Proof]>,
+        context: &C,
+    ) -> Result<bool, BridgeError> {
+        match self.verify_payment_covers_amount_due(
+            channel_id,
+            balance,
+            signature,
+            params,
+            funding_proofs,
+            context,
+        ) {
+            Ok(_) => Ok(true),
+            Err(BridgeError::InsufficientBalance { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn payment_covers_amount_due_via_json(
+        &self,
+        payment_json: &str,
+        context: &C,
+    ) -> Result<bool, BridgeError> {
+        let p: PaymentRequest = serde_json::from_str(payment_json)
+            .map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        self.payment_covers_amount_due(
+            &p.channel_id,
+            p.balance,
+            &p.signature,
+            p.params.as_ref(),
+            p.funding_proofs.as_deref(),
+            context,
+        )
+    }
+
+    pub fn payment_covers_amount_due_via_base64_header(
+        &self,
+        base64_header: &str,
+        context: &C,
+    ) -> Result<bool, BridgeError> {
+        let p = Self::decode_payment_header(base64_header)?;
+        self.payment_covers_amount_due(
+            &p.channel_id,
+            p.balance,
+            &p.signature,
+            p.params.as_ref(),
+            p.funding_proofs.as_deref(),
+            context,
+        )
+    }
+
     pub fn fund_channel(&self, channel_id: &str, balance: u64, signature: &str, params: Option<&serde_json::Value>, funding_proofs: Option<&[Proof]>) -> Result<FundChannelResult, BridgeError> {
         if channel_id.is_empty() {
             return Err(BridgeError::InvalidRequest("missing channel_id".into()));

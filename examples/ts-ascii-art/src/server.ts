@@ -33,6 +33,29 @@ export async function runServer() {
     }
   });
 
+  app.post("/ascii/preflight", (req, res) => {
+    const { message } = req.body || {};
+    if (!message || typeof message !== "string") {
+      res.status(400).json({ error: "Missing 'message'" });
+      return;
+    }
+
+    try {
+      const ok = spilman.paymentCoversAmountDue(req, { chars: message.length });
+      if (!ok) {
+        res.json({ ok: false });
+        return;
+      }
+
+      const amountDue = spilman.verifyPaymentCoversAmountDue(req, { chars: message.length });
+      res.json({ ok: true, amount_due: amountDue });
+    } catch (e: any) {
+      const reason = getBridgeErrorReason(e);
+      const status = mapErrorStatus(e);
+      res.status(status).json({ error: "Payment preflight failed", reason, status });
+    }
+  });
+
   app.listen(PORT, () => {
     console.log(`TS Server listening on :${PORT} (Pubkey: ${ctx.host.pubkey})`);
     console.log("Server is ready.");

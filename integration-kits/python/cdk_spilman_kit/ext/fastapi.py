@@ -252,6 +252,66 @@ class Spilman:
                 headers={"X-Cashu-Channel": json.dumps({"error": reason})},
             )
 
+    async def payment_covers_amount_due(self, x_cashu_channel: Optional[str] = Header(None), context_json: str = "{}"):
+        if not x_cashu_channel:
+            raise HTTPException(status_code=402, detail={
+                "error": "Payment required",
+                "reason": "Missing X-Cashu-Channel header",
+            })
+
+        try:
+            payment_json = base64.b64decode(x_cashu_channel).decode()
+        except:
+            raise HTTPException(status_code=400, detail={
+                "error": "Invalid payment header",
+                "reason": "invalid base64",
+            })
+
+        try:
+            return self.bridge.payment_covers_amount_due(payment_json, context_json)
+        except Exception as e:
+            msg = str(e)
+            status, reason = normalize_bridge_error(msg)
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "success": False,
+                    "error": "Payment preflight failed",
+                    "reason": reason,
+                },
+                headers={"X-Cashu-Channel": json.dumps({"error": reason})},
+            )
+
+    async def verify_payment_covers_amount_due(self, x_cashu_channel: Optional[str] = Header(None), context_json: str = "{}"):
+        if not x_cashu_channel:
+            raise HTTPException(status_code=402, detail={
+                "error": "Payment required",
+                "reason": "Missing X-Cashu-Channel header",
+            })
+
+        try:
+            payment_json = base64.b64decode(x_cashu_channel).decode()
+        except:
+            raise HTTPException(status_code=400, detail={
+                "error": "Invalid payment header",
+                "reason": "invalid base64",
+            })
+
+        try:
+            return self.bridge.verify_payment_covers_amount_due(payment_json, context_json)
+        except Exception as e:
+            msg = str(e)
+            status, reason = normalize_bridge_error(msg)
+            raise HTTPException(
+                status_code=status,
+                detail={
+                    "success": False,
+                    "error": "Payment preflight failed",
+                    "reason": reason,
+                },
+                headers={"X-Cashu-Channel": json.dumps({"error": reason})},
+            )
+
     def add_payment_confirmation_header(self, response: Response, payment_result: Any):
         """Attaches the confirmation header to a FastAPI response."""
         if payment_result:

@@ -213,6 +213,7 @@ async fn main() {
     println!("  GET  http://localhost:{}/channel/params", port);
     println!("  POST http://localhost:{}/channel/register", port);
     println!("  POST http://localhost:{}/ascii", port);
+    println!("  POST http://localhost:{}/ascii/preflight", port);
     println!("  GET  http://localhost:{}/channel/:id/status", port);
     println!("  POST http://localhost:{}/channel/:id/close", port);
     println!(

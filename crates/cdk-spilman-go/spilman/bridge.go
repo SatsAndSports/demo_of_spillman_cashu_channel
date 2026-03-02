@@ -159,6 +159,39 @@ func (b *Bridge) ValidatePayment(paymentJson, contextJson string) (*PaymentValid
 	return &result, nil
 }
 
+// VerifyPaymentCoversAmountDue validates a payment and returns the computed amount_due.
+// It does NOT record usage, but may save funding data for new channels (same as ValidatePayment).
+func (b *Bridge) VerifyPaymentCoversAmountDue(paymentJson, contextJson string) (uint64, error) {
+	result, err := b.ValidatePayment(paymentJson, contextJson)
+	if err != nil {
+		return 0, err
+	}
+	return result.AmountDue, nil
+}
+
+// PaymentCoversAmountDue returns true if the payment covers the current amount due.
+// Returns false only for insufficient balance. Other validation errors are returned.
+func (b *Bridge) PaymentCoversAmountDue(paymentJson, contextJson string) (bool, error) {
+	_, err := b.ValidatePayment(paymentJson, contextJson)
+	if err == nil {
+		return true, nil
+	}
+	if isInsufficientBalance(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func isInsufficientBalance(err error) bool {
+	var info struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal([]byte(err.Error()), &info) == nil && info.Code == "insufficient_balance" {
+		return true
+	}
+	return false
+}
+
 // FundChannel registers/funds a channel without recording any usage.
 // Validates the channel (params, funding proofs, signature for balance=0)
 // and saves it to the funding store, but does NOT record any payment/usage.

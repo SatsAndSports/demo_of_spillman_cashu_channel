@@ -641,6 +641,36 @@ impl SpilmanBridge {
             .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
     }
 
+    /// Verify that a payment covers the current amount due.
+    ///
+    /// Performs full validation (including signature checks) but does NOT record usage.
+    /// Returns the computed amount_due on success.
+    ///
+    /// Raises:
+    ///     RuntimeError: If validation fails or balance is insufficient
+    #[pyo3(signature = (payment_json, context_json))]
+    fn verify_payment_covers_amount_due(
+        &self,
+        payment_json: &str,
+        context_json: &str,
+    ) -> PyResult<u64> {
+        let context_json = context_json.to_string();
+        self.inner
+            .verify_payment_covers_amount_due_via_json(payment_json, &context_json)
+            .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
+    }
+
+    /// Return true if the payment covers the amount due.
+    ///
+    /// Returns false only for insufficient balance. Other validation errors are raised.
+    #[pyo3(signature = (payment_json, context_json))]
+    fn payment_covers_amount_due(&self, payment_json: &str, context_json: &str) -> PyResult<bool> {
+        let context_json = context_json.to_string();
+        self.inner
+            .payment_covers_amount_due_via_json(payment_json, &context_json)
+            .map_err(|e| PyRuntimeError::new_err(bridge_error_response_json(&e)))
+    }
+
     /// Register/fund a channel without recording any usage.
     ///
     /// Validates the channel (params, funding proofs, signature for balance=0)

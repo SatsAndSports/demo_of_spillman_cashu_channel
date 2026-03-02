@@ -41,6 +41,13 @@ Terminal 2:
 python client.py Hello World Cashu --close
 ```
 
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ascii` | POST | Paid ASCII art endpoint |
+| `/ascii/preflight` | POST | Preflight payment check (no side effects) |
+
 ## Environment Variables
 
 | Variable | Default | Description |

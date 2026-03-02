@@ -51,6 +51,33 @@ func runServer() {
 		json.NewEncoder(w).Encode(map[string]interface{}{"art": art, "message": req.Message, "payment": payment})
 	})
 
+	http.HandleFunc("/ascii/preflight", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Message string }
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.Message == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Missing 'message'"})
+			return
+		}
+
+		ok, err := ctx.PaymentCoversAmountDue(r, map[string]uint64{"chars": uint64(len(req.Message))})
+		if err != nil {
+			ctx.HandleError(w, err)
+			return
+		}
+		if !ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false})
+			return
+		}
+
+		amountDue, err := ctx.VerifyPaymentCoversAmountDue(r, map[string]uint64{"chars": uint64(len(req.Message))})
+		if err != nil {
+			ctx.HandleError(w, err)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "amount_due": amountDue})
+	})
+
 	log.Printf("Go Server listening on :%s (Pubkey: %s)\n", PORT, spilmankit.GetServerPubkey(SECRET_KEY))
 	fmt.Println("Server is ready.")
 	http.ListenAndServe(":"+PORT, nil)

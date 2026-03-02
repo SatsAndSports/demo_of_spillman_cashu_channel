@@ -964,10 +964,11 @@ async fn test_swap_to_funding() {
 /// updates, builds payment headers, and verifies them against the server bridge.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_client_bridge() {
-    use super::bridge::{ChannelFunding, ChannelState, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use super::bridge::{BridgeError, ChannelFunding, ChannelState, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use super::client_bridge::{base64_decode, SpilmanClientBridge, SpilmanClientHost};
     use cdk_common::nuts::{CurrencyUnit as CU, Id, PublicKey, Token};
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     // ====================================================================
@@ -1096,6 +1097,7 @@ async fn test_client_bridge() {
         funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
         payments: Mutex<HashMap<String, PaymentProof>>, // channel_id -> payment proof
         charlie_secret_hex: String,
+        amount_due: Arc<AtomicU64>,
     }
 
     impl SpilmanHost<String> for TestServerHost {
@@ -1132,7 +1134,7 @@ async fn test_client_bridge() {
             );
         }
         fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
-            0
+            self.amount_due.load(Ordering::Relaxed)
         }
         fn record_payment(
             &self,
@@ -1429,12 +1431,14 @@ async fn test_client_bridge() {
     let mut keyset_infos = HashMap::new();
     keyset_infos.insert(active_keyset_id, keyset_info_json.clone());
 
+    let amount_due = Arc::new(AtomicU64::new(0));
     let server_host = TestServerHost {
         keyset_ids: vec![active_keyset_id],
         keyset_infos,
         funding_data: Mutex::new(HashMap::new()),
         payments: Mutex::new(HashMap::new()),
         charlie_secret_hex: charlie_secret.to_secret_hex(),
+        amount_due: amount_due.clone(),
     };
 
     let server_bridge = SpilmanBridge::new(server_host);
@@ -1468,6 +1472,50 @@ async fn test_client_bridge() {
         "✓ Server accepted second payment (balance={})",
         payment_result2.balance
     );
+
+    // ====================================================================
+    // Amount due checks (no side effects)
+    // ====================================================================
+
+    amount_due.store(15, Ordering::Relaxed);
+
+    let due = server_bridge
+        .verify_payment_covers_amount_due_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .expect("Should verify payment covers amount due");
+    assert_eq!(due, 15);
+
+    let ok = server_bridge
+        .payment_covers_amount_due_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .expect("Should return boolean for payment coverage");
+    assert!(ok, "Expected payment to cover amount due");
+
+    let ok = server_bridge
+        .payment_covers_amount_due_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .expect("Should return boolean for payment coverage");
+    assert!(!ok, "Expected payment to be insufficient");
+
+    let err = server_bridge
+        .verify_payment_covers_amount_due_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .unwrap_err();
+    match err {
+        BridgeError::InsufficientBalance { balance, amount_due } => {
+            assert_eq!(balance, 10);
+            assert_eq!(amount_due, 15);
+        }
+        other => panic!("Unexpected error: {:?}", other),
+    }
 
     // ====================================================================
     // Remove channel

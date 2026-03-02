@@ -119,6 +119,36 @@ func (c *ConfigurableSpilman) ProcessRequestPayment(r *http.Request, context int
 	return c.Bridge.ProcessPayment(string(paymentJsonBytes), string(contextJsonBytes))
 }
 
+func (c *ConfigurableSpilman) PaymentCoversAmountDue(r *http.Request, context interface{}) (bool, error) {
+	headerB64 := r.Header.Get("X-Cashu-Channel")
+	if headerB64 == "" {
+		return false, fmt.Errorf("Missing X-Cashu-Channel header")
+	}
+
+	paymentJsonBytes, err := base64.StdEncoding.DecodeString(headerB64)
+	if err != nil {
+		return false, fmt.Errorf("invalid base64 encoding")
+	}
+
+	contextJsonBytes, _ := json.Marshal(context)
+	return c.Bridge.PaymentCoversAmountDue(string(paymentJsonBytes), string(contextJsonBytes))
+}
+
+func (c *ConfigurableSpilman) VerifyPaymentCoversAmountDue(r *http.Request, context interface{}) (uint64, error) {
+	headerB64 := r.Header.Get("X-Cashu-Channel")
+	if headerB64 == "" {
+		return 0, fmt.Errorf("Missing X-Cashu-Channel header")
+	}
+
+	paymentJsonBytes, err := base64.StdEncoding.DecodeString(headerB64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid base64 encoding")
+	}
+
+	contextJsonBytes, _ := json.Marshal(context)
+	return c.Bridge.VerifyPaymentCoversAmountDue(string(paymentJsonBytes), string(contextJsonBytes))
+}
+
 func (c *ConfigurableSpilman) AttachPaymentHeader(w http.ResponseWriter, p *spilman.PaymentSuccess) {
 	info := map[string]interface{}{
 		"channel_id": p.ChannelID,

@@ -44,6 +44,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Business logic route
         .route("/ascii", post(post_ascii))
+        .route("/ascii/preflight", post(preflight_ascii))
         // Nest standard Spilman management routes under /channel
         .nest("/channel", configurable_management_router(spilman_state))
         .with_state(state)
@@ -143,6 +144,98 @@ async fn post_ascii(
             }))
             .into_response()
         }
+        Err(e) => {
+            let error_response = ClosePreparationError::from_bridge_error(e);
+            let status = match error_response.status {
+                400 => StatusCode::BAD_REQUEST,
+                402 => StatusCode::PAYMENT_REQUIRED,
+                404 => StatusCode::NOT_FOUND,
+                409 => StatusCode::CONFLICT,
+                410 => StatusCode::GONE,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": error_response.error,
+                    "reason": error_response.reason
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn preflight_ascii(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AsciiRequest>,
+) -> Response {
+    let payment_header_b64 = match headers.get("x-cashu-channel").and_then(|h| h.to_str().ok()) {
+        Some(h) => h,
+        None => {
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(serde_json::json!({
+                    "error": "Payment required",
+                    "reason": "Missing X-Cashu-Channel header"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    let payment_json = match base64::engine::general_purpose::STANDARD.decode(payment_header_b64) {
+        Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Invalid payment header",
+                    "reason": "invalid base64 encoding"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    let context = serde_json::json!({ "chars": body.message.len() });
+
+    let ok = match state
+        .bridge
+        .payment_covers_amount_due_via_json(&payment_json, &context.to_string())
+    {
+        Ok(ok) => ok,
+        Err(e) => {
+            let error_response = ClosePreparationError::from_bridge_error(e);
+            let status = match error_response.status {
+                400 => StatusCode::BAD_REQUEST,
+                402 => StatusCode::PAYMENT_REQUIRED,
+                404 => StatusCode::NOT_FOUND,
+                409 => StatusCode::CONFLICT,
+                410 => StatusCode::GONE,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return (
+                status,
+                Json(serde_json::json!({
+                    "error": error_response.error,
+                    "reason": error_response.reason
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    if !ok {
+        return Json(serde_json::json!({ "ok": false })).into_response();
+    }
+
+    match state
+        .bridge
+        .verify_payment_covers_amount_due_via_json(&payment_json, &context.to_string())
+    {
+        Ok(amount_due) => Json(serde_json::json!({ "ok": true, "amount_due": amount_due })).into_response(),
         Err(e) => {
             let error_response = ClosePreparationError::from_bridge_error(e);
             let status = match error_response.status {

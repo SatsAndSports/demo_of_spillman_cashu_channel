@@ -274,6 +274,32 @@ class Spilman:
         context_json = context if isinstance(context, str) else json.dumps(context)
         return self.bridge.process_payment(payment_json, context_json)
 
+    def payment_covers_amount_due(self, context: Union[str, Dict[str, Any]] = "{}") -> bool:
+        header_b64 = request.headers.get("X-Cashu-Channel")
+        if not header_b64:
+            raise ValueError("Missing X-Cashu-Channel header")
+
+        try:
+            payment_json = base64.b64decode(header_b64).decode()
+        except Exception:
+            raise ValueError("invalid base64")
+
+        context_json = context if isinstance(context, str) else json.dumps(context)
+        return self.bridge.payment_covers_amount_due(payment_json, context_json)
+
+    def verify_payment_covers_amount_due(self, context: Union[str, Dict[str, Any]] = "{}") -> int:
+        header_b64 = request.headers.get("X-Cashu-Channel")
+        if not header_b64:
+            raise ValueError("Missing X-Cashu-Channel header")
+
+        try:
+            payment_json = base64.b64decode(header_b64).decode()
+        except Exception:
+            raise ValueError("invalid base64")
+
+        context_json = context if isinstance(context, str) else json.dumps(context)
+        return self.bridge.verify_payment_covers_amount_due(payment_json, context_json)
+
     def attach_payment_header(self, response, payment_result):
         """Attaches the confirmation header to a Flask response."""
         payment_info = {

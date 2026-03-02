@@ -143,6 +143,34 @@ export class Spilman {
   }
 
   /**
+   * Checks whether the payment covers the current amount due.
+   */
+  paymentCoversAmountDue(req: Request, context: object | string = {}): boolean {
+    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
+    if (!headerB64) {
+      throw new Error("Missing X-Cashu-Channel header");
+    }
+
+    const paymentJson = decodePaymentHeader(headerB64);
+    const contextJson = typeof context === "string" ? context : JSON.stringify(context);
+    return this.bridge.paymentCoversAmountDue(paymentJson, contextJson);
+  }
+
+  /**
+   * Verifies payment and returns the computed amount_due.
+   */
+  verifyPaymentCoversAmountDue(req: Request, context: object | string = {}): number {
+    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
+    if (!headerB64) {
+      throw new Error("Missing X-Cashu-Channel header");
+    }
+
+    const paymentJson = decodePaymentHeader(headerB64);
+    const contextJson = typeof context === "string" ? context : JSON.stringify(context);
+    return Number(this.bridge.verifyPaymentCoversAmountDue(paymentJson, contextJson));
+  }
+
+  /**
    * Attaches the confirmation header to an Express response.
    */
   attachPaymentHeader(res: Response, payment: SpilmanPaymentResult): Response {

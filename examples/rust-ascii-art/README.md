@@ -61,6 +61,7 @@ MINT_URL=http://my-mint:3338 make test-integration
 | `/channel/params` | GET | Get server pubkey and pricing info |
 | `/channel/register` | POST | Pre-register a channel (balance=0) |
 | `/ascii` | POST | Generate ASCII art (requires `X-Cashu-Channel` header) |
+| `/ascii/preflight` | POST | Preflight payment check (no side effects) |
 | `/channel/:id/status` | GET | Get channel status and amount due |
 | `/channel/:id/close` | POST | Close channel cooperatively |
 | `/channel/:id/unilateral-close` | POST | Server-initiated close |

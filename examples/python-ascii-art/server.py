@@ -59,6 +59,26 @@ def generate_ascii():
     })
     return spilman.attach_payment_header(resp, payment)
 
+@app.route("/ascii/preflight", methods=["POST"])
+def preflight_ascii():
+    data = request.get_json() or {}
+    message = data.get("message", "")
+    if not message:
+        return jsonify({"error": "Missing 'message'"}), 400
+
+    try:
+        ok = spilman.payment_covers_amount_due({"chars": len(message)})
+        if not ok:
+            return jsonify({"ok": False})
+
+        amount_due = spilman.verify_payment_covers_amount_due({"chars": len(message)})
+        return jsonify({"ok": True, "amount_due": amount_due})
+    except Exception as e:
+        msg = str(e)
+        status = map_error_status(msg)
+        _, reason, _ = parse_bridge_error(msg)
+        return jsonify({"error": "Payment preflight failed", "reason": reason or msg}), status
+
 if __name__ == "__main__":
     print(f"Server pubkey: {spilman_ctx.host.pubkey}")
     print(f"Mints:         {', '.join(spilman_ctx.config.get('mints', {}).keys())}")

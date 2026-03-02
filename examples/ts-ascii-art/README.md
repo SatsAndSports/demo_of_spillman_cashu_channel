@@ -60,6 +60,11 @@ Returns server configuration for channel setup.
 
 Generate ASCII art. Requires `X-Cashu-Channel` header with base64-encoded payment.
 
+### `POST /ascii/preflight`
+
+Check whether the payment covers the current amount due without recording usage.
+Returns `{ ok: true, amount_due }` when sufficient, or `{ ok: false }` when not.
+
 ## Payment Flow
 
 1. Client fetches `/channel/params` and generates a keypair.

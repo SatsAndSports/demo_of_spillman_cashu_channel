@@ -698,6 +698,53 @@ bridge.process_payment_via_json(payment_json, context_json)
 bridge.process_payment_via_base64_header(base64_header, context_json)
 ```
 
+### Amount Due Checks (No Side Effects)
+
+If you need to verify that a payment covers the current amount due without
+recording usage, use these helpers. They perform full validation (including
+signature checks) and may save funding data for new channels, but never call
+`record_payment`.
+
+```rust
+// Returns amount_due on success; Err(InsufficientBalance) if not enough
+let amount_due = bridge.verify_payment_covers_amount_due(
+    channel_id,
+    balance,
+    signature,
+    params,
+    funding_proofs,
+    context,
+)?;
+
+// Boolean check: false only when balance is insufficient
+let ok = bridge.payment_covers_amount_due(
+    channel_id,
+    balance,
+    signature,
+    params,
+    funding_proofs,
+    context,
+)?;
+```
+
+```ts
+// TypeScript (WASM)
+const amountDue = bridge.verifyPaymentCoversAmountDue(paymentJson, contextJson);
+const ok = bridge.paymentCoversAmountDue(paymentJson, contextJson);
+```
+
+```py
+# Python
+amount_due = bridge.verify_payment_covers_amount_due(payment_json, context_json)
+ok = bridge.payment_covers_amount_due(payment_json, context_json)
+```
+
+```go
+// Go
+amountDue, err := bridge.VerifyPaymentCoversAmountDue(paymentJson, contextJson)
+ok, err := bridge.PaymentCoversAmountDue(paymentJson, contextJson)
+```
+
 ---
 
 ## Error Handling
