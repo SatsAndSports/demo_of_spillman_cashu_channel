@@ -114,6 +114,8 @@ If `r_i` is invalid, retry once with an extra `0xff` byte appended to the hash i
 
 Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings for channel-secret derivations. `channel_id` is a hex string. Raw bytes are used for `Zx` and `i_byte` in the NUT-28 tweak.
 
+Stage 2 proofs may be signed immediately after unblinding using the stage 2 tweaked secret key. Wallet receive flows accept already-signed P2PK proofs and will not add duplicate signatures unless provided signing keys.
+
 ### Blinding Contexts
 
 Different contexts ensure keys are unlinkable across roles:

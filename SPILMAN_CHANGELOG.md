@@ -8,6 +8,7 @@ This document tracks the completed features and improvements for the Spilman Cha
 
 - **Stage2 tweak now uses NUT-28 shared-secret scalar**: per-output stage2 keys are derived from `Cashu_P2BK_v1` over the ephemeral shared secret x-coordinate, replacing the legacy channel-secret stage2 tweak.
 - **Deterministic stage2 ephemeral metadata**: added deterministic ephemeral key material and shared-secret x-coordinate for later proof metadata.
+- **Stage2 wallet receive + spend test**: added an end-to-end test that pre-signs stage2 proofs, stores them in a wallet, and spends them via an online swap.
 - **Breaking change**: existing stage2 outputs are not compatible across the tweak change.
 
 ## Completed Features (Feb 27, 2026)
