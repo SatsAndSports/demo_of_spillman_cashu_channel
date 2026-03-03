@@ -25,6 +25,17 @@ use std::str::FromStr;
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
 
+struct Stage2P2bkTweakInfo {
+    #[allow(dead_code)]
+    ephemeral_secret: SecretKey,
+    #[allow(dead_code)]
+    ephemeral_pubkey: crate::nuts::PublicKey,
+    #[allow(dead_code)]
+    ephemeral_shared_secret_x: [u8; 32],
+    #[allow(dead_code)]
+    stage2_tweak_scalar: Scalar,
+}
+
 /// Parameters for a Spilman payment channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
@@ -510,13 +521,12 @@ impl ChannelParameters {
     /// The `context` parameter specifies which blinded key to derive:
     /// - "sender_stage1" / "receiver_stage1" - for funding token 2-of-2
     /// - "sender_stage1_refund" - for funding token locktime refund
-    /// - "sender_stage2" / "receiver_stage2" - for stage 1 outputs (spent in stage 2)
     ///
     /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     ///
     /// Note: This produces a SHARED blinding scalar for all proofs with the same context.
-    /// For per-proof blinding (stage2), use `derive_stage2_blinding_scalar_for_output()` instead.
+    /// For per-proof blinding (stage2), use `derive_stage2_p2bk_tweak_info_for_output()` instead.
     fn derive_blinding_scalar(&self, context: &str) -> anyhow::Result<Scalar> {
         let channel_id = self.get_channel_id();
 
@@ -542,21 +552,47 @@ impl ChannelParameters {
         anyhow::bail!("Failed to derive valid blinding scalar after 256 attempts")
     }
 
-    /// Derive a per-output blinding scalar for stage 2 contexts
+    /// Derive stage 2 P2BK tweak info for a specific output
     ///
-    /// Unlike `derive_blinding_scalar()`, this includes the amount and index in the
-    /// derivation, producing a UNIQUE blinding scalar for each proof. This provides
-    /// better privacy for stage 1 outputs - the mint cannot trivially link proofs
-    /// from the same channel closure.
-    ///
-    /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
-    /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
-    fn derive_stage2_blinding_scalar_for_output(
+    /// Uses the per-output ephemeral secret to compute a NUT-28 shared-secret tweak
+    /// alongside the deterministic ephemeral key material for later metadata use.
+    fn derive_stage2_p2bk_tweak_info_for_output(
         &self,
         context: &str,
         amount: u64,
         index: usize,
-    ) -> anyhow::Result<Scalar> {
+    ) -> anyhow::Result<Stage2P2bkTweakInfo> {
+        let role_pubkey = match context {
+            "sender_stage2" => &self.alice_pubkey,
+            "receiver_stage2" => &self.charlie_pubkey,
+            _ => anyhow::bail!("Unknown stage2 context: {}", context),
+        };
+        let ephemeral_secret =
+            self.derive_stage2_p2bk_ephemeral_secret_for_output(context, amount, index)?;
+        let ephemeral_pubkey = ephemeral_secret.public_key();
+        let ephemeral_shared_secret_x =
+            SharedSecret::new(role_pubkey, &ephemeral_secret).secret_bytes();
+        let stage2_tweak_scalar =
+            Self::derive__nut28_P2KB_shared_secret_scalar(&ephemeral_shared_secret_x, 0x00)?;
+
+        Ok(Stage2P2bkTweakInfo {
+            ephemeral_secret,
+            ephemeral_pubkey,
+            ephemeral_shared_secret_x,
+            stage2_tweak_scalar,
+        })
+    }
+
+    /// Derive a per-output ephemeral secret for stage 2 contexts
+    ///
+    /// Computes: SHA256("Cashu_Spilman_P2BK_ephemeral_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
+    /// Retries with incrementing retry_counter until a valid secret key is found.
+    fn derive_stage2_p2bk_ephemeral_secret_for_output(
+        &self,
+        context: &str,
+        amount: u64,
+        index: usize,
+    ) -> anyhow::Result<SecretKey> {
         let channel_id = self.get_channel_id();
 
         for retry_counter in 0u8..=255 {
@@ -565,23 +601,52 @@ impl ChannelParameters {
                 channel_id, context, amount, index, retry_counter
             );
             let mut input = Vec::new();
-            input.extend_from_slice(b"Cashu_Spilman_P2BK_v1");
+            input.extend_from_slice(b"Cashu_Spilman_P2BK_ephemeral_v1");
             input.extend_from_slice(&self.channel_secret);
             input.extend_from_slice(text.as_bytes());
 
             let hash = sha256::Hash::hash(&input);
             let bytes: [u8; 32] = hash.to_byte_array();
 
-            // Try to create a valid scalar (must be in range [1, n-1])
-            if let Ok(scalar) = Scalar::from_be_bytes(bytes) {
-                // Scalar::from_be_bytes rejects values >= n, and we also reject zero
-                if scalar != Scalar::ZERO {
-                    return Ok(scalar);
-                }
+            if let Ok(secret) = SecretKey::from_slice(&bytes) {
+                return Ok(secret);
             }
         }
 
-        anyhow::bail!("Failed to derive valid blinding scalar for output after 256 attempts")
+        anyhow::bail!("Failed to derive valid ephemeral secret for output after 256 attempts")
+    }
+
+    /// Derive NUT-28 P2BK scalar from shared secret x-coordinate.
+    ///
+    /// Spec: https://raw.githubusercontent.com/cashubtc/nuts/refs/heads/main/28.md
+    #[allow(non_snake_case)]
+    fn derive__nut28_P2KB_shared_secret_scalar(
+        zx: &[u8; 32],
+        i_byte: u8,
+    ) -> anyhow::Result<Scalar> {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"Cashu_P2BK_v1");
+        input.extend_from_slice(zx);
+        input.push(i_byte);
+
+        let hash = sha256::Hash::hash(&input);
+        let bytes: [u8; 32] = hash.to_byte_array();
+        if let Ok(scalar) = Scalar::from_be_bytes(bytes) {
+            if scalar != Scalar::ZERO {
+                return Ok(scalar);
+            }
+        }
+
+        input.push(0xff);
+        let hash = sha256::Hash::hash(&input);
+        let bytes: [u8; 32] = hash.to_byte_array();
+        if let Ok(scalar) = Scalar::from_be_bytes(bytes) {
+            if scalar != Scalar::ZERO {
+                return Ok(scalar);
+            }
+        }
+
+        anyhow::bail!("Failed to derive valid shared secret scalar")
     }
 
     /// Get the blinded sender (Alice) pubkey for stage 1 P2BK
@@ -690,8 +755,9 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_stage2_blinding_scalar_for_output("sender_stage2", amount, index)?;
-        derive_blinded_pubkey(&self.alice_pubkey, &r)
+        let tweak_info =
+            self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
+        derive_blinded_pubkey(&self.alice_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Get the blinded receiver (Charlie) pubkey for a specific stage 2 output
@@ -707,8 +773,9 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_stage2_blinding_scalar_for_output("receiver_stage2", amount, index)?;
-        derive_blinded_pubkey(&self.charlie_pubkey, &r)
+        let tweak_info =
+            self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
+        derive_blinded_pubkey(&self.charlie_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Derive the blinded sender secret key for a specific stage 2 output
@@ -721,8 +788,9 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_stage2_blinding_scalar_for_output("sender_stage2", amount, index)?;
-        derive_blinded_secret_key(alice_secret, &r)
+        let tweak_info =
+            self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
+        derive_blinded_secret_key(alice_secret, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Derive the blinded receiver secret key for a specific stage 2 output
@@ -735,8 +803,9 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_stage2_blinding_scalar_for_output("receiver_stage2", amount, index)?;
-        derive_blinded_secret_key(charlie_secret, &r)
+        let tweak_info =
+            self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
+        derive_blinded_secret_key(charlie_secret, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Get a string representation of the unit
@@ -1151,6 +1220,58 @@ mod tests {
             verify_result
         );
         println!("Signature verified successfully!");
+    }
+
+    #[test]
+    fn test_stage2_ephemeral_shared_secret_matches_role_secret() {
+        // Create keypairs for Alice and Charlie
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        // Create keyset_info
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
+
+        let funding_token_amount =
+            ChannelParameters::get_minimum_funding_token_amount(1000, &keyset_info, 64)
+                .expect("Failed to compute funding token amount");
+
+        let params = ChannelParameters::new_with_secret_key(
+            alice_pubkey,
+            charlie_pubkey,
+            "https://testmint.cash".to_string(),
+            CurrencyUnit::Sat,
+            1000, // capacity
+            funding_token_amount,
+            1700000000,
+            1699999000,
+            "test-ephemeral-shared".to_string(),
+            keyset_info,
+            64,
+            &alice_secret,
+        )
+        .expect("Failed to create channel params");
+
+        let sender_info = params
+            .derive_stage2_p2bk_tweak_info_for_output("sender_stage2", 64, 0)
+            .expect("Failed to derive sender stage2 tweak info");
+        let sender_shared_from_alice =
+            SharedSecret::new(&sender_info.ephemeral_pubkey, &alice_secret).secret_bytes();
+        assert_eq!(
+            sender_shared_from_alice, sender_info.ephemeral_shared_secret_x,
+            "Alice should derive the same shared secret x for sender_stage2"
+        );
+
+        let receiver_info = params
+            .derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", 64, 0)
+            .expect("Failed to derive receiver stage2 tweak info");
+        let receiver_shared_from_charlie =
+            SharedSecret::new(&receiver_info.ephemeral_pubkey, &charlie_secret).secret_bytes();
+        assert_eq!(
+            receiver_shared_from_charlie, receiver_info.ephemeral_shared_secret_x,
+            "Charlie should derive the same shared secret x for receiver_stage2"
+        );
     }
 
     #[test]

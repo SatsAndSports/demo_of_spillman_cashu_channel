@@ -88,7 +88,9 @@ With P2BK:
 
 ### Blinding Derivation
 
-All protocol-critical derivations (scalars, nonces, blinding factors) use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency.
+Channel-secret based derivations use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency. Stage 2 uses a NUT-28 shared-secret tweak over raw bytes.
+
+Stage 1 (funding / refund) blinding scalar:
 
 ```
 r = SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
@@ -99,7 +101,18 @@ If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity)
 blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
 ```
 
-Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings. `channel_id` is a hex string. Raw bytes are only used for the domain separator prefix and the `channel_secret`.
+Stage 2 (per-output) tweak using a deterministic ephemeral key and NUT-28 shared secret:
+
+```
+e = SHA256("Cashu_Spilman_P2BK_ephemeral_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
+E = e*G
+Zx = x-coordinate of ECDH(e, role_pubkey)
+r_i = SHA256("Cashu_P2BK_v1" || Zx || i_byte)
+```
+
+If `r_i` is invalid, retry once with an extra `0xff` byte appended to the hash input. `i_byte` is a single byte (0x00..0x0A); the current implementation uses 0x00. `role_pubkey` is the raw Alice/Charlie pubkey (not blinded).
+
+Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings for channel-secret derivations. `channel_id` is a hex string. Raw bytes are used for `Zx` and `i_byte` in the NUT-28 tweak.
 
 ### Blinding Contexts
 

@@ -2,6 +2,14 @@
 
 This document tracks the completed features and improvements for the Spilman Channels implementation.
 
+## Completed Features (Mar 03, 2026)
+
+### Stage2 P2BK (NUT-28) Tweak
+
+- **Stage2 tweak now uses NUT-28 shared-secret scalar**: per-output stage2 keys are derived from `Cashu_P2BK_v1` over the ephemeral shared secret x-coordinate, replacing the legacy channel-secret stage2 tweak.
+- **Deterministic stage2 ephemeral metadata**: added deterministic ephemeral key material and shared-secret x-coordinate for later proof metadata.
+- **Breaking change**: existing stage2 outputs are not compatible across the tweak change.
+
 ## Completed Features (Feb 27, 2026)
 
 ### Golden Template Demos
@@ -359,7 +367,7 @@ Three tests require direct bridge access (not HTTP API) and will be added as nat
 - **Test suite updated**: Channel params tests assert `mints_units_keysets` structure and all-unit pricing for all servers.
 
 #### Cross-Platform Bug Fixes
-- **Fixed `usize` platform-dependent bug** in `params.rs`: `index.to_le_bytes()` produced 4 bytes on WASM (wasm32) but 8 bytes on native x86_64 (PyO3/CGo), causing deterministic output derivation to differ between WASM clients and native servers. Fixed by casting to `u64` before `to_le_bytes()` in `derive_stage2_blinding_scalar_for_output()` and `create_deterministic_output_with_blinding()`.
+- **Fixed `usize` platform-dependent bug** in `params.rs`: `index.to_le_bytes()` produced 4 bytes on WASM (wasm32) but 8 bytes on native x86_64 (PyO3/CGo), causing deterministic output derivation to differ between WASM clients and native servers. Fixed by casting to `u64` before `to_le_bytes()` in `derive_stage2_p2bk_tweak_info_for_output()` and `create_deterministic_output_with_blinding()`.
 - **Fixed Python server `json.loads` bug** in `server.py`: Cooperative close idempotent path called `json.loads()` on an already-parsed Python list (stored as parsed JSON in `mark_channel_closed`).
 - **Fixed Go server error response format** in `main.go`: Error responses returned `{"error": ...}` instead of the bridge's structured `body` containing `reason`, `capacity`, `balance`, `locktime`, `min_capacity`, `min_expiry_in_seconds`, and `validation_errors` fields. Also added missing-header guard for empty `X-Cashu-Channel`.
 
