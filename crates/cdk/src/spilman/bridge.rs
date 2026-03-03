@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Spilman Protocol Bridge
 //!
 //! This module provides a high-level bridge for implementing Spilman payment channels
@@ -20,16 +21,22 @@ use std::str::FromStr;
 /// Funding data for a channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelFunding {
+    /// Serialized channel parameters
     pub params_json: String,
+    /// Serialized funding proofs
     pub funding_proofs_json: String,
+    /// Hex-encoded channel secret
     pub channel_secret_hex: String,
+    /// Serialized keyset info
     pub keyset_info_json: String,
 }
 
-/// A payment proof (signed balance update)
+/// Payment proof for a channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentProof {
+    /// Current balance
     pub balance: u64,
+    /// Alice's signature over the balance
     pub signature: String,
 }
 

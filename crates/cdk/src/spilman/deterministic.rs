@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Deterministic P2PK Output Generation
 //!
 //! Types for creating deterministic P2PK outputs for Spilman payment channels.
@@ -557,7 +558,7 @@ mod tests {
 
         // Create keyset info
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
-        let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
+        let keyset_info = KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keys, input_fee_ppk, None);
 
         let capacity = 1000;
         let maximum_amount = 100_000;
@@ -651,7 +652,7 @@ mod tests {
         let keys = Keys::new(keys_map);
 
         let keyset_id = Id::from_bytes(&[0; 8]).unwrap();
-        let keyset_info = KeysetInfo::new(keyset_id, keys, input_fee_ppk);
+        let keyset_info = KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keys, input_fee_ppk, None);
 
         let capacity = 1000;
         let maximum_amount = 100_000;

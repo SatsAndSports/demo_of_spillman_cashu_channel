@@ -207,6 +207,7 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> { self.js_host.sign_with_tweaked_key_host(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e)) }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
 impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
     async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
@@ -215,6 +216,17 @@ impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         let _ = JsFuture::from(self.js_host.refresh_all_keysets(mint)).await.map_err(|e| format!("{:?}", e))?;
         Ok(())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
+    async fn call_mint_swap(&self, _mint_url: &str, _swap_request_json: &str) -> Result<String, String> {
+        Err("WASM proxy only works on wasm32".to_string())
+    }
+    async fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+        Err("WASM proxy only works on wasm32".to_string())
     }
 }
 

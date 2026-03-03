@@ -29,10 +29,13 @@ mod sender_and_receiver;
 pub use balance_update::{get_signatures_from_swap_request, BalanceUpdateMessage};
 pub use bindings::{
     attach_signature_to_balance_update, build_cashu_a_token, channel_parameters_get_channel_id,
-    complete_funding_swap, compute_channel_from_token, compute_channel_secret_from_hex,
-    compute_funding_token_amount, construct_proofs, create_funding_outputs, create_funding_swap,
-    create_plain_blinded_messages, create_signed_balance_update, create_unsigned_balance_update,
-    mint_proofs_from_mint, parse_keyset_info_from_json, sign_with_tweaked_key_util,
+    compute_channel_from_token, compute_channel_secret_from_hex, compute_funding_token_amount,
+    create_funding_outputs, create_funding_swap, create_signed_balance_update,
+    create_unsigned_balance_update, parse_keyset_info_from_json, sign_with_tweaked_key_util,
+};
+#[cfg(feature = "wallet")]
+pub use bindings::{
+    complete_funding_swap, construct_proofs, create_plain_blinded_messages, mint_proofs_from_mint,
 };
 pub use client_bridge::{
     base64_decode, ChannelData, ClientChannelInfo, OpenChannelResult, SpilmanClientBridge,

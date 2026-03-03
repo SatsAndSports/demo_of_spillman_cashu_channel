@@ -99,12 +99,13 @@ pub(crate) fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetI
     let active_keys = Keys::new(keys_map);
     let keyset_id = Id::v1_from_keys(&active_keys);
 
-    KeysetInfo {
+    KeysetInfo::new(
         keyset_id,
+        CurrencyUnit::Sat,
         active_keys,
-        amounts_largest_first,
         input_fee_ppk,
-    }
+        None,
+    )
 }
 
 /// Derive a blinded secret key for P2BK signing

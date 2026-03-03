@@ -7,15 +7,15 @@ use super::{
     compute_channel_secret as ecdh, ChannelParameters, CommitmentOutputs,
     DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, SpilmanChannelSender,
 };
+#[cfg(feature = "wallet")]
 use crate::dhke::construct_proofs as dhke_construct_proofs;
-use crate::nuts::{
-    BlindSignature, BlindSignatureDleq, CurrencyUnit, Id, Keys, Proof, PublicKey, SecretKey,
-    SwapRequest, Token,
-};
+#[cfg(feature = "wallet")]
+use crate::nuts::{BlindSignature, BlindSignatureDleq};
+use crate::nuts::{CurrencyUnit, Id, Keys, Proof, PublicKey, SecretKey, SwapRequest, Token};
+#[cfg(feature = "wallet")]
 use crate::secret::Secret;
 use crate::util::{hex, unix_time};
 use crate::Amount;
-use base64::Engine;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -42,11 +42,22 @@ pub fn parse_keyset_info_from_json(json_str: &str) -> Result<KeysetInfo, String>
         .parse()
         .map_err(|e| format!("Invalid keyset_id: {}", e))?;
 
+    // Parse unit
+    let unit_str = json["unit"]
+        .as_str()
+        .ok_or("Missing or invalid 'unit' field")?;
+    let unit = CurrencyUnit::from_str(unit_str).map_err(|e| format!("Invalid unit: {}", e))?;
+
     // Parse input_fee_ppk (handle both camelCase and snake_case)
     let input_fee_ppk = json["inputFeePpk"]
         .as_u64()
         .or_else(|| json["input_fee_ppk"].as_u64())
         .ok_or("Missing or invalid 'inputFeePpk' field")?;
+
+    // Parse final_expiry (handle both camelCase and snake_case)
+    let final_expiry = json["finalExpiry"]
+        .as_u64()
+        .or_else(|| json["final_expiry"].as_u64());
 
     // Parse keys map: { "1": "02...", "2": "02...", ... }
     let keys_obj = json["keys"]
@@ -68,7 +79,13 @@ pub fn parse_keyset_info_from_json(json_str: &str) -> Result<KeysetInfo, String>
 
     let active_keys = Keys::new(keys_map);
 
-    Ok(KeysetInfo::new(keyset_id, active_keys, input_fee_ppk))
+    Ok(KeysetInfo::new(
+        keyset_id,
+        unit,
+        active_keys,
+        input_fee_ppk,
+        final_expiry,
+    ))
 }
 
 /// Get channel_id from params JSON, shared secret, and keyset info (all as strings)
@@ -153,6 +170,7 @@ pub fn compute_funding_token_amount(
 /// Returns JSON with:
 /// - `blinded_messages`: Array of blinded messages (ready for mint request)
 /// - `secrets_with_blinding`: Array of {secret, blinding_factor, amount} for unblinding later
+#[cfg(feature = "wallet")]
 pub fn create_plain_blinded_messages(
     amount_sat: u64,
     keyset_info_json: &str,
@@ -293,6 +311,7 @@ pub fn create_funding_outputs(
 /// Construct proofs from blind signatures and secrets with blinding
 ///
 /// Returns JSON array of proofs ready for use
+#[cfg(feature = "wallet")]
 pub fn construct_proofs(
     blind_signatures_json: &str,
     secrets_with_blinding_json: &str,
@@ -687,7 +706,7 @@ pub fn create_funding_swap(
 
 /// Complete a funding swap by unblinding the mint's response
 ///
-/// Takes the mint's swap response and unblinds the funding proofs.
+/// Takes the mint's swap response and unblinding the funding proofs.
 /// Also verifies DLEQ proofs on all signatures.
 ///
 /// # Arguments
@@ -698,6 +717,7 @@ pub fn create_funding_swap(
 /// # Returns
 /// JSON with:
 /// - `funding_proofs_json`: Funding proofs for channel (JSON array)
+#[cfg(feature = "wallet")]
 pub fn complete_funding_swap(
     swap_response_json: &str,
     funding_secrets_json: &str,
@@ -811,6 +831,7 @@ pub fn complete_funding_swap(
     let (funding_secrets, funding_rs) = parse_secrets(&funding_secrets_raw)?;
 
     // Construct funding proofs (includes DLEQ verification)
+    #[cfg(feature = "wallet")]
     let funding_proofs =
         dhke_construct_proofs(funding_blind_sigs, funding_rs, funding_secrets, &keys).map_err(
             |e| {
@@ -820,6 +841,11 @@ pub fn complete_funding_swap(
                 )
             },
         )?;
+
+    #[cfg(not(feature = "wallet"))]
+    let funding_proofs: Vec<Proof> = Vec::new(); // Stub for non-wallet builds
+    #[cfg(not(feature = "wallet"))]
+    let _ = (funding_blind_sigs, funding_rs, funding_secrets, keys); // suppress unused warnings
 
     // Serialize results
     let funding_proofs_json = serde_json::to_string(&funding_proofs)
@@ -850,24 +876,18 @@ pub fn complete_funding_swap(
 /// # Returns
 /// A cashuA token string (e.g. "cashuAeyJ0b2...")
 pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, String> {
-    let proofs: serde_json::Value =
+    use crate::mint_url::MintUrl;
+    use crate::nuts::nut00::TokenV3;
+
+    let proofs: Vec<Proof> =
         serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
 
-    let token_payload = serde_json::json!({
-        "token": [{
-            "mint": mint_url,
-            "proofs": proofs
-        }],
-        "unit": "sat"
-    });
+    let mint_url = MintUrl::from_str(mint_url).map_err(|e| format!("Invalid mint URL: {}", e))?;
 
-    let json_bytes = serde_json::to_vec(&token_payload)
-        .map_err(|e| format!("Failed to serialize token: {}", e))?;
+    let token = TokenV3::new(mint_url, proofs, None, Some(CurrencyUnit::Sat))
+        .map_err(|e| format!("Failed to create TokenV3: {}", e))?;
 
-    Ok(format!(
-        "cashuA{}",
-        base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(json_bytes)
-    ))
+    Ok(token.to_string())
 }
 
 /// Mint plain proofs from a Cashu mint via HTTP.
@@ -894,6 +914,7 @@ pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, 
 ///
 /// # Returns
 /// JSON array of proofs ready for use
+#[cfg(feature = "wallet")]
 pub fn mint_proofs_from_mint(
     mint_url: &str,
     amount_sat: u64,

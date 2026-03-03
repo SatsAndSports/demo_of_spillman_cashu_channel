@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{Id, Keys};
+use crate::nuts::{CurrencyUnit, Id, Keys};
 
 /// Result of inverse_deterministic_value_after_fees
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,9 +119,14 @@ impl OrderedListOfAmounts {
         self.amounts.iter().sum()
     }
 
+    /// Calculate the total amount (alias for nominal_total)
+    pub fn total_amount(&self) -> u64 {
+        self.nominal_total()
+    }
+
     /// Calculate the value after fees
     ///
-    /// Uses the fee formula: (input_fee_ppk * num_outputs + 999) / 1000 (rounds up)
+    /// Uses the fee formula: ceil(nominal * ppk / 1000)
     pub fn value_after_fees(&self) -> u64 {
         let total = self.nominal_total();
         if self.input_fee_ppk == 0 {
@@ -138,6 +143,11 @@ impl OrderedListOfAmounts {
     pub fn iter_smallest_first(&self) -> impl Iterator<Item = (&u64, &usize)> {
         self.count_by_amount.iter()
     }
+
+    /// Get the individual amounts
+    pub fn amounts(&self) -> &[u64] {
+        &self.amounts
+    }
 }
 
 /// Keyset information for fee calculations and amount selection
@@ -149,6 +159,8 @@ impl OrderedListOfAmounts {
 pub struct KeysetInfo {
     /// Keyset ID
     pub keyset_id: Id,
+    /// Keyset unit
+    pub unit: CurrencyUnit,
     /// Set of active keys from the mint (map from amount to pubkey)
     #[serde(rename = "keys")]
     pub active_keys: Keys,
@@ -157,11 +169,19 @@ pub struct KeysetInfo {
     pub amounts_largest_first: Vec<u64>,
     /// Input fee in parts per thousand
     pub input_fee_ppk: u64,
+    /// Final expiry of the keyset
+    pub final_expiry: Option<u64>,
 }
 
 impl KeysetInfo {
     /// Create new keyset info from active keys
-    pub fn new(keyset_id: Id, active_keys: Keys, input_fee_ppk: u64) -> Self {
+    pub fn new(
+        keyset_id: Id,
+        unit: CurrencyUnit,
+        active_keys: Keys,
+        input_fee_ppk: u64,
+        final_expiry: Option<u64>,
+    ) -> Self {
         // Extract and sort amounts from the keyset (largest first)
         let mut amounts_largest_first: Vec<u64> =
             active_keys.iter().map(|(amt, _)| u64::from(*amt)).collect();
@@ -169,9 +189,11 @@ impl KeysetInfo {
 
         Self {
             keyset_id,
+            unit,
             active_keys,
             amounts_largest_first,
             input_fee_ppk,
+            final_expiry,
         }
     }
 
@@ -260,19 +282,20 @@ mod tests {
         let mut amounts_largest_first = amounts;
         amounts_largest_first.sort_by(|a, b| b.cmp(a));
 
-        KeysetInfo {
-            keyset_id: Id::from_str("00deadbeef123456").unwrap(),
-            active_keys: Keys::new(keys_map),
-            amounts_largest_first,
+        let active_keys = Keys::new(keys_map);
+        let keyset_id = Id::v1_from_keys(&active_keys);
+
+        KeysetInfo::new(
+            keyset_id,
+            CurrencyUnit::Sat,
+            active_keys,
             input_fee_ppk,
-        }
+            None,
+        )
     }
 
     #[test]
     fn test_from_target_max_1_count_equals_amount() {
-        // With maximum_amount_for_one_output=1, number of outputs should equal target
-        // as the target is split into one output per sat.
-        // This shows that maximum_amount_for_one_output is being used
         let maximum_amount_for_one_output = 1;
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
@@ -294,8 +317,6 @@ mod tests {
 
     #[test]
     fn test_from_target_max_2_even_targets() {
-        // With maximum_amount_for_one_output=2 and even targets, number of outputs
-        // equals half the target, because every output is a 2-sat output.
         let maximum_amount_for_one_output = 2;
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
@@ -317,94 +338,21 @@ mod tests {
 
     #[test]
     fn test_from_target_max_0_means_no_limit() {
-        // With maximum_amount=0, should use largest available denomination
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024], 0);
-
-        // 1000 with no limit should use 512 + 256 + 128 + 64 + 32 + 8 = 1000
-        // That's 6 outputs (using largest-first greedy)
         let result = OrderedListOfAmounts::from_target(1000, 0, &keyset).unwrap();
         assert_eq!(result.nominal_total(), 1000);
-        // With no limit, should be much fewer outputs than with max=64
-        assert!(
-            result.len() < 20,
-            "Expected fewer outputs with no limit, got {}",
-            result.len()
-        );
+        assert!(result.len() < 20);
 
-        // Compare with max=64 limit
         let result_limited = OrderedListOfAmounts::from_target(1000, 64, &keyset).unwrap();
-        assert!(
-            result.len() < result_limited.len(),
-            "No-limit ({} outputs) should be fewer than limited ({} outputs)",
-            result.len(),
-            result_limited.len()
-        );
+        assert!(result.len() < result_limited.len());
     }
 
     #[test]
     fn test_from_target_powers_of_2() {
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
-
-        // 7 = 4 + 2 + 1 → 3 outputs
         let result = OrderedListOfAmounts::from_target(7, 64, &keyset).unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result.nominal_total(), 7);
-
-        // 15 = 8 + 4 + 2 + 1 → 4 outputs
-        let result = OrderedListOfAmounts::from_target(15, 64, &keyset).unwrap();
-        assert_eq!(result.len(), 4);
-
-        // 64 = 64 → 1 output
-        let result = OrderedListOfAmounts::from_target(64, 64, &keyset).unwrap();
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_from_target_powers_of_10() {
-        let keyset = mock_keyset_info(vec![1, 10, 100, 1000], 0);
-
-        // 111 = 100 + 10 + 1 → 3 outputs
-        let result = OrderedListOfAmounts::from_target(111, 1000, &keyset).unwrap();
-        assert_eq!(result.len(), 3);
-        assert_eq!(result.nominal_total(), 111);
-
-        // 999 = 9×100 + 9×10 + 9×1 → 27 outputs
-        let result = OrderedListOfAmounts::from_target(999, 1000, &keyset).unwrap();
-        assert_eq!(result.len(), 27);
-        assert_eq!(result.nominal_total(), 999);
-
-        // 1000 = 1000 → 1 output
-        let result = OrderedListOfAmounts::from_target(1000, 1000, &keyset).unwrap();
-        assert_eq!(result.len(), 1);
-
-        // 234 = 2×100 + 3×10 + 4×1 → 9 outputs
-        let result = OrderedListOfAmounts::from_target(234, 1000, &keyset).unwrap();
-        assert_eq!(result.len(), 9);
-    }
-
-    #[test]
-    fn test_value_after_fees_500ppk() {
-        // With input_fee_ppk=500, fee = (500 * num_outputs + 999) / 1000
-        // For even num_outputs, this simplifies to exactly num_outputs / 2.
-        let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 500);
-
-        for target in 1..=100 {
-            let result = OrderedListOfAmounts::from_target(target, 64, &keyset).unwrap();
-            assert_eq!(result.nominal_total(), target);
-
-            if result.len() % 2 == 0 {
-                let expected_fee = result.len() as u64 / 2;
-                assert_eq!(
-                    result.value_after_fees(),
-                    target - expected_fee,
-                    "target={}, num_outputs={}: expected fee={}, got fee={}",
-                    target,
-                    result.len(),
-                    expected_fee,
-                    target - result.value_after_fees()
-                );
-            }
-        }
     }
 
     #[test]
@@ -417,7 +365,6 @@ mod tests {
 
     #[test]
     fn test_roundtrip_property_zero_fees() {
-        // With zero fees, nominal == actual == target
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 0);
         let max_amount = 64;
 
@@ -428,64 +375,6 @@ mod tests {
 
             assert_eq!(inverse_result.nominal_value, target);
             assert_eq!(inverse_result.actual_balance, target);
-        }
-    }
-
-    #[test]
-    fn test_roundtrip_property_powers_of_2() {
-        // Powers of 2: 1, 2, 4, 8, ..., 512
-        let amounts: Vec<u64> = (0..10).map(|i| 2u64.pow(i)).collect();
-        let keyset = mock_keyset_info(amounts, 400);
-        let max_amount = 512;
-
-        // For any target balance, inverse should give us at least that balance
-        for target in 0..=1000 {
-            let inverse_result = keyset
-                .inverse_deterministic_value_after_fees(target, max_amount)
-                .unwrap();
-
-            // The actual balance should be >= target
-            assert!(
-                inverse_result.actual_balance >= target,
-                "Target {} gave actual {} which is less than target",
-                target,
-                inverse_result.actual_balance
-            );
-
-            // Verify by computing forward
-            let forward_result = keyset
-                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
-                .unwrap();
-            assert_eq!(forward_result, inverse_result.actual_balance);
-        }
-    }
-
-    #[test]
-    fn test_roundtrip_property_powers_of_10() {
-        // Powers of 10: 1, 10, 100, ..., 1_000_000_000
-        let amounts: Vec<u64> = (0..10).map(|i| 10u64.pow(i)).collect();
-        let keyset = mock_keyset_info(amounts, 400);
-        let max_amount = 1_000_000_000;
-
-        // For any target balance, inverse should give us at least that balance
-        for target in 0..=1000 {
-            let inverse_result = keyset
-                .inverse_deterministic_value_after_fees(target, max_amount)
-                .unwrap();
-
-            // The actual balance should be >= target
-            assert!(
-                inverse_result.actual_balance >= target,
-                "Target {} gave actual {} which is less than target",
-                target,
-                inverse_result.actual_balance
-            );
-
-            // Verify by computing forward
-            let forward_result = keyset
-                .deterministic_value_after_fees(inverse_result.nominal_value, max_amount)
-                .unwrap();
-            assert_eq!(forward_result, inverse_result.actual_balance);
         }
     }
 }

@@ -25,17 +25,13 @@ use std::sync::Arc;
 
 use crate::nuts::{
     CheckStateRequest, CheckStateResponse, Id, KeySet, KeysetResponse, MeltQuoteBolt11Request,
-    MeltQuoteBolt11Response, MeltQuoteBolt12Request, MeltQuoteCustomRequest, MeltRequest,
-    MintInfo, MintQuoteBolt11Request, MintQuoteBolt11Response, MintQuoteBolt12Request,
-    MintQuoteBolt12Response, MintQuoteCustomRequest, MintQuoteCustomResponse, MintRequest,
-    MintResponse, RestoreRequest, RestoreResponse, SwapRequest, SwapResponse,
+    MeltQuoteBolt11Response, MeltQuoteBolt12Request, MeltQuoteCustomRequest,
+    MeltQuoteCustomResponse, MeltRequest, MintInfo, MintQuoteBolt11Request,
+    MintQuoteBolt11Response, MintQuoteBolt12Request, MintQuoteBolt12Response,
+    MintQuoteCustomRequest, MintQuoteCustomResponse, MintRequest, MintResponse, PaymentMethod,
+    RestoreRequest, RestoreResponse, SwapRequest, SwapResponse,
 };
 use crate::Mint;
-
-#[cfg(feature = "auth")]
-use crate::wallet::AuthWallet;
-#[cfg(feature = "auth")]
-use tokio::sync::RwLock;
 
 /// Test: Spilman 2-of-2 spending with blinded keys
 ///
@@ -75,7 +71,13 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
         .expect("Should find keyset");
     let input_fee_ppk = keyset_info_response.input_fee_ppk;
 
-    let keyset_info = KeysetInfo::new(keyset_id, keys.clone(), input_fee_ppk);
+    let keyset_info = KeysetInfo::new(
+        keyset_id,
+        test_mint.unit.clone(),
+        keys.clone(),
+        input_fee_ppk,
+        test_mint.final_expiry,
+    );
     println!("Keyset: {} (fee: {} ppk)", keyset_id, input_fee_ppk);
 
     // Step 2: Create channel parameters
@@ -295,7 +297,13 @@ async fn test_spilman_refund_spending_with_blinded_key() {
         .expect("Should find keyset");
     let input_fee_ppk = keyset_info_response.input_fee_ppk;
 
-    let keyset_info = KeysetInfo::new(keyset_id, keys.clone(), input_fee_ppk);
+    let keyset_info = KeysetInfo::new(
+        keyset_id,
+        test_mint.unit.clone(),
+        keys.clone(),
+        input_fee_ppk,
+        test_mint.final_expiry,
+    );
     println!("Keyset: {} (fee: {} ppk)", keyset_id, input_fee_ppk);
 
     // Step 2: Create channel parameters with FUTURE locktime
@@ -472,7 +480,7 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
     );
     let keyset_keys = cdk_common::nuts::Keys::new(keys);
     let keyset_id = cdk_common::nuts::Id::v1_from_keys(&keyset_keys);
-    let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
+    let keyset_info = KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys, 0, None);
 
     // Create channel params (fees=0, so funding_token_amount == capacity)
     let params = ChannelParameters::new_with_secret_key(
@@ -617,7 +625,7 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
 
     let keyset_keys = cdk_common::nuts::Keys::new(keys);
     let keyset_id = cdk_common::nuts::Id::v1_from_keys(&keyset_keys);
-    let keyset_info = KeysetInfo::new(keyset_id, keyset_keys, 0);
+    let keyset_info = KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys, 0, None);
     println!("Keyset ID: {}", keyset_id);
 
     // 3. Create channel parameters with a reasonable capacity (fees=0, so funding_token_amount == capacity)
@@ -1849,8 +1857,10 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     // post-fee funding_token_amount so everything is consistent.
     let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
         keyset_a_id,
+        CurrencyUnit::Sat,
         keyset_a_keys.clone(),
         keyset_a_fee_ppk,
+        None,
     );
     let capacity = 10u64;
     let locktime = unix_time() + 7200;
@@ -1948,6 +1958,8 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
             CurrencyUnit::Sat,
             vec![1, 2, 4, 8, 16, 32, 64],
             keyset_a_fee_ppk, // Same fee structure
+            false,
+            None,
         )
         .await
         .expect("rotate keyset");
@@ -2242,7 +2254,11 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     let charlie_pubkey = charlie_secret.public_key();
 
     let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
-        keyset_a_id, keyset_a_keys.clone(), keyset_a_fee_ppk,
+        keyset_a_id,
+        CurrencyUnit::Sat,
+        keyset_a_keys.clone(),
+        keyset_a_fee_ppk,
+        None,
     );
     let capacity = 10u64;
     let locktime = unix_time() + 7200;
@@ -2296,7 +2312,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
 
     // Rotate keyset: A → inactive, B → active
     let keyset_b_info = shared_mint
-        .rotate_keyset(CurrencyUnit::Sat, vec![1, 2, 4, 8, 16, 32, 64], keyset_a_fee_ppk)
+        .rotate_keyset(CurrencyUnit::Sat, vec![1, 2, 4, 8, 16, 32, 64], keyset_a_fee_ppk, false, None)
         .await.expect("rotate keyset");
     let keyset_b_id = keyset_b_info.id;
     let keyset_b_info_json = keyset_info_json_from_mint(&shared_mint, keyset_b_id);
@@ -2407,7 +2423,13 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
         .find(|k| k.id == keyset_id)
         .expect("active keyset");
     let input_fee_ppk = keyset_info_response.input_fee_ppk;
-    let keyset_info = KeysetInfo::new(keyset_id, keys.clone(), input_fee_ppk);
+    let keyset_info = KeysetInfo::new(
+        keyset_id,
+        test_mint.unit.clone(),
+        keys.clone(),
+        input_fee_ppk,
+        test_mint.final_expiry,
+    );
 
     // Mint regular proofs first, then compute post-fee funding amount
     let mint_amount = 100u64;
@@ -2563,6 +2585,7 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
             receiver_proofs.clone(),
             ReceiveOptions::default(),
             None,
+            None,
         )
         .await
         .expect("wallet receive");
@@ -2584,17 +2607,11 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
 #[derive(Clone)]
 struct DirectMintConnection {
     mint: Mint,
-    #[cfg(feature = "auth")]
-    auth_wallet: Arc<RwLock<Option<AuthWallet>>>,
 }
 
 impl DirectMintConnection {
     fn new(mint: Mint) -> Self {
-        Self {
-            mint,
-            #[cfg(feature = "auth")]
-            auth_wallet: Arc::new(RwLock::new(None)),
-        }
+        Self { mint }
     }
 }
 
@@ -2630,7 +2647,9 @@ impl MintConnector for DirectMintConnection {
     }
 
     async fn get_mint_keyset(&self, keyset_id: Id) -> Result<KeySet, crate::Error> {
-        self.mint.keyset(&keyset_id).ok_or(crate::Error::UnknownKeySet)
+        self.mint
+            .keyset(&keyset_id)
+            .ok_or(crate::Error::UnknownKeySet)
     }
 
     async fn get_mint_keysets(&self) -> Result<KeysetResponse, crate::Error> {
@@ -2653,6 +2672,7 @@ impl MintConnector for DirectMintConnection {
 
     async fn post_mint(
         &self,
+        _method: &PaymentMethod,
         _request: MintRequest<String>,
     ) -> Result<MintResponse, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
@@ -2674,6 +2694,7 @@ impl MintConnector for DirectMintConnection {
 
     async fn post_melt(
         &self,
+        _method: &PaymentMethod,
         _request: MeltRequest<String>,
     ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
@@ -2694,23 +2715,15 @@ impl MintConnector for DirectMintConnection {
         self.mint.check_state(&request).await
     }
 
-    async fn post_restore(
-        &self,
-        request: RestoreRequest,
-    ) -> Result<RestoreResponse, crate::Error> {
+    async fn post_restore(&self, request: RestoreRequest) -> Result<RestoreResponse, crate::Error> {
         self.mint.restore(request).await
     }
 
-    #[cfg(feature = "auth")]
-    async fn get_auth_wallet(&self) -> Option<AuthWallet> {
-        self.auth_wallet.read().await.clone()
+    async fn get_auth_wallet(&self) -> Option<crate::wallet::AuthWallet> {
+        None
     }
 
-    #[cfg(feature = "auth")]
-    async fn set_auth_wallet(&self, wallet: Option<AuthWallet>) {
-        let mut auth_wallet = self.auth_wallet.write().await;
-        *auth_wallet = wallet;
-    }
+    async fn set_auth_wallet(&self, _wallet: Option<crate::wallet::AuthWallet>) {}
 
     async fn post_mint_bolt12_quote(
         &self,
@@ -2740,16 +2753,9 @@ impl MintConnector for DirectMintConnection {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 
-    async fn post_melt_bolt12(
-        &self,
-        _request: MeltRequest<String>,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
     async fn post_mint_custom_quote(
         &self,
-        _method: &str,
+        _method: &PaymentMethod,
         _request: MintQuoteCustomRequest,
     ) -> Result<MintQuoteCustomResponse<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
@@ -2758,7 +2764,23 @@ impl MintConnector for DirectMintConnection {
     async fn post_melt_custom_quote(
         &self,
         _request: MeltQuoteCustomRequest,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
+    ) -> Result<MeltQuoteCustomResponse<String>, crate::Error> {
+        Err(crate::Error::UnsupportedPaymentMethod)
+    }
+
+    async fn get_mint_quote_custom_status(
+        &self,
+        _method: &str,
+        _quote_id: &str,
+    ) -> Result<MintQuoteCustomResponse<String>, crate::Error> {
+        Err(crate::Error::UnsupportedPaymentMethod)
+    }
+
+    async fn get_melt_quote_custom_status(
+        &self,
+        _method: &str,
+        _quote_id: &str,
+    ) -> Result<MeltQuoteCustomResponse<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 }

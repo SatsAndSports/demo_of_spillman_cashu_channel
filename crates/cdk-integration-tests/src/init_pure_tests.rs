@@ -64,18 +64,12 @@ impl MintConnector for DirectMintConnection {
         panic!("Not implemented");
     }
 
-    async fn fetch_lnurl_pay_request(
-        &self,
-        _url: &str,
-    ) -> Result<cdk::wallet::LnurlPayResponse, Error> {
-        unimplemented!("Lightning address not supported in DirectMintConnection")
+    async fn fetch_lnurl_pay_request(&self, _url: &str) -> Result<LnurlPayResponse, Error> {
+        Err(Error::UnsupportedPaymentMethod)
     }
 
-    async fn fetch_lnurl_invoice(
-        &self,
-        _url: &str,
-    ) -> Result<cdk::wallet::LnurlPayInvoiceResponse, Error> {
-        unimplemented!("Lightning address not supported in DirectMintConnection")
+    async fn fetch_lnurl_invoice(&self, _url: &str) -> Result<LnurlPayInvoiceResponse, Error> {
+        Err(Error::UnsupportedPaymentMethod)
     }
 
     async fn get_mint_keys(&self) -> Result<Vec<KeySet>, Error> {
@@ -156,10 +150,7 @@ impl MintConnector for DirectMintConnection {
         Ok(self.mint.mint_info().await?.clone().time(unix_time()))
     }
 
-    async fn post_check_state(
-        &self,
-        request: CheckStateRequest,
-    ) -> Result<CheckStateResponse, Error> {
+    async fn post_check_state(&self, request: CheckStateRequest) -> Result<CheckStateResponse, Error> {
         self.mint.check_state(&request).await
     }
 
@@ -167,17 +158,11 @@ impl MintConnector for DirectMintConnection {
         self.mint.restore(request).await
     }
 
-    /// Get the auth wallet for the client
     async fn get_auth_wallet(&self) -> Option<AuthWallet> {
-        self.auth_wallet.read().await.clone()
+        None
     }
 
-    /// Set auth wallet on client
-    async fn set_auth_wallet(&self, wallet: Option<AuthWallet>) {
-        let mut auth_wallet = self.auth_wallet.write().await;
-
-        *auth_wallet = wallet;
-    }
+    async fn set_auth_wallet(&self, _wallet: Option<AuthWallet>) {}
 
     async fn post_mint_bolt12_quote(
         &self,
@@ -197,11 +182,9 @@ impl MintConnector for DirectMintConnection {
             .check_mint_quote(&QuoteId::from_str(quote_id)?)
             .await?
             .try_into()?;
-
         Ok(quote.into())
     }
 
-    /// Melt Quote [NUT-23]
     async fn post_melt_bolt12_quote(
         &self,
         request: MeltQuoteBolt12Request,
@@ -211,7 +194,7 @@ impl MintConnector for DirectMintConnection {
             .await
             .map(Into::into)
     }
-    /// Melt Quote Status [NUT-23]
+
     async fn get_melt_bolt12_quote_status(
         &self,
         quote_id: &str,
@@ -222,42 +205,34 @@ impl MintConnector for DirectMintConnection {
             .map(Into::into)
     }
 
-    /// Mint Quote for Custom Payment Method
     async fn post_mint_custom_quote(
         &self,
         _method: &PaymentMethod,
         _request: MintQuoteCustomRequest,
     ) -> Result<MintQuoteCustomResponse<String>, Error> {
-        // Custom payment methods not implemented in test mock
         Err(Error::UnsupportedPaymentMethod)
     }
 
-    /// Mint Quote Status for Custom Payment Method
+    async fn post_melt_custom_quote(
+        &self,
+        _request: MeltQuoteCustomRequest,
+    ) -> Result<MeltQuoteCustomResponse<String>, Error> {
+        Err(Error::UnsupportedPaymentMethod)
+    }
+
     async fn get_mint_quote_custom_status(
         &self,
         _method: &str,
         _quote_id: &str,
     ) -> Result<MintQuoteCustomResponse<String>, Error> {
-        // Custom payment methods not implemented in test mock
         Err(Error::UnsupportedPaymentMethod)
     }
 
-    /// Melt Quote for Custom Payment Method
-    async fn post_melt_custom_quote(
-        &self,
-        _request: MeltQuoteCustomRequest,
-    ) -> Result<MeltQuoteCustomResponse<String>, Error> {
-        // Custom payment methods not implemented in test mock
-        Err(Error::UnsupportedPaymentMethod)
-    }
-
-    /// Melt Quote Status for Custom Payment Method
     async fn get_melt_quote_custom_status(
         &self,
         _method: &str,
         _quote_id: &str,
     ) -> Result<MeltQuoteCustomResponse<String>, Error> {
-        // Custom payment methods not implemented in test mock
         Err(Error::UnsupportedPaymentMethod)
     }
 }
@@ -491,7 +466,7 @@ pub async fn fund_wallet(
 ) -> Result<Amount> {
     let desired_amount = Amount::from(amount);
     let quote = wallet
-        .mint_quote(PaymentMethod::BOLT11, Some(desired_amount), None, None)
+        .mint_quote(PaymentMethod::BOLT11, desired_amount)
         .await?;
 
     Ok(wallet

@@ -23,10 +23,9 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use super::bindings::{
-    attach_signature_to_balance_update, complete_funding_swap, compute_channel_from_token,
-    create_funding_swap, create_unsigned_balance_update,
-};
+use super::bindings::{attach_signature_to_balance_update, create_unsigned_balance_update};
+#[cfg(feature = "wallet")]
+use super::bindings::{complete_funding_swap, compute_channel_from_token, create_funding_swap};
 
 // ============================================================================
 // SpilmanClientHost trait
@@ -218,6 +217,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// * `locktime` - Unix timestamp for refund locktime
     /// * `keyset_info_json` - Keyset info JSON (from mint's `/v1/keys/{id}`)
     /// * `max_amount` - Maximum amount per output (from server policy, 0 = no limit)
+    #[cfg(feature = "wallet")]
     pub fn open_channel_from_token(
         &self,
         token_string: &str,

@@ -18,6 +18,12 @@ pub struct TestMintHelper {
     pub mint: Mint,
     pub active_sat_keyset_id: Id,
     pub public_keys_of_the_active_sat_keyset: Keys,
+    #[allow(dead_code)]
+    pub unit: CurrencyUnit,
+    #[allow(dead_code)]
+    pub input_fee_ppk: u64,
+    #[allow(dead_code)]
+    pub final_expiry: Option<u64>,
     /// Available denominations sorted largest first (e.g., [2147483648, 1073741824, ..., 2, 1])
     pub available_amounts_sorted: Vec<u64>,
 }
@@ -32,6 +38,17 @@ impl TestMintHelper {
             .get(&CurrencyUnit::Sat)
             .cloned()
             .ok_or(Error::Internal)?;
+
+        // Get the active SAT keyset info
+        let keysets_response = mint.keysets();
+        let keyset_info = keysets_response
+            .keysets
+            .iter()
+            .find(|k| k.id == active_sat_keyset_id)
+            .expect("active keyset");
+        let input_fee_ppk = keyset_info.input_fee_ppk;
+        let final_expiry = keyset_info.final_expiry;
+        let unit = keyset_info.unit.clone();
 
         // Get the active SAT keyset keys
         let lookup_by_that_id = mint.keyset_pubkeys(&active_sat_keyset_id)?;
@@ -53,6 +70,9 @@ impl TestMintHelper {
             mint,
             active_sat_keyset_id,
             public_keys_of_the_active_sat_keyset,
+            unit,
+            input_fee_ppk,
+            final_expiry,
             available_amounts_sorted,
         })
     }

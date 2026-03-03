@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Spilman Channel Sender and Receiver
 //!
 //! This module contains the sender's (Alice's) and receiver's (Charlie's) views
@@ -109,7 +110,17 @@ pub fn verify_valid_channel(
     // 1. Verify keyset ID matches the keys
     // This prevents an attacker from providing fake keys while claiming a legitimate keyset ID
     let expected_keyset_id = params.keyset_info.keyset_id;
-    let computed_keyset_id = Id::v1_from_keys(&params.keyset_info.active_keys);
+    let computed_keyset_id = match expected_keyset_id.get_version() {
+        crate::nuts::nut02::KeySetVersion::Version00 => {
+            Id::v1_from_keys(&params.keyset_info.active_keys)
+        }
+        crate::nuts::nut02::KeySetVersion::Version01 => Id::v2_from_data(
+            &params.keyset_info.active_keys,
+            &params.keyset_info.unit,
+            params.keyset_info.input_fee_ppk,
+            params.keyset_info.final_expiry,
+        ),
+    };
 
     if expected_keyset_id != computed_keyset_id {
         errors.push(ChannelVerificationError::InvalidKeysetId {
