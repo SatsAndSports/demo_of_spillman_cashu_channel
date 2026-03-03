@@ -516,7 +516,7 @@ impl ChannelParameters {
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     ///
     /// Note: This produces a SHARED blinding scalar for all proofs with the same context.
-    /// For per-proof blinding (stage2), use `derive_blinding_scalar_for_output()` instead.
+    /// For per-proof blinding (stage2), use `derive_stage2_blinding_scalar_for_output()` instead.
     fn derive_blinding_scalar(&self, context: &str) -> anyhow::Result<Scalar> {
         let channel_id = self.get_channel_id();
 
@@ -551,7 +551,7 @@ impl ChannelParameters {
     ///
     /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
-    fn derive_blinding_scalar_for_output(
+    fn derive_stage2_blinding_scalar_for_output(
         &self,
         context: &str,
         amount: u64,
@@ -690,7 +690,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_blinding_scalar_for_output("sender_stage2", amount, index)?;
+        let r = self.derive_stage2_blinding_scalar_for_output("sender_stage2", amount, index)?;
         derive_blinded_pubkey(&self.alice_pubkey, &r)
     }
 
@@ -707,7 +707,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
-        let r = self.derive_blinding_scalar_for_output("receiver_stage2", amount, index)?;
+        let r = self.derive_stage2_blinding_scalar_for_output("receiver_stage2", amount, index)?;
         derive_blinded_pubkey(&self.charlie_pubkey, &r)
     }
 
@@ -721,7 +721,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_blinding_scalar_for_output("sender_stage2", amount, index)?;
+        let r = self.derive_stage2_blinding_scalar_for_output("sender_stage2", amount, index)?;
         derive_blinded_secret_key(alice_secret, &r)
     }
 
@@ -735,7 +735,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let r = self.derive_blinding_scalar_for_output("receiver_stage2", amount, index)?;
+        let r = self.derive_stage2_blinding_scalar_for_output("receiver_stage2", amount, index)?;
         derive_blinded_secret_key(charlie_secret, &r)
     }
 
@@ -750,16 +750,16 @@ impl ChannelParameters {
         }
     }
 
-    /// Get the BLINDED pubkey for a stage 1 output context ("sender" or "receiver")
+    /// Get the STAGE2 blinded pubkey for a stage 1 output context ("sender" or "receiver")
     ///
-    /// Returns the blinded pubkey for use in stage 1 commitment outputs:
+    /// Returns the stage2 blinded pubkey for use in stage 1 commitment outputs:
     /// - "receiver" → Charlie's per-proof blinded pubkey (stage2 context)
     /// - "sender" → Alice's per-proof blinded pubkey (stage2 context)
     /// - "funding" → error (funding uses 2-of-2 with stage1 blinded pubkeys)
     ///
     /// Uses "stage2" blinding context because these are the keys needed to sign in stage 2.
     /// Each proof gets a UNIQUE blinded pubkey derived from (amount, index) for better privacy.
-    pub fn get_blinded_pubkey_for_stage1_output(
+    pub fn get_stage2_blinded_pubkey_for_stage1_output(
         &self,
         context: &str,
         amount: u64,
@@ -779,7 +779,7 @@ impl ChannelParameters {
     /// Uses channel_secret, channel_id, context, amount, and index in the derivation per NUT-XX spec
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
-    /// - "sender"/"receiver" create simple P2PK outputs for commitments
+    /// - "sender"/"receiver" create simple P2PK outputs for commitments using stage2 blinded pubkeys
     /// - "funding" creates P2PK outputs with 2-of-2 multisig + locktime conditions
     pub fn create_deterministic_output_with_blinding(
         &self,
@@ -819,7 +819,8 @@ impl ChannelParameters {
         } else {
             // For sender/receiver contexts, create simple P2PK outputs with BLINDED pubkeys
             // Each proof gets a UNIQUE blinded pubkey derived from (amount, index)
-            let pubkey = self.get_blinded_pubkey_for_stage1_output(context, amount, index)?;
+            let pubkey =
+                self.get_stage2_blinded_pubkey_for_stage1_output(context, amount, index)?;
             DeterministicSecretWithBlinding::new_p2pk(
                 &pubkey,
                 nonce,
