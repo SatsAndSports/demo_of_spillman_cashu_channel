@@ -165,7 +165,7 @@ $(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	cp web/wasm-nodejs/cdk_wasm* integration-kits/ts/wasm/
 	@echo "WASM copied to TS integration kit"
 
-build-blossom-wasm: .wasm-built $(BLOSSOM_WASM)
+build-blossom-wasm: build-wasm $(BLOSSOM_WASM)
 
 # Build WASM for TS ASCII Art (uses symlink, just needs WASM built)
 build-ts-wasm: .wasm-built $(TS_KIT_WASM)
