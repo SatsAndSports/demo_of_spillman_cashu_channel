@@ -10,6 +10,8 @@ export {
   get_sender_blinded_secret_key_for_stage2_output,
   get_receiver_blinded_secret_key_for_stage2_output,
   compute_funding_token_nominal,
+  verify_proof_dleq,
+  verify_channel,
 } from "../wasm/cdk_wasm.js";
 import wasmInit from "../wasm/cdk_wasm.js";
 import { readFileSync } from "fs";
@@ -27,6 +29,11 @@ export {
   type PricingEntry,
   type SpilmanStores,
   type UsageMap,
+  type ChannelFundingData,
+  type ChannelBalance,
+  type ClosingChannelData,
+  type ClosedChannelData,
+  type ChannelStatus,
 } from "./stores.js";
 export { fetchAllKeysetsFromMint, fetchAndCacheKeysetsForMint } from "./keysets.js";
 export {

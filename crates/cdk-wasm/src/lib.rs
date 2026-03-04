@@ -358,6 +358,24 @@ impl WasmSpilmanClientBridge {
     pub fn process_cooperative_close_response(&self, response_json: &str) -> Result<(), JsValue> {
         self.bridge.process_cooperative_close_response(response_json).map_err(|e| JsValue::from_str(&e))
     }
+
+    #[wasm_bindgen(js_name = getChannelInfo)]
+    pub fn get_channel_info(&self, channel_id: &str) -> JsValue {
+        self.bridge.get_channel_info(channel_id)
+            .map(|info| serde_wasm_bindgen::to_value(&info).unwrap())
+            .unwrap_or(JsValue::NULL)
+    }
+
+    #[wasm_bindgen(js_name = listChannels)]
+    pub fn list_channels(&self) -> JsValue {
+        let channels = self.bridge.list_channels();
+        serde_wasm_bindgen::to_value(&channels).unwrap()
+    }
+
+    #[wasm_bindgen(js_name = removeChannel)]
+    pub fn remove_channel(&self, channel_id: &str) {
+        self.bridge.remove_channel(channel_id);
+    }
 }
 
 #[wasm_bindgen]

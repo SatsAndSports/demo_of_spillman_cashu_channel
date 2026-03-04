@@ -52,11 +52,12 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       if (!row) return null;
       try {
         const data = JSON.parse(row.funding_json);
-        const funding = {
+        const funding: ChannelFundingData = {
           paramsJson: data.params_json,
           fundingProofsJson: data.funding_proofs_json,
           channelSecret: data.channel_secret_hex,
           keysetInfoJson: data.keyset_info_json,
+          ...(data.secret_key && { secretKey: data.secret_key }),
         };
         fundingCache.set(channelId, funding);
         return funding;
@@ -70,6 +71,7 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
         funding_proofs_json: data.fundingProofsJson,
         channel_secret_hex: data.channelSecret,
         keyset_info_json: data.keysetInfoJson,
+        ...(data.secretKey && { secret_key: data.secretKey }),
       });
       const result = db.prepare("INSERT INTO spilman_channels (channel_id, funding_json) VALUES (?, ?) ON CONFLICT DO NOTHING").run(channelId, json);
       if (result.changes > 0) {
@@ -85,11 +87,12 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       for (const row of rows) {
         try {
           const data = JSON.parse(row.funding_json);
-          const fd = {
+          const fd: ChannelFundingData = {
             paramsJson: data.params_json,
             fundingProofsJson: data.funding_proofs_json,
             channelSecret: data.channel_secret_hex,
             keysetInfoJson: data.keyset_info_json,
+            ...(data.secret_key && { secretKey: data.secret_key }),
           };
           map.set(row.channel_id, fd);
           fundingCache.set(row.channel_id, fd);

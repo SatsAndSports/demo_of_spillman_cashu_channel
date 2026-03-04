@@ -40,8 +40,9 @@ cdk_ffi.py
 # Test logs
 testing/
 
-# WASM build sentinel
+# Build sentinels
 .wasm-built
+.kit-ts-built
 
 # Go artifacts
 examples/go-ascii-art/main

@@ -56,7 +56,7 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 .PHONY: venv \
 	build-python build-python-wheel install-python \
 	build-go build-mintd build-rust-server \
-	build-wasm build-blossom-wasm build-ts-wasm \
+	build-wasm build-blossom-wasm build-ts-wasm build-kit-ts \
 	build-devenv build-nutmix-setup \
 	run-python-server run-python-client \
 	run-go-server run-go-client \
@@ -165,10 +165,23 @@ $(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	cp web/wasm-nodejs/cdk_wasm* integration-kits/ts/wasm/
 	@echo "WASM copied to TS integration kit"
 
-build-blossom-wasm: build-wasm $(BLOSSOM_WASM)
+build-blossom-wasm: build-wasm $(BLOSSOM_WASM) build-kit-ts
 
 # Build WASM for TS ASCII Art (uses symlink, just needs WASM built)
 build-ts-wasm: .wasm-built $(TS_KIT_WASM)
+
+# --- TS Integration Kit ---
+
+# Build TS integration kit (compiles TypeScript to dist/)
+TS_KIT_DIR := integration-kits/ts
+TS_KIT_SOURCES := $(shell find $(TS_KIT_DIR)/src -name '*.ts' 2>/dev/null)
+
+.kit-ts-built: $(TS_KIT_SOURCES) $(TS_KIT_WASM)
+	cd $(TS_KIT_DIR) && npm install --ignore-scripts && npm run build
+	@touch .kit-ts-built
+	@echo "TS integration kit built"
+
+build-kit-ts: .kit-ts-built
 
 # --- Container/NutMix Builds ---
 
@@ -257,7 +270,7 @@ test-integration-all: test-integration-rust test-integration-go test-integration
 # ===========================================================================
 
 # Test TypeScript server
-test-server-ts: build-mintd build-wasm
+test-server-ts: build-mintd build-wasm build-kit-ts
 	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
 # Test Rust server
@@ -329,11 +342,11 @@ test-demo-ts-nutmix-native: build-wasm
 # ===========================================================================
 
 # Test blossom server with CDK mint
-test-blossom: build-mintd build-blossom-wasm
+test-blossom: build-mintd build-blossom-wasm build-kit-ts
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
 
 # Test blossom server with NutMix
-test-blossom-nutmix: build-nutmix-setup build-blossom-wasm
+test-blossom-nutmix: build-nutmix-setup build-blossom-wasm build-kit-ts
 	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
 
 # ===========================================================================
@@ -433,9 +446,9 @@ clean: clean-nutmix-setup clean-logs
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(PYTHON_VENV)
-	rm -f .wasm-built
+	rm -f .wasm-built .kit-ts-built
 	rm -rf web/wasm-web web/wasm-nodejs
-	rm -rf integration-kits/ts/node_modules examples/ts-ascii-art/node_modules
+	rm -rf integration-kits/ts/node_modules integration-kits/ts/dist examples/ts-ascii-art/node_modules
 	rm -rf integration-kits/ts/wasm
 	rm -f examples/*-ascii-art/*.db
 	@if [ -d $(BLOSSOM_DIR) ]; then $(MAKE) -C $(BLOSSOM_DIR) clean; fi

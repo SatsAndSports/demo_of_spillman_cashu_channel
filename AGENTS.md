@@ -1,3 +1,5 @@
+Don't make any changes to git, unless the user explicitly directs you to
+
 # Agent Context for Spilman Channels
 
 This document provides context for AI coding assistants working on this codebase.

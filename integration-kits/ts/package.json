@@ -4,10 +4,11 @@
   "description": "Spilman channel management kit for Express",
   "type": "module",
   "scripts": {
+    "build": "tsc",
     "server": "tsx src/example_server.ts"
   },
   "exports": {
-    ".": "./src/index.js",
+    ".": "./dist/index.js",
     "./wasm": "./wasm/cdk_wasm.js"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ export interface ChannelFundingData {
   fundingProofsJson: string;
   channelSecret: string;
   keysetInfoJson: string;
+  secretKey?: string;  // Server's secret key at funding time (for key rotation)
 }
 
 export interface ChannelBalance {
@@ -269,7 +270,8 @@ export interface ChannelStatus {
 export function getChannelStatus(
   channelId: string,
   pricing: PricingTable,
-  stores: SpilmanStores
+  stores: SpilmanStores,
+  pricingScale: number = 1
 ): ChannelStatus {
   const funding = stores.channelFunding.get(channelId);
   if (!funding) {
@@ -282,12 +284,14 @@ export function getChannelStatus(
   const closedData = stores.channelClosed.get(channelId);
 
   const unitPricing = pricing[params.unit];
-  let amountDue = 0;
+  let total = 0;
   if (unitPricing) {
     for (const [varName, price] of Object.entries(unitPricing.variables)) {
-      amountDue += (usage[varName] ?? 0) * price;
+      total += (usage[varName] ?? 0) * price;
     }
   }
+  const scale = pricingScale > 0 ? pricingScale : 1;
+  const amountDue = Math.ceil(total / scale);
 
   return {
     channel_id: channelId,

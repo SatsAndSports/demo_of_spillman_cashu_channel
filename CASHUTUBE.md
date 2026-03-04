@@ -67,10 +67,13 @@ The server validates payments in order:
 ### 4. Pricing Formula
 
 ```
-cost = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000)
+cost = ceil((blobs * price.blobs + bytes * price.bytes) / pricing_scale)
 ```
 
-Where `megabytes = bytes / 1,000,000` (decimal, not binary).
+Both usage counters and price values are integers. Use `pricing_scale` to express
+fractional prices without floats.
+To price per gigabyte, set `price.bytes = price_per_gb * pricing_scale / 1_000_000_000`
+(must be an integer).
 
 ## Server Configuration
 
@@ -79,21 +82,30 @@ Add to `config.yml`:
 ```yaml
 channel:
   enabled: true
-  secretKey: "your-64-char-hex-secret-key"  # Charlie's private key
-  approvedMintsAndUnits:
-    http://localhost:3338:
-      - sat
-      - usd
-  pricing:
-    sat:
-      perRequestPpk: 500    # 0.5 sats per request
-      perMegabytePpk: 1000  # 1 sat per MB
-      minCapacity: 100      # minimum channel capacity
-    usd:
-      perRequestPpk: 100    # 0.1 cents per request
-      perMegabytePpk: 200   # 0.2 cents per MB
-      minCapacity: 10
-  minExpiryInSeconds: 3600  # 1 hour minimum locktime
+```
+
+Create `channel-config.yml`:
+
+```yaml
+enabled: true
+secretKey: "your-64-char-hex-secret-key"  # Charlie's private key
+mints:
+  http://localhost:3338:
+    - sat
+    - usd
+min_expiry_seconds: 3600  # 1 hour minimum locktime
+pricing_scale: 1000
+pricing:
+  sat:
+    min_capacity: 100
+    variables:
+      blobs: 500
+      bytes: 10
+  usd:
+    min_capacity: 10
+    variables:
+      blobs: 100
+      bytes: 2
 ```
 
 ## API Endpoints

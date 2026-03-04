@@ -7,6 +7,7 @@ export interface SpilmanHostOptions {
   mints: Record<string, string[]>;
   pricing: PricingTable;
   stores: SpilmanStores;
+  pricingScale?: number;
   refreshKeysets?: (mint: string) => Promise<void>;
   minExpirySeconds?: number;
 }
@@ -21,6 +22,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
   const { secretKeyHex, pricing, stores, refreshKeysets } = options;
   const receiverPubkey = getServerPubkey(secretKeyHex);
   const minExpirySeconds = options.minExpirySeconds ?? 3600;
+  const pricingScale = options.pricingScale && options.pricingScale > 0 ? options.pricingScale : 1;
 
   // Pre-normalize mint URLs in the trusted map
   const trustedMints: Record<string, string[]> = {};
@@ -69,6 +71,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
         fundingProofsJson,
         channelSecret,
         keysetInfoJson,
+        secretKey: secretKeyHex,
       });
       stores.channelBalance.update(channelId, Number(initialBalance), initialSignature);
     },
@@ -91,7 +94,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
         total += (acc + pend) * price;
       }
 
-      return BigInt(total);
+      return BigInt(Math.ceil(total / pricingScale));
     },
 
     recordPayment: (channelId: string, balance: number, signature: string, contextJson: string): void => {

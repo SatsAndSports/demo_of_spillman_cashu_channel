@@ -12,6 +12,7 @@ import { Spilman } from "./express.js";
 export interface SpilmanConfig {
   mints: Record<string, string[]>;
   min_expiry_seconds: number;
+  pricing_scale?: number;
   storage?: {
     type: "memory" | "sqlite";
     path?: string;
@@ -46,6 +47,10 @@ export class ConfigurableSpilman {
       if (entry.max_amount_per_output !== undefined) entry.maxAmountPerOutput = entry.max_amount_per_output;
     }
 
+    if (config.pricing_scale === undefined) {
+      config.pricing_scale = 1;
+    }
+
     // Initialize stores
     let stores: SpilmanStores;
     if (config.storage?.type === "sqlite" && config.storage.path) {
@@ -59,6 +64,7 @@ export class ConfigurableSpilman {
       mints: config.mints,
       pricing: config.pricing,
       stores,
+      pricingScale: config.pricing_scale,
       minExpirySeconds: config.min_expiry_seconds,
       refreshKeysets: async (mint: string) => {
         await fetchAndCacheKeysetsForMint(mint, config.pricing, stores.keysetCache);
@@ -75,6 +81,7 @@ export class ConfigurableSpilman {
       receiverPubkey,
       pricing: config.pricing,
       stores,
+      pricingScale: config.pricing_scale,
       getActivePricing: () => getActivePricing(config.pricing, stores.keysetCache),
     });
 

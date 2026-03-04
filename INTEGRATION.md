@@ -406,13 +406,14 @@ fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
 ### Pricing
 
 The bridge calls `get_amount_due(channel_id, context)` on every request to determine
-how much the client owes. The pricing model is entirely yours. A common formula:
+how much the client owes. The pricing model is entirely yours. A common linear model:
 
 ```
-amount_due = ceil((requests * perRequestPpk + megabytes * perMegabytePpk) / 1000)
+amount_due = ceil((usage["blobs"] * price["blobs"] + usage["bytes"] * price["bytes"]) / pricing_scale)
 ```
 
-Adapt the formula to your service's pricing model.
+Where `usage` counters and `price` values are integers and `pricing_scale` defaults to `1`.
+Use a larger scale (for example `1000`) to express fractional prices without floats.
 
 `ConfigurableHost` provides a ready-made linear pricing model driven by YAML — see the
 [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.

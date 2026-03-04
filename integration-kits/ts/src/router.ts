@@ -11,6 +11,7 @@ export interface ManagementRouterDeps {
   receiverPubkey: string;
   pricing: PricingTable;
   stores: SpilmanStores;
+  pricingScale?: number;
   getActivePricing?: () => PricingTable;
 }
 
@@ -78,6 +79,7 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
       receiver_pubkey: deps.receiverPubkey,
       pricing,
       mints_units_keysets: deps.stores.keysetCache.getMintsUnitsKeysets(),
+      pricing_scale: deps.pricingScale ?? 1,
       min_expiry_in_seconds: 3600,
     });
   });
@@ -85,7 +87,7 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
   router.get("/:id/status", (req, res) => {
     const channelId = req.params.id;
     try {
-      const status = getChannelStatus(channelId, deps.pricing, deps.stores);
+      const status = getChannelStatus(channelId, deps.pricing, deps.stores, deps.pricingScale ?? 1);
       res.json(status);
     } catch (e) {
       const message = (e as Error).message;
