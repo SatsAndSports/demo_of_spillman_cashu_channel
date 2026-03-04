@@ -247,7 +247,9 @@ func (s *memoryStores) GetActiveUnits() map[string]struct{} {
 }
 
 type sqliteStores struct {
-	db *sql.DB
+	db           *sql.DB
+	fundingCache map[string]*ChannelFundingData
+	mu           sync.RWMutex
 }
 
 func NewSqliteStores(dbPath string) (SpilmanStores, error) {
@@ -285,10 +287,28 @@ func NewSqliteStores(dbPath string) (SpilmanStores, error) {
 		return nil, err
 	}
 
-	return &sqliteStores{db: db}, nil
+	return &sqliteStores{
+		db:           db,
+		fundingCache: make(map[string]*ChannelFundingData),
+	}, nil
 }
 
 func (s *sqliteStores) GetFunding(id string) (*ChannelFundingData, bool) {
+	s.mu.RLock()
+	if d, ok := s.fundingCache[id]; ok {
+		s.mu.RUnlock()
+		return d, true
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double check
+	if d, ok := s.fundingCache[id]; ok {
+		return d, true
+	}
+
 	var f string
 	err := s.db.QueryRow("SELECT funding_json FROM spilman_channels WHERE channel_id = ?", id).Scan(&f)
 	if err != nil {
@@ -296,7 +316,11 @@ func (s *sqliteStores) GetFunding(id string) (*ChannelFundingData, bool) {
 	}
 	var d struct{ Params, Proofs, Secret, Keyset string }
 	json.Unmarshal([]byte(f), &d)
-	return &ChannelFundingData{ParamsJson: d.Params, FundingProofsJson: d.Proofs, ChannelSecret: d.Secret, KeysetInfoJson: d.Keyset}, true
+	res := &ChannelFundingData{ParamsJson: d.Params, FundingProofsJson: d.Proofs, ChannelSecret: d.Secret, KeysetInfoJson: d.Keyset}
+
+	s.fundingCache[id] = res
+
+	return res, true
 }
 
 func (s *sqliteStores) InsertFunding(id string, data ChannelFundingData) {
@@ -304,19 +328,43 @@ func (s *sqliteStores) InsertFunding(id string, data ChannelFundingData) {
 		Params: data.ParamsJson, Proofs: data.FundingProofsJson, Secret: data.ChannelSecret, Keyset: data.KeysetInfoJson,
 	}
 	b, _ := json.Marshal(d)
-	s.db.Exec("INSERT INTO spilman_channels (channel_id, funding_json) VALUES (?, ?) ON CONFLICT DO NOTHING", id, string(b))
+	res, _ := s.db.Exec("INSERT INTO spilman_channels (channel_id, funding_json) VALUES (?, ?) ON CONFLICT DO NOTHING", id, string(b))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if res != nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			s.fundingCache[id] = &data
+			return
+		}
+	}
+	// If conflict occurred or error, invalidate cache so next Get gets the truth from DB
+	delete(s.fundingCache, id)
 }
 
 func (s *sqliteStores) AllFunding() map[string]ChannelFundingData {
 	rows, _ := s.db.Query("SELECT channel_id, funding_json FROM spilman_channels")
+	if rows == nil {
+		return make(map[string]ChannelFundingData)
+	}
 	defer rows.Close()
 	res := make(map[string]ChannelFundingData)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for rows.Next() {
 		var id, f string
 		rows.Scan(&id, &f)
 		var d struct{ Params, Proofs, Secret, Keyset string }
 		json.Unmarshal([]byte(f), &d)
-		res[id] = ChannelFundingData{ParamsJson: d.Params, FundingProofsJson: d.Proofs, ChannelSecret: d.Secret, KeysetInfoJson: d.Keyset}
+		fd := ChannelFundingData{ParamsJson: d.Params, FundingProofsJson: d.Proofs, ChannelSecret: d.Secret, KeysetInfoJson: d.Keyset}
+		res[id] = fd
+
+		// Populate cache
+		cached := fd
+		s.fundingCache[id] = &cached
 	}
 	return res
 }
@@ -387,6 +435,10 @@ func (s *sqliteStores) IsClosed(id string) bool {
 func (s *sqliteStores) MarkClosed(id string, data ClosedData) {
 	b, _ := json.Marshal(data)
 	s.db.Exec("UPDATE spilman_channels SET state = 'Closed', closed_json = ?, closing_json = NULL WHERE channel_id = ? AND state != 'Closed'", string(b), id)
+
+	s.mu.Lock()
+	delete(s.fundingCache, id)
+	s.mu.Unlock()
 }
 
 func (s *sqliteStores) GetClosedData(id string) (*ClosedData, bool) {

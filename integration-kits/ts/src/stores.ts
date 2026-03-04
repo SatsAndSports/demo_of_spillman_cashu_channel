@@ -261,6 +261,7 @@ export interface ChannelStatus {
   balance: number;
   usage: UsageMap;
   amount_due: number;
+  chars_served: number;
   closed: boolean;
   closed_amount?: number;
 }

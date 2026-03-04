@@ -14,6 +14,7 @@ import {
 
 export function createSqliteStores(dbPath: string): SpilmanStores {
   const db = new Database(dbPath);
+  const fundingCache = new Map<string, ChannelFundingData>();
 
   // Initialize schema
   db.exec(`
@@ -44,16 +45,21 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
 
   const channelFunding: ChannelFundingStore = {
     get(channelId) {
+      const cached = fundingCache.get(channelId);
+      if (cached) return cached;
+
       const row = db.prepare("SELECT funding_json FROM spilman_channels WHERE channel_id = ?").get(channelId) as any;
       if (!row) return null;
       try {
         const data = JSON.parse(row.funding_json);
-        return {
+        const funding = {
           paramsJson: data.params_json,
           fundingProofsJson: data.funding_proofs_json,
           channelSecret: data.channel_secret_hex,
           keysetInfoJson: data.keyset_info_json,
         };
+        fundingCache.set(channelId, funding);
+        return funding;
       } catch {
         return null;
       }
@@ -65,7 +71,13 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
         channel_secret_hex: data.channelSecret,
         keyset_info_json: data.keysetInfoJson,
       });
-      db.prepare("INSERT INTO spilman_channels (channel_id, funding_json) VALUES (?, ?) ON CONFLICT DO NOTHING").run(channelId, json);
+      const result = db.prepare("INSERT INTO spilman_channels (channel_id, funding_json) VALUES (?, ?) ON CONFLICT DO NOTHING").run(channelId, json);
+      if (result.changes > 0) {
+        fundingCache.set(channelId, data);
+      } else {
+        // Conflict occurred. Invalidate cache to be safe
+        fundingCache.delete(channelId);
+      }
     },
     all() {
       const rows = db.prepare("SELECT channel_id, funding_json FROM spilman_channels").all() as any[];
@@ -73,12 +85,14 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       for (const row of rows) {
         try {
           const data = JSON.parse(row.funding_json);
-          map.set(row.channel_id, {
+          const fd = {
             paramsJson: data.params_json,
             fundingProofsJson: data.funding_proofs_json,
             channelSecret: data.channel_secret_hex,
             keysetInfoJson: data.keyset_info_json,
-          });
+          };
+          map.set(row.channel_id, fd);
+          fundingCache.set(row.channel_id, fd);
         } catch {}
       }
       return map;
@@ -165,6 +179,7 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
         sender_proofs_json: senderProofsJson,
       });
       db.prepare("UPDATE spilman_channels SET state = 'Closed', closed_json = ?, closing_json = NULL WHERE channel_id = ? AND state != 'Closed'").run(json, channelId);
+      fundingCache.delete(channelId);
     },
     get(channelId) {
       const row = db.prepare("SELECT closed_json FROM spilman_channels WHERE channel_id = ? AND state = 'Closed'").get(channelId) as any;
