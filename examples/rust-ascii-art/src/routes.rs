@@ -116,13 +116,14 @@ async fn post_ascii(
                         .map(String::from)
                 })
                 .unwrap_or_else(|| "sat".to_string());
+            let scale = state.host.pricing_scale();
             let cost = state
                 .host
                 .config()
                 .pricing
                 .get(&unit)
                 .and_then(|p| p.variables.get("chars"))
-                .map(|&price| (body.message.len() as u64) * price)
+                .map(|&price| ((body.message.len() as u64) * price).div_ceil(scale))
                 .unwrap_or(body.message.len() as u64);
 
             let art = state

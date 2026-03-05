@@ -7,8 +7,11 @@
 //! The amount due for a channel is computed as a **linear combination**:
 //!
 //! ```text
-//! amount_due = sum_over_var(accumulated[var] * price_per_unit[var])
+//! amount_due = ceil(sum_over_var(accumulated[var] * price_per_unit[var]) / pricing_scale)
 //! ```
+//!
+//! `pricing_scale` (default 1) lets you define prices with sub-unit precision.
+//! For example, `pricing_scale: 1000` with `bytes: 1` means 0.001 sat per byte.
 //!
 //! The context JSON passed to [`SpilmanHost::get_amount_due`] and
 //! [`SpilmanHost::record_payment`] contains the increments for each variable,
@@ -29,6 +32,9 @@
 //! # storage:
 //! #   type: sqlite
 //! #   path: "./spilman.db"
+//!
+//! # Optional scaling divisor (default 1).
+//! # pricing_scale: 1000
 //!
 //! pricing:
 //!   sat:
@@ -109,6 +115,14 @@ pub struct ConfigurableHostConfig {
     #[serde(default = "default_min_expiry")]
     pub min_expiry_seconds: u64,
 
+    /// Scaling divisor for the pricing linear combination.
+    ///
+    /// The amount due is `ceil(raw_total / pricing_scale)`.  Defaults to 1
+    /// (no scaling).  Use a larger value to express sub-unit prices —
+    /// e.g. `pricing_scale: 1000` with `bytes: 1` means 0.001 sat per byte.
+    #[serde(default = "default_pricing_scale")]
+    pub pricing_scale: u64,
+
     /// Storage backend. Defaults to in-memory if omitted.
     #[serde(default)]
     pub storage: StorageConfig,
@@ -119,6 +133,10 @@ pub struct ConfigurableHostConfig {
 
 fn default_min_expiry() -> u64 {
     3600
+}
+
+fn default_pricing_scale() -> u64 {
+    1
 }
 
 impl ConfigurableHostConfig {
@@ -941,6 +959,11 @@ impl ConfigurableHost {
         &self.config
     }
 
+    /// The pricing scale divisor (always >= 1).
+    pub fn pricing_scale(&self) -> u64 {
+        self.config.pricing_scale.max(1)
+    }
+
     /// The trusted mints and their accepted units.
     pub fn mints(&self) -> &HashMap<String, Vec<String>> {
         &self.config.mints
@@ -1033,7 +1056,10 @@ impl ConfigurableHost {
             let pend = pending.get(var_name).copied().unwrap_or(0);
             total = total.saturating_add((acc + pend).saturating_mul(price));
         }
-        total
+
+        // Apply pricing scale: ceil(total / scale).
+        let scale = self.pricing_scale();
+        total.div_ceil(scale)
     }
 
     /// Apply usage increments from context to the accumulated store.
@@ -1580,6 +1606,67 @@ pricing:
         let ctx = serde_json::json!({"chars": 10, "requests": 1}).to_string();
         // 10*1000 + 1*5000 = 15000 msat
         assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 15_000);
+    }
+
+    #[test]
+    fn test_pricing_scale_divides_amount_due() {
+        let yaml = r#"
+mints:
+  "http://localhost:3338": [sat]
+pricing_scale: 1000
+pricing:
+  sat:
+    min_capacity: 1
+    variables:
+      bytes: 1
+"#;
+        let host = ConfigurableHost::from_yaml(yaml, TEST_SECRET_KEY).unwrap();
+        assert_eq!(host.pricing_scale(), 1000);
+
+        seed_channel(&host, "ch1", "sat");
+
+        // 500 bytes * 1 = 500; ceil(500 / 1000) = 1
+        let ctx = serde_json::json!({"bytes": 500}).to_string();
+        assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 1);
+
+        // 1000 bytes * 1 = 1000; ceil(1000 / 1000) = 1
+        let ctx = serde_json::json!({"bytes": 1000}).to_string();
+        assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 1);
+
+        // 1001 bytes * 1 = 1001; ceil(1001 / 1000) = 2
+        let ctx = serde_json::json!({"bytes": 1001}).to_string();
+        assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 2);
+
+        // 0 bytes -> 0
+        let ctx = serde_json::json!({"bytes": 0}).to_string();
+        assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 0);
+    }
+
+    #[test]
+    fn test_pricing_scale_defaults_to_one() {
+        let host = make_host();
+        assert_eq!(host.pricing_scale(), 1);
+    }
+
+    #[test]
+    fn test_pricing_scale_zero_treated_as_one() {
+        let yaml = r#"
+mints:
+  "http://localhost:3338": [sat]
+pricing_scale: 0
+pricing:
+  sat:
+    min_capacity: 1
+    variables:
+      chars: 1
+"#;
+        let host = ConfigurableHost::from_yaml(yaml, TEST_SECRET_KEY).unwrap();
+        // pricing_scale=0 is clamped to 1
+        assert_eq!(host.pricing_scale(), 1);
+
+        seed_channel(&host, "ch1", "sat");
+        let ctx = serde_json::json!({"chars": 10}).to_string();
+        assert_eq!(host.get_amount_due("ch1", Some(&ctx)), 10);
     }
 
     #[test]

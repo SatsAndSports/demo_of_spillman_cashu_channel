@@ -135,13 +135,18 @@ impl TestContext {
         &self.client.base_url
     }
 
-    /// Get price per character for a unit
+    /// Get price per character for a unit (raw, before scaling).
     pub fn get_price_per_char(&self, unit: &str) -> u64 {
         self.server_params
             .pricing
             .get(unit)
-            .map(|p| p.per_char)
+            .and_then(|p| p.variables.get("chars").copied())
             .unwrap_or(1)
+    }
+
+    /// Get the pricing scale divisor.
+    pub fn pricing_scale(&self) -> u64 {
+        self.server_params.pricing_scale.max(1)
     }
 
     /// Get minimum capacity for a unit
@@ -153,9 +158,10 @@ impl TestContext {
             .unwrap_or(10)
     }
 
-    /// Calculate amount due for characters served
+    /// Calculate amount due for characters served: ceil(chars * price / scale).
     pub fn get_amount_due(&self, chars_served: u64, unit: &str) -> u64 {
-        chars_served * self.get_price_per_char(unit)
+        let raw = chars_served * self.get_price_per_char(unit);
+        raw.div_ceil(self.pricing_scale())
     }
 
     /// Mint a funded channel with default options

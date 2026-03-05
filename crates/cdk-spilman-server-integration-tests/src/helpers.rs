@@ -55,16 +55,22 @@ pub struct ServerChannelParams {
     pub pricing: BTreeMap<String, UnitPricing>,
     pub mints_units_keysets: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     pub min_expiry_in_seconds: u64,
+    #[serde(default = "default_pricing_scale")]
+    pub pricing_scale: u64,
+}
+
+fn default_pricing_scale() -> u64 {
+    1
 }
 
 /// Pricing info for a unit
 #[derive(Debug, Clone, Deserialize)]
 pub struct UnitPricing {
-    pub per_char: u64,
-    #[serde(rename = "minCapacity")]
     pub min_capacity: u64,
-    #[serde(rename = "maxAmountPerOutput")]
+    #[serde(default)]
     pub max_amount_per_output: Option<u64>,
+    #[serde(default)]
+    pub variables: BTreeMap<String, u64>,
 }
 
 /// Response from fetchAsciiArt

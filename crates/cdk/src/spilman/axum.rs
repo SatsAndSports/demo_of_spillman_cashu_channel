@@ -157,13 +157,12 @@ where
     let pricing_json: serde_json::Value = active_pricing
         .iter()
         .map(|(unit, cfg)| {
-            let per_char = cfg.variables.get("chars").copied().unwrap_or(0);
             let mut obj = serde_json::json!({
-                "per_char": per_char,
-                "minCapacity": cfg.min_capacity,
+                "min_capacity": cfg.min_capacity,
+                "variables": cfg.variables,
             });
             if let Some(max) = cfg.max_amount_per_output {
-                obj["maxAmountPerOutput"] = serde_json::json!(max);
+                obj["max_amount_per_output"] = serde_json::json!(max);
             }
             (unit.clone(), obj)
         })
@@ -172,6 +171,7 @@ where
     Json(serde_json::json!({
         "receiver_pubkey": s.host.server_pubkey().to_hex(),
         "pricing": pricing_json,
+        "pricing_scale": s.host.pricing_scale(),
         "mints_units_keysets": s.host.get_mints_units_keysets(),
         "min_expiry_in_seconds": s.host.config().min_expiry_seconds,
     }))

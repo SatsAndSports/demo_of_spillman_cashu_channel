@@ -64,7 +64,7 @@ mod channel_params {
             .pricing
             .get("sat")
             .expect("sat pricing required");
-        assert!(sat_pricing.per_char > 0);
+        assert!(!sat_pricing.variables.is_empty(), "sat should have pricing variables");
         assert!(sat_pricing.min_capacity > 0);
 
         // Check msat pricing (CDK dev mint has msat keysets)

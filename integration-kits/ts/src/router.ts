@@ -58,21 +58,19 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
 
   router.get("/params", (_req, res) => {
     const rawPricing = deps.getActivePricing ? deps.getActivePricing() : deps.pricing;
-    
-    // Compatibility layer: include per_char if chars variable exists
+
+    // Emit each pricing entry with snake_case fields only.
     const pricing: Record<string, any> = {};
     for (const [unit, entry] of Object.entries(rawPricing)) {
-      const min_cap = entry.min_capacity ?? entry.minCapacity;
-      const max_output = entry.max_amount_per_output ?? entry.maxAmountPerOutput;
-      
-      pricing[unit] = {
-        ...entry,
-        min_capacity: min_cap,
-        minCapacity: min_cap, // For Rust test client
-        max_amount_per_output: max_output,
-        maxAmountPerOutput: max_output,
-        per_char: entry.variables?.chars ?? 0
+      const obj: Record<string, any> = {
+        min_capacity: entry.min_capacity ?? entry.minCapacity ?? 0,
+        variables: entry.variables ?? {},
       };
+      const maxOutput = entry.max_amount_per_output ?? entry.maxAmountPerOutput;
+      if (maxOutput !== undefined) {
+        obj.max_amount_per_output = maxOutput;
+      }
+      pricing[unit] = obj;
     }
 
     res.json({
