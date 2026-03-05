@@ -2084,6 +2084,14 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     assert!(!receiver.is_empty(), "Receiver should get proofs (balance > 0)");
     println!("✓ Receiver got {} proofs, sender got {} proofs", receiver.len(), sender.len());
 
+    // Verify all receiver proofs have P2PK witness signatures
+    for (i, proof) in receiver.iter().enumerate() {
+        let witness = proof.get("witness");
+        assert!(witness.is_some() && !witness.unwrap().is_null(),
+            "Receiver proof {} should have P2PK witness signature", i);
+    }
+    println!("✓ All receiver proofs have P2PK witness signatures");
+
     // Verify the close returned sensible values
     assert_eq!(success.channel_id, channel_id);
     assert!(success.total_value > 0);
@@ -2394,6 +2402,14 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     assert!(!receiver.is_empty(), "Receiver should get proofs");
     println!("✓ Receiver got {} proofs, sender got {} proofs", receiver.len(), sender.len());
 
+    // Verify all receiver proofs have P2PK witness signatures
+    for (i, proof) in receiver.iter().enumerate() {
+        let witness = proof.get("witness");
+        assert!(witness.is_some() && !witness.unwrap().is_null(),
+            "Receiver proof {} should have P2PK witness signature", i);
+    }
+    println!("✓ All receiver proofs have P2PK witness signatures");
+
     assert_eq!(success.channel_id, channel_id);
     assert!(success.total_value > 0);
     assert!(success.receiver_sum > 0);
@@ -2601,6 +2617,363 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
         .await
         .expect("prepare send");
     let _token = prepared.confirm(None).await.expect("confirm send");
+}
+
+// ========================================================================
+// Shared test infrastructure for overpayment/close balance tests
+// ========================================================================
+
+mod close_balance_tests {
+    use super::*;
+    use super::super::bindings;
+    use super::super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use crate::util::unix_time;
+    use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    /// SpilmanHost mock where amount_due can differ from the latest payment balance.
+    pub(super) struct OverpaymentTestHost {
+        pub mint: Arc<crate::mint::Mint>,
+        keyset_id: Id,
+        keyset_infos: HashMap<Id, String>,
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        pub channel_state: RefCell<ChannelState>,
+        closing_data: RefCell<Option<ClosingData>>,
+        stored_payment: RefCell<Option<PaymentProof>>,
+        amount_due: Cell<u64>,
+        charlie_secret_hex: String,
+        pub swap_call_count: Cell<u32>,
+        pub closed_data: RefCell<Option<(u64, u64, String, String)>>,
+    }
+
+    impl SpilmanHost<String> for OverpaymentTestHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool { true }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool { true }
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data.lock().unwrap().get(channel_id).cloned()
+                .map(|(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                    ChannelFunding { params_json, funding_proofs_json, channel_secret_hex, keyset_info_json }
+                })
+        }
+        fn save_funding(&self, channel_id: &str, funding: ChannelFunding, _initial_payment: PaymentProof) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (funding.params_json, funding.funding_proofs_json, funding.channel_secret_hex, funding.keyset_info_json),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
+            self.amount_due.get()
+        }
+        fn record_payment(&self, _channel_id: &str, payment: PaymentProof, _context_json: &String) {
+            *self.stored_payment.borrow_mut() = Some(payment);
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            self.channel_state.borrow().clone()
+        }
+        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.stored_payment.borrow_mut() = Some(payment.clone());
+            *self.closing_data.borrow_mut() = Some(ClosingData {
+                locktime, balance: payment.balance, signature: payment.signature,
+            });
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            self.closing_data.borrow().clone()
+        }
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
+        }
+        fn now_seconds(&self) -> u64 { unix_time() }
+        fn get_balance_and_signature_for_unilateral_exit(&self, _channel_id: &str) -> Option<PaymentProof> {
+            self.stored_payment.borrow().clone()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
+            vec![self.keyset_id]
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn mark_channel_closed(&self, _channel_id: &str, _locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closed;
+            *self.closed_data.borrow_mut() = Some((balance, receiver_sum + sender_sum, receiver_proofs_json.to_string(), sender_proofs_json.to_string()));
+            Ok(())
+        }
+        fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, alice_pubkey_hex)
+        }
+        fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
+            bindings::sign_with_tweaked_key_util(&self.charlie_secret_hex, message_hex, tweak_scalar_hex)
+        }
+    }
+
+    impl SpilmanNetworking for OverpaymentTestHost {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> { Ok(()) }
+        fn call_mint_swap(&self, _mint_url: &str, swap_request_json: &str) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            let swap_request: cdk_common::nuts::SwapRequest = serde_json::from_str(swap_request_json)
+                .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+    }
+
+    fn keyset_info_json_from_mint(mint: &crate::mint::Mint, keyset_id: Id) -> String {
+        let pubkeys = mint.keyset_pubkeys(&keyset_id).expect("keyset pubkeys");
+        let keyset = pubkeys.keysets.first().expect("keyset");
+        let keys = &keyset.keys;
+        let fee_ppk = mint.keysets().keysets.iter().find(|k| k.id == keyset_id).expect("keyset info").input_fee_ppk;
+        serde_json::json!({
+            "keysetId": keyset_id.to_string(),
+            "unit": "sat",
+            "inputFeePpk": fee_ppk,
+            "keys": keys.iter().map(|(amt, pk)| (u64::from(*amt).to_string(), pk.to_hex())).collect::<HashMap<String, String>>()
+        }).to_string()
+    }
+
+    /// Everything needed by the cooperative and unilateral close tests.
+    pub(super) struct OverpaymentScenario {
+        pub bridge: SpilmanBridge<OverpaymentTestHost, String>,
+        pub shared_mint: Arc<crate::mint::Mint>,
+        pub channel_id: String,
+        pub overpayment_balance: u64,
+        pub amount_due: u64,
+        pub close_signature: String,  // signature for amount_due (used by cooperative close)
+    }
+
+    /// Set up a channel where the latest payment (50) exceeds the amount_due (10).
+    pub(super) async fn setup_overpayment_scenario() -> OverpaymentScenario {
+        let shared_mint = Arc::new(crate::test_helpers::mint::create_test_mint().await.unwrap());
+
+        let keyset_id = shared_mint.get_active_keysets().get(&CurrencyUnit::Sat).cloned().expect("SAT keyset");
+        let keyset_info_json = keyset_info_json_from_mint(&shared_mint, keyset_id);
+        let keyset_keys: Keys = {
+            let pubkeys = shared_mint.keyset_pubkeys(&keyset_id).unwrap();
+            pubkeys.keysets.first().unwrap().keys.clone()
+        };
+        let fee_ppk = shared_mint.keysets().keysets.iter().find(|k| k.id == keyset_id).unwrap().input_fee_ppk;
+
+        let alice_secret = SecretKey::generate();
+        let alice_pubkey = alice_secret.public_key();
+        let charlie_secret = SecretKey::generate();
+        let charlie_pubkey = charlie_secret.public_key();
+
+        let mint_amount = 200u64;
+        let input_proofs = crate::test_helpers::mint::mint_test_proofs(&shared_mint, Amount::from(mint_amount)).await.expect("mint proofs");
+        let num_inputs = input_proofs.len() as u64;
+        let actual_fee = (fee_ppk * num_inputs).div_ceil(1000);
+        let actual_funding = mint_amount - actual_fee;
+
+        let capacity = 100u64;
+        let locktime = unix_time() + 7200;
+        let keyset_info = super::KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys.clone(), fee_ppk, None);
+
+        let params = ChannelParameters::new_with_secret_key(
+            alice_pubkey, charlie_pubkey,
+            "http://localhost:3338".to_string(), CurrencyUnit::Sat,
+            capacity, actual_funding, locktime, unix_time(),
+            format!("overpayment-test-{}", unix_time()),
+            keyset_info.clone(), 64, &alice_secret,
+        ).expect("channel params");
+        let channel_id = params.get_channel_id();
+        let channel_secret = params.channel_secret;
+
+        println!("Channel: capacity={}, funding={}", capacity, actual_funding);
+
+        let funding_outputs = DeterministicOutputsForOneContext::new("funding".to_string(), actual_funding, params.clone()).expect("funding outputs");
+        let funding_messages = funding_outputs.get_blinded_messages(None).expect("blinded messages");
+        let swap_request = cdk_common::nuts::SwapRequest::new(input_proofs.clone(), funding_messages);
+        let swap_response = shared_mint.process_swap_request(swap_request).await.expect("funding swap");
+
+        let swb = funding_outputs.get_secrets_with_blinding().expect("secrets");
+        let blinding_factors: Vec<SecretKey> = swb.iter().map(|s| s.blinding_factor.clone()).collect();
+        let secrets: Vec<crate::secret::Secret> = swb.iter().map(|s| s.secret.clone()).collect();
+        let funding_proofs = cdk_common::dhke::construct_proofs(swap_response.signatures, blinding_factors, secrets, &keyset_keys).expect("construct proofs");
+
+        let channel = super::super::EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("established channel");
+        let sender = super::super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+
+        let overpayment_balance = 50u64;
+        let (overpay_update, _) = sender.create_signed_balance_update(overpayment_balance).unwrap();
+
+        let amount_due = 10u64;
+        let (close_update, _) = sender.create_signed_balance_update(amount_due).unwrap();
+
+        println!("Overpayment balance: {}, amount_due: {}", overpayment_balance, amount_due);
+
+        let params_json = params.get_channel_id_params_json();
+        let funding_proofs_json = serde_json::to_string(&funding_proofs).unwrap();
+        let channel_secret_hex = crate::util::hex::encode(channel_secret);
+
+        let mut keyset_infos = HashMap::new();
+        keyset_infos.insert(keyset_id, keyset_info_json.clone());
+
+        let mut funding_data_map = HashMap::new();
+        funding_data_map.insert(channel_id.clone(), (
+            params_json.clone(), funding_proofs_json.clone(),
+            channel_secret_hex.clone(), keyset_info_json.clone(),
+        ));
+
+        let host = OverpaymentTestHost {
+            mint: Arc::clone(&shared_mint),
+            keyset_id,
+            keyset_infos,
+            funding_data: Mutex::new(funding_data_map),
+            channel_state: RefCell::new(ChannelState::Open),
+            closing_data: RefCell::new(None),
+            stored_payment: RefCell::new(Some(PaymentProof {
+                balance: overpayment_balance,
+                signature: overpay_update.signature.to_string(),
+            })),
+            amount_due: Cell::new(amount_due),
+            charlie_secret_hex: charlie_secret.to_secret_hex(),
+            swap_call_count: Cell::new(0),
+            closed_data: RefCell::new(None),
+        };
+
+        let bridge = SpilmanBridge::new(host);
+
+        OverpaymentScenario {
+            bridge,
+            shared_mint,
+            channel_id,
+            overpayment_balance,
+            amount_due,
+            close_signature: close_update.signature.to_string(),
+        }
+    }
+
+    /// Verify receiver proofs have P2PK witnesses and are spendable via wallet.receive_proofs().
+    pub(super) async fn verify_receiver_proofs_spendable(
+        receiver_proofs_json: &str,
+        shared_mint: &Arc<crate::mint::Mint>,
+    ) -> Amount {
+        // Verify all receiver proofs have P2PK witness signatures
+        let receiver_proofs: Vec<serde_json::Value> = serde_json::from_str(receiver_proofs_json)
+            .expect("receiver proofs should be valid JSON");
+        assert!(!receiver_proofs.is_empty(), "Receiver should get proofs");
+        for (i, proof) in receiver_proofs.iter().enumerate() {
+            let witness = proof.get("witness");
+            assert!(witness.is_some() && !witness.unwrap().is_null(),
+                "Receiver proof {} should have P2PK witness signature", i);
+        }
+        println!("✓ All {} receiver proofs have P2PK witness signatures", receiver_proofs.len());
+
+        // Verify receiver proofs are spendable via wallet.receive_proofs()
+        let typed_receiver_proofs: Vec<cdk_common::nuts::Proof> = serde_json::from_str(receiver_proofs_json)
+            .expect("parse receiver proofs as typed");
+
+        let connector = super::DirectMintConnection::new((**shared_mint).clone());
+        let store = Arc::new(memory::empty().await.expect("wallet store"));
+        let seed = random::<[u8; 64]>();
+        let wallet = WalletBuilder::new()
+            .mint_url("http://localhost:3338".parse().unwrap())
+            .unit(CurrencyUnit::Sat)
+            .localstore(store)
+            .seed(seed)
+            .client(connector)
+            .build()
+            .expect("wallet build");
+
+        let received_amount = wallet
+            .receive_proofs(typed_receiver_proofs, ReceiveOptions::default(), None, None)
+            .await
+            .expect("wallet should accept signed receiver proofs");
+        assert!(received_amount > Amount::ZERO, "Wallet should receive value from signed proofs");
+        println!("✓ Wallet received {} sats from signed receiver proofs", u64::from(received_amount));
+        received_amount
+    }
+}
+
+/// Test: Cooperative close with overpayment — verifies the Closing→Closed transition
+/// uses the amount_due (from closing_data), not the latest payment balance.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cooperative_close_with_overpayment() {
+    use super::bridge::ChannelState;
+
+    let s = close_balance_tests::setup_overpayment_scenario().await;
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.amount_due,
+        "signature": s.close_signature,
+    }).to_string();
+
+    println!("Executing cooperative close with balance={} (overpayment was {})...", s.amount_due, s.overpayment_balance);
+    let result = s.bridge.execute_cooperative_close(&payment_json, s.bridge.host());
+
+    let success = result.expect("Cooperative close should succeed");
+    println!("Close succeeded: total={}, receiver={}, sender={}", success.total_value, success.receiver_sum, success.sender_sum);
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 1, "Should call mint swap exactly once");
+    assert!(matches!(*s.bridge.host().channel_state.borrow(), ChannelState::Closed));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
+        closed.as_ref().expect("mark_channel_closed should have been called");
+
+    // Key assertion: closed balance is amount_due (10), NOT overpayment (50)
+    assert_eq!(*closed_balance, s.amount_due,
+        "Closed balance should be amount_due ({}), not overpayment ({})", s.amount_due, s.overpayment_balance);
+    println!("✓ Closed balance = {} (correct, not {})", closed_balance, s.overpayment_balance);
+
+    // Receiver sum should be consistent with balance=10
+    assert!(success.receiver_sum > 0, "Receiver should get proofs");
+    assert!(success.receiver_sum < 20, "Receiver sum ({}) should be close to amount_due ({})", success.receiver_sum, s.amount_due);
+    println!("✓ Receiver sum = {} (consistent with amount_due={})", success.receiver_sum, s.amount_due);
+
+    // Verify receiver proofs have valid P2PK witnesses and are spendable
+    close_balance_tests::verify_receiver_proofs_spendable(receiver_proofs_json, &s.shared_mint).await;
+
+    println!("✓ Cooperative close with overpayment PASSED!");
+}
+
+/// Test: Unilateral close uses the latest payment balance (not amount_due).
+///
+/// Setup: same as overpayment test — latest payment=50, amount_due=10.
+/// The unilateral close reads balance=50 from the balance store.
+/// We verify closed_balance == 50 (not 10) and proofs are spendable.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unilateral_close_uses_latest_payment_balance() {
+    use super::bridge::ChannelState;
+
+    let s = close_balance_tests::setup_overpayment_scenario().await;
+
+    println!("Executing unilateral close (latest payment={}, amount_due={})...", s.overpayment_balance, s.amount_due);
+    let result = s.bridge.execute_unilateral_close(&s.channel_id, s.bridge.host());
+
+    let success = result.expect("Unilateral close should succeed");
+    println!("Close succeeded: total={}, receiver={}, sender={}", success.total_value, success.receiver_sum, success.sender_sum);
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 1, "Should call mint swap exactly once");
+    assert!(matches!(*s.bridge.host().channel_state.borrow(), ChannelState::Closed));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
+        closed.as_ref().expect("mark_channel_closed should have been called");
+
+    // Key assertion: closed balance is the latest payment (50), NOT amount_due (10)
+    assert_eq!(*closed_balance, s.overpayment_balance,
+        "Closed balance should be latest payment ({}), not amount_due ({})", s.overpayment_balance, s.amount_due);
+    println!("✓ Closed balance = {} (correct, not {})", closed_balance, s.amount_due);
+
+    // Receiver sum should be consistent with balance=50
+    assert!(success.receiver_sum > 0, "Receiver should get proofs");
+    assert!(success.receiver_sum > 30, "Receiver sum ({}) should be close to overpayment ({})", success.receiver_sum, s.overpayment_balance);
+    println!("✓ Receiver sum = {} (consistent with overpayment={})", success.receiver_sum, s.overpayment_balance);
+
+    // Verify receiver proofs have valid P2PK witnesses and are spendable
+    close_balance_tests::verify_receiver_proofs_spendable(receiver_proofs_json, &s.shared_mint).await;
+
+    println!("✓ Unilateral close uses latest payment balance PASSED!");
 }
 
 /// Direct in-process connection to a mint (no HTTP)

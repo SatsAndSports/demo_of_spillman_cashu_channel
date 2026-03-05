@@ -144,6 +144,7 @@ For detailed information, see:
 - [Client-side Opening] the function that swaps an input token into a funding (compute_channel_from_token) should prefer to swap into an active keyset, even if the input token is from a stale keyset.
 - P2BK, follow the standard. Maybe include the ephemeral key *and* the signature
 - optional in-memory cache of the funding token
+- Maybe "unblind_and_verify_dleq (the FFI wrapper) " isn't used any more?
 
 ### Closing
 - it would be nice if the 'receiver_proofs_json' included the receiver's blinded signature, (and the p2pk_e?), to make it easy for non-P2BK wallets to accept them.

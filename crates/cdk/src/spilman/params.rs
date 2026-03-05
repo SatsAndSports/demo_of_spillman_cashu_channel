@@ -25,15 +25,15 @@ use std::str::FromStr;
 use super::deterministic::DeterministicSecretWithBlinding;
 use super::keysets_and_amounts::KeysetInfo;
 
-struct Stage2P2bkTweakInfo {
+pub(crate) struct Stage2P2bkTweakInfo {
     #[allow(dead_code)]
-    ephemeral_secret: SecretKey,
+    pub(crate) ephemeral_secret: SecretKey,
     #[allow(dead_code)]
-    ephemeral_pubkey: crate::nuts::PublicKey,
+    pub(crate) ephemeral_pubkey: crate::nuts::PublicKey,
     #[allow(dead_code)]
-    ephemeral_shared_secret_x: [u8; 32],
+    pub(crate) ephemeral_shared_secret_x: [u8; 32],
     #[allow(dead_code)]
-    stage2_tweak_scalar: Scalar,
+    pub(crate) stage2_tweak_scalar: Scalar,
 }
 
 /// Parameters for a Spilman payment channel
@@ -557,7 +557,7 @@ impl ChannelParameters {
     ///
     /// Uses the per-output ephemeral secret to compute a NUT-28 shared-secret tweak
     /// alongside the deterministic ephemeral key material for later metadata use.
-    fn derive_stage2_p2bk_tweak_info_for_output(
+    pub(crate) fn derive_stage2_p2bk_tweak_info_for_output(
         &self,
         context: &str,
         amount: u64,

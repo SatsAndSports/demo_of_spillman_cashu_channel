@@ -234,11 +234,20 @@ impl CloseData {
     }
 }
 
+/// A proof with its (amount, index) metadata from the commitment outputs
+#[derive(Debug)]
+pub struct ProofWithMeta {
+    pub proof: Proof,
+    pub amount: u64,
+    pub index: usize,
+    pub is_receiver: bool,
+}
+
 /// Result of unblinding and verifying stage 1 swap response
 #[derive(Debug)]
 pub struct UnblindResult {
-    pub receiver_proofs: Vec<Proof>,
-    pub sender_proofs: Vec<Proof>,
+    pub receiver_proofs: Vec<ProofWithMeta>,
+    pub sender_proofs: Vec<ProofWithMeta>,
     pub receiver_sum: u64,
     pub sender_sum: u64,
 }
@@ -599,10 +608,10 @@ pub fn unblind_and_verify_stage1_response(
                 return Err(BridgeError::ValidationFailed("Receiver proof locked to wrong pubkey".into()));
             }
             receiver_sum += u64::from(proof.amount);
-            receiver_proofs.push(proof);
+            receiver_proofs.push(ProofWithMeta { proof, amount, index, is_receiver: true });
         } else {
             sender_sum += u64::from(proof.amount);
-            sender_proofs.push(proof);
+            sender_proofs.push(ProofWithMeta { proof, amount, index, is_receiver: false });
         }
     }
 
@@ -648,7 +657,9 @@ pub fn unblind_and_verify_dleq(
     }
 
     let result = unblind_and_verify_stage1_response(blind_signatures, secrets_with_blinding, &params, &output_keyset_info, balance).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "receiver_proofs": result.receiver_proofs, "sender_proofs": result.sender_proofs, "receiver_sum_after_stage1": result.receiver_sum, "sender_sum_after_stage1": result.sender_sum }).to_string())
+    let receiver_proofs: Vec<&Proof> = result.receiver_proofs.iter().map(|pm| &pm.proof).collect();
+    let sender_proofs: Vec<&Proof> = result.sender_proofs.iter().map(|pm| &pm.proof).collect();
+    Ok(serde_json::json!({ "receiver_proofs": receiver_proofs, "sender_proofs": sender_proofs, "receiver_sum_after_stage1": result.receiver_sum, "sender_sum_after_stage1": result.sender_sum }).to_string())
 }
 
 impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
@@ -933,39 +944,99 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let p: serde_json::Value = serde_json::from_str(json).map_err(|e| ClosePreparationError::bad_request(e.to_string()))?;
         let channel_id = p["channel_id"].as_str().ok_or_else(|| ClosePreparationError::bad_request("Missing ID"))?.to_string();
         let close_data = self.validate_and_prepare_cooperative_close(json).map_err(ClosePreparationError::from_bridge_error)?;
+        let balance = p["balance"].as_u64().unwrap_or(0);
         let funding = self.host.get_funding(&channel_id).ok_or_else(|| ClosePreparationError::internal("Missing funding"))?;
-        let mint_url = serde_json::from_str::<serde_json::Value>(&funding.params_json).map_err(|e| ClosePreparationError::internal(e.to_string()))?["mint"].as_str().ok_or_else(|| ClosePreparationError::internal("Missing mint"))?.to_string();
-        Ok(PreparedClose { channel_id, balance: p["balance"].as_u64().unwrap_or(0), mint_url, swap_request: serde_json::to_value(&close_data.swap_request).unwrap_or(serde_json::Value::Null), secrets_with_blinding: close_data.secrets_with_blinding.iter().map(|(s, is_r)| serde_json::json!({ "secret": s.secret.to_string(), "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()), "amount": s.amount, "index": s.index, "is_receiver": is_r })).collect(), output_keyset_info: serde_json::to_value(&close_data.output_keyset_info).unwrap_or(serde_json::Value::Null), params_json: funding.params_json, keyset_info_json: funding.keyset_info_json, channel_secret: funding.channel_secret_hex })
+        Self::wrap_close_data(close_data, &channel_id, balance, funding)
     }
 
     pub fn prepare_unilateral_close_for_execution(&self, channel_id: &str) -> Result<PreparedClose, ClosePreparationError> {
         let close_data = self.create_unilateral_close_data(channel_id).map_err(ClosePreparationError::from_bridge_error)?;
         let funding = self.host.get_funding(channel_id).ok_or_else(|| ClosePreparationError::internal("Missing funding"))?;
         let p = self.host.get_balance_and_signature_for_unilateral_exit(channel_id).ok_or_else(|| ClosePreparationError::internal("Missing payment"))?;
+        Self::wrap_close_data(close_data, channel_id, p.balance, funding)
+    }
+
+    /// Prepare a close using explicit balance/signature (used by the unified Closing→Closed path).
+    fn prepare_close_for_closing_channel(&self, channel_id: &str, balance: u64, signature: &str) -> Result<PreparedClose, ClosePreparationError> {
+        let close_data = self.prepare_close_data(channel_id, balance, signature, None, None, false).map_err(ClosePreparationError::from_bridge_error)?;
+        let funding = self.host.get_funding(channel_id).ok_or_else(|| ClosePreparationError::internal("Missing funding"))?;
+        Self::wrap_close_data(close_data, channel_id, balance, funding)
+    }
+
+    /// Wrap a CloseData + funding into a PreparedClose struct.
+    fn wrap_close_data(close_data: CloseData, channel_id: &str, balance: u64, funding: ChannelFunding) -> Result<PreparedClose, ClosePreparationError> {
         let mint_url = serde_json::from_str::<serde_json::Value>(&funding.params_json).map_err(|e| ClosePreparationError::internal(e.to_string()))?["mint"].as_str().ok_or_else(|| ClosePreparationError::internal("Missing mint"))?.to_string();
-        Ok(PreparedClose { channel_id: channel_id.to_string(), balance: p.balance, mint_url, swap_request: serde_json::to_value(&close_data.swap_request).unwrap_or(serde_json::Value::Null), secrets_with_blinding: close_data.secrets_with_blinding.iter().map(|(s, is_r)| serde_json::json!({ "secret": s.secret.to_string(), "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()), "amount": s.amount, "index": s.index, "is_receiver": is_r })).collect(), output_keyset_info: serde_json::to_value(&close_data.output_keyset_info).unwrap_or(serde_json::Value::Null), params_json: funding.params_json, keyset_info_json: funding.keyset_info_json, channel_secret: funding.channel_secret_hex })
+        Ok(PreparedClose { channel_id: channel_id.to_string(), balance, mint_url, swap_request: serde_json::to_value(&close_data.swap_request).unwrap_or(serde_json::Value::Null), secrets_with_blinding: close_data.secrets_with_blinding.iter().map(|(s, is_r)| serde_json::json!({ "secret": s.secret.to_string(), "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()), "amount": s.amount, "index": s.index, "is_receiver": is_r })).collect(), output_keyset_info: serde_json::to_value(&close_data.output_keyset_info).unwrap_or(serde_json::Value::Null), params_json: funding.params_json, keyset_info_json: funding.keyset_info_json, channel_secret: funding.channel_secret_hex })
     }
 
     fn finalize_close(&self, channel_id: &str, locktime: u64, payment: PaymentProof, resp_json: &str, prep: &PreparedClose) -> Result<CloseSuccess, CloseError> {
+        use super::parse_keyset_info_from_json;
+        use crate::nuts::SecretKey;
+        use crate::secret::Secret;
+        use bitcoin::hashes::{sha256::Hash as Sha256Hash, Hash};
+
         let resp: serde_json::Value = serde_json::from_str(resp_json).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
-        let sigs = resp.get("signatures").ok_or_else(|| CloseError::UnblindFailed { reason: "Missing signatures".into(), status: 500 })?;
-        let unblind_json = unblind_and_verify_dleq(&sigs.to_string(), &prep.secrets_with_blinding.to_string(), &prep.params_json, &prep.keyset_info_json, &prep.channel_secret, payment.balance, Some(&prep.output_keyset_info.to_string())).map_err(CloseError::unblind_failed)?;
-        let res: serde_json::Value = serde_json::from_str(&unblind_json).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
-        let r_sum = res["receiver_sum_after_stage1"].as_u64().unwrap_or(0);
-        let s_sum = res["sender_sum_after_stage1"].as_u64().unwrap_or(0);
-        self.host.mark_channel_closed(channel_id, locktime, payment.balance, &res["receiver_proofs"].to_string(), &res["sender_proofs"].to_string(), r_sum, s_sum).map_err(CloseError::storage_failed)?;
-        Ok(CloseSuccess { channel_id: channel_id.to_string(), total_value: r_sum + s_sum, receiver_sum: r_sum, sender_sum: s_sum, sender_proofs: res["sender_proofs"].to_string(), already_closed: false })
+        let sigs_value = resp.get("signatures").ok_or_else(|| CloseError::UnblindFailed { reason: "Missing signatures".into(), status: 500 })?;
+
+        // Parse inputs for the internal unblind function
+        let keyset_info = parse_keyset_info_from_json(&prep.keyset_info_json).map_err(CloseError::unblind_failed)?;
+        let output_keyset_info = parse_keyset_info_from_json(&prep.output_keyset_info.to_string()).map_err(CloseError::unblind_failed)?;
+        let channel_secret_bytes = hex::decode(&prep.channel_secret).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+        let channel_secret: [u8; 32] = channel_secret_bytes.try_into().map_err(|_| CloseError::UnblindFailed { reason: "Invalid shared secret length".into(), status: 500 })?;
+        let params = ChannelParameters::from_json_with_channel_secret(&prep.params_json, keyset_info, channel_secret).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+
+        let blind_signatures: Vec<BlindSignature> = serde_json::from_str(&sigs_value.to_string()).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+        let swb_raw: Vec<serde_json::Value> = serde_json::from_str(&prep.secrets_with_blinding.to_string()).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+
+        let mut secrets_with_blinding = Vec::new();
+        for swb in swb_raw {
+            let secret = Secret::new(swb["secret"].as_str().ok_or_else(|| CloseError::UnblindFailed { reason: "Missing secret".into(), status: 500 })?.to_string());
+            let blinding_factor = SecretKey::from_slice(&hex::decode(swb["blinding_factor"].as_str().ok_or_else(|| CloseError::UnblindFailed { reason: "Missing blinding".into(), status: 500 })?).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+            let amount = swb["amount"].as_u64().ok_or_else(|| CloseError::UnblindFailed { reason: "Missing amount".into(), status: 500 })?;
+            let index = swb["index"].as_u64().ok_or_else(|| CloseError::UnblindFailed { reason: "Missing index".into(), status: 500 })? as usize;
+            let is_receiver = swb["is_receiver"].as_bool().ok_or_else(|| CloseError::UnblindFailed { reason: "Missing is_receiver".into(), status: 500 })?;
+            secrets_with_blinding.push((DeterministicSecretWithBlinding { secret, blinding_factor, amount, index }, is_receiver));
+        }
+
+        // Unblind and verify (returns enriched proofs with amount/index metadata)
+        let result = unblind_and_verify_stage1_response(blind_signatures, secrets_with_blinding, &params, &output_keyset_info, payment.balance)
+            .map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
+
+        // Sign each receiver proof with P2PK witness using the host's tweaked signing
+        let mut signed_receiver_proofs: Vec<Proof> = Vec::with_capacity(result.receiver_proofs.len());
+        for pm in &result.receiver_proofs {
+            let mut proof = pm.proof.clone();
+            let tweak_info = params.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", pm.amount, pm.index)
+                .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to derive stage2 tweak: {}", e), status: 500 })?;
+            let tweak_hex = hex::encode(tweak_info.stage2_tweak_scalar.to_be_bytes());
+            let msg_hash = Sha256Hash::hash(&proof.secret.to_bytes());
+            let msg_hex = hex::encode(msg_hash.as_byte_array());
+            let sig = self.host.sign_with_tweaked_key(&params.charlie_pubkey.to_hex(), &msg_hex, &tweak_hex)
+                .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to sign receiver proof: {}", e), status: 500 })?;
+            proof.witness = Some(crate::nuts::Witness::P2PKWitness(crate::nuts::P2PKWitness { signatures: vec![sig] }));
+            signed_receiver_proofs.push(proof);
+        }
+
+        let sender_proofs: Vec<&Proof> = result.sender_proofs.iter().map(|pm| &pm.proof).collect();
+        let r_sum = result.receiver_sum;
+        let s_sum = result.sender_sum;
+
+        let receiver_proofs_json = serde_json::to_string(&signed_receiver_proofs).unwrap_or_default();
+        let sender_proofs_json = serde_json::to_string(&sender_proofs).unwrap_or_default();
+
+        self.host.mark_channel_closed(channel_id, locktime, payment.balance, &receiver_proofs_json, &sender_proofs_json, r_sum, s_sum).map_err(CloseError::storage_failed)?;
+        Ok(CloseSuccess { channel_id: channel_id.to_string(), total_value: r_sum + s_sum, receiver_sum: r_sum, sender_sum: s_sum, sender_proofs: sender_proofs_json, already_closed: false })
     }
 
     pub fn execute_close_for_closing_channel<N: SpilmanNetworking>(&self, channel_id: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         if self.host.get_channel_state(channel_id) != ChannelState::Closing { return Err(CloseError::ValidationFailed { reason: "Not closing".into(), status: 400, expected_balance: None, actual_balance: None }); }
         let cd = self.host.get_closing_data(channel_id).ok_or_else(|| CloseError::ValidationFailed { reason: "Missing closing data".into(), status: 500, expected_balance: None, actual_balance: None })?;
-        let prep = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
+        let prep = self.prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature).map_err(CloseError::from_preparation_error)?;
         let (prep, resp) = match net.call_mint_swap(&prep.mint_url, &prep.swap_request.to_string()) {
             Ok(r) => (prep, r),
             Err(e) => {
                 let _ = net.refresh_all_keysets(&prep.mint_url);
-                let retry = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
+                let retry = self.prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature).map_err(CloseError::from_preparation_error)?;
                 let resp = net
                     .call_mint_swap(&retry.mint_url, &retry.swap_request.to_string())
                     .map_err(|re| CloseError::mint_rejected_after_retry(serde_json::json!(e), serde_json::json!(re)))?;
@@ -978,12 +1049,12 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
     pub async fn execute_close_for_closing_channel_async<N: SpilmanAsyncNetworking>(&self, channel_id: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         if self.host.get_channel_state(channel_id) != ChannelState::Closing { return Err(CloseError::ValidationFailed { reason: "Not closing".into(), status: 400, expected_balance: None, actual_balance: None }); }
         let cd = self.host.get_closing_data(channel_id).ok_or_else(|| CloseError::ValidationFailed { reason: "Missing closing data".into(), status: 500, expected_balance: None, actual_balance: None })?;
-        let prep = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
+        let prep = self.prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature).map_err(CloseError::from_preparation_error)?;
         let (prep, resp) = match net.call_mint_swap(&prep.mint_url, &prep.swap_request.to_string()).await {
             Ok(r) => (prep, r),
             Err(e) => {
                 let _ = net.refresh_all_keysets(&prep.mint_url).await;
-                let retry = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
+                let retry = self.prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature).map_err(CloseError::from_preparation_error)?;
                 let resp = net
                     .call_mint_swap(&retry.mint_url, &retry.swap_request.to_string())
                     .await
