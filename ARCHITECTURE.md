@@ -18,7 +18,7 @@ This settlement process is known as **'Stage 1'**. It spends the shared funding 
 
 ### 1. 2-of-2 Multisig Funding
 
-The channel is funded, by Alice, with a Cashu token that require **both** Alice and Charlie to spend cooperatively. The funding token's spending conditions are:
+The channel is funded by Alice with a Cashu token that requires **both** Alice and Charlie to spend cooperatively. The funding token's spending conditions are:
 
 ```
 P2PK: (Alice AND Charlie) OR (Alice after locktime)
@@ -40,7 +40,7 @@ Both parties compute the **same** blinded outputs for the commitment transaction
 
 ### 3. Balance Updates
 
-Alice authorizes balance updates by signing a Cashu **commitment swap**. This swap spends the shared funding token and creates deterministic Stage 1 outputs for both Charlie (his earned balance) and Alice (her remaining change).
+Alice authorizes balance updates by signing a Cashu **commitment swap**. This swap spends the funding token and creates deterministic Stage 1 outputs for both Charlie (his earned balance) and Alice (her remaining change).
 
 Alice signs the request using the **`SIG_ALL`** flag, ensuring the signature commits to the specific inputs and outputs. She sends Charlie a `BalanceUpdateMessage`:
 
@@ -83,7 +83,7 @@ When Charlie receives the channel parameters and funding proofs, he performs a f
 
 ## P2BK (Pay-to-Blinded-Key) Privacy
 
-The channel uses **blinded pubkeys** in the funding token, and also in the 1-of-1 proofs that are used to distribute the funds at channel closing, so the mint cannot correlate channels to real identities.
+The channel uses **blinded pubkeys** in the funding token and in the per-user proofs created at channel closing, so the mint cannot correlate channels to real identities.
 
 ### Why Blinding?
 
@@ -115,7 +115,7 @@ Blinded keys are derived using standard BIP-340 parity handling.
 
 Stage 2 uses a deterministic ephemeral keypair and follows the [NUT-28](https://github.com/cashubtc/nuts/blob/main/28.md) (P2BK) specification. Each output is locked to a unique blinded pubkey derived from its amount and index.
 
-The ephemeral secret `e`, which is essentially the 'entropy' for the NUT-28 blinding, is derived deterministically:
+The ephemeral secret `e` is derived deterministically:
 
 ```
 e = SHA256("Cashu_Spilman_P2BK_ephemeral_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
@@ -172,7 +172,7 @@ The Spilman logic is implemented as a structured **Protocol Bridge** (`SpilmanBr
 
 ### The SpilmanHost Interface
 
-The bridge is **keyless and stateless**. It delegates policy decisions (pricing, storage) and cryptographic operations (ECDH, signing) to the host application via the `SpilmanHost` trait. This allows is to be very flexible, and also ensures that the bridge doesn't have to see the private key
+The bridge is **keyless and stateless**. It delegates policy decisions (pricing, storage) and cryptographic operations (ECDH, signing) to the host application via the `SpilmanHost` trait. The host owns the private key; the bridge remains keyless.
 
 ```rust
 trait SpilmanHost<C = String> {
