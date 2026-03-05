@@ -137,14 +137,13 @@ For detailed information, see:
 | Protocol design, P2BK privacy, bridge architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | CashuTube API, data stores, HLS encoding | [CASHUTUBE.md](CASHUTUBE.md) |
 | Development setup, running mints, testing | [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) |
-| Completed features history | [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) |
+| Integration guide | [INTEGRATION.md](INTEGRATION.md) |
 
 ## Active TODOs
 
 - [Client-side Opening] the function that swaps an input token into a funding (compute_channel_from_token) should prefer to swap into an active keyset, even if the input token is from a stale keyset.
 - P2BK, follow the standard. Maybe include the ephemeral key *and* the signature
 - optional in-memory cache of the funding token
-- Maybe "unblind_and_verify_dleq (the FFI wrapper) " isn't used any more?
 - Server to try to move existing 'Closing' to 'Closed'
 
 ### Closing

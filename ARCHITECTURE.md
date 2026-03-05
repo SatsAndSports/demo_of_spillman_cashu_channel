@@ -63,6 +63,8 @@ channel_id = SHA256(
 
 The `channel_secret` (ECDH shared secret) is included, meaning only the two parties who know the secret can compute the channel ID. All fields are pipe-delimited decimal text (for cross-platform consistency). This binds all parameters together cryptographically. Any tampering changes the channel ID.
 
+`funding_token_amount` is an explicit channel parameter. Use `compute_funding_token_amount()` when constructing a channel; do not recompute it from capacity.
+
 ### 5. DLEQ Verification
 
 When Charlie receives funding proofs, he verifies the DLEQ proofs to ensure:
@@ -115,6 +117,8 @@ If `r_i` is invalid, retry once with an extra `0xff` byte appended to the hash i
 Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings for channel-secret derivations. `channel_id` is a hex string. Raw bytes are used for `Zx` and `i_byte` in the NUT-28 tweak.
 
 Stage 2 proofs may be signed immediately after unblinding using the stage 2 tweaked secret key. Wallet receive flows accept already-signed P2PK proofs and will not add duplicate signatures unless provided signing keys.
+
+Stage 2 P2BK tweak is defined as the NUT-28 shared-secret tweak (`Cashu_P2BK_v1`). Outputs derived with the legacy tweak are not compatible; close and re-fund channels created with the legacy tweak.
 
 ### Blinding Contexts
 

@@ -179,9 +179,9 @@ cdk/
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Protocol design, P2BK privacy, bridge architecture |
+| [INTEGRATION.md](INTEGRATION.md) | Server integration guide and host/bridge API |
 | [CASHUTUBE.md](CASHUTUBE.md) | Video streaming demo, API reference, HLS encoding |
 | [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) | Development setup, running mints, testing |
-| [SPILMAN_CHANGELOG.md](SPILMAN_CHANGELOG.md) | Completed features history |
 
 ## How It Works
 
