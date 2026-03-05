@@ -2,6 +2,7 @@
 mints:
   "http://localhost:3338": [sat, msat, usd]
 min_expiry_seconds: 3600
+pricing_scale: 1
 
 # Storage backend: "memory" (default) or "sqlite"
 storage:

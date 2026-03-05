@@ -61,3 +61,4 @@ python client.py Hello World Cashu --close
 
 - The client prints the full channel ID and uses `--close` to cooperatively close.
 - The server exposes `/channel/*` management endpoints via the kit's Flask helper.
+- `pricing_scale` is optional in `config.yaml` (default `1`).

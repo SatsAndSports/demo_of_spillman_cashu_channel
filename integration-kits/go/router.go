@@ -47,29 +47,25 @@ func RegisterManagementRoutes(mux *http.ServeMux, ctx *ConfigurableSpilman) {
 
 func HandleParams(w http.ResponseWriter, r *http.Request, ctx *ConfigurableSpilman) {
 	activeUnits := ctx.Stores.GetActiveUnits()
-	compPricing := make(map[string]interface{})
+	pricing := make(map[string]interface{})
 	for unit, entry := range ctx.Config.Pricing {
 		if _, ok := activeUnits[unit]; !ok {
 			continue
 		}
 		data := map[string]interface{}{
 			"min_capacity": entry.MinCapacity,
-			"minCapacity":  entry.MinCapacity,
 			"variables":    entry.Variables,
 		}
 		if entry.MaxAmountPerOutput != nil {
 			data["max_amount_per_output"] = *entry.MaxAmountPerOutput
-			data["maxAmountPerOutput"] = *entry.MaxAmountPerOutput
 		}
-		if p, ok := entry.Variables["chars"]; ok {
-			data["per_char"] = p
-		}
-		compPricing[unit] = data
+		pricing[unit] = data
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"receiver_pubkey":       GetServerPubkey(ctx.Host.SecretKey),
-		"pricing":               compPricing,
+		"pricing":               pricing,
+		"pricing_scale":         ctx.Config.PricingScale,
 		"mints_units_keysets":   ctx.Stores.GetMintsUnitsKeysets(),
 		"min_expiry_in_seconds": ctx.Config.MinExpirySeconds,
 	})

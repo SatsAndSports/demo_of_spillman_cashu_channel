@@ -33,13 +33,16 @@ class ConfigurableSpilman:
             all_units = list(config.get("pricing", {}).keys())
             config["mints"] = {mint_url: all_units}
 
-        # Normalize pricing for compatibility
         pricing = config.get("pricing", {})
-        for unit_cfg in pricing.values():
-            if "min_capacity" in unit_cfg:
-                unit_cfg["minCapacity"] = unit_cfg["min_capacity"]
-            if "max_amount_per_output" in unit_cfg:
-                unit_cfg["maxAmountPerOutput"] = unit_cfg["max_amount_per_output"]
+
+        pricing_scale = config.get("pricing_scale", 1)
+        try:
+            pricing_scale = int(pricing_scale)
+        except (TypeError, ValueError):
+            pricing_scale = 1
+        if pricing_scale <= 0:
+            pricing_scale = 1
+        config["pricing_scale"] = pricing_scale
 
         # Initialize stores
         storage_cfg = config.get("storage", {})
@@ -53,7 +56,8 @@ class ConfigurableSpilman:
             mints=config.get("mints", {}),
             pricing=pricing,
             stores=stores,
-            min_expiry_seconds=config.get("min_expiry_seconds", 3600)
+            min_expiry_seconds=config.get("min_expiry_seconds", 3600),
+            pricing_scale=pricing_scale,
         )
 
         bridge = SpilmanBridge(host)

@@ -47,3 +47,4 @@ go run -tags spilman_dev . client "Hello World" --close
 
 - The demo uses `spilmankit.DemoFetchActiveKeysetInfo` and `DemoMintFundingToken`.
 - Add `--close` to cooperatively close the channel at the end of the run.
+- `pricing_scale` is optional in `config.yaml` (default `1`).

@@ -27,15 +27,20 @@ type BaseSpilmanHost struct {
 	pricing          PricingTable
 	stores           SpilmanStores
 	minExpirySeconds uint64
+	pricingScale     uint64
 }
 
-func NewBaseSpilmanHost(secretKey string, mints map[string][]string, pricing PricingTable, stores SpilmanStores, minExpiry uint64) *BaseSpilmanHost {
+func NewBaseSpilmanHost(secretKey string, mints map[string][]string, pricing PricingTable, stores SpilmanStores, minExpiry uint64, pricingScale uint64) *BaseSpilmanHost {
 	pubkey, _ := spilman.SecretKeyToPubkey(secretKey)
 
 	// Normalize mint URLs
 	normMints := make(map[string][]string)
 	for url, units := range mints {
 		normMints[strings.TrimSuffix(url, "/")] = units
+	}
+
+	if pricingScale == 0 {
+		pricingScale = 1
 	}
 
 	return &BaseSpilmanHost{
@@ -45,6 +50,7 @@ func NewBaseSpilmanHost(secretKey string, mints map[string][]string, pricing Pri
 		pricing:          pricing,
 		stores:           stores,
 		minExpirySeconds: minExpiry,
+		pricingScale:     pricingScale,
 	}
 }
 
@@ -119,7 +125,14 @@ func (h *BaseSpilmanHost) GetAmountDue(channelId string, contextJson *string) ui
 		pend := pending[varName]
 		total += (acc + pend) * price
 	}
-	return total
+	if total == 0 {
+		return 0
+	}
+	scale := h.pricingScale
+	if scale == 0 {
+		scale = 1
+	}
+	return (total + scale - 1) / scale
 }
 
 func (h *BaseSpilmanHost) RecordPayment(channelId string, balance uint64, signature, contextJson string) {

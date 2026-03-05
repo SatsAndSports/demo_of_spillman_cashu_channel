@@ -80,11 +80,24 @@ class Spilman:
 
         @router.get("/params")
         async def get_params():
+            raw_pricing = self.host.stores.get_active_pricing(self.host.pricing)
+            pricing = {}
+            for unit, entry in raw_pricing.items():
+                min_capacity = entry.get("min_capacity") or entry.get("minCapacity") or 0
+                max_output = entry.get("max_amount_per_output") or entry.get("maxAmountPerOutput")
+                data = {
+                    "min_capacity": min_capacity,
+                    "variables": entry.get("variables", {}),
+                }
+                if max_output is not None:
+                    data["max_amount_per_output"] = max_output
+                pricing[unit] = data
             return {
                 "receiver_pubkey": self.host.pubkey,
-                "pricing": self.host.stores.get_active_pricing(self.host.pricing),
+                "pricing": pricing,
                 "mints_units_keysets": self.host.stores.get_mints_units_keysets(),
-                "min_expiry_in_seconds": 3600,
+                "pricing_scale": self.host.pricing_scale,
+                "min_expiry_in_seconds": self.host.min_expiry_seconds,
             }
 
         @router.post("/register")

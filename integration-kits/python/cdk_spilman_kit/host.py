@@ -23,7 +23,8 @@ class BaseSpilmanHost:
         mints: Dict[str, List[str]], 
         pricing: Dict[str, Any], 
         stores: SpilmanStores,
-        min_expiry_seconds: int = 3600
+        min_expiry_seconds: int = 3600,
+        pricing_scale: int = 1,
     ):
         if secret_key_to_pubkey is None:
             raise RuntimeError("cdk_spilman is required to use cdk_spilman_kit")
@@ -34,6 +35,7 @@ class BaseSpilmanHost:
         self.stores = stores
         self.pubkey = secret_key_to_pubkey(secret_key)
         self.min_expiry_seconds = min_expiry_seconds
+        self.pricing_scale = pricing_scale if pricing_scale and pricing_scale > 0 else 1
 
     def receiver_key_is_acceptable(self, pubkey_hex: str) -> bool:
         return pubkey_hex.lower() == self.pubkey.lower()
@@ -91,8 +93,12 @@ class BaseSpilmanHost:
             acc = accumulated.get(var_name, 0)
             pend = pending.get(var_name, 0)
             total += (acc + pend) * price
-            
-        return total
+
+        if total == 0:
+            return 0
+
+        scale = self.pricing_scale if self.pricing_scale > 0 else 1
+        return (total + scale - 1) // scale
 
     def record_payment(self, channel_id: str, balance: int, signature: str, context_json: str):
         increments: UsageMap = json.loads(context_json) if context_json else {}

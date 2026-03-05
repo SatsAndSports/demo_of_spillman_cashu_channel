@@ -15,6 +15,18 @@ Standard components for integrating Spilman payment channels into Python web app
 pip install cdk-spilman-kit[flask]  # or [fastapi]
 ```
 
+## Configuration
+
+```yaml
+min_expiry_seconds: 3600
+pricing_scale: 1        # Optional divisor: ceil(total / pricing_scale)
+pricing:
+  sat:
+    min_capacity: 10
+    variables:
+      chars: 1
+```
+
 ## Usage (Flask)
 
 ```python

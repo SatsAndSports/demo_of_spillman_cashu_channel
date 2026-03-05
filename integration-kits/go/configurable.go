@@ -10,6 +10,7 @@ import (
 type SpilmanConfig struct {
 	Mints            map[string][]string `yaml:"mints"`
 	MinExpirySeconds uint64              `yaml:"min_expiry_seconds"`
+	PricingScale     uint64              `yaml:"pricing_scale"`
 	Storage          struct {
 		Type string `yaml:"type"`
 		Path string `yaml:"path"`
@@ -45,9 +46,6 @@ func LoadFromYaml(configPath, secretKeyHex string) (*ConfigurableSpilman, error)
 		config.Mints = map[string][]string{mintUrl: allUnits}
 	}
 
-	// Normalize Pricing keys for compatibility (min_capacity vs minCapacity)
-	// YAML handles snake_case tags, but we might want to ensure they exist.
-
 	var stores SpilmanStores
 	if config.Storage.Type == "sqlite" && config.Storage.Path != "" {
 		stores, err = NewSqliteStores(config.Storage.Path)
@@ -61,8 +59,11 @@ func LoadFromYaml(configPath, secretKeyHex string) (*ConfigurableSpilman, error)
 	if config.MinExpirySeconds == 0 {
 		config.MinExpirySeconds = 3600
 	}
+	if config.PricingScale == 0 {
+		config.PricingScale = 1
+	}
 
-	host := NewBaseSpilmanHost(secretKeyHex, config.Mints, config.Pricing, stores, config.MinExpirySeconds)
+	host := NewBaseSpilmanHost(secretKeyHex, config.Mints, config.Pricing, stores, config.MinExpirySeconds, config.PricingScale)
 	bridge := spilman.NewBridge(host)
 
 	ctx := &ConfigurableSpilman{

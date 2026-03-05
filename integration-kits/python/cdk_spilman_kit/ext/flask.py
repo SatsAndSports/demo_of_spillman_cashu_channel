@@ -105,24 +105,25 @@ class Spilman:
         
         @bp.route("/params")
         def get_params():
-            raw_pricing = self.host.pricing
-            # Compatibility layer: include per_char if chars variable exists
+            raw_pricing = self.host.stores.get_active_pricing(self.host.pricing)
             pricing = {}
             for unit, entry in raw_pricing.items():
-                pricing[unit] = dict(entry)
-                # Ensure snake_case and camelCase compatibility
-                if "min_capacity" in entry: pricing[unit]["minCapacity"] = entry["min_capacity"]
-                if "max_amount_per_output" in entry: pricing[unit]["maxAmountPerOutput"] = entry["max_amount_per_output"]
-                
-                vars_dict = entry.get("variables", {})
-                if "chars" in vars_dict:
-                    pricing[unit]["per_char"] = vars_dict["chars"]
+                min_capacity = entry.get("min_capacity") or entry.get("minCapacity") or 0
+                max_output = entry.get("max_amount_per_output") or entry.get("maxAmountPerOutput")
+                data = {
+                    "min_capacity": min_capacity,
+                    "variables": entry.get("variables", {}),
+                }
+                if max_output is not None:
+                    data["max_amount_per_output"] = max_output
+                pricing[unit] = data
 
             return jsonify({
                 "receiver_pubkey": self.host.pubkey,
                 "pricing": pricing,
                 "mints_units_keysets": self.host.stores.get_mints_units_keysets(),
-                "min_expiry_in_seconds": 3600,
+                "pricing_scale": self.host.pricing_scale,
+                "min_expiry_in_seconds": self.host.min_expiry_seconds,
             })
 
         @bp.route("/register", methods=["POST"])
