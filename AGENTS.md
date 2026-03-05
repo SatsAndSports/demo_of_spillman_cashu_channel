@@ -145,6 +145,7 @@ For detailed information, see:
 - P2BK, follow the standard. Maybe include the ephemeral key *and* the signature
 - optional in-memory cache of the funding token
 - Maybe "unblind_and_verify_dleq (the FFI wrapper) " isn't used any more?
+- Server to try to move existing 'Closing' to 'Closed'
 
 ### Closing
 - it would be nice if the 'receiver_proofs_json' included the receiver's blinded signature, (and the p2pk_e?), to make it easy for non-P2BK wallets to accept them.
