@@ -730,41 +730,6 @@ pub unsafe extern "C" fn spilman_bridge_execute_unilateral_close(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn spilman_unblind_and_verify_dleq(
-    sigs_json: *const c_char,
-    secrets_json: *const c_char,
-    params_json: *const c_char,
-    keyset_json: *const c_char,
-    channel_secret_hex: *const c_char,
-    balance: u64,
-    output_keyset_json: *const c_char,
-) -> CResult {
-    let sigs = CStr::from_ptr(sigs_json).to_str().unwrap();
-    let secrets = CStr::from_ptr(secrets_json).to_str().unwrap();
-    let params = CStr::from_ptr(params_json).to_str().unwrap();
-    let keyset = CStr::from_ptr(keyset_json).to_str().unwrap();
-    let secret = CStr::from_ptr(channel_secret_hex).to_str().unwrap();
-    let output_keyset = if !output_keyset_json.is_null() {
-        Some(CStr::from_ptr(output_keyset_json).to_str().unwrap())
-    } else {
-        None
-    };
-
-    match spilman::unblind_and_verify_dleq(
-        sigs,
-        secrets,
-        params,
-        keyset,
-        secret,
-        balance,
-        output_keyset,
-    ) {
-        Ok(res) => CResult::success(res),
-        Err(e) => CResult::error(e),
-    }
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn spilman_create_signed_balance_update(
     params_json: *const c_char,
     keyset_json: *const c_char,

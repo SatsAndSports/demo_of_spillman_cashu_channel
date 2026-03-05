@@ -623,45 +623,6 @@ pub fn unblind_and_verify_stage1_response(
     Ok(UnblindResult { receiver_proofs, sender_proofs, receiver_sum, sender_sum })
 }
 
-pub fn unblind_and_verify_dleq(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    params_json: &str,
-    keyset_info_json: &str,
-    channel_secret_hex: &str,
-    balance: u64,
-    output_keyset_info_json: Option<&str>,
-) -> Result<String, String> {
-    use super::parse_keyset_info_from_json;
-    use crate::nuts::SecretKey;
-    use crate::secret::Secret;
-
-    let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
-    let output_keyset_info = match output_keyset_info_json {
-        Some(json) => parse_keyset_info_from_json(json)?,
-        None => keyset_info.clone(),
-    };
-
-    let channel_secret_bytes = hex::decode(channel_secret_hex).map_err(|e| e.to_string())?;
-    let channel_secret: [u8; 32] = channel_secret_bytes.try_into().map_err(|_| "Invalid shared secret length".to_string())?;
-
-    let params = ChannelParameters::from_json_with_channel_secret(params_json, keyset_info, channel_secret).map_err(|e| e.to_string())?;
-    let blind_signatures: Vec<BlindSignature> = serde_json::from_str(blind_signatures_json).map_err(|e| e.to_string())?;
-    let swb_raw: Vec<serde_json::Value> = serde_json::from_str(secrets_with_blinding_json).map_err(|e| e.to_string())?;
-
-    let mut secrets_with_blinding = Vec::new();
-    for swb in swb_raw {
-        let secret = Secret::new(swb["secret"].as_str().ok_or("Missing secret")?.to_string());
-        let blinding_factor = SecretKey::from_slice(&hex::decode(swb["blinding_factor"].as_str().ok_or("Missing blinding")?).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        secrets_with_blinding.push((DeterministicSecretWithBlinding { secret, blinding_factor, amount: swb["amount"].as_u64().ok_or("Missing amount")?, index: swb["index"].as_u64().ok_or("Missing index")? as usize }, swb["is_receiver"].as_bool().ok_or("Missing is_receiver")?));
-    }
-
-    let result = unblind_and_verify_stage1_response(blind_signatures, secrets_with_blinding, &params, &output_keyset_info, balance).map_err(|e| e.to_string())?;
-    let receiver_proofs: Vec<&Proof> = result.receiver_proofs.iter().map(|pm| &pm.proof).collect();
-    let sender_proofs: Vec<&Proof> = result.sender_proofs.iter().map(|pm| &pm.proof).collect();
-    Ok(serde_json::json!({ "receiver_proofs": receiver_proofs, "sender_proofs": sender_proofs, "receiver_sum_after_stage1": result.receiver_sum, "sender_sum_after_stage1": result.sender_sum }).to_string())
-}
-
 impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
     pub fn new(host: H) -> Self { Self { host, _phantom: std::marker::PhantomData } }
     pub fn host(&self) -> &H { &self.host }

@@ -63,10 +63,10 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
     const pricing: Record<string, any> = {};
     for (const [unit, entry] of Object.entries(rawPricing)) {
       const obj: Record<string, any> = {
-        min_capacity: entry.min_capacity ?? entry.minCapacity ?? 0,
+        min_capacity: entry.min_capacity ?? 0,
         variables: entry.variables ?? {},
       };
-      const maxOutput = entry.max_amount_per_output ?? entry.maxAmountPerOutput;
+      const maxOutput = entry.max_amount_per_output;
       if (maxOutput !== undefined) {
         obj.max_amount_per_output = maxOutput;
       }

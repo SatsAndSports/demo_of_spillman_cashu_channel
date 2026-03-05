@@ -83,8 +83,8 @@ class Spilman:
             raw_pricing = self.host.stores.get_active_pricing(self.host.pricing)
             pricing = {}
             for unit, entry in raw_pricing.items():
-                min_capacity = entry.get("min_capacity") or entry.get("minCapacity") or 0
-                max_output = entry.get("max_amount_per_output") or entry.get("maxAmountPerOutput")
+                min_capacity = entry.get("min_capacity", 0)
+                max_output = entry.get("max_amount_per_output")
                 data = {
                     "min_capacity": min_capacity,
                     "variables": entry.get("variables", {}),

@@ -132,8 +132,8 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       if (!unitPricing) return null;
       return {
         min_expiry_in_seconds: minExpirySeconds,
-        min_capacity: unitPricing.min_capacity ?? unitPricing.minCapacity ?? 0,
-        max_amount_per_output: unitPricing.max_amount_per_output ?? unitPricing.maxAmountPerOutput,
+        min_capacity: unitPricing.min_capacity ?? 0,
+        max_amount_per_output: unitPricing.max_amount_per_output,
       };
     },
 

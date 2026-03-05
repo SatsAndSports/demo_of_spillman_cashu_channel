@@ -141,8 +141,8 @@ class BaseSpilmanHost:
         p = self.pricing.get(unit)
         if not p:
             return None
-        min_cap = p.get("min_capacity") or p.get("minCapacity") or 10
-        max_output = p.get("max_amount_per_output") or p.get("maxAmountPerOutput")
+        min_cap = p.get("min_capacity", 10)
+        max_output = p.get("max_amount_per_output")
         return (self.min_expiry_seconds, min_cap, max_output)
 
     def now_seconds(self) -> int:

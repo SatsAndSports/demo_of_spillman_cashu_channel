@@ -182,9 +182,9 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
         let val = self.js_host.get_channel_policy(unit);
         if val.is_null() || val.is_undefined() { return None; }
         let obj = js_sys::Object::try_from(&val)?;
-        let min_expiry_in_seconds = js_sys::Reflect::get(obj, &JsValue::from_str("min_expiry_in_seconds")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("minExpiryInSeconds")).ok())?.as_f64()? as u64;
-        let min_capacity = js_sys::Reflect::get(obj, &JsValue::from_str("min_capacity")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("minCapacity")).ok())?.as_f64()? as u64;
-        let max_amount_per_output = js_sys::Reflect::get(obj, &JsValue::from_str("max_amount_per_output")).ok().or_else(|| js_sys::Reflect::get(obj, &JsValue::from_str("maxAmountPerOutput")).ok()).and_then(|v| v.as_f64()).map(|v| v as u64);
+        let min_expiry_in_seconds = js_sys::Reflect::get(obj, &JsValue::from_str("min_expiry_in_seconds")).ok()?.as_f64()? as u64;
+        let min_capacity = js_sys::Reflect::get(obj, &JsValue::from_str("min_capacity")).ok()?.as_f64()? as u64;
+        let max_amount_per_output = js_sys::Reflect::get(obj, &JsValue::from_str("max_amount_per_output")).ok().and_then(|v| v.as_f64()).map(|v| v as u64);
         Some(ChannelPolicy { min_expiry_in_seconds, min_capacity, max_amount_per_output })
     }
     fn now_seconds(&self) -> u64 { self.js_host.now_seconds() }
@@ -419,10 +419,6 @@ pub fn get_receiver_blinded_secret_key_for_stage2_output(params_json: &str, keys
     let cs: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
     let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
     p.get_receiver_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
-}
-#[wasm_bindgen]
-pub fn unblind_and_verify_dleq(blind_signatures_json: &str, secrets_with_blinding_json: &str, params_json: &str, keyset_info_json: &str, channel_secret_hex: &str, balance: u64, output_keyset_info_json: Option<String>) -> Result<String, JsValue> {
-    cdk::spilman::unblind_and_verify_dleq(blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, channel_secret_hex, balance, output_keyset_info_json.as_deref()).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn spilman_channel_sender_create_signed_balance_update(params_json: &str, keyset_info_json: &str, alice_secret_hex: &str, funding_proofs_json: &str, charlie_balance: u64) -> Result<String, JsValue> {

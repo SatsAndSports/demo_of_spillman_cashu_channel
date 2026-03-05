@@ -946,45 +946,6 @@ fn create_signed_balance_update(
     .map_err(PyValueError::new_err)
 }
 
-/// Unblind mint signatures and verify DLEQ proofs.
-///
-/// This processes the mint's response to a swap request, unblinding the signatures
-/// and verifying that they are valid. It also separates receiver and sender proofs.
-///
-/// Args:
-///     blind_signatures_json: JSON array of blind signatures from mint
-///     secrets_with_blinding_json: JSON array from validate_and_prepare_cooperative_close
-///     params_json: Channel parameters JSON
-///     keyset_info_json: Keyset info JSON (funding keyset)
-///     channel_secret_hex: Shared secret (hex)
-///     balance: The balance used to close the channel
-///     output_keyset_info_json: Optional Keyset info JSON for outputs
-///
-/// Returns:
-///     JSON with receiver_proofs, sender_proofs, receiver_sum_after_stage1, sender_sum_after_stage1
-#[pyfunction]
-#[pyo3(signature = (blind_signatures_json, secrets_with_blinding_json, params_json, keyset_info_json, channel_secret_hex, balance, output_keyset_info_json=None))]
-fn unblind_and_verify_dleq(
-    blind_signatures_json: &str,
-    secrets_with_blinding_json: &str,
-    params_json: &str,
-    keyset_info_json: &str,
-    channel_secret_hex: &str,
-    balance: u64,
-    output_keyset_info_json: Option<String>,
-) -> PyResult<String> {
-    spilman::unblind_and_verify_dleq(
-        blind_signatures_json,
-        secrets_with_blinding_json,
-        params_json,
-        keyset_info_json,
-        channel_secret_hex,
-        balance,
-        output_keyset_info_json.as_deref(),
-    )
-    .map_err(PyValueError::new_err)
-}
-
 /// Create plain (non-P2PK) blinded messages for minting.
 ///
 /// This creates blinded messages suitable for the mint's /v1/mint/bolt11 endpoint.
@@ -1431,9 +1392,6 @@ fn cdk_spilman(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_cashu_a_token, m)?)?;
     m.add_function(wrap_pyfunction!(mint_proofs_from_mint, m)?)?;
     m.add_function(wrap_pyfunction!(sign_with_tweaked_key_util, m)?)?;
-
-    // Server-side functions (for closing)
-    m.add_function(wrap_pyfunction!(unblind_and_verify_dleq, m)?)?;
 
     Ok(())
 }

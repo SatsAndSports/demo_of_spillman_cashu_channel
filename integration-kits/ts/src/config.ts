@@ -41,12 +41,6 @@ export class ConfigurableSpilman {
       config.mints = { [mintUrl]: allUnits };
     }
 
-    // Ensure pricing entries have both snake_case and camelCase for compatibility
-    for (const entry of Object.values(config.pricing)) {
-      if (entry.min_capacity !== undefined) entry.minCapacity = entry.min_capacity;
-      if (entry.max_amount_per_output !== undefined) entry.maxAmountPerOutput = entry.max_amount_per_output;
-    }
-
     if (config.pricing_scale === undefined) {
       config.pricing_scale = 1;
     }

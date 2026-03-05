@@ -150,7 +150,6 @@ See `examples/python-ascii-art/README.md` for more details.
 - `create_funding_outputs(params_json, secret, keyset_json)` - Create blinded outputs for funding
 - `construct_proofs(signatures_json, secrets_json, keyset_json)` - Construct proofs from signatures
 - `create_signed_balance_update(params_json, keyset_json, secret, proofs_json, balance)` - Sign a payment
-- `unblind_and_verify_dleq(...)` - Unblind signatures and verify DLEQ proofs
 
 ## Protocol
 

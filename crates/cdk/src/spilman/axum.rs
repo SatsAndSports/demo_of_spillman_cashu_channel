@@ -285,14 +285,11 @@ where
     let closed_data = s.host.get_closed_data(&channel_id);
     let amount_due = s.host.get_amount_due(&channel_id, None);
 
-    let chars_served = usage.get("chars").copied().unwrap_or(0);
-
     Json(serde_json::json!({
         "channel_id": channel_id,
         "capacity": capacity,
         "balance": balance,
         "usage": usage,
-        "chars_served": chars_served,
         "amount_due": amount_due,
         "closed": closed_data.is_some(),
         "closed_amount": closed_data.as_ref().map(|c| c.closed_amount),

@@ -42,8 +42,8 @@ pub use client_bridge::{
     SpilmanClientHost,
 };
 pub use bridge::{
-    unblind_and_verify_dleq, unblind_and_verify_stage1_response, BridgeError, ChannelFunding,
-    BridgeErrorResponse, ChannelPolicy, ChannelState, CloseData, CloseError,
+    unblind_and_verify_stage1_response, BridgeError, ChannelFunding, BridgeErrorResponse,
+    ChannelPolicy, ChannelState, CloseData, CloseError,
     ClosePreparationError, CloseSuccess, ClosingData, FundChannelResult, PaymentProof,
     PaymentSuccess, PaymentValidationResult, PreparedClose, SpilmanAsyncNetworking,
     SpilmanBridge, SpilmanHost, SpilmanNetworking, UnblindResult,

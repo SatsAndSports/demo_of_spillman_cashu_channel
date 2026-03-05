@@ -21,7 +21,6 @@ CResult spilman_generate_keypair();
 CResult spilman_secret_key_to_pubkey(const char* secret_hex);
 CResult spilman_compute_channel_secret(const char* my_secret_hex, const char* their_pubkey_hex);
 CResult spilman_compute_funding_token_amount(uint64_t capacity, const char* keyset_info_json, uint64_t maximum_amount);
-CResult spilman_unblind_and_verify_dleq(const char* sigs, const char* secrets, const char* params, const char* keyset, const char* channel_secret, uint64_t balance, const char* output_keyset);
 CResult spilman_create_signed_balance_update(const char* params, const char* keyset, const char* secret, const char* proofs, uint64_t balance);
 CResult spilman_channel_parameters_get_channel_id(const char* params, const char* channel_secret, const char* keyset);
 CResult spilman_create_plain_blinded_messages(uint64_t amount_sat, const char* keyset_info_json);
@@ -119,35 +118,6 @@ func ComputeFundingTokenAmount(capacity uint64, keysetInfoJson string, maximumAm
 		return 0, err
 	}
 	return amount, nil
-}
-
-// UnblindAndVerifyDleq unblinds mint signatures and verifies DLEQ proofs.
-// Used by clients to verify and construct proofs from mint blind signature responses.
-func UnblindAndVerifyDleq(sigs, secrets, params, keyset, channelSecret string, balance uint64, outputKeyset *string) (string, error) {
-	cSigs := C.CString(sigs)
-	defer C.free(unsafe.Pointer(cSigs))
-	cSecrets := C.CString(secrets)
-	defer C.free(unsafe.Pointer(cSecrets))
-	cParams := C.CString(params)
-	defer C.free(unsafe.Pointer(cParams))
-	cKeyset := C.CString(keyset)
-	defer C.free(unsafe.Pointer(cKeyset))
-	cSecret := C.CString(channelSecret)
-	defer C.free(unsafe.Pointer(cSecret))
-
-	var cOutputKeyset *C.char
-	if outputKeyset != nil {
-		cOutputKeyset = C.CString(*outputKeyset)
-		defer C.free(unsafe.Pointer(cOutputKeyset))
-	}
-
-	res := C.spilman_unblind_and_verify_dleq(cSigs, cSecrets, cParams, cKeyset, cSecret, C.uint64_t(balance), cOutputKeyset)
-	defer C.spilman_free_cresult(res)
-
-	if res.error != nil {
-		return "", errors.New(C.GoString(res.error))
-	}
-	return C.GoString(res.data), nil
 }
 
 // CreateSignedBalanceUpdate creates a signed balance update for payment.

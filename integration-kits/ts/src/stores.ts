@@ -37,9 +37,7 @@ export interface KeysetCacheEntry {
 
 export interface PricingEntry {
   min_capacity: number;
-  minCapacity?: number; // Optional for code-created entries
   max_amount_per_output?: number;
-  maxAmountPerOutput?: number; // Optional
   variables: UsageMap;
 }
 
@@ -262,7 +260,6 @@ export interface ChannelStatus {
   balance: number;
   usage: UsageMap;
   amount_due: number;
-  chars_served: number;
   closed: boolean;
   closed_amount?: number;
 }
@@ -298,7 +295,6 @@ export function getChannelStatus(
     capacity: params.capacity,
     balance: balance?.balance ?? 0,
     usage,
-    chars_served: usage.chars ?? 0, // Compatibility
     amount_due: amountDue,
     closed: closedData !== null,
     ...(closedData && { closed_amount: closedData.closedAmount }),

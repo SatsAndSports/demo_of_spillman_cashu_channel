@@ -50,8 +50,9 @@ Returns server configuration for channel setup.
 ```json
 {
   "receiver_pubkey": "02abc...",
-  "pricing": { "sat": { "variables": { "chars": 1 }, "minCapacity": 10 } },
+  "pricing": { "sat": { "variables": { "chars": 1 }, "min_capacity": 10 } },
   "mints_units_keysets": { "http://localhost:3338": { "sat": ["001b..."] } },
+  "pricing_scale": 1,
   "min_expiry_in_seconds": 3600
 }
 ```

@@ -118,10 +118,6 @@ func HandleStatus(w http.ResponseWriter, r *http.Request, ctx *ConfigurableSpilm
 		"usage": usage, "amount_due": ctx.Host.GetAmountDue(id, nil),
 		"closed": isClosed,
 	}
-	// For backwards compatibility with ASCII art demo clients
-	if val, ok := usage["chars"]; ok {
-		res["chars_served"] = val
-	}
 
 	if balance != nil {
 		res["balance"] = balance.Balance

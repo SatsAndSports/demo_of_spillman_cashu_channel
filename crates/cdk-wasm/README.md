@@ -169,7 +169,6 @@ Each contains:
 - `create_funding_outputs(params_json, secret, keyset_json)` - Create blinded outputs for funding
 - `construct_proofs(signatures_json, secrets_json, keyset_json)` - Construct proofs from signatures
 - `spilman_channel_sender_create_signed_balance_update(...)` - Sign a payment
-- `unblind_and_verify_dleq(...)` - Unblind signatures and verify DLEQ proofs
 - `verify_channel(...)` - Verify a channel is valid
 - `verify_balance_update_signature(...)` - Verify a balance update signature
 

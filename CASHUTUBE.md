@@ -166,7 +166,7 @@ Error types:
 - `missing` - no X-Cashu-Channel header
 - `invalid JSON` - malformed header
 - `channel_id mismatch` - computed ID doesn't match
-- `capacity too small` - below minCapacity
+- `capacity too small` - below min_capacity
 - `locktime too soon` - insufficient time before expiry
 - `keyset not from approved mint`
 - `channel validation failed` - DLEQ verification failed
