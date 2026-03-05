@@ -1,154 +1,50 @@
 # Spilman Channels for Cashu
 
-> Unidirectional payment channels for Cashu ecash - enabling instant, off-chain micropayments.
+> Unidirectional payment channels for Cashu ecash — enabling instant, off-chain micropayments.
 
-This is an extension of [CDK (Cashu Development Kit)](https://github.com/cashubtc/cdk) that adds **Spilman-style payment channels**. It enables services to accept streaming micropayments without round-trip latency or on-chain settlement for each payment.
+This repository contains the reference implementation of Spilman-style payment channels for the [Cashu](https://cashu.space) protocol. It enables services to accept streaming micropayments without round-trip latency or on-chain settlement for every request.
 
-## What Are Spilman Channels?
+**Status: Early Alpha**
+Experimental protocol. APIs and data models are subject to breaking changes.
 
-A Spilman channel is a simple unidirectional payment channel:
+## Key Features
 
-1. **Alice** (payer) locks funds in a 2-of-2 multisig with **Charlie** (payee)
-2. Alice signs off-chain balance updates, incrementally transferring value to Charlie
-3. Charlie can close the channel anytime, settling with the mint
-4. If Charlie disappears, Alice can reclaim her funds after a timeout
+- **Efficiency**: Unlimited micropayments via a single funding transaction.
+- **Privacy**: Uses P2BK (Pay-to-Blinded-Key) to prevent mint correlation.
+- **Portability**: Core protocol in Rust with bindings for WASM (JS/TS), Python, and Go.
+- **Deterministic**: Both parties independently compute commitment outputs using a common `_channel secret_`.
 
-**Key features:**
-- **Instant payments** - No mint round-trips during the channel lifetime
-- **Privacy** - Blinded keys prevent the mint from correlating payments
-- **Deterministic** - Both parties compute the same outputs without communication
-- **Multi-language** - Core logic in Rust, with WASM/Python/Go bindings
+---
 
-## Demo Applications
+## Documentation
 
-### CashuTube (TypeScript/WASM)
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Cryptographic protocol and system design |
+| [INTEGRATION.md](INTEGRATION.md) | Server and Client integration guide |
+| [CASHUTUBE.md](CASHUTUBE.md) | Video streaming demo and API reference |
+| [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) | Contributor guide and environment setup |
 
-A pay-per-segment video streaming service built on [Blossom](https://github.com/hzrd149/blossom) (decentralized blob storage).
+---
 
-```bash
-# Start a mint
-cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
+## Quick Start (Rust)
 
-# Build and run CashuTube
-cd web/blossom-server
-make wasm && npx pnpm install && npx pnpm start
+1. **Add Dependency**:
+   ```toml
+   cdk = { version = "0.14", features = ["configurable-host", "spilman-axum"] }
+   ```
 
-# Open http://localhost:3000
-```
+2. **Run ASCII Art Server**:
+   ```bash
+   cd examples/rust-ascii-art
+   cargo run
+   ```
 
-See [CASHUTUBE.md](CASHUTUBE.md) for full documentation.
-
-### ASCII Art Demos (Rust/TypeScript/Python/Go)
-
-Minimal pay-per-character demos across all four languages. Each has a server
-and a client. The client supports `--close` to cooperatively close the channel.
-
-Rust (port 5003):
-
-```bash
-PORT=5003 MINT_URL=http://localhost:3338 cargo run -p rust-ascii-art
-```
-
-TypeScript (port 5001):
-
-```bash
-make build-wasm
-cd examples/ts-ascii-art
-npm install
-npm run server
-npm run client -- "Hello World" --close
-```
-
-Python (port 5000):
-
-```bash
-make -C crates/cdk-spilman-python build
-cd examples/python-ascii-art
-pip install -r requirements.txt
-pip install -e ../../integration-kits/python
-python server.py
-python client.py "Hello World" --close
-```
-
-Go (port 5001):
-
-```bash
-cargo build -p cdk-spilman-go
-cd examples/go-ascii-art
-go run -tags spilman_dev . server
-go run -tags spilman_dev . client "Hello World" --close
-```
-
-## Architecture
-
-The core Spilman logic lives in Rust (`crates/cdk/src/spilman/`) and is exposed via:
-
-| Binding | Location | Use Case |
-|---------|----------|----------|
-| **WASM** | `crates/cdk-wasm/` | Browser clients, Node.js servers |
-| **TS Kit** | `integration-kits/ts/` | Express.js servers (drop-in router) |
-| **Python Kit** | `integration-kits/python/` | Flask/FastAPI servers |
-| **Go Kit** | `integration-kits/go/` | Standard library HTTP servers |
-| **Python Bindings** | `crates/cdk-spilman-python/` | PyO3 bindings |
-| **Go Bindings** | `crates/cdk-spilman-go/` | CGO bindings |
-
-Each binding implements a **SpilmanHost** interface that handles:
-- Storage (channel state, proofs)
-- Pricing (amount due per request)
-- Policy (approved mints, minimum capacity)
-
-The security-critical cryptography (DLEQ, Schnorr signatures, channel ID derivation) stays in Rust.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for protocol details.
-
-## Quick Start
-
-### Prerequisites
-
-- Rust toolchain
-- A Cashu mint (see below)
-
-### Running a Mint
-
-The easiest option is the CDK mint with the dev configuration:
-
-```bash
-# Build with fakewallet (auto-pays invoices for testing)
-cargo build -p cdk-mintd --features fakewallet
-
-# Start the mint
-./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
-```
-
-The mint runs at `http://localhost:3338` with fixed keyset IDs for reproducibility.
-
-### Running Tests
-
-```bash
-# Spilman-specific tests
-cargo test -p cdk spilman
-
-# All checks
-cargo clippy -p cdk -p cdk-wasm -p cdk-spilman-python -p cdk-spilman-go -- -D warnings
-```
-
-See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for full setup instructions.
-
-### Containerized Testing (No Local Rust Required)
-
-If you don't have Rust installed, you can run tests using Podman or Docker (recommended for VPS/Laptop).
-
-**Note for Raspberry Pi/Raspiblitz:** Containerized tests are not supported due to cgroup restrictions. Please use [Native Development](SPILMAN_DEVELOPMENT.md#native-development-recommended-for-pi) instead.
-
-```bash
-# Using Podman (default)
-make test-rust-only-containerized
-
-# Using Docker
-make test-rust-only-containerized CONTAINER_ENGINE=docker
-```
-
-This builds a development container with the Rust toolchain and runs the integration tests in isolation. Uses host networking on ports 33380 (mint) and 50080 (server). Configuration is in `docker-compose.spilman.yml`. See [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) for details.
+3. **Run TypeScript Demo**:
+   ```bash
+   cd examples/ts-ascii-art
+   npm install && npm start
+   ```
 
 ## Project Structure
 
@@ -163,48 +59,16 @@ cdk/
 │   ├── ts/                         # TypeScript/Express integration kit
 │   ├── python/                     # Python integration kit
 │   └── go/                         # Go integration kit
-├── containers/                     # Podman/Docker dev environment
 ├── examples/
-│   ├── rust-ascii-art/             # Rust demo (native, uses core cdk)
-│   ├── ts-ascii-art/               # TypeScript demo server + client
-│   ├── python-ascii-art/           # Python demo server + client
-│   └── go-ascii-art/               # Go demo server + client
+│   ├── rust-ascii-art/             # Rust demo (native)
+│   ├── ts-ascii-art/               # TypeScript demo
+│   ├── python-ascii-art/           # Python demo
+│   └── go-ascii-art/               # Go demo
 ├── web/
-│   └── blossom-server/             # CashuTube demo
-└── dev-mint/                       # Mint dev config
+│   └── blossom-server/             # Video streaming demo (separate repo)
+└── dev-mint/                       # CDK mint dev config
 ```
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Protocol design, P2BK privacy, bridge architecture |
-| [INTEGRATION.md](INTEGRATION.md) | Server integration guide and host/bridge API |
-| [CASHUTUBE.md](CASHUTUBE.md) | Video streaming demo, API reference, HLS encoding |
-| [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) | Development setup, running mints, testing |
-
-## How It Works
-
-1. **Channel Setup**: Alice and Charlie derive a shared secret via ECDH. Alice creates a funding token with 2-of-2 spending conditions.
-
-2. **Payments**: For each request, Alice signs a balance update message. Charlie verifies the signature and serves the content.
-
-3. **Closing**: Charlie submits the funding token + balance update to the mint, receiving proofs for his share. Alice gets her change.
-
-4. **Privacy**: All pubkeys in the funding token are blinded, preventing the mint from linking channels to identities.
-
-## Status
-
-This is experimental software. The protocol works but:
-- Storage is pluggable (in-memory or SQLite); demos default to memory
-- Some edge cases around keyset rotation need handling
-
-See the TODO section in [AGENTS.md](AGENTS.md) for active work items.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
-
-## Acknowledgments
-
-Built on [CDK](https://github.com/cashubtc/cdk) by the Cashu community.
+Code is licensed under MIT.

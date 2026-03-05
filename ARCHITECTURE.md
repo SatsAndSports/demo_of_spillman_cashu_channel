@@ -1,6 +1,6 @@
 # Spilman Channel Architecture
 
-This document describes the technical design of Spilman-style unidirectional payment channels for Cashu ecash.
+This document describes the technical design and cryptographic protocol of Spilman-style unidirectional payment channels for Cashu ecash.
 
 ## Overview
 
@@ -8,13 +8,17 @@ A Spilman channel is a unidirectional payment channel between:
 - **Alice (sender)**: The payer (e.g., video viewer)
 - **Charlie (receiver)**: The payee (e.g., video server)
 
-Alice locks funds in a 2-of-2 multisig with a time-locked refund path. She then signs off-chain balance updates that incrementally transfer value to Charlie. Charlie can close the channel at any time by submitting the latest balance update to the mint.
+Alice funds the channel by locking ecash in a 2-of-2 multisig with a time-locked refund path. She then signs off-chain balance updates—effectively 'commitment transactions'—that incrementally transfer value to Charlie. Charlie can settle the channel at any time by submitting the latest update to the mint.
 
-## Key Concepts
+This settlement process is known as **'Stage 1'**. It spends the shared funding token and generates two sets of individual P2PK proofs: one for Charlie's earned balance and another for Alice's remaining change. This ensures both parties can independently reclaim their respective shares in **'Stage 2'**.
+
+---
+
+## Technical Protocol
 
 ### 1. 2-of-2 Multisig Funding
 
-The channel is funded with Cashu tokens that require **both** Alice and Charlie to spend cooperatively. The funding token's spending conditions are:
+The channel is funded, by Alice, with a Cashu token that require **both** Alice and Charlie to spend cooperatively. The funding token's spending conditions are:
 
 ```
 P2PK: (Alice AND Charlie) OR (Alice after locktime)
@@ -28,15 +32,17 @@ This is implemented using Cashu's NUT-11 spending conditions:
 
 ### 2. Deterministic Outputs
 
-Both parties can compute the **same** blinded outputs for the commitment transaction using a shared secret derived via ECDH. This eliminates round trips during payment:
+Both parties compute the **same** blinded outputs for the commitment transaction using a common `_channel secret_`. This eliminates round trips during payment:
 
-1. Alice and Charlie derive `channel_secret = ECDH(alice_secret, charlie_pubkey)`
-2. Both use the shared secret to deterministically generate blinding factors
+1. Alice and Charlie derive the `_channel secret_` from an ECDH shared secret (hashed with a domain separator).
+2. Both use the `_channel secret_` to deterministically generate blinding factors
 3. Both can independently compute the same `BlindedMessage` outputs
 
 ### 3. Balance Updates
 
-Alice signs off-chain messages that update Charlie's cumulative balance:
+Alice authorizes balance updates by signing a Cashu **commitment swap**. This swap spends the shared funding token and creates deterministic Stage 1 outputs for both Charlie (his earned balance) and Alice (her remaining change).
+
+Alice signs the request using the **`SIG_ALL`** flag, ensuring the signature commits to the specific inputs and outputs. She sends Charlie a `BalanceUpdateMessage`:
 
 ```json
 {
@@ -46,11 +52,11 @@ Alice signs off-chain messages that update Charlie's cumulative balance:
 }
 ```
 
-The signature covers `SHA256(channel_id || balance)` using Alice's **blinded** secret key.
+Charlie verifies the signature by reconstructing the same swap request.
 
 ### 4. Channel ID
 
-The channel ID is a SHA256 hash of all canonical channel parameters, using pipe-delimited text:
+The channel ID is a SHA256 hash of all canonical channel parameters, using pipe-delimited decimal text:
 
 ```
 channel_id = SHA256(
@@ -61,20 +67,23 @@ channel_id = SHA256(
 )
 ```
 
-The `channel_secret` (ECDH shared secret) is included, meaning only the two parties who know the secret can compute the channel ID. All fields are pipe-delimited decimal text (for cross-platform consistency). This binds all parameters together cryptographically. Any tampering changes the channel ID.
+All fields are pipe-delimited decimal text for cross-platform consistency. `channel_secret_hex` (the hex-encoded `_channel secret_`) ensures that only the two parties who know the secret can compute the channel ID.
 
 `funding_token_amount` is an explicit channel parameter. Use `compute_funding_token_amount()` when constructing a channel; do not recompute it from capacity.
 
-### 5. DLEQ Verification
+### 5. Funding Verification
 
-When Charlie receives funding proofs, he verifies the DLEQ proofs to ensure:
-- The mint actually signed these proofs (not fabricated by Alice)
-- The keyset ID matches the public keys provided
-- No token inflation is possible
+When Charlie receives the channel parameters and funding proofs, he performs a full verification:
+
+1. **Deterministic Construction**: He re-derives the expected blinded messages using the `_channel secret_` and ensures the funding proofs match exactly.
+2. **DLEQ Verification**: He verifies the DLEQ proofs to ensure the mint actually signed these proofs and no token inflation is possible.
+3. **Policy Check**: He confirms the mint, unit, and keyset are acceptable.
+
+---
 
 ## P2BK (Pay-to-Blinded-Key) Privacy
 
-The channel uses **blinded pubkeys** in the funding token so the mint cannot correlate channels to real identities.
+The channel uses **blinded pubkeys** in the funding token, and also in the 1-of-1 proofs that are used to distribute the funds at channel closing, so the mint cannot correlate channels to real identities.
 
 ### Why Blinding?
 
@@ -90,77 +99,80 @@ With P2BK:
 
 ### Blinding Derivation
 
-Channel-secret based derivations use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency. Stage 2 uses a NUT-28 shared-secret tweak over raw bytes.
+Channel-secret based derivations use **pipe-delimited decimal text** for hash inputs to ensure 100% cross-platform consistency.
 
-Stage 1 (funding / refund) blinding scalar:
+#### Stage 1 (Funding / Refund)
+
+Stage 1 uses a shared blinding scalar `r` per role. Distinct `context` strings (e.g., `sender_stage1`, `sender_stage1_refund`) ensure that Alice's refund blinded key is uncorrelated from her 2-of-2 payment key.
 
 ```
 r = SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
-
-If pubkey has even Y:  blinded_pubkey = raw_pubkey + r*G
-If pubkey has odd Y:   blinded_pubkey = -raw_pubkey + r*G  (BIP-340 parity)
-
-blinded_secret = raw_secret + r  (or -raw_secret + r for odd Y)
 ```
 
-Stage 2 (per-output) tweak using a deterministic ephemeral key and NUT-28 shared secret:
+Blinded keys are derived using standard BIP-340 parity handling.
+
+#### Stage 2 (Per-Output)
+
+Stage 2 uses a deterministic ephemeral keypair and follows the [NUT-28](https://github.com/cashubtc/nuts/blob/main/28.md) (P2BK) specification. Each output is locked to a unique blinded pubkey derived from its amount and index.
+
+The ephemeral secret `e`, which is essentially the 'entropy' for the NUT-28 blinding, is derived deterministically:
 
 ```
 e = SHA256("Cashu_Spilman_P2BK_ephemeral_v1" || channel_secret || "{channel_id}|{context}|{amount}|{index}|{retry_counter}")
-E = e*G
-Zx = x-coordinate of ECDH(e, role_pubkey)
-r_i = SHA256("Cashu_P2BK_v1" || Zx || i_byte)
 ```
 
-If `r_i` is invalid, retry once with an extra `0xff` byte appended to the hash input. `i_byte` is a single byte (0x00..0x0A); the current implementation uses 0x00. `role_pubkey` is the raw Alice/Charlie pubkey (not blinded).
 
-Values like `amount`, `index`, and `retry_counter` are interpolated as decimal strings for channel-secret derivations. `channel_id` is a hex string. Raw bytes are used for `Zx` and `i_byte` in the NUT-28 tweak.
+---
 
-Stage 2 proofs may be signed immediately after unblinding using the stage 2 tweaked secret key. Wallet receive flows accept already-signed P2PK proofs and will not add duplicate signatures unless provided signing keys.
+## State and Pricing
 
-Stage 2 P2BK tweak is defined as the NUT-28 shared-secret tweak (`Cashu_P2BK_v1`). Outputs derived with the legacy tweak are not compatible; close and re-fund channels created with the legacy tweak.
+The protocol handles cryptographic signing and verification, but a functional service also requires **state management** and **business logic**. These requirements motivate the Bridge and Host architecture described below.
 
-### Blinding Contexts
+- **Service Tracking**: Charlie must track how much service has been delivered per channel (e.g., bytes, requests) to ensure each payment covers the accumulated cost.
+- **Payment Persistence**: Charlie must store the highest-balance update received per channel. This is his proof for settlement and prevents rollback attempts.
+- **Pricing Function**: The developer defines how usage maps to `amount_due`. The server only fulfills a request if `balance >= amount_due`. Some clients will sometimes overpay a little, as it's not always obvious in advance what the cost of a given request will be.
 
-Different contexts ensure keys are unlinkable across roles:
+By delegating these concerns to a "Host" while keeping the protocol logic in the "Bridge," Spilman channels can be integrated into any service.
 
-| Context | Purpose |
-|---------|---------|
-| `"sender_stage1"` | Alice's key for 2-of-2 spending |
-| `"receiver_stage1"` | Charlie's key for 2-of-2 spending |
-| `"sender_stage1_refund"` | Alice's refund key (unlinkable to 2-of-2) |
-| `"sender_stage2"` | Alice's key for spending stage 1 outputs |
-| `"receiver_stage2"` | Charlie's key for spending stage 1 outputs |
-
-### Funding Token Structure
+### Channel Lifecycle (Server Perspective)
 
 ```
-Secret: P2PK with SIG_ALL flag
-  - data: Alice's blinded pubkey (sender_stage1)
-  - pubkeys: [Charlie's blinded pubkey (receiver_stage1)]
-  - refund_keys: [Alice's blinded refund pubkey (sender_stage1_refund)]
-  - locktime: Unix timestamp
-  - sigflag: SIG_ALL (signatures cover inputs AND outputs)
+               payment
+                ┌───┐
+                ▼   │
+      fund ──► Open ──► Closing ──► Closed
+                 │                    ▲
+                 │    (unilateral)    │
+                 └────────────────────┘
 ```
+
+- **Open**: Created when a client registers a funded channel. The server accepts payments, tracks usage, and persists the highest-balance update.
+- **Closing**: A cooperative close has been initiated. The swap request is prepared but not yet submitted to the mint. No further payments are accepted.
+- **Closed**: The mint has processed the swap. Receiver and sender proofs have been unblinded and stored. The channel is settled.
+
+Transitions:
+- `→ Open`: Client funds a channel and registers it via the funding endpoint.
+- `Open → Open`: Normal payment — balance increases, usage is recorded.
+- `Open → Closing`: Cooperative close requested, where the server accepts payment for only what's actually due, allowing the client to 'undo' any earlier overpayment.
+- `Closing → Closed`: Mint swap succeeds and proofs are unblinded.
+- `Open → Closed`: Unilateral close (server submits the latest payment directly).
+
+---
 
 ## Universal Bridge Architecture
 
-To make Spilman channels adoptable across different tech stacks, we use a **"Pure Brain + Language Bridges"** model.
+To make Spilman channels adoptable across different tech stacks, the library uses a **"Pure Brain + Language Bridges"** model.
 
-### The Core (Rust)
+### The Protocol Bridge
 
 The Spilman logic is implemented as a structured **Protocol Bridge** (`SpilmanBridge`):
-
-- **Input**: Typed params + request context (JSON/base64 helpers are optional)
-- **Output**: `Result<PaymentSuccess, BridgeError>` (typed success or error)
+- **Input**: Typed params + request context
+- **Output**: Typed success or error
 - **Portability**: Compiles to WASM (JS/TS) and FFI (Python/Go)
 
-Core methods (`process_payment`, `fund_channel`, `validate_payment`) return typed results and signal errors via the language's native mechanism (WASM throws, Python raises, Go returns error). Close methods (`execute_cooperative_close`, `execute_unilateral_close`) also return typed results in Rust; bindings convert to language-native objects.
+### The SpilmanHost Interface
 
-### The SpilmanHost Trait
-
-The bridge delegates policy decisions and cryptographic operations to the host application.
-Networking is split into separate traits so sync (Python/Go) and async (Rust/WASM) hosts can share the same core bridge.
+The bridge is **keyless and stateless**. It delegates policy decisions (pricing, storage) and cryptographic operations (ECDH, signing) to the host application via the `SpilmanHost` trait. This allows is to be very flexible, and also ensures that the bridge doesn't have to see the private key
 
 ```rust
 trait SpilmanHost<C = String> {
@@ -200,89 +212,11 @@ trait SpilmanHost<C = String> {
     fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String>;
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
 }
-
-trait SpilmanNetworking {
-    fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
-    fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
-}
-
-#[async_trait]
-trait SpilmanAsyncNetworking {
-    async fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String>;
-    async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
-}
-// See INTEGRATION.md for full method signatures and documentation.
 ```
 
-**Key design principle**: Like the client-side bridge, the server-side bridge never holds or sees the server's secret key. All operations requiring the key are delegated to the host via callbacks:
+### Client-Side: SpilmanClientBridge
 
-- `compute_channel_secret`: Host performs ECDH between Charlie's secret and Alice's pubkey, then hashes with a domain separator
-- `sign_with_tweaked_key`: Host produces BIP-340 Schnorr signatures using `(secret + tweak)`, where the tweak is the P2BK blinding scalar computed by the bridge
-
-For hosts holding raw keys, convenience functions `compute_channel_secret_from_hex()` and `sign_with_tweaked_key_util()` are provided.
-
-### ConfigurableHost (Ready-Made Implementation)
-
-For Rust servers that don't need custom host logic, `ConfigurableHost` provides a complete `SpilmanHost` implementation driven by YAML configuration. It is feature-gated behind `configurable-host` in the `cdk` crate.
-
-Key features:
-- **Named usage variables**: Pricing is defined as a linear combination of monotonic integer counters (e.g., `"chars"`, `"requests"`, `"bytes"`) with per-unit prices
-- **YAML configuration**: Mint URL, expiry, per-unit pricing, and storage backend are all defined in a YAML file
-- **Pluggable storage** via an internal `SpilmanStorage` trait:
-  - `MemoryStorage` (default): Thread-safe `RwLock<HashMap>` stores behind `Arc`; cheap `Clone` for sharing between `SpilmanBridge` and route handlers
-  - `SqliteStorage`: File-backed persistence using `rusqlite` with `Mutex<Connection>`; usage counters use normalized rows with atomic SQL increments (`INSERT ... ON CONFLICT DO UPDATE SET count = count + excluded.count`)
-- **Public accessors**: `get_balance()`, `get_usage()`, `get_funding_data()`, `get_mints_units_keysets()`, etc. for route handlers
-
-Construct via `ConfigurableHost::from_yaml(yaml_str, secret_key_hex)` or `ConfigurableHost::new(config, secret_key_hex)` (both read `config.storage` to select the backend). Use `ConfigurableHost::with_storage(config, secret_key_hex, storage)` for custom backends. See `spilman/configurable_host.rs` and the [Rust ASCII Art server](examples/rust-ascii-art/) for a working example.
-
-### Networking Batteries (Rust)
-
-For Rust servers, the library provides a "batteries-included" networking implementation behind the `configurable-host-reqwest` feature:
-
-- **`ReqwestNetworking`**: A ready-made implementation of `SpilmanAsyncNetworking` using `reqwest`.
-- **`initialize_keysets()`**: A one-line startup helper on `ConfigurableHost` that fetches and caches keysets from all configured mints.
-- **Auto-Refresh**: The bridge automatically calls `refresh_all_keysets` on swap failures (e.g., due to stale keysets), and `ReqwestNetworking` handles the HTTP re-fetching.
-
-This eliminates the need for every Rust integrator to write the same ~150 lines of HTTP boilerplate.
-
-### Axum Integration (Rust)
-
-For Rust servers using the `axum` framework, the library provides high-level components behind the `spilman-axum` feature:
-
-- **`SpilmanState<H, N, C>`**: A unified state container for the `SpilmanBridge`, `SpilmanHost`, and `SpilmanAsyncNetworking`.
-- **Management Router**: A pre-built `axum::Router` that handles all standard channel lifecycle endpoints (`/params`, `/register`, status, and closing). It can be nested into any application via `.nest("/channel", configurable_management_router(state))`.
-- **Error Mapping**: Standardized logic that maps `BridgeError` and `CloseError` to consistent HTTP status codes and JSON bodies expected by Spilman clients.
-
-### Persistence
-
-The `ConfigurableHost` supports pluggable storage backends via the `SpilmanStorage` trait.
-
-#### 1. SqliteStorage
-
-File-backed persistence using `rusqlite`.
-- **Schema**: Three tables for `channels` (funding/balance), `usage` (per-variable counters), and `keysets` (cached mint data).
-- **Atomic Usage**: Increments are performed in a single SQL statement using `INSERT ... ON CONFLICT DO UPDATE`, ensuring correctness even under high concurrency.
-- **Performance**: A lazy, write-once in-memory cache is used for `ChannelFunding` data to eliminate redundant disk reads for static channel parameters.
-
-#### 2. MemoryStorage (Default)
-
-Thread-safe `RwLock<HashMap>` based storage. Ideal for development, testing, or ephemeral services where persistence is not required.
-
-### Language Bridges
-
-Each language implements the `SpilmanHost` trait/interface:
-
-| Language | Bridge Location | Example |
-|----------|-----------------|---------|
-| **TypeScript** | `cdk-wasm` | CashuTube (Blossom server) |
-| **Python** | `cdk-spilman-python` | ASCII art demo |
-| **Go** | `cdk-spilman-go` | Go demo server |
-
-The security-critical logic (DLEQ, signatures, channel ID) stays in Rust.
-
-### Client-Side Bridge
-
-The `SpilmanClientBridge` mirrors the server-side pattern, providing a high-level API for channel management on the client side:
+The `SpilmanClientBridge` mirrors this pattern, enabling external signers and custom storage for client applications.
 
 ```rust
 trait SpilmanClientHost {
@@ -296,126 +230,56 @@ trait SpilmanClientHost {
 }
 ```
 
-**Key design principle**: The bridge never holds or sees Alice's secret key. All operations requiring the key are delegated to the host via callbacks:
+---
 
-- `sign_with_tweaked_key`: Host produces BIP-340 Schnorr signatures using `(secret + tweak)`, where the tweak is the P2BK blinding scalar computed by the bridge
-- `compute_channel_secret`: Host performs ECDH between Alice's secret and Charlie's pubkey, then hashes with a domain separator
+### Integration Kits
 
-This enables external signers, HSMs, or any key management strategy the host prefers. The caller passes `alice_pubkey_hex` per channel when opening, so different channels can use different keys.
+The Bridge and Host traits are deliberately flexible, but most services follow the same pattern: load pricing from config, track usage in a database, and expose management endpoints. To avoid reimplementing this boilerplate, the library provides **integration kits** — ready-made `SpilmanHost` implementations driven by a simple YAML config file.
 
-The bridge orchestrates:
-1. **Channel opening**: `open_channel_from_token()` — parses token, computes ECDH via host, creates funding swap, submits to mint, verifies DLEQ, saves channel
-2. **Payment signing**: `sign_balance_update()` / `build_payment_header()` — creates balance updates with host-delegated signing
-3. **Channel management**: `get_channel_info()`, `list_channels()`, `remove_channel()`
+Integration kits are available for Rust (`ConfigurableHost`), TypeScript (`cdk-spilman-kit`), Python, and Go. See [INTEGRATION.md](INTEGRATION.md) for setup guides.
 
-## Channel Lifecycle
+## Data Model: YAML Configuration
 
-### 1. Channel Setup
+The integration kits use a standardized YAML schema for pricing and policy:
 
-```
-Alice                                Charlie
-  |                                     |
-  |  GET /channel/params                |
-  |------------------------------------>|
-  |  {receiver_pubkey, pricing, ...}    |
-  |<------------------------------------|
-  |                                     |
-  |  [Compute channel_secret via ECDH]   |
-  |  [Generate channel_id]              |
-  |  [Create funding token]             |
-  |  [Mint/swap to get proofs]          |
-```
+```yaml
+# Trusted mints and the units they support
+mints:
+  "http://localhost:3338": [sat, msat, usd]
 
-### 2. Payments
+# Optional scaling divisor: amount_due = ceil(raw_total / pricing_scale)
+pricing_scale: 1000
 
-```
-Alice                                Charlie
-  |                                     |
-  |  GET /blob/xyz                      |
-  |  X-Cashu-Channel: {                 |
-  |    channel_id, balance, signature,  |
-  |    params?, funding_proofs?         |
-  |  }                                  |
-  |------------------------------------>|
-  |                                     |
-  |  [Verify signature]                 |
-  |  [Check balance >= amount_due]      |
-  |  [Record payment atomically]        |
-  |                                     |
-  |  200 OK + blob data                 |
-  |  X-Cashu-Channel: {confirmation}    |
-  |<------------------------------------|
+# Per-unit pricing and capacity policies
+pricing:
+  sat:
+    min_capacity: 100
+    variables:
+      blobs: 500    # 0.5 sat per blob
+      bytes: 10     # 0.01 sat per byte
+  usd:
+    min_capacity: 10
+    max_amount_per_output: 64
+    variables:
+      blobs: 100
+      bytes: 2
 ```
 
-### 3. Channel Closing
+---
 
-```
-Alice                                Charlie                              Mint
-  |                                     |                                   |
-  |  POST /channel/:id/close            |                                   |
-  |  {balance, signature}               |                                   |
-  |------------------------------------>|                                   |
-  |                                     |                                   |
-  |                    [Verify balance == amount_due]                       |
-  |                    [Create 2-of-2 signed swap request]                  |
-  |                                     |                                   |
-  |                                     |  POST /v1/swap                    |
-  |                                     |  {inputs: funding, outputs: P2PK} |
-  |                                     |---------------------------------->|
-  |                                     |                                   |
-  |                                     |  {signatures: blind_sigs}         |
-  |                                     |<----------------------------------|
-  |                                     |                                   |
-  |                    [Unblind signatures]                                 |
-  |                    [Verify DLEQ proofs]                                 |
-  |                    [Store receiver proofs]                              |
-  |                                     |                                   |
-  |  {success, sender_proofs}           |                                   |
-  |<------------------------------------|                                   |
-```
-
-## Core Rust Files
-
-| File | Purpose |
-|------|---------|
-| `spilman/params.rs` | `ChannelParameters`, channel ID derivation, P2BK key derivation |
-| `spilman/keysets_and_amounts.rs` | Fee calculations, amount decomposition |
-| `spilman/deterministic.rs` | Deterministic blinded output generation |
-| `spilman/balance_update.rs` | Balance update messages and Schnorr signatures |
-| `spilman/sender_and_receiver.rs` | `SpilmanChannelSender`, `verify_valid_channel` |
-| `spilman/established_channel.rs` | `EstablishedChannel` state container |
-| `spilman/bridge.rs` | `SpilmanBridge` and `SpilmanHost` trait (server-side) |
-| `spilman/client_bridge.rs` | `SpilmanClientBridge` and `SpilmanClientHost` trait (client-side) |
-| `spilman/bindings.rs` | FFI-friendly wrapper functions (compute_channel_from_token, create_funding_swap, etc.) |
-| `spilman/configurable_host.rs` | `ConfigurableHost`: YAML-driven `SpilmanHost` implementation (feature: `configurable-host`) |
-| `spilman/tests.rs` | Integration tests against real mint |
-
-## Transport Constraints
-
-### HTTP Header Limits
-The Spilman protocol typically transmits `X-Cashu-Channel` as a base64-encoded JSON header. Standard web servers (Node.js, Express, Nginx) often impose a **16KB limit** on total header size.
-
-A single funding proof occupies ~350-400 bytes when base64 encoded. Consequently, a funding token containing more than **~40 proofs** will likely overflow this limit. 
-
-This is particularly relevant for:
-- **High-capacity msat channels**: A 10,000 sat channel funded with `msat` tokens using standard 64-output fragmentation will generate ~150+ proofs (~60KB).
-- **Workaround**: Use a larger `maximum_amount` (e.g., 8192) to keep the proof count small, or move funding to a `POST` request body.
-
-## Future Work
-
-### Two-Stage Channel Closing (Implemented)
-
-Channel closing is now fully orchestrated by the bridge:
-
-1. **Sync stage** (`prepare_cooperative_close_for_execution` / `prepare_unilateral_close_for_execution`): Validates signatures, verifies balance, creates the swap request
-2. **Async stage** (handled by WASM/PyO3/CGO bindings): Submits swap to mint, retries on keyset error, unblinds signatures, verifies DLEQ, calls `mark_channel_closed` host hook
-
-All four server demos (CashuTube, TS ASCII Art, Python ASCII Art, Go ASCII Art) use identical patterns: call the bridge's close method and pass through the result.
+## System Behavior
 
 ### Keyset Rotation Handling
 
 The implementation handles mint keyset rotation using a **Persistent Cache** strategy:
 
-1.  **Retention**: When the keyset cache is refreshed (e.g., after a swap failure or at startup), existing keysets are never removed from the local store, even if they are no longer returned by the mint's `/v1/keysets` endpoint.
-2.  **Validation**: This ensures that channels opened while a keyset was active remain valid and closable even after the mint deactivates that keyset.
-3.  **Active Flag**: The cache updates the `active` flag of entries. The bridge uses this flag to decide which keysets are acceptable for *new* channels, while still allowing *existing* channels to use their original keysets.
+1.  **Retention**: When the keyset cache is refreshed, existing keysets are never removed from the local store, even if they are no longer returned by the mint's `/v1/keysets` endpoint.
+2.  **Validation**: Channels opened while a keyset was active remain valid and closable after the mint deactivates that keyset.
+3.  **Active Flag**: The bridge uses an `active` flag to decide which keysets are acceptable for *new* channels, while allowing *existing* channels to use their original keysets.
+
+### Channel Closing Flow
+
+Closing is orchestrated by the bridge in two stages:
+
+1. **Sync stage** (`prepare_cooperative_close_for_execution`): Validates signatures, verifies balance, and creates the swap request.
+2. **Async stage**: Submits the swap to the mint, retries on keyset error, unblinds signatures, verifies DLEQ, and calls the `mark_channel_closed` host hook.

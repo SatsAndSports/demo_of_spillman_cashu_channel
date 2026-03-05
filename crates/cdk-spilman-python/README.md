@@ -1,23 +1,8 @@
 # CDK Spilman Python Bindings
 
-Python bindings for Spilman payment channels using PyO3.
-
-This package provides both server-side (SpilmanBridge) and client-side functions for implementing Spilman unidirectional payment channels.
+Python bindings for Spilman payment channels, compiled from the core Rust implementation using PyO3.
 
 ## Installation
-
-### From Source (requires Rust)
-
-```bash
-# Using the Makefile
-make build
-
-# Or manually
-pip install maturin
-maturin develop
-```
-
-### From PyPI (coming soon)
 
 ```bash
 pip install cdk-spilman
@@ -25,136 +10,63 @@ pip install cdk-spilman
 
 ## Usage
 
-### Server-Side (Receiver)
+### Server-Side: SpilmanBridge
+
+The `SpilmanBridge` handles payment validation and channel registration. It delegates storage and policy to a host object.
 
 ```python
 from cdk_spilman import SpilmanBridge
 
 class MyHost:
-    """Implement SpilmanHost methods for your application."""
-    
     def get_amount_due(self, channel_id: str, context: str | None) -> int:
         return 10  # Your pricing logic
     
-    def receiver_key_is_acceptable(self, pubkey: str) -> bool:
-        return pubkey == self.server_pubkey
+    def save_funding(self, channel_id: str, funding: str, payment: str):
+        pass  # Persist funding data
     
-    # ... implement other required methods
+    # ... see Architecture docs for full list
 
 # Create bridge with your host
 bridge = SpilmanBridge(MyHost(), server_secret_key_hex)
 
-# Process payments
-result = bridge.process_payment(payment_json, context_json)
-print(f"Payment accepted: balance={result.balance}, channel={result.channel_id}")
-```
-
-#### Error handling
-
-Payment/validation errors raise `RuntimeError` with a JSON payload containing
-`error`, `reason`, `status`, `code`, and optional `extra`.
-
-```python
-import json
-
+# Process a payment
 try:
     result = bridge.process_payment(payment_json, context_json)
+    print(f"Payment accepted. New balance: {result.balance}")
 except RuntimeError as e:
+    import json
     err = json.loads(str(e))
-    print(err["status"], err["reason"], err.get("code"))
+    print(err["status"], err["reason"]) # Structured JSON error
 ```
 
-### Client-Side (Sender)
+### Client-Side: Setup
 
 ```python
 from cdk_spilman import (
     generate_keypair,
     compute_channel_secret,
-    channel_parameters_get_channel_id,
     create_funding_outputs,
     create_signed_balance_update,
 )
 
-# Generate keypair
-secret, pubkey = generate_keypair()
-
-# Compute shared secret with receiver
-channel_secret = compute_channel_secret(secret, receiver_pubkey)
-
-# Get channel ID
-channel_id = channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)
+# Derive `_channel secret_` with receiver
+channel_secret = compute_channel_secret(alice_secret, charlie_pubkey)
 
 # Create funding outputs for minting
-funding = create_funding_outputs(params_json, secret, keyset_json)
+funding = create_funding_outputs(params_json, alice_secret, keyset_json)
 
-# Create signed payment
-payment = create_signed_balance_update(params_json, keyset_json, secret, proofs_json, balance)
+# Sign a payment
+payment = create_signed_balance_update(params_json, keyset_json, alice_secret, proofs_json, balance)
 ```
-
-## Testing
-
-### Integration Tests
-
-Integration tests require a Cashu mint running:
-
-```bash
-# Start a mint (from CDK repo root)
-cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
-
-# In another terminal, run integration tests
-make test-integration
-
-# Or with custom mint URL
-MINT_URL=http://my-mint:3338 make test-integration
-```
-
-### Full Integration Suite
-
-The comprehensive 52-test integration suite is run from the CDK root:
-
-```bash
-# From CDK repository root
-make test-server-python
-```
-
-## Example Server
-
-An ASCII art demo server is included:
-
-```bash
-# Start the server
-make run-server
-
-# In another terminal, run the client
-make run-client
-```
-
-See `examples/python-ascii-art/README.md` for more details.
 
 ## API Reference
 
 ### Classes
-
 - `SpilmanBridge` - Main bridge for server-side payment validation
-- `PaymentSuccess` - Result of a successful payment
-- `PaymentValidationResult` - Result of payment validation (without recording)
-- `FundChannelResult` - Result of channel registration
-- `CloseSuccess` - Result of channel closing
 
-### Functions
-
+### Core Functions
 - `generate_keypair()` - Generate a new secp256k1 keypair
-- `secret_key_to_pubkey(secret_hex)` - Derive public key from secret
-- `compute_channel_secret(my_secret, their_pubkey)` - Compute ECDH shared secret
-- `channel_parameters_get_channel_id(params_json, channel_secret, keyset_json)` - Get channel ID
-- `create_funding_outputs(params_json, secret, keyset_json)` - Create blinded outputs for funding
-- `construct_proofs(signatures_json, secrets_json, keyset_json)` - Construct proofs from signatures
-- `create_signed_balance_update(params_json, keyset_json, secret, proofs_json, balance)` - Sign a payment
-
-## Protocol
-
-See [NUT-XX: Spilman Channels](https://github.com/cashubtc/nuts/pull/296) for the full protocol specification.
-
-## License
-
-MIT
+- `compute_channel_secret(secret, pubkey)` - Derive `_channel secret_`
+- `create_funding_outputs(params, secret, keyset)` - Create blinded outputs for funding
+- `create_signed_balance_update(...)` - Sign a payment
+- `verify_channel(params, proofs, keyset)` - Validate channel funding
