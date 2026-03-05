@@ -70,6 +70,10 @@ func (h *BaseSpilmanHost) MintAndKeysetIsAcceptable(mint string, keysetId string
 		return false
 	}
 
+	if !entry.Active {
+		return false
+	}
+
 	for _, u := range trustedUnits {
 		if u == entry.Unit {
 			return true

@@ -1150,7 +1150,7 @@ impl SpilmanHost for ConfigurableHost {
             None => return false,
         };
         match self.storage.get_keyset(mint, keyset_id) {
-            Some(entry) => trusted_units.iter().any(|u| u == &entry.unit.to_string()),
+            Some(entry) => entry.active && trusted_units.iter().any(|u| u == &entry.unit.to_string()),
             None => false,
         }
     }

@@ -43,7 +43,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       if (!trustedUnits) return false;
       
       const entry = stores.keysetCache.get(mint, keysetId);
-      return entry !== null && trustedUnits.includes(entry.unit);
+      return entry !== null && entry.active && trustedUnits.includes(entry.unit);
     },
 
     getFundingAndParams: (channelId: string): [string, string, string, string] | null => {

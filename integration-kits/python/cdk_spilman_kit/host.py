@@ -47,7 +47,7 @@ class BaseSpilmanHost:
             return False
         
         entry = self.stores.keyset_cache.get((mint, keyset_id))
-        return entry is not None and entry.unit in trusted_units
+        return entry is not None and entry.active and entry.unit in trusted_units
 
     def get_funding_and_params(self, channel_id: str) -> Optional[Tuple[str, str, str, str]]:
         data = self.stores.channel_funding.get(channel_id)
