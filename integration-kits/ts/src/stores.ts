@@ -79,6 +79,7 @@ export interface ChannelClosedStore {
     senderProofsJson: string
   ): void;
   get(channelId: string): ClosedChannelData | null;
+  list(): Array<{ channelId: string; data: ClosedChannelData }>;
 }
 
 export interface KeysetCache {
@@ -192,6 +193,13 @@ export function createInMemoryStores(): SpilmanStores {
     },
     get(channelId) {
       return channelClosedStore.get(channelId) ?? null;
+    },
+    list() {
+      const result: Array<{ channelId: string; data: ClosedChannelData }> = [];
+      for (const [channelId, data] of channelClosedStore) {
+        result.push({ channelId, data });
+      }
+      return result;
     },
   };
 

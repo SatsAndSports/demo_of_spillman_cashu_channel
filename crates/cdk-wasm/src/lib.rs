@@ -443,3 +443,7 @@ pub fn verify_channel(params_json: &str, channel_secret_hex: &str, funding_proof
     let result = cdk::spilman::verify_valid_channel(&serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &params);
     serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
+#[wasm_bindgen]
+pub fn build_cashu_b_token(mint_url: &str, unit: &str, proofs_json: &str) -> Result<String, JsValue> {
+    cdk::spilman::build_cashu_b_token(mint_url, unit, proofs_json).map_err(|e| JsValue::from_str(&e))
+}

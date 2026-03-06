@@ -12,6 +12,7 @@ export {
   compute_funding_token_nominal,
   verify_proof_dleq,
   verify_channel,
+  build_cashu_b_token,
 } from "../wasm/cdk_wasm.js";
 import wasmInit from "../wasm/cdk_wasm.js";
 import { readFileSync } from "fs";

@@ -198,6 +198,26 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
         senderProofsJson: data.sender_proofs_json,
       };
     },
+    list() {
+      const rows = db.prepare("SELECT channel_id, closed_json FROM spilman_channels WHERE state = 'Closed'").all() as any[];
+      return rows
+        .filter((r: any) => r.closed_json)
+        .map((r: any) => {
+          const data = JSON.parse(r.closed_json);
+          return {
+            channelId: r.channel_id,
+            data: {
+              locktime: data.locktime,
+              closedAmount: data.closed_amount,
+              valueAfterStage1: data.value_after_stage1,
+              receiverSum: data.receiver_sum,
+              senderSum: data.sender_sum,
+              receiverProofsJson: data.receiver_proofs_json,
+              senderProofsJson: data.sender_proofs_json,
+            },
+          };
+        });
+    },
   };
 
   const keysetCache: KeysetCache = {

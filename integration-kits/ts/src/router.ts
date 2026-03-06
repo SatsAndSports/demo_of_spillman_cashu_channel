@@ -1,6 +1,7 @@
 import express from "express";
 import { getChannelStatus, PricingTable, SpilmanStores } from "./stores.js";
 import { getBridgeErrorReason, mapBridgeErrorStatus } from "./express.js";
+import { build_cashu_b_token } from "../wasm/cdk_wasm.js";
 
 export interface ManagementRouterDeps {
   bridge: {
@@ -236,6 +237,59 @@ export function createSpilmanManagementRouter(deps: ManagementRouterDeps): expre
         status,
       });
     }
+  });
+
+  router.get("/closed/receiver-tokens", (_req, res) => {
+    const closedChannels = deps.stores.channelClosed.list();
+
+    const tokens: Array<{
+      channel_id: string;
+      mint: string;
+      unit: string;
+      receiver_sum: number;
+      token: string;
+    }> = [];
+    const errors: Array<{ channel_id: string; reason: string }> = [];
+
+    for (const { channelId, data } of closedChannels) {
+      try {
+        const funding = deps.stores.channelFunding.get(channelId);
+        if (!funding) {
+          errors.push({ channel_id: channelId, reason: "missing funding data" });
+          continue;
+        }
+
+        const params = JSON.parse(funding.paramsJson);
+        const mint: string = params.mint;
+        const unit: string = params.unit ?? "sat";
+
+        if (!mint) {
+          errors.push({ channel_id: channelId, reason: "missing mint in params" });
+          continue;
+        }
+
+        if (!data.receiverProofsJson || data.receiverProofsJson === "[]") {
+          errors.push({ channel_id: channelId, reason: "no receiver proofs" });
+          continue;
+        }
+
+        const token = build_cashu_b_token(mint, unit, data.receiverProofsJson);
+        tokens.push({
+          channel_id: channelId,
+          mint,
+          unit,
+          receiver_sum: data.receiverSum,
+          token,
+        });
+      } catch (e) {
+        errors.push({
+          channel_id: channelId,
+          reason: (e as Error).message || String(e),
+        });
+      }
+    }
+
+    res.json({ count: tokens.length, tokens, errors });
   });
 
   return router;

@@ -890,6 +890,38 @@ pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, 
     Ok(token.to_string())
 }
 
+/// Build a cashuB (v4) token string from proofs JSON, a mint URL, and a unit.
+///
+/// Takes a JSON array of proofs and wraps them in the cashuB token format
+/// (CBOR-encoded, `"cashuB" + base64url(...)`).
+///
+/// # Arguments
+/// * `mint_url` - The mint URL to embed in the token
+/// * `unit` - The currency unit (e.g. "sat", "msat", "usd")
+/// * `proofs_json` - JSON array of proofs (must include witness fields if present)
+///
+/// # Returns
+/// A cashuB token string (e.g. "cashuBpGF0...")
+pub fn build_cashu_b_token(
+    mint_url: &str,
+    unit: &str,
+    proofs_json: &str,
+) -> Result<String, String> {
+    use crate::mint_url::MintUrl;
+
+    let proofs: Vec<Proof> =
+        serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
+
+    let mint_url = MintUrl::from_str(mint_url).map_err(|e| format!("Invalid mint URL: {}", e))?;
+
+    let currency_unit =
+        CurrencyUnit::from_str(unit).unwrap_or(CurrencyUnit::Custom(unit.to_string()));
+
+    let token = Token::new(mint_url, proofs, None, currency_unit);
+
+    Ok(token.to_string())
+}
+
 /// Mint plain proofs from a Cashu mint via HTTP.
 ///
 /// Performs the full minting flow:
