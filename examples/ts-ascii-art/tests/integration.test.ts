@@ -120,18 +120,18 @@ describe("Channel Setup", () => {
     expect(derivedPubkey).toBe(expectedPubkey);
   });
 
-  it("should compute shared secret", () => {
+  it("should compute channel secret", () => {
     const alice = generateKeypair();
     const bob = generateKeypair();
 
-    // Both parties should compute the same shared secret
+    // Both parties should compute the same channel secret
     const sharedAlice = compute_channel_secret(alice.secret, bob.pubkey);
     const sharedBob = compute_channel_secret(bob.secret, alice.pubkey);
 
     expect(sharedAlice).toBe(sharedBob);
     expect(sharedAlice).toHaveLength(64);
 
-    console.log(`Computed shared secret: ${sharedAlice.slice(0, 16)}...`);
+    console.log(`Computed channel secret: ${sharedAlice.slice(0, 16)}...`);
   });
 
   it("should create funding outputs and channel ID", async () => {
@@ -148,9 +148,9 @@ describe("Channel Setup", () => {
     const keysetJson = JSON.stringify(keysetInfo);
     console.log(`Fetched keyset: ${keysetInfo!.keysetId}`);
 
-    // Compute shared secret
+    // Compute channel secret
     const channelSecret = compute_channel_secret(alice.secret, receiver.pubkey);
-    console.log(`Computed shared secret: ${channelSecret.slice(0, 16)}...`);
+    console.log(`Computed channel secret: ${channelSecret.slice(0, 16)}...`);
 
     // Build channel parameters
     const now = Math.floor(Date.now() / 1000);

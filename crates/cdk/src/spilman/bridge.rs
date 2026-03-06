@@ -943,7 +943,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let keyset_info = parse_keyset_info_from_json(&prep.keyset_info_json).map_err(CloseError::unblind_failed)?;
         let output_keyset_info = parse_keyset_info_from_json(&prep.output_keyset_info.to_string()).map_err(CloseError::unblind_failed)?;
         let channel_secret_bytes = hex::decode(&prep.channel_secret).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
-        let channel_secret: [u8; 32] = channel_secret_bytes.try_into().map_err(|_| CloseError::UnblindFailed { reason: "Invalid shared secret length".into(), status: 500 })?;
+        let channel_secret: [u8; 32] = channel_secret_bytes.try_into().map_err(|_| CloseError::UnblindFailed { reason: "Invalid channel secret length".into(), status: 500 })?;
         let params = ChannelParameters::from_json_with_channel_secret(&prep.params_json, keyset_info, channel_secret).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
 
         let blind_signatures: Vec<BlindSignature> = serde_json::from_str(&sigs_value.to_string()).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;

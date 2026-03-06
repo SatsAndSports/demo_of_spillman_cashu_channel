@@ -88,7 +88,7 @@ pub fn parse_keyset_info_from_json(json_str: &str) -> Result<KeysetInfo, String>
     ))
 }
 
-/// Get channel_id from params JSON, shared secret, and keyset info (all as strings)
+/// Get channel_id from params JSON, channel secret, and keyset info (all as strings)
 ///
 /// This is effectively a method on ChannelParameters, but takes JSON input
 /// for FFI compatibility.
@@ -97,9 +97,9 @@ pub fn channel_parameters_get_channel_id(
     channel_secret_hex: &str,
     keyset_info_json: &str,
 ) -> Result<String, String> {
-    // Parse the shared secret
-    let channel_secret_bytes =
-        hex::decode(channel_secret_hex).map_err(|e| format!("Invalid shared secret hex: {}", e))?;
+    // Parse the channel secret
+    let channel_secret_bytes = hex::decode(channel_secret_hex)
+        .map_err(|e| format!("Invalid channel secret hex: {}", e))?;
 
     if channel_secret_bytes.len() != 32 {
         return Err(format!(
@@ -122,9 +122,9 @@ pub fn channel_parameters_get_channel_id(
     Ok(params.get_channel_id())
 }
 
-/// Compute ECDH shared secret from hex strings
+/// Compute channel secret from hex-encoded secret key and public key
 ///
-/// Returns the x-coordinate of the shared point as a hex string (32 bytes).
+/// Returns the channel secret as a hex string (32 bytes).
 pub fn compute_channel_secret_from_hex(
     my_secret_hex: &str,
     their_pubkey_hex: &str,

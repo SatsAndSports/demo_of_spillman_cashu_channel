@@ -54,8 +54,9 @@ The server validates payments in order:
 1. Decode base64 and parse JSON from `X-Cashu-Channel` header
 2. Check required fields: `channel_id`, `balance`, `signature`
 3. If `params` + `funding_proofs` provided:
+   - Reconstruct deterministic outputs from params and verify funding proofs match
    - Verify DLEQ proofs via WASM
-   - Check keyset is from approved mint
+   - Check keyset is from approved mint and is active
    - Cache funding data
 4. Look up cached funding
 5. Verify Schnorr signature

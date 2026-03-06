@@ -6,7 +6,7 @@
 //! without requiring on-chain transactions for each payment. The channel uses:
 //!
 //! - 2-of-2 multisig funding with locktime refund for Alice
-//! - Deterministic output derivation using shared secrets
+//! - Deterministic output derivation using a channel secret
 //! - Off-chain balance updates signed by Alice
 //! - Final commitment transaction signed by both parties
 

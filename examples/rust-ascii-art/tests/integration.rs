@@ -112,11 +112,11 @@ fn test_funding_outputs_and_channel_id() {
     let keyset_json = serde_json::to_string(&keyset_info).expect("Failed to serialize keyset");
     println!("Fetched keyset: {}", keyset_id);
 
-    // 4. Compute shared secret
+    // 4. Compute channel secret
     let channel_secret_hex =
         compute_channel_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
-            .expect("Failed to compute shared secret");
-    println!("Computed shared secret: {}...", &channel_secret_hex[..16]);
+            .expect("Failed to compute channel secret");
+    println!("Computed channel secret: {}...", &channel_secret_hex[..16]);
 
     // 5. Build channel parameters (JSON format for bindings)
     let now = SystemTime::now()
@@ -198,7 +198,7 @@ fn test_channel_id_deterministic() {
 
     let channel_secret_hex =
         compute_channel_secret_from_hex(&alice_secret.to_secret_hex(), &receiver_pubkey.to_hex())
-            .expect("Failed to compute shared secret");
+            .expect("Failed to compute channel secret");
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

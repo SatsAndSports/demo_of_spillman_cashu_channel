@@ -61,7 +61,7 @@ pub struct ChannelParameters {
     pub keyset_info: KeysetInfo,
     /// Maximum amount for one output (amounts larger than this are filtered out)
     pub maximum_amount_for_one_output: u64,
-    /// Shared secret derived from ECDH between Alice and Charlie
+    /// Channel secret: a domain-separated hash of the ECDH shared secret between Alice and Charlie
     pub channel_secret: [u8; 32],
 }
 
@@ -177,7 +177,7 @@ fn derive_blinded_pubkey(
 }
 
 impl ChannelParameters {
-    /// Create new channel parameters with a pre-computed shared secret
+    /// Create new channel parameters with a pre-computed channel secret
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         alice_pubkey: crate::nuts::PublicKey,
@@ -236,9 +236,9 @@ impl ChannelParameters {
         })
     }
 
-    /// Create new channel parameters by computing the shared secret from a secret key
+    /// Create new channel parameters by computing the channel secret from a secret key
     ///
-    /// This constructor computes the ECDH shared secret automatically.
+    /// This constructor computes the channel secret (hashed ECDH) automatically.
     /// It auto-detects whether the provided secret key belongs to Alice or Charlie by checking
     /// if its public key matches either party, then uses the counterparty's public key for ECDH.
     ///
@@ -329,7 +329,7 @@ impl ChannelParameters {
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
 
-        // Determine counterparty and compute shared secret
+        // Determine counterparty and compute channel secret
         let my_pubkey = my_secret.public_key();
         let their_pubkey = if my_pubkey == alice_pubkey {
             &charlie_pubkey
@@ -346,9 +346,9 @@ impl ChannelParameters {
         Self::from_json_with_channel_secret(json_str, keyset_info, channel_secret)
     }
 
-    /// Create channel parameters from a JSON string with a pre-computed shared secret
+    /// Create channel parameters from a JSON string with a pre-computed channel secret
     ///
-    /// Same as `from_json` but takes the shared secret directly instead of computing it.
+    /// Same as `from_json` but takes the channel secret directly instead of computing it.
     pub fn from_json_with_channel_secret(
         json_str: &str,
         keyset_info: KeysetInfo,
@@ -471,7 +471,7 @@ impl ChannelParameters {
     ///
     /// The channel_secret (channel_secret) is included implicitly — it does not
     /// appear in `get_channel_id_params_json()`. This means the channel ID can
-    /// only be computed by the two parties who know the shared secret.
+    /// only be computed by the two parties who know the channel secret.
     pub fn get_channel_id_bytes(&self) -> [u8; 32] {
         let params_string = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -617,7 +617,7 @@ impl ChannelParameters {
         anyhow::bail!("Failed to derive valid ephemeral secret for output after 256 attempts")
     }
 
-    /// Derive NUT-28 P2BK scalar from shared secret x-coordinate.
+    /// Derive NUT-28 P2BK scalar from ephemeral shared secret x-coordinate.
     ///
     /// Spec: https://raw.githubusercontent.com/cashubtc/nuts/refs/heads/main/28.md
     #[allow(non_snake_case)]
@@ -647,7 +647,7 @@ impl ChannelParameters {
             }
         }
 
-        anyhow::bail!("Failed to derive valid shared secret scalar")
+        anyhow::bail!("Failed to derive valid P2BK scalar")
     }
 
     /// Get the blinded sender (Alice) pubkey for stage 1 P2BK
@@ -845,7 +845,7 @@ impl ChannelParameters {
         }
     }
 
-    /// Create a deterministic output with blinding using the channel ID and shared secret
+    /// Create a deterministic output with blinding using the channel ID and channel secret
     /// Uses channel_secret, channel_id, context, amount, and index in the derivation per NUT-XX spec
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
@@ -1045,10 +1045,10 @@ mod tests {
 
         println!("Reconstructed Channel ID: {}", reconstructed_channel_id);
 
-        // Verify shared secrets match (ECDH should produce same result from both sides)
+        // Verify channel secrets match (ECDH is symmetric, so both sides derive the same result)
         assert_eq!(
             original_params.channel_secret, reconstructed_params.channel_secret,
-            "Shared secrets should match (ECDH is symmetric)"
+            "Channel secrets should match (ECDH is symmetric)"
         );
 
         // Assert channel IDs match
@@ -1099,10 +1099,10 @@ mod tests {
             ChannelParameters::from_json_with_secret_key(&json, keyset_info, &charlie_secret)
                 .expect("Failed to create Charlie's params");
 
-        // Verify shared secrets match (ECDH symmetry)
+        // Verify channel secrets match (ECDH symmetry)
         assert_eq!(
             alice_params.channel_secret, charlie_params.channel_secret,
-            "Shared secrets should match"
+            "Channel secrets should match"
         );
 
         // Verify blinded sender pubkey is the same

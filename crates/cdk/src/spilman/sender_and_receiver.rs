@@ -300,7 +300,7 @@ impl SpilmanChannelSender {
         self.channel.params.get_channel_id()
     }
 
-    /// Get the shared secret with Charlie (stored in channel params)
+    /// Get the channel secret (stored in channel params)
     pub fn get_channel_secret(&self) -> &[u8; 32] {
         &self.channel.params.channel_secret
     }

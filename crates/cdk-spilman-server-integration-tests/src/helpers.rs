@@ -682,10 +682,10 @@ pub async fn mint_funded_channel(
         .map_err(|e| anyhow!("Failed to construct proofs: {}", e))?;
     let proofs: Vec<Proof> = serde_json::from_str(&proofs_json)?;
 
-    // Compute shared secret and channel ID
+    // Compute channel secret and channel ID
     let channel_secret =
         compute_channel_secret_from_hex(&alice.secret_hex, &server_params.receiver_pubkey)
-            .map_err(|e| anyhow!("Failed to compute shared secret: {}", e))?;
+            .map_err(|e| anyhow!("Failed to compute channel secret: {}", e))?;
 
     let channel_id =
         channel_parameters_get_channel_id(&channel_params_json, &channel_secret, &keyset_info_json)
