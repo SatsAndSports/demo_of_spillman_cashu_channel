@@ -66,7 +66,7 @@ export class ConfigurableSpilman {
     });
 
     const bridge = new WasmSpilmanBridge(host);
-    const spilman = new Spilman(bridge);
+    const spilman = new Spilman(bridge, host);
 
     const receiverPubkey = getServerPubkey(secretKeyHex);
 

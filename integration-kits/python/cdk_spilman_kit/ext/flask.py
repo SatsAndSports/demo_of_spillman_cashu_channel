@@ -252,6 +252,16 @@ class Spilman:
         app.register_blueprint(bp)
         app.extensions["spilman"] = self
 
+    def _decode_payment_header(self) -> str:
+        """Decode the X-Cashu-Channel header from the current Flask request."""
+        header_b64 = request.headers.get("X-Cashu-Channel")
+        if not header_b64:
+            raise ValueError("Missing X-Cashu-Channel header")
+        try:
+            return base64.b64decode(header_b64).decode()
+        except Exception:
+            raise ValueError("invalid base64")
+
     def process_request_payment(self, context: Union[str, Dict[str, Any]] = "{}"):
         """Extracts and processes payment from the current Flask request.
         
@@ -262,17 +272,38 @@ class Spilman:
             Exception that should be handled by the caller or caught by Flask.
             Specifically, it might raise errors that map to 400 or 402.
         """
-        header_b64 = request.headers.get("X-Cashu-Channel")
-        if not header_b64:
-            raise ValueError("Missing X-Cashu-Channel header")
-        
-        try:
-            payment_json = base64.b64decode(header_b64).decode()
-        except Exception:
-            raise ValueError("invalid base64")
-        
+        payment_json = self._decode_payment_header()
         context_json = context if isinstance(context, str) else json.dumps(context)
         return self.bridge.process_payment(payment_json, context_json)
+
+    def process_request_payment_no_usage(self):
+        """Process payment with zero usage context.
+
+        Validates that the payment covers prior accumulated usage (raises on
+        402 if insufficient), tracks the balance and signature, but does NOT
+        increment any usage counters.  Call ``record_usage`` after the work
+        is done to apply the actual usage.
+
+        Returns:
+            PaymentSuccess object.
+        """
+        return self.process_request_payment("{}")
+
+    def record_usage(self, increments: Dict[str, Any]):
+        """Record usage for the channel in the current request.
+
+        Auto-reads the X-Cashu-Channel header to extract channel_id,
+        balance, and signature, then calls ``host.record_payment`` with
+        the given usage increments.  Does NOT re-validate the payment.
+
+        This is the companion to ``process_request_payment_no_usage``.
+        """
+        payment_json = self._decode_payment_header()
+        data = json.loads(payment_json)
+        channel_id = data.get("channel_id", "")
+        balance = data.get("balance", 0)
+        signature = data.get("signature", "")
+        self.host.record_payment(channel_id, balance, signature, json.dumps(increments))
 
     def payment_covers_amount_due(self, context: Union[str, Dict[str, Any]] = "{}") -> bool:
         header_b64 = request.headers.get("X-Cashu-Channel")

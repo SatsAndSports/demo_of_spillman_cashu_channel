@@ -118,8 +118,24 @@ export function mapErrorStatus(errorMsg: unknown): number {
 
 export { mapErrorStatus as mapBridgeErrorStatus };
 
+export interface SpilmanHost {
+  recordPayment(channelId: string, balance: number, signature: string, contextJson: string): void;
+}
+
 export class Spilman {
-  constructor(private bridge: WasmSpilmanBridge) {}
+  private host?: SpilmanHost;
+
+  constructor(private bridge: WasmSpilmanBridge, host?: SpilmanHost) {
+    this.host = host;
+  }
+
+  private decodeHeader(req: Request): string {
+    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
+    if (!headerB64) {
+      throw new Error("Missing X-Cashu-Channel header");
+    }
+    return decodePaymentHeader(headerB64);
+  }
 
   /**
    * Extracts and processes payment from the current Express request.
@@ -130,12 +146,7 @@ export class Spilman {
    * @throws Error with message that should be mapped to HTTP status
    */
   processRequestPayment(req: Request, context: object | string = {}): SpilmanPaymentResult {
-    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
-    if (!headerB64) {
-      throw new Error("Missing X-Cashu-Channel header");
-    }
-
-    const paymentJson = decodePaymentHeader(headerB64);
+    const paymentJson = this.decodeHeader(req);
     const contextJson = typeof context === "string" ? context : JSON.stringify(context);
 
     // WASM bridge throws on validation error
@@ -143,15 +154,45 @@ export class Spilman {
   }
 
   /**
+   * Process payment with zero usage context.
+   *
+   * Validates that the payment covers prior accumulated usage (throws if
+   * insufficient), tracks balance and signature, but does NOT increment
+   * any usage counters. Call `recordUsage` after the work is done.
+   */
+  processRequestPaymentNoUsage(req: Request): SpilmanPaymentResult {
+    return this.processRequestPayment(req, "{}");
+  }
+
+  /**
+   * Record usage for the channel in the current request.
+   *
+   * Auto-reads the X-Cashu-Channel header to extract channel_id,
+   * balance, and signature, then calls host.recordPayment with the
+   * given usage increments. Does NOT re-validate the payment.
+   *
+   * This is the companion to `processRequestPaymentNoUsage`.
+   *
+   * @param req Express request (must have X-Cashu-Channel header)
+   * @param increments Usage increments to record
+   */
+  recordUsage(req: Request, increments: Record<string, number>): void {
+    if (!this.host) {
+      throw new Error("Spilman host not provided; cannot record usage");
+    }
+    const paymentJson = this.decodeHeader(req);
+    const data = JSON.parse(paymentJson);
+    const channelId = data.channel_id || "";
+    const balance = data.balance || 0;
+    const signature = data.signature || "";
+    this.host.recordPayment(channelId, balance, signature, JSON.stringify(increments));
+  }
+
+  /**
    * Checks whether the payment covers the current amount due.
    */
   paymentCoversAmountDue(req: Request, context: object | string = {}): boolean {
-    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
-    if (!headerB64) {
-      throw new Error("Missing X-Cashu-Channel header");
-    }
-
-    const paymentJson = decodePaymentHeader(headerB64);
+    const paymentJson = this.decodeHeader(req);
     const contextJson = typeof context === "string" ? context : JSON.stringify(context);
     return this.bridge.paymentCoversAmountDue(paymentJson, contextJson);
   }
@@ -160,12 +201,7 @@ export class Spilman {
    * Verifies payment and returns the computed amount_due.
    */
   verifyPaymentCoversAmountDue(req: Request, context: object | string = {}): number {
-    const headerB64 = req.headers["x-cashu-channel"] as string | undefined;
-    if (!headerB64) {
-      throw new Error("Missing X-Cashu-Channel header");
-    }
-
-    const paymentJson = decodePaymentHeader(headerB64);
+    const paymentJson = this.decodeHeader(req);
     const contextJson = typeof context === "string" ? context : JSON.stringify(context);
     return Number(this.bridge.verifyPaymentCoversAmountDue(paymentJson, contextJson));
   }

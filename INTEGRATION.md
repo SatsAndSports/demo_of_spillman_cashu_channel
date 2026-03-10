@@ -103,6 +103,46 @@ A single funding proof occupies ~400 bytes when encoded. A funding token contain
 
 ---
 
+## Two-Phase Payment (Deferred Usage)
+
+When the precise usage isn't known until after request processing, use a
+two-phase pattern:
+
+1. **Accept payment without usage** — validates the payment against *prior*
+   accumulated usage and records the latest balance and signature, but does
+   **not** increment any usage counters.
+2. **Record usage after work completes** — applies the actual usage increments.
+
+This accepts the payment up front; it just defers usage accounting.
+
+All integration kits provide helpers for this:
+
+| Language | Accept payment (no usage) | Record usage |
+|----------|---------------------------|--------------|
+| **Python (Flask)** | `spilman.process_request_payment_no_usage()` | `spilman.record_usage({"chars": n})` |
+| **Python (FastAPI)** | `await spilman.process_request_payment_no_usage(request)` | `await spilman.record_usage(request, {"chars": n})` |
+| **TypeScript** | `spilman.processRequestPaymentNoUsage(req)` | `spilman.recordUsage(req, { chars: n })` |
+| **Go** | `ctx.ProcessRequestPaymentNoUsage(r)` | `ctx.RecordUsage(r, map[string]int{"chars": n})` |
+
+**Rust** does not have a dedicated wrapper; use the core API directly:
+
+```rust
+// Accept payment with empty context (no usage increment)
+let payment = bridge.process_payment_via_json(payment_json, "{}")?;
+
+// ... do work ...
+
+// Record actual usage
+host.record_payment(channel_id, balance, &signature, &serde_json::to_string(&increments)?);
+```
+
+**Behavior**: The first call validates that the payment covers **prior** accumulated
+usage and will reject (402) if insufficient. It does not reserve the new usage.
+If actual usage exceeds balance, it will be recorded and the **next** request
+will be rejected until topped up.
+
+---
+
 ## State Management
 
 | Store | Purpose |

@@ -227,6 +227,21 @@ class Spilman:
 
         return router
 
+    def _decode_payment_header(self, x_cashu_channel: Optional[str]) -> str:
+        """Decode the X-Cashu-Channel header value."""
+        if not x_cashu_channel:
+            raise HTTPException(status_code=402, detail={
+                "error": "Payment required",
+                "reason": "Missing X-Cashu-Channel header",
+            })
+        try:
+            return base64.b64decode(x_cashu_channel).decode()
+        except:
+            raise HTTPException(status_code=400, detail={
+                "error": "Invalid payment header",
+                "reason": "invalid base64",
+            })
+
     async def process_request_payment(self, request: Request, x_cashu_channel: Optional[str] = Header(None), context_json: str = "{}"):
         """Extracts and processes payment from the current FastAPI request.
         
@@ -236,20 +251,7 @@ class Spilman:
         Raises:
             HTTPException with 400 or 402 status.
         """
-        if not x_cashu_channel:
-            raise HTTPException(status_code=402, detail={
-                "error": "Payment required",
-                "reason": "Missing X-Cashu-Channel header",
-            })
-        
-        try:
-            payment_json = base64.b64decode(x_cashu_channel).decode()
-        except:
-            raise HTTPException(status_code=400, detail={
-                "error": "Invalid payment header",
-                "reason": "invalid base64",
-            })
-            
+        payment_json = self._decode_payment_header(x_cashu_channel)
         try:
             return self.bridge.process_payment(payment_json, context_json)
         except Exception as e:
@@ -264,6 +266,36 @@ class Spilman:
                 },
                 headers={"X-Cashu-Channel": json.dumps({"error": reason})},
             )
+
+    async def process_request_payment_no_usage(self, request: Request, x_cashu_channel: Optional[str] = Header(None)):
+        """Process payment with zero usage context.
+
+        Validates that the payment covers prior accumulated usage (raises
+        HTTPException 402 if insufficient), tracks balance and signature,
+        but does NOT increment any usage counters.  Call ``record_usage``
+        after the work is done to apply actual usage.
+
+        Returns:
+            PaymentSuccess object.
+        """
+        return await self.process_request_payment(request, x_cashu_channel, "{}")
+
+    async def record_usage(self, request: Request, increments: dict):
+        """Record usage for the channel in the current request.
+
+        Auto-reads the X-Cashu-Channel header to extract channel_id,
+        balance, and signature, then calls ``host.record_payment`` with
+        the given usage increments.  Does NOT re-validate the payment.
+
+        This is the companion to ``process_request_payment_no_usage``.
+        """
+        x_cashu_channel = request.headers.get("x-cashu-channel")
+        payment_json = self._decode_payment_header(x_cashu_channel)
+        data = json.loads(payment_json)
+        channel_id = data.get("channel_id", "")
+        balance = data.get("balance", 0)
+        signature = data.get("signature", "")
+        self.host.record_payment(channel_id, balance, signature, json.dumps(increments))
 
     async def payment_covers_amount_due(self, x_cashu_channel: Optional[str] = Header(None), context_json: str = "{}"):
         if not x_cashu_channel:

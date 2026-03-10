@@ -104,19 +104,56 @@ func MapErrorStatus(errorMsg string) int {
 	return 402 // Default
 }
 
-func (c *ConfigurableSpilman) ProcessRequestPayment(r *http.Request, context interface{}) (*spilman.PaymentSuccess, error) {
+func (c *ConfigurableSpilman) decodePaymentHeader(r *http.Request) (string, error) {
 	headerB64 := r.Header.Get("X-Cashu-Channel")
 	if headerB64 == "" {
-		return nil, fmt.Errorf("Missing X-Cashu-Channel header")
+		return "", fmt.Errorf("Missing X-Cashu-Channel header")
 	}
-
 	paymentJsonBytes, err := base64.StdEncoding.DecodeString(headerB64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid base64 encoding")
+		return "", fmt.Errorf("invalid base64 encoding")
 	}
+	return string(paymentJsonBytes), nil
+}
 
+func (c *ConfigurableSpilman) ProcessRequestPayment(r *http.Request, context interface{}) (*spilman.PaymentSuccess, error) {
+	paymentJson, err := c.decodePaymentHeader(r)
+	if err != nil {
+		return nil, err
+	}
 	contextJsonBytes, _ := json.Marshal(context)
-	return c.Bridge.ProcessPayment(string(paymentJsonBytes), string(contextJsonBytes))
+	return c.Bridge.ProcessPayment(paymentJson, string(contextJsonBytes))
+}
+
+// ProcessRequestPaymentNoUsage validates that the payment covers prior
+// accumulated usage, tracks balance and signature, but does NOT increment
+// any usage counters. Call RecordUsage after the work is done.
+func (c *ConfigurableSpilman) ProcessRequestPaymentNoUsage(r *http.Request) (*spilman.PaymentSuccess, error) {
+	return c.ProcessRequestPayment(r, struct{}{})
+}
+
+// RecordUsage records usage for the channel in the current request.
+// It auto-reads the X-Cashu-Channel header to extract channel_id,
+// balance, and signature, then calls Host.RecordPayment with the
+// given usage increments. Does NOT re-validate the payment.
+//
+// This is the companion to ProcessRequestPaymentNoUsage.
+func (c *ConfigurableSpilman) RecordUsage(r *http.Request, increments map[string]int) error {
+	paymentJson, err := c.decodePaymentHeader(r)
+	if err != nil {
+		return err
+	}
+	var data struct {
+		ChannelID string `json:"channel_id"`
+		Balance   uint64 `json:"balance"`
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal([]byte(paymentJson), &data); err != nil {
+		return fmt.Errorf("failed to parse payment header: %w", err)
+	}
+	incrementsJson, _ := json.Marshal(increments)
+	c.Host.RecordPayment(data.ChannelID, data.Balance, data.Signature, string(incrementsJson))
+	return nil
 }
 
 func (c *ConfigurableSpilman) PaymentCoversAmountDue(r *http.Request, context interface{}) (bool, error) {
