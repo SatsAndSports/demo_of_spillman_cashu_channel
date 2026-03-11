@@ -11,7 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
-use rand::Rng;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -112,8 +111,8 @@ pub struct CloseChannelResponse {
 /// Options for customizing channel parameters
 #[derive(Debug, Default)]
 pub struct MintFundedChannelOptions {
-    /// Custom locktime (Unix timestamp). Defaults to 1 week from now.
-    pub locktime: Option<u64>,
+    /// Custom expiry timestamp. Defaults to 1 week from now.
+    pub expiry_timestamp: Option<u64>,
     /// Maximum amount per output. Defaults to 64.
     pub maximum_amount: Option<u64>,
 }
@@ -580,13 +579,8 @@ pub async fn mint_funded_channel(
         .unwrap()
         .as_secs();
     let setup_timestamp = now;
-    let locktime = options.locktime.unwrap_or(now + 7 * 24 * 60 * 60); // Default: 1 week
+    let expiry_timestamp = options.expiry_timestamp.unwrap_or(now + 7 * 24 * 60 * 60); // Default: 1 week
     let maximum_amount = options.maximum_amount.unwrap_or(64);
-
-    // Generate random nonce
-    let mut nonce_bytes = [0u8; 32];
-    rand::rng().fill(&mut nonce_bytes);
-    let sender_nonce = hex::encode(&nonce_bytes);
 
     // Compute the minimum funding_token_amount for the desired capacity
     let funding_token_amount =
@@ -604,8 +598,7 @@ pub async fn mint_funded_channel(
         "setup_timestamp": setup_timestamp,
         "alice_pubkey": alice.pubkey_hex,
         "charlie_pubkey": server_params.receiver_pubkey,
-        "locktime": locktime,
-        "sender_nonce": sender_nonce,
+        "expiry_timestamp": expiry_timestamp,
     });
     let channel_params_json = serde_json::to_string(&channel_params)?;
 
@@ -716,9 +709,3 @@ pub fn now_seconds() -> u64 {
         .as_secs()
 }
 
-// Hex encoding helper
-mod hex {
-    pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
-    }
-}

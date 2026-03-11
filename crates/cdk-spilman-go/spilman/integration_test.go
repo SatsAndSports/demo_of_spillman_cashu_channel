@@ -92,9 +92,8 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 		"capacity":             uint64(100),
 		"funding_token_amount": fundingTokenAmount,
 		"maximum_amount":       uint64(64),
-		"locktime":             time.Now().Unix() + 7200,
+		"expiry_timestamp":     time.Now().Unix() + 7200,
 		"setup_timestamp":      time.Now().Unix(),
-		"sender_nonce":         fmt.Sprintf("test-%d", time.Now().UnixNano()),
 		"keyset_id":            keysetInfo["keysetId"],
 		"input_fee_ppk":        keysetInfo["inputFeePpk"],
 	}
@@ -301,7 +300,7 @@ func (h *testServerHost) RecordPayment(channelId string, balance uint64, signatu
 
 func (h *testServerHost) GetChannelState(channelId string) string { return "open" }
 
-func (h *testServerHost) MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error {
+func (h *testServerHost) MarkChannelClosing(channelId string, expiryTimestamp, balance uint64, signature string) error {
 	return nil
 }
 
@@ -343,7 +342,7 @@ func (h *testServerHost) CallMintSwap(mintUrl, swapRequestJson string) (string, 
 
 func (h *testServerHost) RefreshAllKeysets(mintUrl string) error { return nil }
 
-func (h *testServerHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
+func (h *testServerHost) MarkChannelClosed(channelId string, expiryTimestamp, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
 	return nil
 }
 
@@ -439,10 +438,10 @@ func TestClientBridge(t *testing.T) {
 
 	t.Logf("Client bridge created, alice_pubkey: %s...", alicePubkey[:16])
 
-	locktime := uint64(time.Now().Unix()) + 7200 // 2 hours
+	expiryTimestamp := uint64(time.Now().Unix()) + 7200 // 2 hours
 	maxAmount := uint64(64)
 
-	openResult, err := clientBridge.OpenChannelFromToken(token, charliePubkey, alicePubkey, locktime, string(keysetJSON), maxAmount)
+	openResult, err := clientBridge.OpenChannelFromToken(token, charliePubkey, alicePubkey, expiryTimestamp, string(keysetJSON), maxAmount)
 	if err != nil {
 		t.Fatalf("OpenChannelFromToken failed: %v", err)
 	}

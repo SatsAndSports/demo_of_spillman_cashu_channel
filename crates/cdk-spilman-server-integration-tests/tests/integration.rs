@@ -749,14 +749,14 @@ mod validation {
     }
 
     #[tokio::test]
-    async fn returns_402_when_locktime_too_soon() -> Result<()> {
+    async fn returns_402_when_expiry_too_soon() -> Result<()> {
         let ctx = TestContext::new().await?;
 
-        let too_soon_locktime = now_seconds() + 60;  // Only 60 seconds
-        println!("Using locktime {} (60s from now)", too_soon_locktime);
+        let too_soon_expiry = now_seconds() + 60;  // Only 60 seconds
+        println!("Using expiry_timestamp {} (60s from now)", too_soon_expiry);
 
         let options = MintFundedChannelOptions {
-            locktime: Some(too_soon_locktime),
+            expiry_timestamp: Some(too_soon_expiry),
             ..Default::default()
         };
         let channel = ctx.mint_channel_with_options("sat", 100, options).await?;
@@ -781,8 +781,8 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        assert!(result["reason"].as_str().unwrap_or("").contains("locktime too soon"));
-        println!("Locktime too soon rejected");
+        assert!(result["reason"].as_str().unwrap_or("").contains("expiry too soon"));
+        println!("Expiry too soon rejected");
         Ok(())
     }
 

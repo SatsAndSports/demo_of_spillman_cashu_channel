@@ -151,8 +151,8 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       const row = db.prepare("SELECT state FROM spilman_channels WHERE channel_id = ?").get(channelId) as any;
       return row?.state === "Closing";
     },
-    markClosing(channelId, locktime, balance, signature) {
-      const json = JSON.stringify({ locktime, balance, signature });
+    markClosing(channelId, expiry_timestamp, balance, signature) {
+      const json = JSON.stringify({ expiry_timestamp, balance, signature });
       db.prepare("UPDATE spilman_channels SET state = 'Closing', closing_json = ? WHERE channel_id = ? AND state != 'Closed'").run(json, channelId);
     },
     get(channelId) {
@@ -171,9 +171,9 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       const row = db.prepare("SELECT state FROM spilman_channels WHERE channel_id = ?").get(channelId) as any;
       return row?.state === "Closed";
     },
-    markClosed(channelId, locktime, closedAmount, valueAfterStage1, receiverSum, senderSum, receiverProofsJson, senderProofsJson) {
+    markClosed(channelId, expiry_timestamp, closedAmount, valueAfterStage1, receiverSum, senderSum, receiverProofsJson, senderProofsJson) {
       const json = JSON.stringify({
-        locktime,
+        expiry_timestamp,
         closed_amount: closedAmount,
         value_after_stage1: valueAfterStage1,
         receiver_sum: receiverSum,
@@ -189,7 +189,7 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
       if (!row?.closed_json) return null;
       const data = JSON.parse(row.closed_json);
       return {
-        locktime: data.locktime,
+        expiry_timestamp: data.expiry_timestamp,
         closedAmount: data.closed_amount,
         valueAfterStage1: data.value_after_stage1,
         receiverSum: data.receiver_sum,
@@ -207,7 +207,7 @@ export function createSqliteStores(dbPath: string): SpilmanStores {
           return {
             channelId: r.channel_id,
             data: {
-              locktime: data.locktime,
+              expiry_timestamp: data.expiry_timestamp,
               closedAmount: data.closed_amount,
               valueAfterStage1: data.value_after_stage1,
               receiverSum: data.receiver_sum,

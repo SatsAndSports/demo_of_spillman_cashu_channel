@@ -14,13 +14,13 @@ export interface ChannelBalance {
 export type UsageMap = Record<string, number>;
 
 export interface ClosingChannelData {
-  locktime: number;
+  expiry_timestamp: number;
   balance: number;
   signature: string;
 }
 
 export interface ClosedChannelData {
-  locktime: number;
+  expiry_timestamp: number;
   closedAmount: number;
   valueAfterStage1: number;
   receiverSum: number;
@@ -61,7 +61,7 @@ export interface ChannelUsageStore {
 
 export interface ChannelClosingStore {
   isClosing(channelId: string): boolean;
-  markClosing(channelId: string, locktime: number, balance: number, signature: string): void;
+  markClosing(channelId: string, expiry_timestamp: number, balance: number, signature: string): void;
   get(channelId: string): ClosingChannelData | null;
   remove(channelId: string): void;
 }
@@ -70,7 +70,7 @@ export interface ChannelClosedStore {
   isClosed(channelId: string): boolean;
   markClosed(
     channelId: string,
-    locktime: number,
+    expiry_timestamp: number,
     closedAmount: number,
     valueAfterStage1: number,
     receiverSum: number,
@@ -155,8 +155,8 @@ export function createInMemoryStores(): SpilmanStores {
     isClosing(channelId) {
       return channelClosingStore.has(channelId);
     },
-    markClosing(channelId, locktime, balance, signature) {
-      channelClosingStore.set(channelId, { locktime, balance, signature });
+    markClosing(channelId, expiry_timestamp, balance, signature) {
+      channelClosingStore.set(channelId, { expiry_timestamp, balance, signature });
     },
     get(channelId) {
       return channelClosingStore.get(channelId) ?? null;
@@ -172,7 +172,7 @@ export function createInMemoryStores(): SpilmanStores {
     },
     markClosed(
       channelId,
-      locktime,
+      expiry_timestamp,
       closedAmount,
       valueAfterStage1,
       receiverSum,
@@ -182,7 +182,7 @@ export function createInMemoryStores(): SpilmanStores {
     ) {
       channelClosing.remove(channelId);
       channelClosedStore.set(channelId, {
-        locktime,
+        expiry_timestamp,
         closedAmount,
         valueAfterStage1,
         receiverSum,

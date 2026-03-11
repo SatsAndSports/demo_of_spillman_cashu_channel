@@ -137,9 +137,8 @@ fn test_funding_outputs_and_channel_id() {
         "capacity": capacity,
         "maximum_amount": maximum_amount,
         "funding_token_amount": funding_token_amount,
-        "locktime": now + 7200,
+        "expiry_timestamp": now + 7200,
         "setup_timestamp": now,
-        "sender_nonce": format!("test-rust-{}", now),
         "keyset_id": keyset_id,
         "input_fee_ppk": keyset_info["inputFeePpk"].as_u64().unwrap_or(0)
     });
@@ -218,9 +217,8 @@ fn test_channel_id_deterministic() {
         "capacity": capacity,
         "maximum_amount": maximum_amount,
         "funding_token_amount": funding_token_amount,
-        "locktime": now + 7200,
+        "expiry_timestamp": now + 7200,
         "setup_timestamp": now,
-        "sender_nonce": "deterministic-test",
         "keyset_id": keyset_id,
         "input_fee_ppk": keyset_info["inputFeePpk"].as_u64().unwrap_or(0)
     });

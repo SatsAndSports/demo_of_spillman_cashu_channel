@@ -21,14 +21,14 @@ This settlement process is known as **'Stage 1'**. It spends the shared funding 
 The channel is funded by Alice with a Cashu token that requires **both** Alice and Charlie to spend cooperatively. The funding token's spending conditions are:
 
 ```
-P2PK: (Alice AND Charlie) OR (Alice after locktime)
+P2PK: (Alice AND Charlie) OR (Alice after expiry)
 ```
 
 This is implemented using Cashu's NUT-11 spending conditions:
 - `pubkeys`: [Charlie's pubkey] - requires Charlie's signature
 - `data`: Alice's pubkey - requires Alice's signature  
-- `refund_keys`: [Alice's refund pubkey] - allows Alice to reclaim after locktime
-- `locktime`: Unix timestamp when refund becomes valid
+- `refund_keys`: [Alice's refund pubkey] - allows Alice to reclaim after expiry
+- `locktime`: Unix timestamp when refund becomes valid (the channel's `expiry_timestamp`)
 
 ### 2. Deterministic Outputs
 
@@ -63,7 +63,7 @@ channel_id = SHA256(
   mint_url | unit | capacity | funding_token_amount |
   keyset_id | input_fee_ppk | maximum_amount |
   setup_timestamp | alice_pubkey | charlie_pubkey |
-  locktime | sender_nonce | channel_secret_hex
+  expiry_timestamp | channel_secret_hex
 )
 ```
 
@@ -191,12 +191,12 @@ trait SpilmanHost<C = String> {
 
     // Channel state transitions
     fn get_channel_state(&self, channel_id: &str) -> ChannelState;
-    fn mark_channel_closing(&self, channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String>;
+    fn mark_channel_closing(&self, channel_id: &str, expiry_timestamp: u64, payment: PaymentProof) -> Result<(), String>;
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData>;
     fn mark_channel_closed(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,

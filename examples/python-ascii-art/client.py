@@ -50,8 +50,7 @@ def main():
         "alice_pubkey": alice_pubkey, "charlie_pubkey": charlie_pubkey,
         "mint": mint_url, "unit": "sat", "capacity": capacity,
         "funding_token_amount": fta, "maximum_amount": 64,
-        "locktime": int(time.time()) + 7200, "setup_timestamp": int(time.time()),
-        "sender_nonce": f"demo-py-{int(time.time())}",
+        "expiry_timestamp": int(time.time()) + 7200, "setup_timestamp": int(time.time()),
         "keyset_id": keyset_info["keysetId"], "input_fee_ppk": keyset_info["inputFeePpk"],
     }
     cid = channel_parameters_get_channel_id(json.dumps(cp), ss, json.dumps(keyset_info))

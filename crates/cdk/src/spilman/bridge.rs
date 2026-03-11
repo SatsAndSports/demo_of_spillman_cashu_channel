@@ -54,8 +54,8 @@ pub enum ChannelState {
 /// Data stored when a channel enters CLOSING state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosingData {
-    /// The channel's locktime
-    pub locktime: u64,
+    /// The channel's expiry timestamp
+    pub expiry_timestamp: u64,
     /// The balance at close
     pub balance: u64,
     /// The client's Schnorr signature authorizing this balance
@@ -97,7 +97,7 @@ pub trait SpilmanHost<C = String> {
     fn mark_channel_closing(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         payment: PaymentProof,
     ) -> Result<(), String>;
 
@@ -128,7 +128,7 @@ pub trait SpilmanHost<C = String> {
     fn mark_channel_closed(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
@@ -381,13 +381,13 @@ impl BridgeErrorResponse {
                 extra = Some(map);
                 (402, "Payment required", "capacity_too_small")
             }
-            BridgeError::LocktimeTooSoon { locktime, min_locktime, now } => {
+            BridgeError::ExpiryTooSoon { expiry_timestamp, min_expiry, now } => {
                 let mut map = serde_json::Map::new();
-                map.insert("locktime".into(), serde_json::json!(locktime));
-                map.insert("min_locktime".into(), serde_json::json!(min_locktime));
+                map.insert("expiry_timestamp".into(), serde_json::json!(expiry_timestamp));
+                map.insert("min_expiry".into(), serde_json::json!(min_expiry));
                 map.insert("now".into(), serde_json::json!(now));
                 extra = Some(map);
-                (402, "Payment required", "locktime_too_soon")
+                (402, "Payment required", "expiry_too_soon")
             }
             BridgeError::MaxAmountExceeded { amount, max_allowed } => {
                 let mut map = serde_json::Map::new();
@@ -509,7 +509,7 @@ impl std::error::Error for CloseError {}
 /// [`SpilmanHost::get_channel_policy`].
 #[derive(Debug, Clone)]
 pub struct ChannelPolicy {
-    /// Minimum seconds between now and the channel locktime.
+    /// Minimum seconds between now and the channel expiry timestamp.
     pub min_expiry_in_seconds: u64,
     /// Minimum channel capacity (in the unit's base denomination).
     pub min_capacity: u64,
@@ -521,7 +521,7 @@ pub struct ChannelPolicy {
 pub enum BridgeError {
     InvalidRequest(String), ChannelClosed, ChannelClosing, ServerMisconfigured(String),
     CapacityTooSmall { capacity: u64, min_capacity: u64 },
-    LocktimeTooSoon { locktime: u64, min_locktime: u64, now: u64 },
+    ExpiryTooSoon { expiry_timestamp: u64, min_expiry: u64, now: u64 },
     MaxAmountExceeded { amount: u64, max_allowed: u64 },
     BalanceExceedsCapacity { balance: u64, capacity: u64 },
     UnsupportedUnit(String), ChannelIdMismatch, ValidationFailed(String), UnknownChannel,
@@ -538,7 +538,7 @@ impl std::fmt::Display for BridgeError {
             Self::ChannelClosing => write!(f, "channel closing, swap pending"),
             Self::ServerMisconfigured(s) => write!(f, "server misconfigured: {}", s),
             Self::CapacityTooSmall { capacity, min_capacity } => write!(f, "capacity too small: {} < {}", capacity, min_capacity),
-            Self::LocktimeTooSoon { locktime, min_locktime, now } => write!(f, "locktime too soon: {} < {} ({}s remaining)", locktime, min_locktime, locktime.saturating_sub(*now)),
+            Self::ExpiryTooSoon { expiry_timestamp, min_expiry, now } => write!(f, "expiry too soon: {} < {} ({}s remaining)", expiry_timestamp, min_expiry, expiry_timestamp.saturating_sub(*now)),
             Self::MaxAmountExceeded { amount, max_allowed } => write!(f, "max_amount_per_output exceeded: {} > {}", amount, max_allowed),
             Self::BalanceExceedsCapacity { balance, capacity } => { write!(f, "balance exceeds capacity: {} > {}", balance, capacity) }
             Self::UnsupportedUnit(u) => write!(f, "unsupported unit: {}", u),
@@ -818,7 +818,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
     fn validate_and_save_new_channel(&self, channel_id: &str, params_val: &serde_json::Value, proofs: &[Proof], balance: u64, signature: &str) -> Result<ChannelFunding, BridgeError> {
         let unit = params_val["unit"].as_str().ok_or(BridgeError::InvalidRequest("Missing unit".into()))?;
         let capacity = params_val["capacity"].as_u64().ok_or(BridgeError::InvalidRequest("Missing capacity".into()))?;
-        let locktime = params_val["locktime"].as_u64().ok_or(BridgeError::InvalidRequest("Missing locktime".into()))?;
+        let expiry_timestamp = params_val["expiry_timestamp"].as_u64().ok_or(BridgeError::InvalidRequest("Missing expiry_timestamp".into()))?;
         let maximum_amount = params_val["maximum_amount"].as_u64().ok_or(BridgeError::InvalidRequest("Missing maximum_amount".into()))?;
         let charlie_pubkey = PublicKey::from_hex(params_val["charlie_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing charlie_pubkey".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
         if !self.host.receiver_key_is_acceptable(&charlie_pubkey) { return Err(BridgeError::ReceiverKeyNotAcceptable); }
@@ -830,7 +830,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         if capacity < policy.min_capacity { return Err(BridgeError::CapacityTooSmall { capacity, min_capacity: policy.min_capacity }); }
         if let Some(max) = policy.max_amount_per_output { if max > 0 && maximum_amount > max { return Err(BridgeError::MaxAmountExceeded { amount: maximum_amount, max_allowed: max }); } }
         let now = self.host.now_seconds();
-        if locktime < now + policy.min_expiry_in_seconds { return Err(BridgeError::LocktimeTooSoon { locktime, min_locktime: now + policy.min_expiry_in_seconds, now }); }
+        if expiry_timestamp < now + policy.min_expiry_in_seconds { return Err(BridgeError::ExpiryTooSoon { expiry_timestamp, min_expiry: now + policy.min_expiry_in_seconds, now }); }
         if balance > capacity { return Err(BridgeError::BalanceExceedsCapacity { balance, capacity }); }
         let channel_secret_hex = self.host.compute_channel_secret(params_val["charlie_pubkey"].as_str().unwrap(), params_val["alice_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing alice_pubkey".into()))?).map_err(BridgeError::ServerMisconfigured)?;
         let channel_secret: [u8; 32] = hex::decode(&channel_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?.try_into().map_err(|_| BridgeError::Internal("Invalid secret length".into()))?;
@@ -930,7 +930,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         Ok(PreparedClose { channel_id: channel_id.to_string(), balance, mint_url, swap_request: serde_json::to_value(&close_data.swap_request).unwrap_or(serde_json::Value::Null), secrets_with_blinding: close_data.secrets_with_blinding.iter().map(|(s, is_r)| serde_json::json!({ "secret": s.secret.to_string(), "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()), "amount": s.amount, "index": s.index, "is_receiver": is_r })).collect(), output_keyset_info: serde_json::to_value(&close_data.output_keyset_info).unwrap_or(serde_json::Value::Null), params_json: funding.params_json, keyset_info_json: funding.keyset_info_json, channel_secret: funding.channel_secret_hex })
     }
 
-    fn finalize_close(&self, channel_id: &str, locktime: u64, payment: PaymentProof, resp_json: &str, prep: &PreparedClose) -> Result<CloseSuccess, CloseError> {
+    fn finalize_close(&self, channel_id: &str, expiry_timestamp: u64, payment: PaymentProof, resp_json: &str, prep: &PreparedClose) -> Result<CloseSuccess, CloseError> {
         use super::parse_keyset_info_from_json;
         use crate::nuts::SecretKey;
         use crate::secret::Secret;
@@ -985,7 +985,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let receiver_proofs_json = serde_json::to_string(&signed_receiver_proofs).unwrap_or_default();
         let sender_proofs_json = serde_json::to_string(&sender_proofs).unwrap_or_default();
 
-        self.host.mark_channel_closed(channel_id, locktime, payment.balance, &receiver_proofs_json, &sender_proofs_json, r_sum, s_sum).map_err(CloseError::storage_failed)?;
+        self.host.mark_channel_closed(channel_id, expiry_timestamp, payment.balance, &receiver_proofs_json, &sender_proofs_json, r_sum, s_sum).map_err(CloseError::storage_failed)?;
         Ok(CloseSuccess { channel_id: channel_id.to_string(), total_value: r_sum + s_sum, receiver_sum: r_sum, sender_sum: s_sum, sender_proofs: sender_proofs_json, already_closed: false })
     }
 
@@ -1004,7 +1004,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
                 (retry, resp)
             }
         };
-        self.finalize_close(channel_id, cd.locktime, PaymentProof { balance: cd.balance, signature: cd.signature }, &resp, &prep)
+        self.finalize_close(channel_id, cd.expiry_timestamp, PaymentProof { balance: cd.balance, signature: cd.signature }, &resp, &prep)
     }
 
     pub async fn execute_close_for_closing_channel_async<N: SpilmanAsyncNetworking>(&self, channel_id: &str, net: &N) -> Result<CloseSuccess, CloseError> {
@@ -1023,38 +1023,38 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
                 (retry, resp)
             }
         };
-        self.finalize_close(channel_id, cd.locktime, PaymentProof { balance: cd.balance, signature: cd.signature }, &resp, &prep)
+        self.finalize_close(channel_id, cd.expiry_timestamp, PaymentProof { balance: cd.balance, signature: cd.signature }, &resp, &prep)
     }
 
     pub fn execute_cooperative_close<N: SpilmanNetworking>(&self, json: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         let prep = self.prepare_cooperative_close_for_execution(json).map_err(CloseError::from_preparation_error)?;
-        let locktime = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["locktime"].as_u64().unwrap_or(0);
+        let expiry_timestamp = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["expiry_timestamp"].as_u64().unwrap_or(0);
         let sig = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default()["signature"].as_str().unwrap_or_default().to_string();
-        self.host.mark_channel_closing(&prep.channel_id, locktime, PaymentProof { balance: prep.balance, signature: sig }).map_err(CloseError::storage_failed)?;
+        self.host.mark_channel_closing(&prep.channel_id, expiry_timestamp, PaymentProof { balance: prep.balance, signature: sig }).map_err(CloseError::storage_failed)?;
         self.execute_close_for_closing_channel(&prep.channel_id, net)
     }
 
     pub async fn execute_cooperative_close_async<N: SpilmanAsyncNetworking>(&self, json: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         let prep = self.prepare_cooperative_close_for_execution(json).map_err(CloseError::from_preparation_error)?;
-        let locktime = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["locktime"].as_u64().unwrap_or(0);
+        let expiry_timestamp = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["expiry_timestamp"].as_u64().unwrap_or(0);
         let sig = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default()["signature"].as_str().unwrap_or_default().to_string();
-        self.host.mark_channel_closing(&prep.channel_id, locktime, PaymentProof { balance: prep.balance, signature: sig }).map_err(CloseError::storage_failed)?;
+        self.host.mark_channel_closing(&prep.channel_id, expiry_timestamp, PaymentProof { balance: prep.balance, signature: sig }).map_err(CloseError::storage_failed)?;
         self.execute_close_for_closing_channel_async(&prep.channel_id, net).await
     }
 
     pub fn execute_unilateral_close<N: SpilmanNetworking>(&self, channel_id: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         let prep = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
-        let locktime = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["locktime"].as_u64().unwrap_or(0);
+        let expiry_timestamp = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["expiry_timestamp"].as_u64().unwrap_or(0);
         let p = self.host.get_balance_and_signature_for_unilateral_exit(channel_id).ok_or_else(|| CloseError::ValidationFailed { reason: "No payment".into(), status: 400, expected_balance: None, actual_balance: None })?;
-        self.host.mark_channel_closing(channel_id, locktime, p).map_err(CloseError::storage_failed)?;
+        self.host.mark_channel_closing(channel_id, expiry_timestamp, p).map_err(CloseError::storage_failed)?;
         self.execute_close_for_closing_channel(channel_id, net)
     }
 
     pub async fn execute_unilateral_close_async<N: SpilmanAsyncNetworking>(&self, channel_id: &str, net: &N) -> Result<CloseSuccess, CloseError> {
         let prep = self.prepare_unilateral_close_for_execution(channel_id).map_err(CloseError::from_preparation_error)?;
-        let locktime = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["locktime"].as_u64().unwrap_or(0);
+        let expiry_timestamp = serde_json::from_str::<serde_json::Value>(&prep.params_json).unwrap_or_default()["expiry_timestamp"].as_u64().unwrap_or(0);
         let p = self.host.get_balance_and_signature_for_unilateral_exit(channel_id).ok_or_else(|| CloseError::ValidationFailed { reason: "No payment".into(), status: 400, expected_balance: None, actual_balance: None })?;
-        self.host.mark_channel_closing(channel_id, locktime, p).map_err(CloseError::storage_failed)?;
+        self.host.mark_channel_closing(channel_id, expiry_timestamp, p).map_err(CloseError::storage_failed)?;
         self.execute_close_for_closing_channel_async(channel_id, net).await
     }
 }
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_bridge_rejects_unacceptable_receiver() {
         let b = SpilmanBridge::new(MockHost { ra: false, ma: true });
-        let p = serde_json::json!({ "alice_pubkey": SecretKey::generate().public_key().to_hex(), "charlie_pubkey": SecretKey::generate().public_key().to_hex(), "mint": "https://m", "unit": "sat", "capacity": 1000, "funding_token_amount": 1000, "maximum_amount": 64, "locktime": 1700007200, "setup_timestamp": 1700000000, "sender_nonce": "n", "keyset_id": "00" });
+        let p = serde_json::json!({ "alice_pubkey": SecretKey::generate().public_key().to_hex(), "charlie_pubkey": SecretKey::generate().public_key().to_hex(), "mint": "https://m", "unit": "sat", "capacity": 1000, "funding_token_amount": 1000, "maximum_amount": 64, "expiry_timestamp": 1700007200, "setup_timestamp": 1700000000, "keyset_id": "00" });
         let pay = serde_json::json!({ "channel_id": "i", "balance": 100, "signature": "s", "params": p, "funding_proofs": [] });
         assert!(b.process_payment_via_json(&pay.to_string(), &"{}".to_string()).unwrap_err().to_string().contains("receiver key not acceptable"));
     }

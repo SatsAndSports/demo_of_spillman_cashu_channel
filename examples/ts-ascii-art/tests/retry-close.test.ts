@@ -150,8 +150,7 @@ describe('WASM close retry with real mint', () => {
     const capacity = 100;
     const maximumAmount = 64;
     const setupTimestamp = Math.floor(Date.now() / 1000);
-    const locktime = setupTimestamp + 7 * 24 * 60 * 60;
-    const senderNonce = randomBytes(32).toString('hex');
+    const expiryTimestamp = setupTimestamp + 7 * 24 * 60 * 60;
 
     const fundingTokenAmount = Number(compute_funding_token_amount(
       BigInt(capacity), keysetInfoJson, BigInt(maximumAmount),
@@ -168,8 +167,7 @@ describe('WASM close retry with real mint', () => {
       setup_timestamp: setupTimestamp,
       alice_pubkey: alice.pubkeyHex,
       charlie_pubkey: charlie.pubkeyHex,
-      locktime,
-      sender_nonce: senderNonce,
+      expiry_timestamp: expiryTimestamp,
     };
     const channelParamsJson = JSON.stringify(channelParams);
 
@@ -232,7 +230,7 @@ describe('WASM close retry with real mint', () => {
       markChannelClosing: (_chId: string, lt: number, bal: number, sig: string) => {
         channelState = 'closing';
         storedPayment = [Number(bal), sig];
-        closingData = { locktime: Number(lt), balance: Number(bal), signature: sig };
+        closingData = { expiry_timestamp: Number(lt), balance: Number(bal), signature: sig };
       },
       getClosingData: (_chId: string) => closingData,
 

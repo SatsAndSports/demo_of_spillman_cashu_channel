@@ -137,9 +137,8 @@ class TestChannelSetup:
             "capacity": 100,
             "funding_token_amount": funding_token_amount,
             "maximum_amount": 64,
-            "locktime": now + 7200,
+            "expiry_timestamp": now + 7200,
             "setup_timestamp": now,
-            "sender_nonce": f"test-python-{now}",
             "keyset_id": keyset_info["keysetId"],
             "input_fee_ppk": keyset_info["inputFeePpk"],
         }
@@ -186,9 +185,8 @@ class TestChannelSetup:
             "capacity": 100,
             "funding_token_amount": funding_token_amount,
             "maximum_amount": 64,
-            "locktime": now + 7200,
+            "expiry_timestamp": now + 7200,
             "setup_timestamp": now,
-            "sender_nonce": "deterministic-test",
             "keyset_id": keyset_info["keysetId"],
             "input_fee_ppk": keyset_info["inputFeePpk"],
         }
@@ -305,7 +303,7 @@ class MockServerHost:
         return "open"
 
     def mark_channel_closing(
-        self, channel_id: str, locktime: int, balance: int, signature: str
+        self, channel_id: str, expiry_timestamp: int, balance: int, signature: str
     ):
         pass
 
@@ -351,7 +349,7 @@ class MockServerHost:
     def mark_channel_closed(
         self,
         channel_id: str,
-        locktime: int,
+        expiry_timestamp: int,
         balance: int,
         receiver_proofs_json: str,
         sender_proofs_json: str,
@@ -410,11 +408,11 @@ class TestClientBridge:
         client_bridge = cdk_spilman.ClientBridge(client_host)
         print(f"Client bridge created, alice_pubkey: {alice_pubkey[:16]}...")
 
-        locktime = int(time.time()) + 7200  # 2 hours
+        expiry_timestamp = int(time.time()) + 7200  # 2 hours
         max_amount = 64
 
         result = client_bridge.open_channel_from_token(
-            token, charlie_pubkey, alice_pubkey, locktime, keyset_json, max_amount
+            token, charlie_pubkey, alice_pubkey, expiry_timestamp, keyset_json, max_amount
         )
 
         print(

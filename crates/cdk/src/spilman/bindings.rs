@@ -452,7 +452,7 @@ pub fn create_signed_balance_update(
 /// * `charlie_pubkey_hex` - Receiver's public key (hex)
 /// * `alice_pubkey_hex` - Sender's public key (hex)
 /// * `channel_secret_hex` - Pre-computed ECDH channel secret (32 bytes, hex)
-/// * `locktime` - Unix timestamp for refund locktime
+/// * `expiry_timestamp` - Unix timestamp for channel expiry (refund becomes available)
 /// * `keyset_info_json` - Keyset info from mint (JSON)
 /// * `maximum_amount_for_one_output` - Max amount per output from server policy
 ///
@@ -469,7 +469,7 @@ pub fn compute_channel_from_token(
     charlie_pubkey_hex: &str,
     alice_pubkey_hex: &str,
     channel_secret_hex: &str,
-    locktime: u64,
+    expiry_timestamp: u64,
     keyset_info_json: &str,
     maximum_amount_for_one_output: u64,
 ) -> Result<String, String> {
@@ -556,13 +556,6 @@ pub fn compute_channel_from_token(
     let mut channel_secret = [0u8; 32];
     channel_secret.copy_from_slice(&channel_secret_bytes);
 
-    // Generate sender nonce
-    let sender_nonce = format!(
-        "swap-{}-{}",
-        unix_time(),
-        hex::encode(&alice_pubkey.to_bytes()[..8])
-    );
-
     // Create channel parameters with pre-computed channel secret
     let params = ChannelParameters::new(
         alice_pubkey,
@@ -571,9 +564,8 @@ pub fn compute_channel_from_token(
         unit,
         capacity,
         funding_token_amount,
-        locktime,
+        expiry_timestamp,
         unix_time(),
-        sender_nonce,
         keyset_info.clone(),
         max_amt,
         channel_secret,

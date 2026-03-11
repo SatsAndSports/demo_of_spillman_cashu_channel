@@ -158,8 +158,8 @@ func runClient(args []string) {
 	ss, _ := spilman.ComputeChannelSecret(aliceSecret, sp.ReceiverPubkey)
 	cpJ, _ := json.Marshal(map[string]interface{}{
 		"alice_pubkey": alicePub, "charlie_pubkey": sp.ReceiverPubkey, "mint": mintUrl, "unit": "sat", "capacity": cap,
-		"funding_token_amount": fta, "maximum_amount": 64, "locktime": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
-		"sender_nonce": fmt.Sprintf("demo-go-%d", time.Now().Unix()), "keyset_id": ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],
+		"funding_token_amount": fta, "maximum_amount": 64, "expiry_timestamp": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
+		"keyset_id": ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],
 	})
 	cid, _ := spilman.ChannelParametersGetChannelId(string(cpJ), ss, string(kiJ))
 	fJ, _ := spilman.CreateFundingOutputs(string(cpJ), aliceSecret, string(kiJ))

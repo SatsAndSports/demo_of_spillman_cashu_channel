@@ -94,7 +94,7 @@ pub struct SpilmanHostCallbacks {
     pub mark_channel_closing: extern "C" fn(
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         signature: *const c_char,
     ) -> c_int,
@@ -102,7 +102,7 @@ pub struct SpilmanHostCallbacks {
     pub get_closing_data: extern "C" fn(
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
-        locktime_out: *mut u64,
+        expiry_timestamp_out: *mut u64,
         balance_out: *mut u64,
         signature_out: *mut *mut c_char,
     ) -> c_int,
@@ -156,7 +156,7 @@ pub struct SpilmanHostCallbacks {
     pub mark_channel_closed: extern "C" fn(
         user_data: *mut libc::c_void,
         channel_id: *const c_char,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: *const c_char,
         sender_proofs_json: *const c_char,
@@ -285,7 +285,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
     fn mark_channel_closing(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         payment: PaymentProof,
     ) -> Result<(), String> {
         let id_c = CString::new(channel_id).unwrap();
@@ -293,7 +293,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
         let ok = (self.callbacks.mark_channel_closing)(
             self.callbacks.user_data,
             id_c.as_ptr(),
-            locktime,
+            expiry_timestamp,
             payment.balance,
             sig_c.as_ptr(),
         );
@@ -306,14 +306,14 @@ impl SpilmanHost<String> for CGoSpilmanHost {
 
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
         let id_c = CString::new(channel_id).unwrap();
-        let mut locktime: u64 = 0;
+        let mut expiry_timestamp: u64 = 0;
         let mut balance: u64 = 0;
         let mut sig_ptr: *mut c_char = ptr::null_mut();
 
         let ok = (self.callbacks.get_closing_data)(
             self.callbacks.user_data,
             id_c.as_ptr(),
-            &mut locktime,
+            &mut expiry_timestamp,
             &mut balance,
             &mut sig_ptr,
         );
@@ -322,7 +322,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
             unsafe {
                 let signature = CString::from_raw(sig_ptr).into_string().unwrap();
                 Some(ClosingData {
-                    locktime,
+                    expiry_timestamp,
                     balance,
                     signature,
                 })
@@ -430,7 +430,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
     fn mark_channel_closed(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
@@ -444,7 +444,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
         let ok = (self.callbacks.mark_channel_closed)(
             self.callbacks.user_data,
             id_c.as_ptr(),
-            locktime,
+            expiry_timestamp,
             balance,
             rp_c.as_ptr(),
             sp_c.as_ptr(),
@@ -1136,7 +1136,7 @@ pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
     token_string: *const c_char,
     charlie_pubkey_hex: *const c_char,
     alice_pubkey_hex: *const c_char,
-    locktime: u64,
+    expiry_timestamp: u64,
     keyset_info_json: *const c_char,
     max_amount: u64,
 ) -> CResult {
@@ -1146,10 +1146,14 @@ pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
     let alice = CStr::from_ptr(alice_pubkey_hex).to_str().unwrap();
     let keyset = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match instance
-        .bridge
-        .open_channel_from_token(token, charlie, alice, locktime, keyset, max_amount)
-    {
+    match instance.bridge.open_channel_from_token(
+        token,
+        charlie,
+        alice,
+        expiry_timestamp,
+        keyset,
+        max_amount,
+    ) {
         Ok(result) => {
             let json = serde_json::to_string(&result).unwrap();
             CResult::success(json)

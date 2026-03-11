@@ -13,7 +13,7 @@ use super::params::ChannelParameters;
 pub struct EstablishedChannel {
     /// Channel parameters (includes shared_secret)
     pub params: ChannelParameters,
-    /// Locked proofs (2-of-2 multisig with locktime refund)
+    /// Locked proofs (2-of-2 multisig with expiry-based refund)
     pub funding_proofs: Vec<Proof>,
 }
 

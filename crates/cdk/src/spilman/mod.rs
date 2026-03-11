@@ -5,7 +5,7 @@
 //! A Spilman channel allows Alice (sender) to make incremental payments to Charlie (receiver)
 //! without requiring on-chain transactions for each payment. The channel uses:
 //!
-//! - 2-of-2 multisig funding with locktime refund for Alice
+//! - 2-of-2 multisig funding with expiry-based refund for Alice
 //! - Deterministic output derivation using a channel secret
 //! - Off-chain balance updates signed by Alice
 //! - Final commitment transaction signed by both parties

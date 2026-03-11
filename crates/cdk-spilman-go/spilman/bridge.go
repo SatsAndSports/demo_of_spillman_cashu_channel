@@ -358,10 +358,10 @@ func go_get_channel_state(userData unsafe.Pointer, channelId *C.char) *C.char {
 }
 
 //export go_mark_channel_closing
-func go_mark_channel_closing(userData unsafe.Pointer, channelId *C.char, locktime C.uint64_t, balance C.uint64_t, signature *C.char) C.int {
+func go_mark_channel_closing(userData unsafe.Pointer, channelId *C.char, expiryTimestamp C.uint64_t, balance C.uint64_t, signature *C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	err := host.MarkChannelClosing(C.GoString(channelId), uint64(locktime), uint64(balance), C.GoString(signature))
+	err := host.MarkChannelClosing(C.GoString(channelId), uint64(expiryTimestamp), uint64(balance), C.GoString(signature))
 	if err != nil {
 		return 0
 	}
@@ -369,14 +369,14 @@ func go_mark_channel_closing(userData unsafe.Pointer, channelId *C.char, locktim
 }
 
 //export go_get_closing_data
-func go_get_closing_data(userData unsafe.Pointer, channelId *C.char, locktimeOut *C.uint64_t, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
+func go_get_closing_data(userData unsafe.Pointer, channelId *C.char, expiryTimestampOut *C.uint64_t, balanceOut *C.uint64_t, signatureOut **C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
 	data := host.GetClosingData(C.GoString(channelId))
 	if data == nil {
 		return 0
 	}
-	*locktimeOut = C.uint64_t(data.Locktime)
+	*expiryTimestampOut = C.uint64_t(data.ExpiryTimestamp)
 	*balanceOut = C.uint64_t(data.Balance)
 	*signatureOut = C.CString(data.Signature)
 	return 1
@@ -465,12 +465,12 @@ func go_refresh_all_keysets(userData unsafe.Pointer, mintUrl *C.char) C.int {
 }
 
 //export go_mark_channel_closed
-func go_mark_channel_closed(userData unsafe.Pointer, channelId *C.char, locktime C.uint64_t, balance C.uint64_t, receiverProofsJson *C.char, senderProofsJson *C.char, receiverSum C.uint64_t, senderSum C.uint64_t) C.int {
+func go_mark_channel_closed(userData unsafe.Pointer, channelId *C.char, expiryTimestamp C.uint64_t, balance C.uint64_t, receiverProofsJson *C.char, senderProofsJson *C.char, receiverSum C.uint64_t, senderSum C.uint64_t) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
 	err := host.MarkChannelClosed(
 		C.GoString(channelId),
-		uint64(locktime),
+		uint64(expiryTimestamp),
 		uint64(balance),
 		C.GoString(receiverProofsJson),
 		C.GoString(senderProofsJson),

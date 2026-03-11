@@ -82,7 +82,7 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
 
     // Step 2: Create channel parameters
     let capacity = 10u64;
-    let future_locktime = unix_time() + 3600; // 1 hour in future
+    let future_expiry = unix_time() + 3600; // 1 hour in future
 
     // With real fees from the mint, compute the minimum funding_token_amount
     let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
@@ -99,9 +99,8 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
         CurrencyUnit::Sat,
         capacity,
         funding_token_amount,
-        future_locktime,
+        future_expiry,
         unix_time(),
-        format!("test-{}", unix_time()),
         keyset_info.clone(),
         64, // max amount per output
         &alice_secret,
@@ -263,13 +262,13 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
 
 /// Test: Spilman refund path spending with blinded refund key
 ///
-/// Verifies that after locktime expires, Alice can spend the funding token
+/// Verifies that after expiry, Alice can spend the funding token
 /// with ONLY her refund blinded secret key (1-of-1 instead of 2-of-2).
 ///
 /// This tests the refund path of the P2BK privacy feature:
-/// - Funding token has expired locktime
+/// - Funding token has expired expiry_timestamp
 /// - Refund key is Alice's SEPARATE blinded pubkey (different tweak from 2-of-2)
-/// - Mint accepts the single refund signature after locktime
+/// - Mint accepts the single refund signature after expiry
 #[tokio::test]
 async fn test_spilman_refund_spending_with_blinded_key() {
     let test_mint = TestMintHelper::new().await.unwrap();
@@ -306,10 +305,10 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     );
     println!("Keyset: {} (fee: {} ppk)", keyset_id, input_fee_ppk);
 
-    // Step 2: Create channel parameters with FUTURE locktime
+    // Step 2: Create channel parameters with FUTURE expiry
     // (needed to derive blinded pubkeys correctly via ChannelParameters)
     let capacity = 10u64;
-    let future_locktime = unix_time() + 3600; // 1 hour in future
+    let future_expiry = unix_time() + 3600; // 1 hour in future
 
     let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
         capacity,
@@ -325,9 +324,8 @@ async fn test_spilman_refund_spending_with_blinded_key() {
         CurrencyUnit::Sat,
         capacity,
         funding_token_amount,
-        future_locktime,
+        future_expiry,
         unix_time(),
-        format!("test-refund-{}", unix_time()),
         keyset_info.clone(),
         64,
         &alice_secret,
@@ -355,23 +353,23 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     assert_ne!(blinded_alice.to_hex(), blinded_alice_refund.to_hex());
     println!("✓ Refund blinded pubkey differs from 2-of-2 blinded pubkey");
 
-    // Step 4: Create SpendingConditions manually with PAST locktime
-    // We bypass Conditions::new() because it rejects past locktimes
-    let past_locktime = unix_time() - 3600; // 1 hour ago (expired)
-    println!("Past locktime: {} (expired 1 hour ago)", past_locktime);
+    // Step 4: Create SpendingConditions manually with PAST expiry
+    // We bypass Conditions::new() because it rejects past expiry timestamps
+    let past_expiry = unix_time() - 3600; // 1 hour ago (expired)
+    println!("Past expiry: {} (expired 1 hour ago)", past_expiry);
 
     let spending_conditions = SpendingConditions::new_p2pk(
         blinded_alice, // data field: Alice's blinded pubkey for 2-of-2
         Some(Conditions {
-            locktime: Some(past_locktime),                 // Expired!
+            locktime: Some(past_expiry),                     // Expired!
             pubkeys: Some(vec![blinded_charlie]),          // Charlie for 2-of-2
             refund_keys: Some(vec![blinded_alice_refund]), // Alice's REFUND blinded key
-            num_sigs: Some(2),                             // 2-of-2 before locktime
+            num_sigs: Some(2),                             // 2-of-2 before expiry
             sig_flag: SigFlag::SigAll,                     // SIG_ALL
             num_sigs_refund: Some(1),                      // 1-of-1 for refund
         }),
     );
-    println!("Created P2PK conditions with expired locktime and blinded refund key");
+    println!("Created P2PK conditions with expired expiry and blinded refund key");
 
     // Step 5: Mint input proofs, then create P2PK outputs for available amount after fees
     let input_proofs = test_mint
@@ -425,7 +423,7 @@ async fn test_spilman_refund_spending_with_blinded_key() {
         proof_amounts.join("+")
     );
 
-    // Step 8: Spend with ONLY Alice's refund blinded key (locktime expired)
+    // Step 8: Spend with ONLY Alice's refund blinded key (expiry passed)
     // The P2PK proofs we got are worth `available_for_outputs` sats.
     // We need to account for fees again when spending them.
     let refund_fee = (input_fee_ppk * p2pk_proofs.len() as u64).div_ceil(1000);
@@ -442,7 +440,7 @@ async fn test_spilman_refund_spending_with_blinded_key() {
         .get_sender_blinded_secret_key_for_stage1_refund(&alice_secret)
         .expect("Failed to get Alice's refund blinded secret");
 
-    // Sign with ONLY the refund key (1-of-1 after locktime)
+    // Sign with ONLY the refund key (1-of-1 after expiry)
     swap_request_refund
         .sign_sig_all(alice_refund_blinded_secret)
         .expect("Failed to sign with Alice's refund blinded key");
@@ -450,7 +448,7 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     let result = mint.process_swap_request(swap_request_refund).await;
     assert!(
         result.is_ok(),
-        "Refund spending with blinded key should succeed after locktime: {:?}",
+        "Refund spending with blinded key should succeed after expiry: {:?}",
         result.err()
     );
     println!("✓ Refund spending with Alice's blinded refund key succeeded");
@@ -492,7 +490,6 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
         100, // funding_token_amount
         crate::util::unix_time() + 3600,
         crate::util::unix_time(),
-        "test-stage2-keys".to_string(),
         keyset_info,
         64,
         &alice_secret,
@@ -639,7 +636,6 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
         capacity, // funding_token_amount == capacity when fees are 0
         crate::util::unix_time() + 3600, // 1 hour in future
         crate::util::unix_time(),
-        format!("test-sender-keys-{}", crate::util::unix_time()),
         keyset_info,
         64, // max amount per output
         &alice_secret,
@@ -834,7 +830,7 @@ async fn test_swap_to_funding() {
     println!("Token: {}...", &token_string[..50]);
 
     // Step 4: Call compute_channel_from_token
-    let locktime = unix_time() + 3600; // 1 hour in future
+    let expiry_timestamp = unix_time() + 3600; // 1 hour in future
     let max_amount = 64u64;
 
     // Compute channel secret via the utility function (what the host would do)
@@ -849,7 +845,7 @@ async fn test_swap_to_funding() {
         &charlie_pubkey.to_hex(),
         &alice_secret.public_key().to_hex(),
         &channel_secret_hex,
-        locktime,
+        expiry_timestamp,
         &keyset_info_json,
         max_amount,
     )
@@ -1182,7 +1178,7 @@ async fn test_client_bridge() {
         fn mark_channel_closing(
             &self,
             _channel_id: &str,
-            _locktime: u64,
+            _expiry_timestamp: u64,
             _payment: PaymentProof,
         ) -> Result<(), String> {
             Ok(())
@@ -1214,7 +1210,7 @@ async fn test_client_bridge() {
         fn mark_channel_closed(
             &self,
             _channel_id: &str,
-            _locktime: u64,
+            _expiry_timestamp: u64,
             _balance: u64,
             _receiver_proofs_json: &str,
             _sender_proofs_json: &str,
@@ -1346,7 +1342,7 @@ async fn test_client_bridge() {
     // Open channel from token
     // ====================================================================
 
-    let locktime = unix_time() + 7200; // 2 hours (well above the 1-hour min_expiry)
+    let expiry_timestamp = unix_time() + 7200; // 2 hours (well above the 1-hour min_expiry)
     let max_amount = 64u64;
 
     let open_result = client_bridge
@@ -1354,7 +1350,7 @@ async fn test_client_bridge() {
             &token_string,
             &charlie_pubkey.to_hex(),
             &alice_pubkey_hex,
-            locktime,
+            expiry_timestamp,
             &keyset_info_json,
             max_amount,
         )
@@ -1670,13 +1666,13 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         fn mark_channel_closing(
             &self,
             _channel_id: &str,
-            locktime: u64,
+            expiry_timestamp: u64,
             payment: PaymentProof,
         ) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closing;
             *self.stored_payment.borrow_mut() = Some(payment.clone());
             *self.closing_data.borrow_mut() = Some(ClosingData {
-                locktime,
+                expiry_timestamp,
                 balance: payment.balance,
                 signature: payment.signature,
             });
@@ -1709,7 +1705,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         fn mark_channel_closed(
             &self,
             _channel_id: &str,
-            _locktime: u64,
+            _expiry_timestamp: u64,
             balance: u64,
             receiver_proofs_json: &str,
             sender_proofs_json: &str,
@@ -1863,7 +1859,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         None,
     );
     let capacity = 10u64;
-    let locktime = unix_time() + 7200;
+    let expiry_timestamp = unix_time() + 7200;
 
     // We need enough funding for the capacity to survive TWO rounds of fees:
     // the initial swap-to-P2BK fee, and later the close swap fee.
@@ -1883,7 +1879,6 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     println!("Minted: {}, fee: {}, actual funding: {}", mint_amount, actual_fee, actual_funding);
 
     // Build params with the actual post-fee funding amount
-    let sender_nonce = format!("retry-test-coop-{}", unix_time());
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
         charlie_pubkey,
@@ -1891,9 +1886,8 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         CurrencyUnit::Sat,
         capacity,
         actual_funding,
-        locktime,
+        expiry_timestamp,
         unix_time(),
-        sender_nonce,
         keyset_info_a.clone(),
         64,
         &alice_secret,
@@ -2159,10 +2153,10 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
             self.channel_state.borrow().clone()
         }
-        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
+        fn mark_channel_closing(&self, _channel_id: &str, expiry_timestamp: u64, payment: PaymentProof) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closing;
             *self.stored_payment.borrow_mut() = Some(payment.clone());
-            *self.closing_data.borrow_mut() = Some(ClosingData { locktime, balance: payment.balance, signature: payment.signature });
+            *self.closing_data.borrow_mut() = Some(ClosingData { expiry_timestamp, balance: payment.balance, signature: payment.signature });
             Ok(())
         }
         fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
@@ -2181,7 +2175,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
         }
-        fn mark_channel_closed(&self, _channel_id: &str, _locktime: u64, balance: u64,
+        fn mark_channel_closed(&self, _channel_id: &str, _expiry_timestamp: u64, balance: u64,
             receiver_proofs_json: &str, sender_proofs_json: &str,
             receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closed;
@@ -2269,7 +2263,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         None,
     );
     let capacity = 10u64;
-    let locktime = unix_time() + 7200;
+    let expiry_timestamp = unix_time() + 7200;
     let mint_amount = 100u64;
 
     let input_proofs = crate::test_helpers::mint::mint_test_proofs(
@@ -2284,8 +2278,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         alice_pubkey, charlie_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat, capacity, actual_funding,
-        locktime, unix_time(),
-        format!("retry-test-unilateral-{}", unix_time()),
+        expiry_timestamp, unix_time(),
         keyset_info_a.clone(), 64, &alice_secret,
     ).expect("channel params");
     let channel_id = params.get_channel_id();
@@ -2461,7 +2454,7 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
     // Channel parameters
     let capacity = 10u64;
     let balance = 5u64;
-    let future_locktime = unix_time() + 3600;
+    let future_expiry = unix_time() + 3600;
 
     let params = ChannelParameters::new_with_secret_key(
         alice_pubkey,
@@ -2470,9 +2463,8 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
         CurrencyUnit::Sat,
         capacity,
         actual_funding,
-        future_locktime,
+        future_expiry,
         unix_time(),
-        format!("test-stage2-wallet-{}", unix_time()),
         keyset_info.clone(),
         64,
         &alice_secret,
@@ -2672,11 +2664,11 @@ mod close_balance_tests {
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
             self.channel_state.borrow().clone()
         }
-        fn mark_channel_closing(&self, _channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
+        fn mark_channel_closing(&self, _channel_id: &str, expiry_timestamp: u64, payment: PaymentProof) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closing;
             *self.stored_payment.borrow_mut() = Some(payment.clone());
             *self.closing_data.borrow_mut() = Some(ClosingData {
-                locktime, balance: payment.balance, signature: payment.signature,
+                expiry_timestamp, balance: payment.balance, signature: payment.signature,
             });
             Ok(())
         }
@@ -2696,7 +2688,7 @@ mod close_balance_tests {
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
             self.keyset_infos.get(keyset_id).cloned()
         }
-        fn mark_channel_closed(&self, _channel_id: &str, _locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
+        fn mark_channel_closed(&self, _channel_id: &str, _expiry_timestamp: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
             *self.channel_state.borrow_mut() = ChannelState::Closed;
             *self.closed_data.borrow_mut() = Some((balance, receiver_sum + sender_sum, receiver_proofs_json.to_string(), sender_proofs_json.to_string()));
             Ok(())
@@ -2773,14 +2765,13 @@ mod close_balance_tests {
         let actual_funding = mint_amount - actual_fee;
 
         let capacity = 100u64;
-        let locktime = unix_time() + 7200;
+        let expiry_timestamp = unix_time() + 7200;
         let keyset_info = super::KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys.clone(), fee_ppk, None);
 
         let params = ChannelParameters::new_with_secret_key(
             alice_pubkey, charlie_pubkey,
             "http://localhost:3338".to_string(), CurrencyUnit::Sat,
-            capacity, actual_funding, locktime, unix_time(),
-            format!("overpayment-test-{}", unix_time()),
+            capacity, actual_funding, expiry_timestamp, unix_time(),
             keyset_info.clone(), 64, &alice_secret,
         ).expect("channel params");
         let channel_id = params.get_channel_id();

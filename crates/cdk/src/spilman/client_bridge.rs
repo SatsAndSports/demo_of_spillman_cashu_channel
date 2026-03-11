@@ -13,7 +13,7 @@
 //! let bridge = SpilmanClientBridge::new(host, None)?;
 //!
 //! // Open a channel from an existing Cashu token
-//! let result = bridge.open_channel_from_token(token, charlie_pubkey, locktime, keyset_info, 64)?;
+//! let result = bridge.open_channel_from_token(token, charlie_pubkey, expiry_timestamp, keyset_info, 64)?;
 //!
 //! // Make payments
 //! let header = bridge.build_payment_header(&result.channel_id, 10, true)?;  // first request
@@ -214,7 +214,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// * `token_string` - Cashu token (cashuA... or cashuB...)
     /// * `charlie_pubkey_hex` - Receiver's public key (from server's `/channel/params`)
     /// * `alice_pubkey_hex` - Sender's public key (caller chooses which key for this channel)
-    /// * `locktime` - Unix timestamp for refund locktime
+    /// * `expiry_timestamp` - Unix timestamp for channel expiry (refund becomes available)
     /// * `keyset_info_json` - Keyset info JSON (from mint's `/v1/keys/{id}`)
     /// * `max_amount` - Maximum amount per output (from server policy, 0 = no limit)
     #[cfg(feature = "wallet")]
@@ -223,7 +223,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         token_string: &str,
         charlie_pubkey_hex: &str,
         alice_pubkey_hex: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         keyset_info_json: &str,
         max_amount: u64,
     ) -> Result<OpenChannelResult, String> {
@@ -238,7 +238,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             charlie_pubkey_hex,
             alice_pubkey_hex,
             &channel_secret_hex,
-            locktime,
+            expiry_timestamp,
             keyset_info_json,
             max_amount,
         )?;

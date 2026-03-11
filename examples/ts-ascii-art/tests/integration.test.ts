@@ -167,9 +167,8 @@ describe("Channel Setup", () => {
       capacity: 100,
       funding_token_amount: fundingTokenAmount,
       maximum_amount: 64,
-      locktime: now + 7200,
+      expiry_timestamp: now + 7200,
       setup_timestamp: now,
-      sender_nonce: `test-ts-${now}`,
       keyset_id: keysetInfo!.keysetId,
       input_fee_ppk: keysetInfo!.inputFeePpk,
     };
@@ -228,9 +227,8 @@ describe("Channel Setup", () => {
       capacity: 100,
       funding_token_amount: fundingTokenAmount,
       maximum_amount: 64,
-      locktime: now + 7200,
+      expiry_timestamp: now + 7200,
       setup_timestamp: now,
-      sender_nonce: "deterministic-test",
       keyset_id: keysetInfo!.keysetId,
       input_fee_ppk: keysetInfo!.inputFeePpk,
     };

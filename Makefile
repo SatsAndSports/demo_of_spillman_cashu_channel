@@ -255,7 +255,7 @@ test-integration-python: build-python build-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(PYTHON_CRATE_DIR) test-integration
 
 # Run TypeScript integration tests (basic tests, requires mint)
-test-integration-ts: build-wasm build-mintd
+test-integration-ts: build-wasm build-kit-ts build-mintd
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(WASM_CRATE) test-integration
 
 # Run all integration tests (Go, Python, TS, Rust)

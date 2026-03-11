@@ -51,12 +51,10 @@ pub struct ChannelParameters {
     pub capacity: u64,
     /// Total nominal value of the funding token (must satisfy: capacity <= forward(forward(funding_token_amount)))
     pub funding_token_amount: u64,
-    /// Locktime after which Alice can reclaim funds (unix timestamp)
-    pub locktime: u64,
+    /// Expiry timestamp after which Alice can reclaim funds (unix timestamp)
+    pub expiry_timestamp: u64,
     /// Setup timestamp (unix timestamp when channel was created)
     pub setup_timestamp: u64,
-    /// Sender nonce (random value created by Alice for channel identification)
-    pub sender_nonce: String,
     /// Keyset information (ID, keys, amounts, fees)
     pub keyset_info: KeysetInfo,
     /// Maximum amount for one output (amounts larger than this are filtered out)
@@ -186,9 +184,8 @@ impl ChannelParameters {
         unit: CurrencyUnit,
         capacity: u64,
         funding_token_amount: u64,
-        locktime: u64,
+        expiry_timestamp: u64,
         setup_timestamp: u64,
-        sender_nonce: String,
         keyset_info: KeysetInfo,
         maximum_amount_for_one_output: u64,
         channel_secret: [u8; 32],
@@ -227,9 +224,8 @@ impl ChannelParameters {
             unit,
             capacity,
             funding_token_amount,
-            locktime,
+            expiry_timestamp,
             setup_timestamp,
-            sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
             channel_secret,
@@ -256,9 +252,8 @@ impl ChannelParameters {
         unit: CurrencyUnit,
         capacity: u64,
         funding_token_amount: u64,
-        locktime: u64,
+        expiry_timestamp: u64,
         setup_timestamp: u64,
-        sender_nonce: String,
         keyset_info: KeysetInfo,
         maximum_amount_for_one_output: u64,
         my_secret: &SecretKey,
@@ -288,9 +283,8 @@ impl ChannelParameters {
             unit,
             capacity,
             funding_token_amount,
-            locktime,
+            expiry_timestamp,
             setup_timestamp,
-            sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
             channel_secret,
@@ -300,8 +294,8 @@ impl ChannelParameters {
     /// Create channel parameters from a JSON string and a secret key
     ///
     /// The JSON should contain: mint, unit, capacity, keyset_id, input_fee_ppk,
-    /// maximum_amount, setup_timestamp, alice_pubkey, charlie_pubkey, locktime,
-    /// sender_nonce (as produced by `get_channel_id_params_json`)
+    /// maximum_amount, setup_timestamp, alice_pubkey, charlie_pubkey, expiry_timestamp
+    /// (as produced by `get_channel_id_params_json`)
     ///
     /// Additional parameters needed:
     /// * `keyset_info` - Keyset information from the mint (keyset_id and input_fee_ppk must match JSON)
@@ -435,14 +429,9 @@ impl ChannelParameters {
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
 
-        let locktime = json["locktime"]
+        let expiry_timestamp = json["expiry_timestamp"]
             .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'locktime' field"))?;
-
-        let sender_nonce = json["sender_nonce"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_nonce' field"))?
-            .to_string();
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'expiry_timestamp' field"))?;
 
         Self::new(
             alice_pubkey,
@@ -451,9 +440,8 @@ impl ChannelParameters {
             unit,
             capacity,
             funding_token_amount,
-            locktime,
+            expiry_timestamp,
             setup_timestamp,
-            sender_nonce,
             keyset_info,
             maximum_amount_for_one_output,
             channel_secret,
@@ -467,14 +455,14 @@ impl ChannelParameters {
     }
 
     /// Get channel ID as raw bytes (32-byte SHA256 hash)
-    /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|locktime|sender_nonce|channel_secret
+    /// The hash is computed over: mint|unit|capacity|funding_token_amount|keyset_id|input_fee_ppk|maximum_amount|setup_timestamp|sender_pubkey|receiver_pubkey|expiry_timestamp|channel_secret
     ///
     /// The channel_secret (channel_secret) is included implicitly — it does not
     /// appear in `get_channel_id_params_json()`. This means the channel ID can
     /// only be computed by the two parties who know the channel secret.
     pub fn get_channel_id_bytes(&self) -> [u8; 32] {
         let params_string = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.mint,
             self.unit_name(),
             self.capacity,
@@ -485,8 +473,7 @@ impl ChannelParameters {
             self.setup_timestamp,
             self.alice_pubkey.to_hex(),
             self.charlie_pubkey.to_hex(),
-            self.locktime,
-            self.sender_nonce,
+            self.expiry_timestamp,
             hex::encode(self.channel_secret)
         );
         sha256::Hash::hash(params_string.as_bytes()).to_byte_array()
@@ -511,8 +498,7 @@ impl ChannelParameters {
             "setup_timestamp": self.setup_timestamp,
             "alice_pubkey": self.alice_pubkey.to_hex(),
             "charlie_pubkey": self.charlie_pubkey.to_hex(),
-            "locktime": self.locktime,
-            "sender_nonce": self.sender_nonce
+            "expiry_timestamp": self.expiry_timestamp
         })
         .to_string()
     }
@@ -521,7 +507,7 @@ impl ChannelParameters {
     ///
     /// The `context` parameter specifies which blinded key to derive:
     /// - "sender_stage1" / "receiver_stage1" - for funding token 2-of-2
-    /// - "sender_stage1_refund" - for funding token locktime refund
+    /// - "sender_stage1_refund" - for funding token expiry refund
     ///
     /// Computes: SHA256("Cashu_Spilman_P2BK_v1" || channel_secret || "{channel_id}|{context}|{retry_counter}")
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
@@ -707,7 +693,7 @@ impl ChannelParameters {
         self.derive_blinding_scalar("receiver_stage1")
     }
 
-    /// Get the blinded sender (Alice) pubkey for stage 1 locktime refund
+    /// Get the blinded sender (Alice) pubkey for stage 1 expiry refund
     ///
     /// Uses a DIFFERENT blinding tweak than the 2-of-2 spending path, so the mint
     /// cannot correlate Alice's refund to the normal channel close.
@@ -718,10 +704,10 @@ impl ChannelParameters {
         derive_blinded_pubkey(&self.alice_pubkey, &r)
     }
 
-    /// Derive the blinded sender secret key for stage 1 locktime refund
+    /// Derive the blinded sender secret key for stage 1 expiry refund
     ///
     /// Uses a DIFFERENT blinding tweak than the 2-of-2 spending path.
-    /// Alice uses this to sign when reclaiming funds after locktime.
+    /// Alice uses this to sign when reclaiming funds after expiry.
     pub fn get_sender_blinded_secret_key_for_stage1_refund(
         &self,
         alice_secret: &SecretKey,
@@ -850,7 +836,7 @@ impl ChannelParameters {
     ///
     /// The context parameter specifies the role: "sender", "receiver", or "funding"
     /// - "sender"/"receiver" create simple P2PK outputs for commitments using stage2 blinded pubkeys
-    /// - "funding" creates P2PK outputs with 2-of-2 multisig + locktime conditions
+    /// - "funding" creates P2PK outputs with 2-of-2 multisig + expiry conditions
     pub fn create_deterministic_output_with_blinding(
         &self,
         context: &str,
@@ -877,7 +863,7 @@ impl ChannelParameters {
         let hash = sha256::Hash::hash(&blinding_input);
         let blinding_factor = SecretKey::from_slice(hash.as_byte_array())?;
 
-        // Handle funding context separately (requires 2-of-2 blinded pubkeys + locktime)
+        // Handle funding context separately (requires 2-of-2 blinded pubkeys + expiry)
         if context == "funding" {
             DeterministicSecretWithBlinding::new_funding(
                 self,
@@ -1020,9 +1006,8 @@ mod tests {
             CurrencyUnit::Sat,
             1000, // capacity
             funding_token_amount,
-            1700000000, // locktime
+            1700000000, // expiry_timestamp
             1699999000, // setup_timestamp
-            "test-nonce-12345".to_string(),
             keyset_info.clone(),
             64, // maximum_amount_for_one_output
             &alice_secret,
@@ -1086,7 +1071,6 @@ mod tests {
             funding_token_amount,
             1700000000,
             1699999000,
-            "test-nonce-12345".to_string(),
             keyset_info.clone(),
             64,
             &alice_secret,
@@ -1177,7 +1161,6 @@ mod tests {
             funding_token_amount,
             1700000000,
             1699999000,
-            "test-nonce-12345".to_string(),
             keyset_info.clone(),
             64,
             &alice_secret,
@@ -1247,7 +1230,6 @@ mod tests {
             funding_token_amount,
             1700000000,
             1699999000,
-            "test-ephemeral-shared".to_string(),
             keyset_info,
             64,
             &alice_secret,
@@ -1299,7 +1281,6 @@ mod tests {
             funding_token_amount,
             1700000000,
             1699999000,
-            "test-nonce-12345".to_string(),
             keyset_info,
             64,
             &alice_secret,
@@ -1367,7 +1348,6 @@ mod tests {
             funding_token_amount,
             1700000000,
             1699999000,
-            "test-nonce-12345".to_string(),
             keyset_info.clone(),
             64,
             &alice_secret,
@@ -1442,8 +1422,7 @@ mod tests {
             funding_token_amount: 1000,
             maximum_amount_for_one_output: 64,
             setup_timestamp: 1700000000,
-            locktime: 1700003600,
-            sender_nonce: "test-nonce".to_string(),
+            expiry_timestamp: 1700003600,
             keyset_info: keyset,
             channel_secret,
         };

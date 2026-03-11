@@ -53,8 +53,8 @@ export async function runClient(args: string[]) {
   const ss = compute_channel_secret(aliceSecret, sp.receiver_pubkey);
   const cp = {
     alice_pubkey: alicePub, charlie_pubkey: sp.receiver_pubkey, mint: mintUrl, unit: "sat", capacity: cap,
-    funding_token_amount: Number(fta), maximum_amount: 64, locktime: Math.floor(Date.now() / 1000) + 7200,
-    setup_timestamp: Math.floor(Date.now() / 1000), sender_nonce: `demo-ts-${Date.now()}`,
+    funding_token_amount: Number(fta), maximum_amount: 64, expiry_timestamp: Math.floor(Date.now() / 1000) + 7200,
+    setup_timestamp: Math.floor(Date.now() / 1000),
     keyset_id: ki.keysetId, input_fee_ppk: ki.inputFeePpk,
   };
   const cid = channel_parameters_get_channel_id(JSON.stringify(cp), ss, JSON.stringify(ki));

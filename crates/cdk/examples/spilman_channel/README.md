@@ -6,7 +6,7 @@ This directory contains a low-level example and tests for the Spilman Channel pr
 
 The example demonstrates:
 1.  **Key Generation**: Creating secp256k1 keys for Alice (sender) and Charlie (receiver).
-2.  **Channel Parameters**: Defining capacity, locktime, and deriving the `_channel secret_`.
+2.  **Channel Parameters**: Defining capacity, expiry timestamp, and deriving the `_channel secret_`.
 3.  **Funding**: Creating the 2-of-2 multisig funding token.
 4.  **Payments**: Alice signing incremental balance updates.
 5.  **Closing**: Charlie verifying signatures and settling with the mint.

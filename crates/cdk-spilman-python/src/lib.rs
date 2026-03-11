@@ -130,8 +130,8 @@ impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
 /// - get_amount_due(channel_id: str, context_json: str) -> int
 /// - record_payment(channel_id: str, balance: int, signature: str, context_json: str)
 /// - get_channel_state(channel_id: str) -> str  # Returns "open", "closing", or "closed"
-/// - mark_channel_closing(channel_id: str, locktime: int, balance: int, signature: str) -> None  # Raises on error
-/// - get_closing_data(channel_id: str) -> Optional[dict]  # Returns {locktime, balance, signature} or None
+/// - mark_channel_closing(channel_id: str, expiry_timestamp: int, balance: int, signature: str) -> None  # Raises on error
+/// - get_closing_data(channel_id: str) -> Optional[dict]  # Returns {expiry_timestamp, balance, signature} or None
 /// - get_channel_policy(unit: str) -> Optional[Tuple[int, int, Optional[int]]]  # (min_expiry_in_seconds, min_capacity, max_amount_per_output) or None
 /// - now_seconds() -> int
 /// - get_balance_and_signature_for_unilateral_exit(channel_id: str) -> Optional[Tuple[int, str]]
@@ -352,14 +352,19 @@ impl SpilmanHost for PySpilmanHost {
     fn mark_channel_closing(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         payment: cdk::spilman::PaymentProof,
     ) -> Result<(), String> {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
                 py,
                 "mark_channel_closing",
-                (channel_id, locktime, payment.balance, payment.signature),
+                (
+                    channel_id,
+                    expiry_timestamp,
+                    payment.balance,
+                    payment.signature,
+                ),
             ) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
@@ -378,10 +383,10 @@ impl SpilmanHost for PySpilmanHost {
                 return None;
             }
 
-            // Expecting a dict with locktime, balance, signature
-            let locktime = result
-                .getattr(py, "locktime")
-                .or_else(|_| result.call_method1(py, "__getitem__", ("locktime",)))
+            // Expecting a dict with expiry_timestamp, balance, signature
+            let expiry_timestamp = result
+                .getattr(py, "expiry_timestamp")
+                .or_else(|_| result.call_method1(py, "__getitem__", ("expiry_timestamp",)))
                 .ok()?
                 .extract::<u64>(py)
                 .ok()?;
@@ -401,7 +406,7 @@ impl SpilmanHost for PySpilmanHost {
                 .ok()?;
 
             Some(ClosingData {
-                locktime,
+                expiry_timestamp,
                 balance,
                 signature,
             })
@@ -468,7 +473,7 @@ impl SpilmanHost for PySpilmanHost {
     fn mark_channel_closed(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
@@ -481,7 +486,7 @@ impl SpilmanHost for PySpilmanHost {
                 "mark_channel_closed",
                 (
                     channel_id,
-                    locktime,
+                    expiry_timestamp,
                     balance,
                     receiver_proofs_json,
                     sender_proofs_json,
@@ -1222,19 +1227,19 @@ impl ClientBridge {
     ///     token_string: Cashu token (cashuA... or cashuB...)
     ///     charlie_pubkey_hex: Receiver's public key (from server's /channel/params)
     ///     alice_pubkey_hex: Sender's public key (caller chooses which key for this channel)
-    ///     locktime: Unix timestamp for refund locktime
+    ///     expiry_timestamp: Unix timestamp for channel expiry
     ///     keyset_info_json: Keyset info JSON (from mint's /v1/keys/{id})
     ///     max_amount: Maximum amount per output (from server policy, 0 = no limit)
     ///
     /// Returns:
     ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url, alice_pubkey_hex
-    #[pyo3(signature = (token_string, charlie_pubkey_hex, alice_pubkey_hex, locktime, keyset_info_json, max_amount))]
+    #[pyo3(signature = (token_string, charlie_pubkey_hex, alice_pubkey_hex, expiry_timestamp, keyset_info_json, max_amount))]
     fn open_channel_from_token(
         &self,
         token_string: &str,
         charlie_pubkey_hex: &str,
         alice_pubkey_hex: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         keyset_info_json: &str,
         max_amount: u64,
     ) -> PyResult<ClientOpenChannelResult> {
@@ -1244,7 +1249,7 @@ impl ClientBridge {
                 token_string,
                 charlie_pubkey_hex,
                 alice_pubkey_hex,
-                locktime,
+                expiry_timestamp,
                 keyset_info_json,
                 max_amount,
             )

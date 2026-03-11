@@ -57,7 +57,7 @@ extern "C" {
     fn mark_channel_closing(
         this: &JsSpilmanHost,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         signature: &str,
     ) -> Result<(), JsValue>;
@@ -81,7 +81,7 @@ extern "C" {
     fn mark_channel_closed(
         this: &JsSpilmanHost,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
@@ -166,17 +166,17 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
     fn get_channel_state(&self, channel_id: &str) -> ChannelState {
         match self.js_host.get_channel_state(channel_id).as_str() { "closed" => ChannelState::Closed, "closing" => ChannelState::Closing, _ => ChannelState::Open }
     }
-    fn mark_channel_closing(&self, channel_id: &str, locktime: u64, payment: PaymentProof) -> Result<(), String> {
-        self.js_host.mark_channel_closing(channel_id, locktime, payment.balance, &payment.signature).map_err(|e| format!("{:?}", e))
+    fn mark_channel_closing(&self, channel_id: &str, expiry_timestamp: u64, payment: PaymentProof) -> Result<(), String> {
+        self.js_host.mark_channel_closing(channel_id, expiry_timestamp, payment.balance, &payment.signature).map_err(|e| format!("{:?}", e))
     }
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
         let val = self.js_host.get_closing_data(channel_id);
         if val.is_null() || val.is_undefined() { return None; }
         let obj = js_sys::Object::try_from(&val)?;
-        let locktime = js_sys::Reflect::get(obj, &JsValue::from_str("locktime")).ok()?.as_f64()? as u64;
+        let expiry_timestamp = js_sys::Reflect::get(obj, &JsValue::from_str("expiry_timestamp")).ok()?.as_f64()? as u64;
         let balance = js_sys::Reflect::get(obj, &JsValue::from_str("balance")).ok()?.as_f64()? as u64;
         let signature = js_sys::Reflect::get(obj, &JsValue::from_str("signature")).ok()?.as_string()?;
-        Some(ClosingData { locktime, balance, signature })
+        Some(ClosingData { expiry_timestamp, balance, signature })
     }
     fn get_channel_policy(&self, unit: &str) -> Option<ChannelPolicy> {
         let val = self.js_host.get_channel_policy(unit);
@@ -200,8 +200,8 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
         js_sys::Array::from(&val).iter().filter_map(|v| v.as_string().and_then(|s| Id::from_str(&s).ok())).collect()
     }
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String> { self.js_host.get_keyset_info(mint, &keyset_id.to_string()).as_string() }
-    fn mark_channel_closed(&self, channel_id: &str, locktime: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
-        self.js_host.mark_channel_closed(channel_id, locktime, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum).map_err(|e| format!("{:?}", e))
+    fn mark_channel_closed(&self, channel_id: &str, expiry_timestamp: u64, balance: u64, receiver_proofs_json: &str, sender_proofs_json: &str, receiver_sum: u64, sender_sum: u64) -> Result<(), String> {
+        self.js_host.mark_channel_closed(channel_id, expiry_timestamp, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum).map_err(|e| format!("{:?}", e))
     }
     fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> { self.js_host.compute_channel_secret_host(charlie_pubkey_hex, alice_pubkey_hex).map_err(|e| format!("{:?}", e)) }
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> { self.js_host.sign_with_tweaked_key_host(signer_pubkey_hex, message_hex, tweak_scalar_hex).map_err(|e| format!("{:?}", e)) }
@@ -338,8 +338,8 @@ impl WasmSpilmanClientBridge {
     }
 
     #[wasm_bindgen(js_name = openChannelFromToken)]
-    pub fn open_channel_from_token(&self, token_string: &str, charlie_pubkey_hex: &str, alice_pubkey_hex: &str, locktime: u64, keyset_info_json: &str, max_amount: u64) -> Result<JsValue, JsValue> {
-        self.bridge.open_channel_from_token(token_string, charlie_pubkey_hex, alice_pubkey_hex, locktime, keyset_info_json, max_amount)
+    pub fn open_channel_from_token(&self, token_string: &str, charlie_pubkey_hex: &str, alice_pubkey_hex: &str, expiry_timestamp: u64, keyset_info_json: &str, max_amount: u64) -> Result<JsValue, JsValue> {
+        self.bridge.open_channel_from_token(token_string, charlie_pubkey_hex, alice_pubkey_hex, expiry_timestamp, keyset_info_json, max_amount)
             .map(|r| serde_wasm_bindgen::to_value(&r).unwrap())
             .map_err(|e| JsValue::from_str(&e))
     }

@@ -111,7 +111,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
 
     markChannelClosing: (
       channel_id: string,
-      locktime: number,
+      expiry_timestamp: number,
       balance: number,
       signature: string
     ): void => {
@@ -120,10 +120,10 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       }
       // Also update balance store so it's available for unilateral exit logic during retry
       stores.channelBalance.update(channel_id, Number(balance), signature);
-      stores.channelClosing.markClosing(channel_id, Number(locktime), Number(balance), signature);
+      stores.channelClosing.markClosing(channel_id, Number(expiry_timestamp), Number(balance), signature);
     },
 
-    getClosingData: (channelId: string): { locktime: number; balance: number; signature: string } | null => {
+    getClosingData: (channelId: string): { expiry_timestamp: number; balance: number; signature: string } | null => {
       return stores.channelClosing.get(channelId);
     },
 
@@ -171,7 +171,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
 
     markChannelClosed: (
       channelId: string,
-      locktime: number,
+      expiry_timestamp: number,
       balance: number,
       receiverProofsJson: string,
       senderProofsJson: string,
@@ -183,7 +183,7 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       }
       stores.channelClosed.markClosed(
         channelId,
-        Number(locktime),
+        Number(expiry_timestamp),
         Number(balance),
         Number(receiverSum) + Number(senderSum),
         Number(receiverSum),

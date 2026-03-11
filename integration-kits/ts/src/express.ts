@@ -94,7 +94,7 @@ export function mapErrorStatus(errorMsg: unknown): number {
     lowerMsg.includes("channel_id mismatch") ||
     lowerMsg.includes("insufficient balance") ||
     lowerMsg.includes("balance exceeds capacity") ||
-    lowerMsg.includes("locktime too soon") ||
+    lowerMsg.includes("expiry too soon") ||
     lowerMsg.includes("mint or keyset not acceptable") ||
     lowerMsg.includes("capacity too small") ||
     lowerMsg.includes("max_amount_per_output exceeded");

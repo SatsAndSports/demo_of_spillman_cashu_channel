@@ -6,7 +6,6 @@
 mod test_helpers;
 
 use cdk::nuts::{CurrencyUnit, SecretKey};
-use cdk::secret::Secret;
 use cdk::util::unix_time;
 use clap::Parser;
 
@@ -28,7 +27,7 @@ struct Args {
     #[arg(long)]
     mint: Option<String>,
 
-    /// Delay in seconds until Alice can refund (locktime)
+    /// Delay in seconds until Alice can refund (expiry)
     #[arg(long, default_value = "10")]
     delay_until_refund: u64,
 }
@@ -59,11 +58,7 @@ async fn main() -> anyhow::Result<()> {
 
     let capacity = 1_000_000; // Desired channel capacity (maximum Charlie can receive after all fees)
     let setup_timestamp = unix_time();
-    let locktime = setup_timestamp + args.delay_until_refund;
-
-    // Generate random sender nonce (created by Alice)
-    let sender_nonce = Secret::generate().to_string();
-
+    let expiry_timestamp = setup_timestamp + args.delay_until_refund;
     // 4. CREATE CHANNEL PARAMETERS WITH KEYSET_ID AND SHARED SECRET
     let maximum_amount_for_one_output = 100_000; // 100k sats maximum per output
 
@@ -81,9 +76,8 @@ async fn main() -> anyhow::Result<()> {
         channel_unit.clone(),
         capacity,
         funding_token_amount,
-        locktime,
+        expiry_timestamp,
         setup_timestamp,
-        sender_nonce,
         keyset_info,
         maximum_amount_for_one_output,
         &alice_secret,
@@ -91,9 +85,9 @@ async fn main() -> anyhow::Result<()> {
 
     println!("   Desired capacity: {} {:?}", capacity, channel_unit);
     println!(
-        "   Locktime: {} ({} seconds from now)\n",
-        locktime,
-        locktime - unix_time()
+        "   Expiry timestamp: {} ({} seconds from now)\n",
+        expiry_timestamp,
+        expiry_timestamp - unix_time()
     );
     println!(
         "   Input fee: {} ppk",

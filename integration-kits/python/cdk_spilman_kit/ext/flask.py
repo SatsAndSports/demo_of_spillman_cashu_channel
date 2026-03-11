@@ -43,7 +43,7 @@ def map_error_status(error_msg: str) -> int:
         "channel_id mismatch",
         "insufficient balance",
         "balance exceeds capacity",
-        "locktime too soon",
+        "expiry too soon",
         "mint or keyset not acceptable",
         "max_amount_per_output exceeded"
     ])

@@ -23,13 +23,13 @@ type ChannelBalance struct {
 }
 
 type ClosingData struct {
-	Locktime  uint64
-	Balance   uint64
-	Signature string
+	ExpiryTimestamp uint64
+	Balance         uint64
+	Signature       string
 }
 
 type ClosedData struct {
-	Locktime           uint64
+	ExpiryTimestamp    uint64
 	ClosedAmount       uint64
 	ValueAfterStage1   uint64
 	ReceiverSum        uint64
@@ -61,7 +61,7 @@ type SpilmanStores interface {
 	IncrementUsage(channelId string, increments UsageMap)
 
 	IsClosing(channelId string) bool
-	MarkClosing(channelId string, locktime, balance uint64, signature string)
+	MarkClosing(channelId string, expiryTimestamp, balance uint64, signature string)
 	GetClosingData(channelId string) (*ClosingData, bool)
 
 	IsClosed(channelId string) bool
@@ -168,7 +168,7 @@ func (s *memoryStores) MarkClosing(id string, lt, b uint64, sig string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.closed[id]; !ok {
-		s.closing[id] = ClosingData{Locktime: lt, Balance: b, Signature: sig}
+		s.closing[id] = ClosingData{ExpiryTimestamp: lt, Balance: b, Signature: sig}
 	}
 }
 func (s *memoryStores) GetClosingData(id string) (*ClosingData, bool) {
@@ -411,7 +411,7 @@ func (s *sqliteStores) IsClosing(id string) bool {
 }
 
 func (s *sqliteStores) MarkClosing(id string, lt, b uint64, sig string) {
-	d, _ := json.Marshal(ClosingData{lt, b, sig})
+	d, _ := json.Marshal(ClosingData{ExpiryTimestamp: lt, Balance: b, Signature: sig})
 	s.db.Exec("UPDATE spilman_channels SET state = 'Closing', closing_json = ? WHERE channel_id = ? AND state != 'Closed'", string(d), id)
 }
 

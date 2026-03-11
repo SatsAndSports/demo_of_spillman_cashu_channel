@@ -1126,7 +1126,7 @@ impl ConfigurableHost {
 /// Public view of closed channel data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedDataView {
-    pub locktime: u64,
+    pub expiry_timestamp: u64,
     pub closed_amount: u64,
     pub value_after_stage1: u64,
     pub receiver_sum: u64,
@@ -1201,13 +1201,13 @@ impl SpilmanHost for ConfigurableHost {
     fn mark_channel_closing(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         payment: PaymentProof,
     ) -> Result<(), String> {
         self.storage.mark_closing(
             channel_id,
             ClosingData {
-                locktime,
+                expiry_timestamp,
                 balance: payment.balance,
                 signature: payment.signature,
             },
@@ -1271,7 +1271,7 @@ impl SpilmanHost for ConfigurableHost {
     fn mark_channel_closed(
         &self,
         channel_id: &str,
-        locktime: u64,
+        expiry_timestamp: u64,
         balance: u64,
         receiver_proofs_json: &str,
         sender_proofs_json: &str,
@@ -1281,7 +1281,7 @@ impl SpilmanHost for ConfigurableHost {
         self.storage.mark_closed(
             channel_id,
             ClosedDataView {
-                locktime,
+                expiry_timestamp,
                 closed_amount: balance,
                 value_after_stage1: receiver_sum + sender_sum,
                 receiver_sum,
@@ -1783,7 +1783,7 @@ pricing:
         assert_eq!(host.get_channel_state("ch1"), ChannelState::Closing);
 
         let closing = host.get_closing_data("ch1").unwrap();
-        assert_eq!(closing.locktime, 1000);
+            assert_eq!(closing.expiry_timestamp, 1000);
         assert_eq!(closing.balance, 50);
 
         host.mark_channel_closed("ch1", 1000, 50, "[]", "[]", 40, 10)
@@ -2204,7 +2204,7 @@ storage:
             s.mark_closing(
                 "ch1",
                 ClosingData {
-                    locktime: 1000,
+                    expiry_timestamp: 1000,
                     balance: 50,
                     signature: "sig50".to_string(),
                 },
@@ -2213,13 +2213,13 @@ storage:
             assert_eq!(s.get_state("ch1"), ChannelState::Closing);
 
             let closing = s.get_closing_data("ch1").unwrap();
-            assert_eq!(closing.locktime, 1000);
+        assert_eq!(closing.expiry_timestamp, 1000);
             assert_eq!(closing.balance, 50);
 
             s.mark_closed(
                 "ch1",
                 ClosedDataView {
-                    locktime: 1000,
+                    expiry_timestamp: 1000,
                     closed_amount: 50,
                     value_after_stage1: 50,
                     receiver_sum: 40,
@@ -2255,7 +2255,7 @@ storage:
             .unwrap();
 
             let data = ClosedDataView {
-                locktime: 1000,
+                expiry_timestamp: 1000,
                 closed_amount: 50,
                 value_after_stage1: 50,
                 receiver_sum: 40,

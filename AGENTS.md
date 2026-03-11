@@ -57,6 +57,7 @@ make test-server-go
 
 ## Active TODOs
 
+- use the errorcodes.md
 - [Client-side Opening] prefer swapping into an active keyset even if input is stale.
 - P2BK: Include ephemeral key and signature in witness.
 - In-memory cache for funding tokens.

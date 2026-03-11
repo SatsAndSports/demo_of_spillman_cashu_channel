@@ -36,7 +36,7 @@ func (m *MockHost) GetChannelState(channelId string) string {
 	return "open"
 }
 
-func (m *MockHost) MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error {
+func (m *MockHost) MarkChannelClosing(channelId string, expiryTimestamp, balance uint64, signature string) error {
 	return nil
 }
 
@@ -72,7 +72,7 @@ func (m *MockHost) RefreshAllKeysets(mintUrl string) error {
 	return nil
 }
 
-func (m *MockHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
+func (m *MockHost) MarkChannelClosed(channelId string, expiryTimestamp, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error {
 	return nil
 }
 

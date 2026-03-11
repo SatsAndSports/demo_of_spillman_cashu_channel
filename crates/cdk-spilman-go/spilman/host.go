@@ -42,7 +42,7 @@ type SpilmanHost interface {
 
 	// MarkChannelClosing marks a channel as being in the CLOSING state (pre-swap).
 	// This is called when a cooperative close is initiated but before the swap completes.
-	MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error
+	MarkChannelClosing(channelId string, expiryTimestamp, balance uint64, signature string) error
 
 	// GetClosingData returns the closing data for a channel in CLOSING state.
 	// Returns nil if the channel is not in CLOSING state.
@@ -53,7 +53,7 @@ type SpilmanHost interface {
 	GetChannelPolicy(unit string) *ChannelPolicy
 
 	// NowSeconds returns the current Unix timestamp in seconds.
-	// Used for locktime validation.
+	// Used for expiry timestamp validation.
 	NowSeconds() uint64
 
 	// GetBalanceAndSignatureForUnilateralExit retrieves the last recorded payment
@@ -80,7 +80,7 @@ type SpilmanHost interface {
 
 	// MarkChannelClosed marks a channel as fully CLOSED after a successful swap.
 	// Called with the final proof distribution for record-keeping.
-	MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
+	MarkChannelClosed(channelId string, expiryTimestamp, balance uint64, receiverProofsJson, senderProofsJson string, receiverSum, senderSum uint64) error
 
 	// ComputeChannelSecret computes the hashed ECDH channel secret.
 	//
@@ -122,7 +122,7 @@ type ChannelPolicy struct {
 // ClosingData holds the pre-swap state for a channel in CLOSING state.
 // This is used to resume a close operation if the initial swap attempt failed.
 type ClosingData struct {
-	Locktime  uint64
-	Balance   uint64
-	Signature string
+	ExpiryTimestamp uint64
+	Balance         uint64
+	Signature       string
 }

@@ -78,8 +78,8 @@ func (b *ClientBridge) Free() {
 //  4. Submit the swap to the mint via host.CallMintSwap()
 //  5. Unblind signatures and verify DLEQ proofs
 //  6. Save the channel via host.SaveChannel()
-func (b *ClientBridge) OpenChannelFromToken(token, charliePubkeyHex, alicePubkeyHex string, locktime uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
-	return clientBridgeOpenChannel(b.ptr, token, charliePubkeyHex, alicePubkeyHex, locktime, keysetInfoJSON, maxAmount)
+func (b *ClientBridge) OpenChannelFromToken(token, charliePubkeyHex, alicePubkeyHex string, expiryTimestamp uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
+	return clientBridgeOpenChannel(b.ptr, token, charliePubkeyHex, alicePubkeyHex, expiryTimestamp, keysetInfoJSON, maxAmount)
 }
 
 // SignBalanceUpdate creates a signed balance update for a channel.

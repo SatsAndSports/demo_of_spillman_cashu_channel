@@ -50,6 +50,7 @@ build-wasm:
 
 # Install example dependencies
 install:
+	rm -rf $(EXAMPLE_DIR)/node_modules/cdk-spilman-kit
 	cd $(EXAMPLE_DIR) && npm install
 
 # ============================================================================

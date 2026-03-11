@@ -156,14 +156,14 @@ func (h *BaseSpilmanHost) GetChannelState(channelId string) string {
 	return "open"
 }
 
-func (h *BaseSpilmanHost) MarkChannelClosing(channelId string, locktime, balance uint64, signature string) error {
+func (h *BaseSpilmanHost) MarkChannelClosing(channelId string, expiryTimestamp, balance uint64, signature string) error {
 	if h.stores.IsClosed(channelId) {
 		return fmt.Errorf("channel already closed")
 	}
 
 	// Mirror TS/Python fix: Update balance store during closing
 	h.stores.UpdateBalance(channelId, balance, signature)
-	h.stores.MarkClosing(channelId, locktime, balance, signature)
+	h.stores.MarkClosing(channelId, expiryTimestamp, balance, signature)
 	return nil
 }
 
@@ -173,9 +173,9 @@ func (h *BaseSpilmanHost) GetClosingData(channelId string) *spilman.ClosingData 
 		return nil
 	}
 	return &spilman.ClosingData{
-		Locktime:  d.Locktime,
-		Balance:   d.Balance,
-		Signature: d.Signature,
+		ExpiryTimestamp: d.ExpiryTimestamp,
+		Balance:         d.Balance,
+		Signature:       d.Signature,
 	}
 }
 
@@ -248,12 +248,12 @@ func (h *BaseSpilmanHost) RefreshAllKeysets(mintUrl string) error {
 	return nil
 }
 
-func (h *BaseSpilmanHost) MarkChannelClosed(channelId string, locktime, balance uint64, receiverProofs, senderProofs string, receiverSum, senderSum uint64) error {
+func (h *BaseSpilmanHost) MarkChannelClosed(channelId string, expiryTimestamp, balance uint64, receiverProofs, senderProofs string, receiverSum, senderSum uint64) error {
 	if h.stores.IsClosed(channelId) {
 		return fmt.Errorf("channel already closed")
 	}
 	h.stores.MarkClosed(channelId, ClosedData{
-		Locktime:           locktime,
+		ExpiryTimestamp:    expiryTimestamp,
 		ClosedAmount:       balance,
 		ValueAfterStage1:   receiverSum + senderSum,
 		ReceiverSum:        receiverSum,

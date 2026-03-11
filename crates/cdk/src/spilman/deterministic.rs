@@ -84,9 +84,9 @@ impl DeterministicSecretWithBlinding {
         })
     }
 
-    /// Create a funding output with 2-of-2 multisig + locktime conditions
+    /// Create a funding output with 2-of-2 multisig + expiry conditions
     /// Used for the funding token that both parties must sign to spend,
-    /// or Alice alone can reclaim after locktime.
+    /// or Alice alone can reclaim after expiry.
     ///
     /// Uses BLINDED pubkeys for privacy - the mint cannot correlate
     /// the funding token to Alice and Charlie's real identities.
@@ -108,14 +108,14 @@ impl DeterministicSecretWithBlinding {
         // The refund path uses a DIFFERENT blinded key for Alice (unlinkable to 2-of-2)
         let blinded_alice_pubkey_refund = params.get_sender_blinded_pubkey_for_stage1_refund()?;
 
-        // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before locktime
-        // After locktime, Alice can refund with just her signature
+        // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before expiry
+        // After expiry, Alice can refund with just her signature
         // All pubkeys are BLINDED for privacy, with refund using a separate tweak
         let conditions = Conditions::new(
-            Some(params.locktime),                   // Locktime for Alice's refund
+            Some(params.expiry_timestamp),           // Expiry timestamp for Alice's refund
             Some(vec![blinded_charlie_pubkey]),      // Charlie's blinded key for 2-of-2
             Some(vec![blinded_alice_pubkey_refund]), // Alice's REFUND blinded key (different tweak)
-            Some(2),                                 // Require 2 signatures before locktime
+            Some(2),                                 // Require 2 signatures before expiry
             Some(SigFlag::SigAll),                   // SigAll: signatures commit to outputs
             Some(1),                                 // Only 1 signature needed for refund (Alice)
         )?;
@@ -573,9 +573,8 @@ mod tests {
             CurrencyUnit::Sat,
             capacity,
             funding_token_amount,
-            0, // locktime
+            0, // expiry_timestamp
             0, // setup_timestamp
-            "test".to_string(),
             keyset_info,
             maximum_amount,
             &alice_secret,
@@ -627,11 +626,11 @@ mod tests {
         assert_eq!(forward, vec![(1, 1), (2, 1), (4, 1)]);
     }
 
-    /// Create test params with a specific locktime (for funding token tests)
-    fn create_test_params_with_locktime(
+    /// Create test params with a specific expiry_timestamp (for funding token tests)
+    fn create_test_params_with_expiry(
         input_fee_ppk: u64,
         power: u64,
-        locktime: u64,
+        expiry_timestamp: u64,
     ) -> ChannelParameters {
         use std::collections::BTreeMap;
 
@@ -667,9 +666,8 @@ mod tests {
             CurrencyUnit::Sat,
             capacity,
             funding_token_amount,
-            locktime, // locktime (configurable)
+            expiry_timestamp, // expiry_timestamp (configurable)
             0,        // setup_timestamp
-            "test".to_string(),
             keyset_info,
             maximum_amount,
             &alice_secret,
@@ -684,14 +682,14 @@ mod tests {
         // - "pubkeys" tag: Charlie's blinded pubkey (receiver_stage1) for 2-of-2
         // - refund "pubkeys" tag: Alice's REFUND blinded pubkey (sender_stage1_refund)
 
-        // Use a future locktime to pass Conditions::new() validation
-        let future_locktime = std::time::SystemTime::now()
+        // Use a future expiry_timestamp to pass Conditions::new() validation
+        let future_expiry = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
             + 3600; // 1 hour in the future
 
-        let params = create_test_params_with_locktime(0, 2, future_locktime);
+        let params = create_test_params_with_expiry(0, 2, future_expiry);
 
         // Get the expected blinded pubkeys
         let expected_alice_blinded = params

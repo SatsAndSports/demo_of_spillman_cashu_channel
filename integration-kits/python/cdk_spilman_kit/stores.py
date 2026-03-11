@@ -8,7 +8,7 @@ UsageMap = Dict[str, int]
 
 @dataclass
 class ChannelClosedData:
-    locktime: int
+    expiry_timestamp: int
     balance: int
     receiver_proofs: List[Dict[str, Any]]
     sender_proofs: List[Dict[str, Any]]
@@ -28,7 +28,7 @@ class SpilmanStores:
         self.channel_funding: Dict[str, Dict[str, str]] = {}
         # channel_id -> {balance: int, signature: str}
         self.channel_largest_payment: Dict[str, Dict[str, Any]] = {}
-        # channel_id -> {locktime, balance, signature}
+        # channel_id -> {expiry_timestamp, balance, signature}
         self.channel_closing: Dict[str, Dict[str, Any]] = {}
         # channel_id -> ChannelClosedData
         self.channel_closed: Dict[str, ChannelClosedData] = {}
@@ -304,7 +304,7 @@ class _SqliteClosedProxy:
         return row is not None
     def __setitem__(self, key, value):
         d = {
-            "locktime": value.locktime,
+            "expiry_timestamp": value.expiry_timestamp,
             "balance": value.balance,
             "receiver_proofs": value.receiver_proofs,
             "sender_proofs": value.sender_proofs,

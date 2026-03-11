@@ -118,7 +118,7 @@ class BaseSpilmanHost:
             return "closing"
         return "open"
 
-    def mark_channel_closing(self, channel_id, locktime, balance, signature):
+    def mark_channel_closing(self, channel_id, expiry_timestamp, balance, signature):
         if channel_id in self.stores.channel_closed:
             raise ValueError("channel already closed")
         
@@ -129,7 +129,7 @@ class BaseSpilmanHost:
         }
         
         self.stores.channel_closing[channel_id] = {
-            "locktime": locktime,
+            "expiry_timestamp": expiry_timestamp,
             "balance": balance,
             "signature": signature
         }
@@ -175,11 +175,11 @@ class BaseSpilmanHost:
     def refresh_all_keysets(self, mint: str):
         refresh_keyset_cache(self.stores, mint, list(self.pricing.keys()))
 
-    def mark_channel_closed(self, channel_id, locktime, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum):
+    def mark_channel_closed(self, channel_id, expiry_timestamp, balance, receiver_proofs_json, sender_proofs_json, receiver_sum, sender_sum):
         if channel_id in self.stores.channel_closed:
             raise ValueError("channel already closed")
         self.stores.channel_closed[channel_id] = ChannelClosedData(
-            locktime=locktime,
+            expiry_timestamp=expiry_timestamp,
             balance=balance,
             receiver_proofs=json.loads(receiver_proofs_json),
             sender_proofs=json.loads(sender_proofs_json),
