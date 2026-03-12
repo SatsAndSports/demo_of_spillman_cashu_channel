@@ -47,7 +47,7 @@ Alice signs the request using the **`SIG_ALL`** flag, ensuring the signature com
 ```json
 {
   "channel_id": "abc123...",
-  "balance": 150,
+  "amount": 150,
   "signature": "schnorr_sig_hex"
 }
 ```
