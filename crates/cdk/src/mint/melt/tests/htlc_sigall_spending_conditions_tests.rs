@@ -26,12 +26,12 @@ async fn test_htlc_sig_all_requiring_preimage_and_one_signature() {
     let mint = test_mint.mint();
 
     // Generate keypair for Alice
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
 
     // Create hash and preimage
     let (hash, preimage) = create_test_hash_and_preimage();
 
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
     println!("Hash: {}", hash);
     println!("Preimage: {}", preimage);
 
@@ -44,7 +44,7 @@ async fn test_htlc_sig_all_requiring_preimage_and_one_signature() {
         &hash,
         Some(Conditions {
             locktime: None,
-            pubkeys: Some(vec![alice_pubkey]),
+            pubkeys: Some(vec![sender_pubkey]),
             refund_keys: None,
             num_sigs: None,            // Default (1)
             sig_flag: SigFlag::SigAll, // <-- SIG_ALL flag

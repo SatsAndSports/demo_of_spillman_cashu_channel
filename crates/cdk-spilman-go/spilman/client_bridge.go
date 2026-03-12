@@ -30,7 +30,7 @@ import (
 // It wraps the Rust SpilmanClientBridge and delegates storage/network to a SpilmanClientHost.
 //
 // The bridge never holds or sees Alice's secret key; all key operations are
-// delegated to the host via callbacks. The caller passes alice_pubkey_hex
+// delegated to the host via callbacks. The caller passes sender_pubkey_hex
 // per channel when opening channels.
 type ClientBridge struct {
 	ptr    unsafe.Pointer
@@ -41,7 +41,7 @@ type ClientBridge struct {
 // NewClientBridge creates a new ClientBridge with the given host implementation.
 //
 // The bridge is stateless and keyless — it delegates all key operations
-// to the host. The caller passes alicePubkeyHex per channel when opening channels.
+// to the host. The caller passes senderPubkeyHex per channel when opening channels.
 func NewClientBridge(host SpilmanClientHost) (*ClientBridge, error) {
 	handle := cgo.NewHandle(host)
 	callbacks := C.fill_client_callbacks(unsafe.Pointer(handle)) //nolint:govet
@@ -78,8 +78,8 @@ func (b *ClientBridge) Free() {
 //  4. Submit the swap to the mint via host.CallMintSwap()
 //  5. Unblind signatures and verify DLEQ proofs
 //  6. Save the channel via host.SaveChannel()
-func (b *ClientBridge) OpenChannelFromToken(token, charliePubkeyHex, alicePubkeyHex string, expiryTimestamp uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
-	return clientBridgeOpenChannel(b.ptr, token, charliePubkeyHex, alicePubkeyHex, expiryTimestamp, keysetInfoJSON, maxAmount)
+func (b *ClientBridge) OpenChannelFromToken(token, receiverPubkeyHex, senderPubkeyHex string, expiryTimestamp uint64, keysetInfoJSON string, maxAmount uint64) (*OpenChannelResult, error) {
+	return clientBridgeOpenChannel(b.ptr, token, receiverPubkeyHex, senderPubkeyHex, expiryTimestamp, keysetInfoJSON, maxAmount)
 }
 
 // SignBalanceUpdate creates a signed balance update for a channel.
@@ -197,10 +197,10 @@ func go_client_sign_with_tweaked_key(userData unsafe.Pointer, signerPubkeyHex *C
 }
 
 //export go_client_compute_channel_secret
-func go_client_compute_channel_secret(userData unsafe.Pointer, alicePubkeyHex *C.char, charliePubkeyHex *C.char, responseOut **C.char) C.int {
+func go_client_compute_channel_secret(userData unsafe.Pointer, senderPubkeyHex *C.char, receiverPubkeyHex *C.char, responseOut **C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanClientHost)
-	resp, err := host.ComputeChannelSecret(C.GoString(alicePubkeyHex), C.GoString(charliePubkeyHex))
+	resp, err := host.ComputeChannelSecret(C.GoString(senderPubkeyHex), C.GoString(receiverPubkeyHex))
 	if err != nil {
 		*responseOut = C.CString(err.Error())
 		return 0

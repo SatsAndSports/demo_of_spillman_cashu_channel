@@ -50,12 +50,12 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
 
     // Generate keypairs for Alice and Charlie
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
-    println!("Alice pubkey: {}", alice_pubkey.to_hex());
-    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+    println!("Alice pubkey: {}", sender_pubkey.to_hex());
+    println!("Charlie pubkey: {}", receiver_pubkey.to_hex());
     println!("Current time: {}", unix_time());
 
     // Step 1: Get keyset info from the test mint
@@ -93,8 +93,8 @@ async fn test_spilman_2of2_spending_with_blinded_keys() {
     .expect("Failed to compute funding token amount");
 
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(), // mint URL (not actually used for swap)
         CurrencyUnit::Sat,
         capacity,
@@ -276,12 +276,12 @@ async fn test_spilman_refund_spending_with_blinded_key() {
 
     // Generate keypairs for Alice and Charlie
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
-    println!("Alice pubkey: {}", alice_pubkey.to_hex());
-    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+    println!("Alice pubkey: {}", sender_pubkey.to_hex());
+    println!("Charlie pubkey: {}", receiver_pubkey.to_hex());
     println!("Current time: {}", unix_time());
 
     // Step 1: Get keyset info from the test mint
@@ -318,8 +318,8 @@ async fn test_spilman_refund_spending_with_blinded_key() {
     .expect("Failed to compute funding token amount");
 
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
@@ -463,9 +463,9 @@ async fn test_spilman_refund_spending_with_blinded_key() {
 #[test]
 fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     // Create minimal keyset info for the test
     let mut keys = std::collections::BTreeMap::new();
@@ -482,8 +482,8 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
 
     // Create channel params (fees=0, so funding_token_amount == capacity)
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         100, // capacity
@@ -497,8 +497,8 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() {
     .expect("Failed to create params");
 
     // Get all the different pubkeys
-    let alice_raw = alice_pubkey.to_hex();
-    let charlie_raw = charlie_pubkey.to_hex();
+    let alice_raw = sender_pubkey.to_hex();
+    let charlie_raw = receiver_pubkey.to_hex();
 
     let alice_stage1 = params
         .get_sender_blinded_pubkey_for_stage1()
@@ -604,12 +604,12 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
 
     // 1. Setup: Generate keypairs for Alice and Charlie
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
-    println!("Alice pubkey: {}", alice_pubkey.to_hex());
-    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+    println!("Alice pubkey: {}", sender_pubkey.to_hex());
+    println!("Charlie pubkey: {}", receiver_pubkey.to_hex());
 
     // 2. Create minimal keyset info for the test
     // Generate valid public keys by deriving them from secret keys
@@ -628,8 +628,8 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
     // 3. Create channel parameters with a reasonable capacity (fees=0, so funding_token_amount == capacity)
     let capacity = 100u64;
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
@@ -772,10 +772,10 @@ async fn test_swap_to_funding() {
     // Generate keypairs for Alice and Charlie
     let alice_secret = SecretKey::generate();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     println!("Alice pubkey: {}", alice_secret.public_key().to_hex());
-    println!("Charlie pubkey: {}", charlie_pubkey.to_hex());
+    println!("Charlie pubkey: {}", receiver_pubkey.to_hex());
 
     // Step 1: Get keyset info from the test mint
     let keyset_id = test_mint.active_sat_keyset_id;
@@ -836,13 +836,13 @@ async fn test_swap_to_funding() {
     // Compute channel secret via the utility function (what the host would do)
     let channel_secret_hex = super::bindings::compute_channel_secret_from_hex(
         &alice_secret.to_secret_hex(),
-        &charlie_pubkey.to_hex(),
+        &receiver_pubkey.to_hex(),
     )
     .expect("compute_channel_secret_from_hex should succeed");
 
     let compute_result = compute_channel_from_token(
         &token_string,
-        &charlie_pubkey.to_hex(),
+        &receiver_pubkey.to_hex(),
         &alice_secret.public_key().to_hex(),
         &channel_secret_hex,
         expiry_timestamp,
@@ -1090,24 +1090,24 @@ async fn test_client_bridge() {
 
         fn compute_channel_secret(
             &self,
-            alice_pubkey_hex: &str,
-            charlie_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
+            receiver_pubkey_hex: &str,
         ) -> Result<String, String> {
             let secret_hex = self
                 .keys
                 .lock()
                 .unwrap()
-                .get(alice_pubkey_hex)
+                .get(sender_pubkey_hex)
                 .cloned()
                 .ok_or_else(|| {
                     format!(
                         "No key registered for pubkey: {}",
-                        alice_pubkey_hex
+                        sender_pubkey_hex
                     )
                 })?;
             super::bindings::compute_channel_secret_from_hex(
                 &secret_hex,
-                charlie_pubkey_hex,
+                receiver_pubkey_hex,
             )
         }
     }
@@ -1222,12 +1222,12 @@ async fn test_client_bridge() {
 
         fn compute_channel_secret(
             &self,
-            _charlie_pubkey_hex: &str,
-            alice_pubkey_hex: &str,
+            _receiver_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
         ) -> Result<String, String> {
             super::bindings::compute_channel_secret_from_hex(
                 &self.charlie_secret_hex,
-                alice_pubkey_hex,
+                sender_pubkey_hex,
             )
         }
 
@@ -1265,7 +1265,7 @@ async fn test_client_bridge() {
 
     // Generate Charlie (server) keypair
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     let shared_mint = Arc::new(
         crate::test_helpers::mint::create_test_mint()
@@ -1317,7 +1317,7 @@ async fn test_client_bridge() {
 
     // Generate Alice's keypair externally (the bridge never sees the secret)
     let alice_secret = SecretKey::generate();
-    let alice_pubkey_hex = alice_secret.public_key().to_hex();
+    let sender_pubkey_hex = alice_secret.public_key().to_hex();
 
     let client_host = TestClientHost {
         mint: Arc::clone(&shared_mint),
@@ -1328,14 +1328,14 @@ async fn test_client_bridge() {
     // Register Alice's key with the host so it can sign and compute ECDH
     client_host.register_key(
         &alice_secret.to_secret_hex(),
-        &alice_pubkey_hex,
+        &sender_pubkey_hex,
     );
 
     let client_bridge = SpilmanClientBridge::new(client_host);
 
     println!(
-        "Client bridge created, alice_pubkey: {}",
-        alice_pubkey_hex
+        "Client bridge created, sender_pubkey: {}",
+        sender_pubkey_hex
     );
 
     // ====================================================================
@@ -1348,8 +1348,8 @@ async fn test_client_bridge() {
     let open_result = client_bridge
         .open_channel_from_token(
             &token_string,
-            &charlie_pubkey.to_hex(),
-            &alice_pubkey_hex,
+            &receiver_pubkey.to_hex(),
+            &sender_pubkey_hex,
             expiry_timestamp,
             &keyset_info_json,
             max_amount,
@@ -1724,12 +1724,12 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
         }
         fn compute_channel_secret(
             &self,
-            _charlie_pubkey_hex: &str,
-            alice_pubkey_hex: &str,
+            _receiver_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
         ) -> Result<String, String> {
             bindings::compute_channel_secret_from_hex(
                 &self.charlie_secret_hex,
-                alice_pubkey_hex,
+                sender_pubkey_hex,
             )
         }
         fn sign_with_tweaked_key(
@@ -1843,9 +1843,9 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
 
     // Generate keypairs
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     // Build channel parameters with keyset A.
     // We use a two-pass approach: first compute the ideal funding amount,
@@ -1880,8 +1880,8 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
 
     // Build params with the actual post-fee funding amount
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
@@ -2185,8 +2185,8 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
             ));
             Ok(())
         }
-        fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
-            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, alice_pubkey_hex)
+        fn compute_channel_secret(&self, _receiver_pubkey_hex: &str, sender_pubkey_hex: &str) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, sender_pubkey_hex)
         }
         fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
             bindings::sign_with_tweaked_key_util(&self.charlie_secret_hex, message_hex, tweak_scalar_hex)
@@ -2251,9 +2251,9 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
         .find(|k| k.id == keyset_a_id).unwrap().input_fee_ppk;
 
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
         keyset_a_id,
@@ -2275,7 +2275,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     let actual_funding = mint_amount - actual_fee;
 
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey, charlie_pubkey,
+        sender_pubkey, receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat, capacity, actual_funding,
         expiry_timestamp, unix_time(),
@@ -2418,9 +2418,9 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
 
     // Generate keypairs for Alice and Charlie
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     // Keyset info from mint
     let keyset_id = test_mint.active_sat_keyset_id;
@@ -2457,8 +2457,8 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
     let future_expiry = unix_time() + 3600;
 
     let params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         "http://localhost:3338".to_string(),
         CurrencyUnit::Sat,
         capacity,
@@ -2693,8 +2693,8 @@ mod close_balance_tests {
             *self.closed_data.borrow_mut() = Some((balance, receiver_sum + sender_sum, receiver_proofs_json.to_string(), sender_proofs_json.to_string()));
             Ok(())
         }
-        fn compute_channel_secret(&self, _charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String> {
-            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, alice_pubkey_hex)
+        fn compute_channel_secret(&self, _receiver_pubkey_hex: &str, sender_pubkey_hex: &str) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, sender_pubkey_hex)
         }
         fn sign_with_tweaked_key(&self, _signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String> {
             bindings::sign_with_tweaked_key_util(&self.charlie_secret_hex, message_hex, tweak_scalar_hex)
@@ -2754,9 +2754,9 @@ mod close_balance_tests {
         let fee_ppk = shared_mint.keysets().keysets.iter().find(|k| k.id == keyset_id).unwrap().input_fee_ppk;
 
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         let mint_amount = 200u64;
         let input_proofs = crate::test_helpers::mint::mint_test_proofs(&shared_mint, Amount::from(mint_amount)).await.expect("mint proofs");
@@ -2769,7 +2769,7 @@ mod close_balance_tests {
         let keyset_info = super::KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys.clone(), fee_ppk, None);
 
         let params = ChannelParameters::new_with_secret_key(
-            alice_pubkey, charlie_pubkey,
+            sender_pubkey, receiver_pubkey,
             "http://localhost:3338".to_string(), CurrencyUnit::Sat,
             capacity, actual_funding, expiry_timestamp, unix_time(),
             keyset_info.clone(), 64, &alice_secret,

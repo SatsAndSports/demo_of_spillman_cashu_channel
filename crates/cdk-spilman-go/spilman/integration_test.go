@@ -50,11 +50,11 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 	mintURL := getMintURL()
 
 	// 1. Generate sender keypair
-	aliceSecret, alicePubkey, err := GenerateKeypair()
+	aliceSecret, senderPubkey, err := GenerateKeypair()
 	if err != nil {
 		t.Fatalf("GenerateKeypair failed: %v", err)
 	}
-	t.Logf("Generated sender pubkey: %s...", alicePubkey[:16])
+	t.Logf("Generated sender pubkey: %s...", senderPubkey[:16])
 
 	// 2. Generate receiver keypair (normally this comes from the server)
 	_, receiverPubkey, err := GenerateKeypair()
@@ -85,8 +85,8 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 		t.Fatalf("ComputeFundingTokenAmount failed: %v", err)
 	}
 	params := map[string]interface{}{
-		"alice_pubkey":         alicePubkey,
-		"charlie_pubkey":       receiverPubkey,
+		"sender_pubkey":         senderPubkey,
+		"receiver_pubkey":       receiverPubkey,
 		"mint":                 mintURL,
 		"unit":                 "sat",
 		"capacity":             uint64(100),
@@ -224,14 +224,14 @@ func (h *testClientHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakSc
 	return SignWithTweakedKeyUtil(secretHex, messageHex, tweakScalarHex)
 }
 
-func (h *testClientHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+func (h *testClientHost) ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex string) (string, error) {
 	h.mu.Lock()
-	secretHex, ok := h.keys[alicePubkeyHex]
+	secretHex, ok := h.keys[senderPubkeyHex]
 	h.mu.Unlock()
 	if !ok {
-		return "", fmt.Errorf("no key registered for pubkey: %s", alicePubkeyHex)
+		return "", fmt.Errorf("no key registered for pubkey: %s", senderPubkeyHex)
 	}
-	return ComputeChannelSecret(secretHex, charliePubkeyHex)
+	return ComputeChannelSecret(secretHex, receiverPubkeyHex)
 }
 
 // testServerHost implements SpilmanHost for the server-side bridge in tests.
@@ -346,8 +346,8 @@ func (h *testServerHost) MarkChannelClosed(channelId string, expiryTimestamp, ba
 	return nil
 }
 
-func (h *testServerHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
-	return ComputeChannelSecret(h.secretKey, alicePubkeyHex)
+func (h *testServerHost) ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex string) (string, error) {
+	return ComputeChannelSecret(h.secretKey, senderPubkeyHex)
 }
 
 func (h *testServerHost) SignWithTweakedKey(signerPubkeyHex, messageHex, tweakScalarHex string) (string, error) {
@@ -397,11 +397,11 @@ func TestClientBridge(t *testing.T) {
 	t.Logf("Using keyset: %s", keysetID)
 
 	// Generate Charlie (server/receiver) keypair
-	charlieSecret, charliePubkey, err := GenerateKeypair()
+	charlieSecret, receiverPubkey, err := GenerateKeypair()
 	if err != nil {
 		t.Fatalf("GenerateKeypair (charlie) failed: %v", err)
 	}
-	t.Logf("Charlie pubkey: %s...", charliePubkey[:16])
+	t.Logf("Charlie pubkey: %s...", receiverPubkey[:16])
 
 	// ================================================================
 	// Step 1: Mint plain proofs and build cashuA token
@@ -422,13 +422,13 @@ func TestClientBridge(t *testing.T) {
 	// ================================================================
 
 	// Generate Alice keypair externally and register with host
-	aliceSecret, alicePubkey, err := GenerateKeypair()
+	aliceSecret, senderPubkey, err := GenerateKeypair()
 	if err != nil {
 		t.Fatalf("GenerateKeypair (alice) failed: %v", err)
 	}
 
 	clientHost := newTestClientHost(mintURL)
-	clientHost.RegisterKey(aliceSecret, alicePubkey)
+	clientHost.RegisterKey(aliceSecret, senderPubkey)
 
 	clientBridge, err := NewClientBridge(clientHost)
 	if err != nil {
@@ -436,12 +436,12 @@ func TestClientBridge(t *testing.T) {
 	}
 	defer clientBridge.Free()
 
-	t.Logf("Client bridge created, alice_pubkey: %s...", alicePubkey[:16])
+	t.Logf("Client bridge created, sender_pubkey: %s...", senderPubkey[:16])
 
 	expiryTimestamp := uint64(time.Now().Unix()) + 7200 // 2 hours
 	maxAmount := uint64(64)
 
-	openResult, err := clientBridge.OpenChannelFromToken(token, charliePubkey, alicePubkey, expiryTimestamp, string(keysetJSON), maxAmount)
+	openResult, err := clientBridge.OpenChannelFromToken(token, receiverPubkey, senderPubkey, expiryTimestamp, string(keysetJSON), maxAmount)
 	if err != nil {
 		t.Fatalf("OpenChannelFromToken failed: %v", err)
 	}

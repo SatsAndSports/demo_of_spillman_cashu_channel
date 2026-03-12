@@ -50,7 +50,7 @@ from cdk_spilman import (
 )
 
 # Derive `_channel secret_` with receiver
-channel_secret = compute_channel_secret(alice_secret, charlie_pubkey)
+channel_secret = compute_channel_secret(sender_secret, receiver_pubkey)
 
 # Create funding outputs for minting
 funding = create_funding_outputs(params_json, alice_secret, keyset_json)

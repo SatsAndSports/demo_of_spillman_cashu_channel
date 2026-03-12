@@ -141,8 +141,8 @@ pub struct SpilmanHostCallbacks {
     /// Compute channel secret: performs ECDH and returns hex. Returns 1=success, 0=error.
     pub compute_channel_secret: extern "C" fn(
         user_data: *mut libc::c_void,
-        charlie_pubkey_hex: *const c_char,
-        alice_pubkey_hex: *const c_char,
+        receiver_pubkey_hex: *const c_char,
+        sender_pubkey_hex: *const c_char,
         result_out: *mut *mut c_char,
     ) -> c_int,
     /// Sign with tweaked key: returns 1=success, 0=error. result_out gets signature hex.
@@ -461,11 +461,11 @@ impl SpilmanHost<String> for CGoSpilmanHost {
 
     fn compute_channel_secret(
         &self,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
     ) -> Result<String, String> {
-        let cp_c = CString::new(charlie_pubkey_hex).unwrap();
-        let ap_c = CString::new(alice_pubkey_hex).unwrap();
+        let cp_c = CString::new(receiver_pubkey_hex).unwrap();
+        let ap_c = CString::new(sender_pubkey_hex).unwrap();
         let mut result_ptr: *mut c_char = ptr::null_mut();
 
         let ok = (self.callbacks.compute_channel_secret)(
@@ -973,8 +973,8 @@ pub struct SpilmanClientHostCallbacks {
     ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
     pub compute_channel_secret: extern "C" fn(
         user_data: *mut libc::c_void,
-        alice_pubkey_hex: *const c_char,
-        charlie_pubkey_hex: *const c_char,
+        sender_pubkey_hex: *const c_char,
+        receiver_pubkey_hex: *const c_char,
         response_out: *mut *mut c_char,
     ) -> c_int, // 1 = success, 0 = error (response_out contains error message)
 }
@@ -1085,11 +1085,11 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
 
     fn compute_channel_secret(
         &self,
-        alice_pubkey_hex: &str,
-        charlie_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
     ) -> Result<String, String> {
-        let alice_c = CString::new(alice_pubkey_hex).unwrap();
-        let charlie_c = CString::new(charlie_pubkey_hex).unwrap();
+        let alice_c = CString::new(sender_pubkey_hex).unwrap();
+        let charlie_c = CString::new(receiver_pubkey_hex).unwrap();
         let mut response_ptr: *mut c_char = ptr::null_mut();
 
         let ok = (self.callbacks.compute_channel_secret)(
@@ -1134,16 +1134,16 @@ pub unsafe extern "C" fn spilman_client_bridge_free(ptr: *mut ClientBridgeInstan
 pub unsafe extern "C" fn spilman_client_bridge_open_channel_from_token(
     ptr: *mut ClientBridgeInstance,
     token_string: *const c_char,
-    charlie_pubkey_hex: *const c_char,
-    alice_pubkey_hex: *const c_char,
+    receiver_pubkey_hex: *const c_char,
+    sender_pubkey_hex: *const c_char,
     expiry_timestamp: u64,
     keyset_info_json: *const c_char,
     max_amount: u64,
 ) -> CResult {
     let instance = &*ptr;
     let token = CStr::from_ptr(token_string).to_str().unwrap();
-    let charlie = CStr::from_ptr(charlie_pubkey_hex).to_str().unwrap();
-    let alice = CStr::from_ptr(alice_pubkey_hex).to_str().unwrap();
+    let charlie = CStr::from_ptr(receiver_pubkey_hex).to_str().unwrap();
+    let alice = CStr::from_ptr(sender_pubkey_hex).to_str().unwrap();
     let keyset = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
     match instance.bridge.open_channel_from_token(

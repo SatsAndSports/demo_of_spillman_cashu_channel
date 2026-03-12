@@ -84,7 +84,7 @@ Create `channel-config.yml`:
 
 ```yaml
 enabled: true
-secretKey: "your-64-char-hex-secret-key"  # Charlie's private key
+secretKey: "your-64-char-hex-secret-key"  # Receiver's private key
 mints:
   http://localhost:3338: [sat, usd]
 min_expiry_seconds: 3600

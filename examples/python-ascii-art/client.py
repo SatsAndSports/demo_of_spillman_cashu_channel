@@ -29,14 +29,14 @@ def main():
     if not messages: messages = ["Hello", "Cashu", "World"]
 
     # 2. Setup Client
-    alice_secret, alice_pubkey = generate_keypair()
+    alice_secret, sender_pubkey = generate_keypair()
     host = BaseSpilmanClientHost(alice_secret)
     client = SpilmanClient(host)
 
     # 3. Get Server Params & Keyset
     print(f"Connecting to {SERVER_URL}...")
     server_params = requests.get(f"{SERVER_URL}/channel/params").json()
-    charlie_pubkey = server_params["receiver_pubkey"]
+    receiver_pubkey = server_params["receiver_pubkey"]
     mint_url = next(iter(server_params["mints_units_keysets"]))
     keyset_info = fetch_active_keyset_info(mint_url)
 
@@ -44,10 +44,10 @@ def main():
     print("Funding channel...")
     capacity = max(sum(len(m) for m in messages) + 20, 50)
     fta = compute_funding_token_amount(capacity, json.dumps(keyset_info), 64)
-    ss = compute_channel_secret(alice_secret, charlie_pubkey)
+    ss = compute_channel_secret(alice_secret, receiver_pubkey)
     
     cp = {
-        "alice_pubkey": alice_pubkey, "charlie_pubkey": charlie_pubkey,
+        "sender_pubkey": sender_pubkey, "receiver_pubkey": receiver_pubkey,
         "mint": mint_url, "unit": "sat", "capacity": capacity,
         "funding_token_amount": fta, "maximum_amount": 64,
         "expiry_timestamp": int(time.time()) + 7200, "setup_timestamp": int(time.time()),
@@ -65,7 +65,7 @@ def main():
     host.save_channel(cid, json.dumps({
         "channel_id": cid, "params_json": json.dumps(cp), "keyset_info_json": json.dumps(keyset_info),
         "funding_proofs_json": proofs, "capacity": capacity, "funding_token_amount": fta,
-        "mint_url": mint_url, "alice_pubkey_hex": alice_pubkey,
+        "mint_url": mint_url, "sender_pubkey_hex": sender_pubkey,
     }), ss)
 
     # 5. Make Requests

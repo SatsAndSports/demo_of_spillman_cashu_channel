@@ -24,10 +24,10 @@ async fn test_p2pk_post_locktime_anyone_can_spend() {
     let mint = test_mint.mint();
 
     // Generate keypairs
-    let (_alice_secret, alice_pubkey) = create_test_keypair();
+    let (_alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, _bob_pubkey) = create_test_keypair();
 
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Create regular unencumbered proofs
     let input_amount = Amount::from(20);
@@ -38,7 +38,7 @@ async fn test_p2pk_post_locktime_anyone_can_spend() {
     let locktime = unix_time() - 3600;
 
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime),     // Locktime in the past (expired)
             pubkeys: None,                // no additional pubkeys
@@ -140,10 +140,10 @@ async fn test_p2pk_before_locktime_requires_correct_key() {
     let mint = test_mint.mint();
 
     // Generate keypairs
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, _bob_pubkey) = create_test_keypair();
 
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Create regular unencumbered proofs
     let input_amount = Amount::from(20);
@@ -154,7 +154,7 @@ async fn test_p2pk_before_locktime_requires_correct_key() {
     let locktime = unix_time() + 365 * 24 * 60 * 60;
 
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 Some(locktime),           // Locktime in the future

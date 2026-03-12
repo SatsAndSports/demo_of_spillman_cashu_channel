@@ -160,8 +160,8 @@ describe("Channel Setup", () => {
       BigInt(64),
     ));
     const params = {
-      alice_pubkey: alice.pubkey,
-      charlie_pubkey: receiver.pubkey,
+      sender_pubkey: alice.pubkey,
+      receiver_pubkey: receiver.pubkey,
       mint: MINT_URL,
       unit: "sat",
       capacity: 100,
@@ -220,8 +220,8 @@ describe("Channel Setup", () => {
       BigInt(64),
     ));
     const params = {
-      alice_pubkey: alice.pubkey,
-      charlie_pubkey: receiver.pubkey,
+      sender_pubkey: alice.pubkey,
+      receiver_pubkey: receiver.pubkey,
       mint: MINT_URL,
       unit: "sat",
       capacity: 100,

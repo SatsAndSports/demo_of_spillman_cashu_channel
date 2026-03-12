@@ -35,9 +35,9 @@ class BaseSpilmanClientHost:
         from cdk_spilman import sign_with_tweaked_key_util
         return sign_with_tweaked_key_util(self.alice_secret, message_hex, tweak_scalar_hex)
 
-    def compute_channel_secret(self, alice_pubkey_hex: str, charlie_pubkey_hex: str) -> str:
+    def compute_channel_secret(self, sender_pubkey_hex: str, receiver_pubkey_hex: str) -> str:
         from cdk_spilman import compute_channel_secret
-        return compute_channel_secret(self.alice_secret, charlie_pubkey_hex)
+        return compute_channel_secret(self.alice_secret, receiver_pubkey_hex)
 
 class SpilmanClient:
     """High-level wrapper for the Spilman client bridge."""

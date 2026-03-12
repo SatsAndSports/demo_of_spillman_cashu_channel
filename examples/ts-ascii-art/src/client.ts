@@ -52,7 +52,7 @@ export async function runClient(args: string[]) {
   const fta = compute_funding_token_amount(BigInt(cap), JSON.stringify(ki), BigInt(64));
   const ss = compute_channel_secret(aliceSecret, sp.receiver_pubkey);
   const cp = {
-    alice_pubkey: alicePub, charlie_pubkey: sp.receiver_pubkey, mint: mintUrl, unit: "sat", capacity: cap,
+    sender_pubkey: alicePub, receiver_pubkey: sp.receiver_pubkey, mint: mintUrl, unit: "sat", capacity: cap,
     funding_token_amount: Number(fta), maximum_amount: 64, expiry_timestamp: Math.floor(Date.now() / 1000) + 7200,
     setup_timestamp: Math.floor(Date.now() / 1000),
     keyset_id: ki.keysetId, input_fee_ppk: ki.inputFeePpk,
@@ -65,7 +65,7 @@ export async function runClient(args: string[]) {
   host.saveChannel(cid, JSON.stringify({
     channel_id: cid, params_json: JSON.stringify(cp), keyset_info_json: JSON.stringify(ki),
     funding_proofs_json: proofs, capacity: cap, funding_token_amount: Number(fta),
-    mint_url: mintUrl, alice_pubkey_hex: alicePub,
+    mint_url: mintUrl, sender_pubkey_hex: alicePub,
   }), ss);
 
   console.log(`Full channel ID: ${cid}\nChannel ready! Sending requests...`);

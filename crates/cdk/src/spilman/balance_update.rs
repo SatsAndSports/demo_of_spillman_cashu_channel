@@ -94,8 +94,8 @@ impl BalanceUpdateMessage {
 
         // Verify the signature using Alice's BLINDED pubkey
         // Alice signs with her blinded secret key (the funding token uses blinded pubkeys for privacy)
-        let blinded_alice_pubkey = channel.params.get_sender_blinded_pubkey_for_stage1()?;
-        blinded_alice_pubkey
+        let blinded_sender_pubkey = channel.params.get_sender_blinded_pubkey_for_stage1()?;
+        blinded_sender_pubkey
             .verify(msg_to_sign.as_bytes(), &self.signature)
             .map_err(|_| {
                 anyhow::anyhow!("Invalid signature: Alice did not authorize this balance update")

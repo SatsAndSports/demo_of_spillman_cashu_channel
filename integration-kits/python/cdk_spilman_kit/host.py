@@ -187,10 +187,10 @@ class BaseSpilmanHost:
             sender_sum=sender_sum
         )
 
-    def compute_channel_secret(self, charlie_pubkey_hex: str, alice_pubkey_hex: str) -> str:
+    def compute_channel_secret(self, receiver_pubkey_hex: str, sender_pubkey_hex: str) -> str:
         if compute_channel_secret is None:
              raise RuntimeError("cdk_spilman.compute_channel_secret is not available")
-        return compute_channel_secret(self.secret_key, alice_pubkey_hex)
+        return compute_channel_secret(self.secret_key, sender_pubkey_hex)
 
     def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
         if sign_with_tweaked_key_util is None:

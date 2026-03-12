@@ -596,8 +596,8 @@ pub async fn mint_funded_channel(
         "input_fee_ppk": keyset_info.input_fee_ppk,
         "maximum_amount": maximum_amount,
         "setup_timestamp": setup_timestamp,
-        "alice_pubkey": alice.pubkey_hex,
-        "charlie_pubkey": server_params.receiver_pubkey,
+        "sender_pubkey": alice.pubkey_hex,
+        "receiver_pubkey": server_params.receiver_pubkey,
         "expiry_timestamp": expiry_timestamp,
     });
     let channel_params_json = serde_json::to_string(&channel_params)?;

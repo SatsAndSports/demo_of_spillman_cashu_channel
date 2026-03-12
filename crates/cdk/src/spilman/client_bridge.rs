@@ -13,7 +13,7 @@
 //! let bridge = SpilmanClientBridge::new(host, None)?;
 //!
 //! // Open a channel from an existing Cashu token
-//! let result = bridge.open_channel_from_token(token, charlie_pubkey, expiry_timestamp, keyset_info, 64)?;
+//! let result = bridge.open_channel_from_token(token, receiver_pubkey, expiry_timestamp, keyset_info, 64)?;
 //!
 //! // Make payments
 //! let header = bridge.build_payment_header(&result.channel_id, 10, true)?;  // first request
@@ -96,25 +96,25 @@ pub trait SpilmanClientHost {
 
     /// Compute the hashed ECDH channel secret for a channel.
     ///
-    /// The host performs ECDH between Alice's secret key (identified by
-    /// `alice_pubkey_hex`) and Charlie's public key, then hashes the result
+    /// The host performs ECDH between the sender's secret key (identified by
+    /// `sender_pubkey_hex`) and the receiver's public key, then hashes the result
     /// with a domain separator:
-    ///   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(alice_secret, charlie_pubkey))
+    ///   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(sender_secret, receiver_pubkey))
     ///
     /// For hosts that hold raw secret keys, the convenience function
     /// `crate::spilman::bindings::compute_channel_secret_from_hex()` provides
     /// a standard implementation.
     ///
     /// # Arguments
-    /// * `alice_pubkey_hex` - Alice's public key (identifies which secret key to use)
-    /// * `charlie_pubkey_hex` - Charlie's (receiver's) public key
+    /// * `sender_pubkey_hex` - Sender's public key (identifies which secret key to use)
+    /// * `receiver_pubkey_hex` - Receiver's public key
     ///
     /// # Returns
     /// The hashed channel secret as a 64-char hex string (32 bytes).
     fn compute_channel_secret(
         &self,
-        alice_pubkey_hex: &str,
-        charlie_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
     ) -> Result<String, String>;
 }
 
@@ -129,10 +129,10 @@ pub struct OpenChannelResult {
     pub capacity: u64,
     pub funding_token_amount: u64,
     pub mint_url: String,
-    /// Alice's public key used for this channel.
+    /// Sender public key used for this channel.
     /// The caller passes this to `open_channel_from_token` and gets it back
     /// here so it can be associated with the channel.
-    pub alice_pubkey_hex: String,
+    pub sender_pubkey_hex: String,
 }
 
 /// Information about a stored channel.
@@ -170,8 +170,8 @@ struct StoredChannel {
     capacity: u64,
     funding_token_amount: u64,
     mint_url: String,
-    /// Alice's public key for this channel (per-channel, not from bridge).
-    alice_pubkey_hex: String,
+    /// Sender public key for this channel (per-channel, not from bridge).
+    sender_pubkey_hex: String,
 }
 
 // ============================================================================
@@ -194,7 +194,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// Create a new client bridge.
     ///
     /// The bridge is stateless and keyless — it delegates all key operations
-    /// to the host. The caller passes `alice_pubkey_hex` per channel when
+    /// to the host. The caller passes `sender_pubkey_hex` per channel when
     /// opening channels.
     pub fn new(host: H) -> Self {
         Self { host }
@@ -212,8 +212,8 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     ///
     /// # Arguments
     /// * `token_string` - Cashu token (cashuA... or cashuB...)
-    /// * `charlie_pubkey_hex` - Receiver's public key (from server's `/channel/params`)
-    /// * `alice_pubkey_hex` - Sender's public key (caller chooses which key for this channel)
+    /// * `receiver_pubkey_hex` - Receiver's public key (from server's `/channel/params`)
+    /// * `sender_pubkey_hex` - Sender's public key (caller chooses which key for this channel)
     /// * `expiry_timestamp` - Unix timestamp for channel expiry (refund becomes available)
     /// * `keyset_info_json` - Keyset info JSON (from mint's `/v1/keys/{id}`)
     /// * `max_amount` - Maximum amount per output (from server policy, 0 = no limit)
@@ -221,8 +221,8 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     pub fn open_channel_from_token(
         &self,
         token_string: &str,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
         expiry_timestamp: u64,
         keyset_info_json: &str,
         max_amount: u64,
@@ -230,13 +230,13 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
         // Step 1: Compute channel secret via host (ECDH delegation)
         let channel_secret_hex = self
             .host
-            .compute_channel_secret(alice_pubkey_hex, charlie_pubkey_hex)?;
+            .compute_channel_secret(sender_pubkey_hex, receiver_pubkey_hex)?;
 
         // Step 2: Parse token and compute channel parameters
         let compute_result = compute_channel_from_token(
             token_string,
-            charlie_pubkey_hex,
-            alice_pubkey_hex,
+            receiver_pubkey_hex,
+            sender_pubkey_hex,
             &channel_secret_hex,
             expiry_timestamp,
             keyset_info_json,
@@ -311,7 +311,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             capacity,
             funding_token_amount,
             mint_url: mint_url.clone(),
-            alice_pubkey_hex: alice_pubkey_hex.to_string(),
+            sender_pubkey_hex: sender_pubkey_hex.to_string(),
         };
 
         let channel_json = serde_json::to_string(&stored)
@@ -325,7 +325,7 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             capacity,
             funding_token_amount,
             mint_url,
-            alice_pubkey_hex: alice_pubkey_hex.to_string(),
+            sender_pubkey_hex: sender_pubkey_hex.to_string(),
         })
     }
 
@@ -366,9 +366,9 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .ok_or("Missing 'channel_id'")?;
         let amount = unsigned["amount"].as_u64().ok_or("Missing 'amount'")?;
 
-        // Step 2: Delegate signing to the host (use per-channel alice pubkey)
+        // Step 2: Delegate signing to the host (use per-channel sender pubkey)
         let signature_hex = self.host.sign_with_tweaked_key(
-            &stored.alice_pubkey_hex,
+            &stored.sender_pubkey_hex,
             message_hex,
             tweak_scalar_hex,
         )?;

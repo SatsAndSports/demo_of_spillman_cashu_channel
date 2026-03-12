@@ -92,10 +92,10 @@ fn test_funding_outputs_and_channel_id() {
 
     // 1. Generate sender keypair
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     println!(
         "Generated sender pubkey: {}...",
-        &alice_pubkey.to_hex()[..16]
+        &sender_pubkey.to_hex()[..16]
     );
 
     // 2. Generate receiver keypair (normally this comes from the server)
@@ -130,8 +130,8 @@ fn test_funding_outputs_and_channel_id() {
         .expect("Failed to compute funding token amount");
 
     let params = serde_json::json!({
-        "alice_pubkey": alice_pubkey.to_hex(),
-        "charlie_pubkey": receiver_pubkey.to_hex(),
+        "sender_pubkey": sender_pubkey.to_hex(),
+        "receiver_pubkey": receiver_pubkey.to_hex(),
         "mint": mint_url,
         "unit": "sat",
         "capacity": capacity,
@@ -187,7 +187,7 @@ fn test_channel_id_deterministic() {
     let mint_url = get_mint_url();
 
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let receiver_secret = SecretKey::generate();
     let receiver_pubkey = receiver_secret.public_key();
 
@@ -210,8 +210,8 @@ fn test_channel_id_deterministic() {
         .expect("Failed to compute funding token amount");
 
     let params = serde_json::json!({
-        "alice_pubkey": alice_pubkey.to_hex(),
-        "charlie_pubkey": receiver_pubkey.to_hex(),
+        "sender_pubkey": sender_pubkey.to_hex(),
+        "receiver_pubkey": receiver_pubkey.to_hex(),
         "mint": mint_url,
         "unit": "sat",
         "capacity": capacity,

@@ -139,8 +139,8 @@ pub trait SpilmanHost<C = String> {
     /// Compute the ECDH-derived channel secret.
     fn compute_channel_secret(
         &self,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
     ) -> Result<String, String>;
 
     /// Sign a message with the tweaked (P2BK-blinded) server key.
@@ -820,8 +820,8 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let capacity = params_val["capacity"].as_u64().ok_or(BridgeError::InvalidRequest("Missing capacity".into()))?;
         let expiry_timestamp = params_val["expiry_timestamp"].as_u64().ok_or(BridgeError::InvalidRequest("Missing expiry_timestamp".into()))?;
         let maximum_amount = params_val["maximum_amount"].as_u64().ok_or(BridgeError::InvalidRequest("Missing maximum_amount".into()))?;
-        let charlie_pubkey = PublicKey::from_hex(params_val["charlie_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing charlie_pubkey".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
-        if !self.host.receiver_key_is_acceptable(&charlie_pubkey) { return Err(BridgeError::ReceiverKeyNotAcceptable); }
+        let receiver_pubkey = PublicKey::from_hex(params_val["receiver_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing receiver_pubkey".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        if !self.host.receiver_key_is_acceptable(&receiver_pubkey) { return Err(BridgeError::ReceiverKeyNotAcceptable); }
         let keyset_id = Id::from_str(params_val["keyset_id"].as_str().ok_or(BridgeError::InvalidRequest("Missing keyset_id".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
         let mint = params_val["mint"].as_str().ok_or(BridgeError::InvalidRequest("Missing mint".into()))?;
         if !self.host.mint_and_keyset_is_acceptable(mint, &keyset_id) { return Err(BridgeError::MintOrKeysetNotAcceptable); }
@@ -832,7 +832,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let now = self.host.now_seconds();
         if expiry_timestamp < now + policy.min_expiry_in_seconds { return Err(BridgeError::ExpiryTooSoon { expiry_timestamp, min_expiry: now + policy.min_expiry_in_seconds, now }); }
         if balance > capacity { return Err(BridgeError::BalanceExceedsCapacity { balance, capacity }); }
-        let channel_secret_hex = self.host.compute_channel_secret(params_val["charlie_pubkey"].as_str().unwrap(), params_val["alice_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing alice_pubkey".into()))?).map_err(BridgeError::ServerMisconfigured)?;
+        let channel_secret_hex = self.host.compute_channel_secret(params_val["receiver_pubkey"].as_str().unwrap(), params_val["sender_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing sender_pubkey".into()))?).map_err(BridgeError::ServerMisconfigured)?;
         let channel_secret: [u8; 32] = hex::decode(&channel_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?.try_into().map_err(|_| BridgeError::Internal("Invalid secret length".into()))?;
         let params = ChannelParameters::from_json_with_channel_secret(&params_val.to_string(), super::parse_keyset_info_from_json(&keyset_info_json).map_err(BridgeError::InvalidRequest)?, channel_secret).map_err(|e| BridgeError::Internal(e.to_string()))?;
         if params.get_channel_id() != channel_id { return Err(BridgeError::ChannelIdMismatch); }
@@ -870,7 +870,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let channel = EstablishedChannel::new(params.clone(), proofs).map_err(|e| BridgeError::Internal(e.to_string()))?;
         BalanceUpdateMessage { channel_id: channel_id.to_string(), amount: balance, signature: sig }.verify_sender_signature(&channel).map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
         let tweak = hex::encode(params.derive_receiver_blinding_scalar_for_stage1().map_err(|e| BridgeError::Internal(e.to_string()))?.to_be_bytes());
-        let server_sig = self.host.sign_with_tweaked_key(&params.charlie_pubkey.to_hex(), &swap.sig_all_message_hash_hex(), &tweak).map_err(BridgeError::ServerMisconfigured)?;
+        let server_sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &swap.sig_all_message_hash_hex(), &tweak).map_err(BridgeError::ServerMisconfigured)?;
         swap.attach_signature_to_first_input(&server_sig).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let expected_total = params.get_value_after_stage1_with_keyset(&out_keyset).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let mut swb: Vec<_> = commitment.receiver_outputs.get_secrets_with_blinding().map_err(|e| BridgeError::Internal(e.to_string()))?.into_iter().map(|s| (s, true)).chain(commitment.sender_outputs.get_secrets_with_blinding().map_err(|e| BridgeError::Internal(e.to_string()))?.into_iter().map(|s| (s, false))).collect();
@@ -972,7 +972,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
             let tweak_hex = hex::encode(tweak_info.stage2_tweak_scalar.to_be_bytes());
             let msg_hash = Sha256Hash::hash(&proof.secret.to_bytes());
             let msg_hex = hex::encode(msg_hash.as_byte_array());
-            let sig = self.host.sign_with_tweaked_key(&params.charlie_pubkey.to_hex(), &msg_hex, &tweak_hex)
+            let sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &msg_hex, &tweak_hex)
                 .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to sign receiver proof: {}", e), status: 500 })?;
             proof.witness = Some(crate::nuts::Witness::P2PKWitness(crate::nuts::P2PKWitness { signatures: vec![sig] }));
             signed_receiver_proofs.push(proof);
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_bridge_rejects_unacceptable_receiver() {
         let b = SpilmanBridge::new(MockHost { ra: false, ma: true });
-        let p = serde_json::json!({ "alice_pubkey": SecretKey::generate().public_key().to_hex(), "charlie_pubkey": SecretKey::generate().public_key().to_hex(), "mint": "https://m", "unit": "sat", "capacity": 1000, "funding_token_amount": 1000, "maximum_amount": 64, "expiry_timestamp": 1700007200, "setup_timestamp": 1700000000, "keyset_id": "00" });
+        let p = serde_json::json!({ "sender_pubkey": SecretKey::generate().public_key().to_hex(), "receiver_pubkey": SecretKey::generate().public_key().to_hex(), "mint": "https://m", "unit": "sat", "capacity": 1000, "funding_token_amount": 1000, "maximum_amount": 64, "expiry_timestamp": 1700007200, "setup_timestamp": 1700000000, "keyset_id": "00" });
         let pay = serde_json::json!({ "channel_id": "i", "balance": 100, "signature": "s", "params": p, "funding_proofs": [] });
         assert!(b.process_payment_via_json(&pay.to_string(), &"{}".to_string()).unwrap_err().to_string().contains("receiver key not acceptable"));
     }

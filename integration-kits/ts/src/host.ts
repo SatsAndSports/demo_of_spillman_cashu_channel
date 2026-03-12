@@ -198,8 +198,8 @@ export function createSpilmanHost(options: SpilmanHostOptions) {
       await refreshKeysets(mint);
     },
 
-    computeChannelSecret: (_charliePubkeyHex: string, alicePubkeyHex: string): string => {
-      return compute_channel_secret(secretKeyHex, alicePubkeyHex);
+    computeChannelSecret: (_receiverPubkeyHex: string, senderPubkeyHex: string): string => {
+      return compute_channel_secret(secretKeyHex, senderPubkeyHex);
     },
 
     signWithTweakedKey: (_signerPubkeyHex: string, messageHex: string, tweakScalarHex: string): string => {

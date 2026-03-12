@@ -76,7 +76,7 @@ func (m *MockHost) MarkChannelClosed(channelId string, expiryTimestamp, balance 
 	return nil
 }
 
-func (m *MockHost) ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error) {
+func (m *MockHost) ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex string) (string, error) {
 	return "", fmt.Errorf("not implemented in mock")
 }
 

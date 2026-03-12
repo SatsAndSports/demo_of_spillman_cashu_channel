@@ -10,7 +10,7 @@ export interface SpilmanClientHost {
     messageHex: string,
     tweakScalarHex: string
   ): string;
-  computeChannelSecret(alicePubkeyHex: string, charliePubkeyHex: string): string;
+  computeChannelSecret(senderPubkeyHex: string, receiverPubkeyHex: string): string;
 }
 
 /**

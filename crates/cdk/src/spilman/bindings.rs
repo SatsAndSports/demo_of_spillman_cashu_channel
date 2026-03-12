@@ -449,8 +449,8 @@ pub fn create_signed_balance_update(
 ///
 /// # Arguments
 /// * `token_string` - The Cashu token (cashuA... or cashuB...)
-/// * `charlie_pubkey_hex` - Receiver's public key (hex)
-/// * `alice_pubkey_hex` - Sender's public key (hex)
+/// * `receiver_pubkey_hex` - Receiver's public key (hex)
+/// * `sender_pubkey_hex` - Sender's public key (hex)
 /// * `channel_secret_hex` - Pre-computed ECDH channel secret (32 bytes, hex)
 /// * `expiry_timestamp` - Unix timestamp for channel expiry (refund becomes available)
 /// * `keyset_info_json` - Keyset info from mint (JSON)
@@ -466,8 +466,8 @@ pub fn create_signed_balance_update(
 /// - `proofs_json`: The parsed proofs from the token (for create_funding_swap)
 pub fn compute_channel_from_token(
     token_string: &str,
-    charlie_pubkey_hex: &str,
-    alice_pubkey_hex: &str,
+    receiver_pubkey_hex: &str,
+    sender_pubkey_hex: &str,
     channel_secret_hex: &str,
     expiry_timestamp: u64,
     keyset_info_json: &str,
@@ -534,15 +534,15 @@ pub fn compute_channel_from_token(
         .deterministic_value_after_fees(v2, max_amt)
         .map_err(|e| format!("Failed to compute capacity: {}", e))?;
 
-    // Parse Alice's pubkey
-    let alice_pubkey: PublicKey = alice_pubkey_hex
+    // Parse sender pubkey
+    let sender_pubkey: PublicKey = sender_pubkey_hex
         .parse()
-        .map_err(|e| format!("Invalid alice pubkey: {}", e))?;
+        .map_err(|e| format!("Invalid sender pubkey: {}", e))?;
 
-    // Parse Charlie's pubkey
-    let charlie_pubkey: PublicKey = charlie_pubkey_hex
+    // Parse receiver pubkey
+    let receiver_pubkey: PublicKey = receiver_pubkey_hex
         .parse()
-        .map_err(|e| format!("Invalid charlie pubkey: {}", e))?;
+        .map_err(|e| format!("Invalid receiver pubkey: {}", e))?;
 
     // Parse channel secret
     let channel_secret_bytes = hex::decode(channel_secret_hex)
@@ -558,8 +558,8 @@ pub fn compute_channel_from_token(
 
     // Create channel parameters with pre-computed channel secret
     let params = ChannelParameters::new(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         mint_url.to_string(),
         unit,
         capacity,

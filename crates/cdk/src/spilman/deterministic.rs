@@ -103,18 +103,18 @@ impl DeterministicSecretWithBlinding {
     ) -> Result<Self, anyhow::Error> {
         // Get blinded pubkeys for privacy
         // The 2-of-2 path uses one set of blinded keys
-        let blinded_alice_pubkey = params.get_sender_blinded_pubkey_for_stage1()?;
-        let blinded_charlie_pubkey = params.get_receiver_blinded_pubkey_for_stage1()?;
+        let blinded_sender_pubkey = params.get_sender_blinded_pubkey_for_stage1()?;
+        let blinded_receiver_pubkey = params.get_receiver_blinded_pubkey_for_stage1()?;
         // The refund path uses a DIFFERENT blinded key for Alice (unlinkable to 2-of-2)
-        let blinded_alice_pubkey_refund = params.get_sender_blinded_pubkey_for_stage1_refund()?;
+        let blinded_sender_pubkey_refund = params.get_sender_blinded_pubkey_for_stage1_refund()?;
 
         // Create the spending conditions: 2-of-2 multisig (Alice + Charlie) before expiry
         // After expiry, Alice can refund with just her signature
         // All pubkeys are BLINDED for privacy, with refund using a separate tweak
         let conditions = Conditions::new(
             Some(params.expiry_timestamp),           // Expiry timestamp for Alice's refund
-            Some(vec![blinded_charlie_pubkey]),      // Charlie's blinded key for 2-of-2
-            Some(vec![blinded_alice_pubkey_refund]), // Alice's REFUND blinded key (different tweak)
+            Some(vec![blinded_receiver_pubkey]),      // Charlie's blinded key for 2-of-2
+            Some(vec![blinded_sender_pubkey_refund]), // Alice's REFUND blinded key (different tweak)
             Some(2),                                 // Require 2 signatures before expiry
             Some(SigFlag::SigAll),                   // SigAll: signatures commit to outputs
             Some(1),                                 // Only 1 signature needed for refund (Alice)
@@ -132,7 +132,7 @@ impl DeterministicSecretWithBlinding {
             "P2PK",
             {
                 "nonce": nonce,
-                "data": blinded_alice_pubkey.to_hex(),
+                "data": blinded_sender_pubkey.to_hex(),
                 "tags": tags_json
             }
         ]);
@@ -541,10 +541,10 @@ mod tests {
         use std::collections::BTreeMap;
 
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
 
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         let mint_secret = SecretKey::generate();
         let mint_pubkey = mint_secret.public_key();
@@ -567,8 +567,8 @@ mod tests {
                 .unwrap();
 
         ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
             capacity,
@@ -635,10 +635,10 @@ mod tests {
         use std::collections::BTreeMap;
 
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
 
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         let mint_secret = SecretKey::generate();
         let mint_pubkey = mint_secret.public_key();
@@ -660,8 +660,8 @@ mod tests {
                 .unwrap();
 
         ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "local".to_string(),
             CurrencyUnit::Sat,
             capacity,
@@ -776,14 +776,14 @@ mod tests {
             })
             .expect("Should have pubkeys tag");
 
-        let charlie_pubkey_in_tag = pubkeys_tag
+        let receiver_pubkey_in_tag = pubkeys_tag
             .as_array()
             .and_then(|arr| arr.get(1))
             .and_then(|v| v.as_str())
             .expect("pubkeys tag should have a pubkey value");
 
         assert_eq!(
-            charlie_pubkey_in_tag,
+            receiver_pubkey_in_tag,
             expected_charlie_blinded.to_hex(),
             "pubkeys tag should contain Charlie's blinded pubkey"
         );

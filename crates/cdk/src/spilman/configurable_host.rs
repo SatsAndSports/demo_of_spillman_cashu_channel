@@ -1253,10 +1253,10 @@ impl SpilmanHost for ConfigurableHost {
 
     fn compute_channel_secret(
         &self,
-        _charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        _receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
     ) -> Result<String, String> {
-        super::compute_channel_secret_from_hex(&self.server_secret_hex, alice_pubkey_hex)
+        super::compute_channel_secret_from_hex(&self.server_secret_hex, sender_pubkey_hex)
     }
 
     fn sign_with_tweaked_key(

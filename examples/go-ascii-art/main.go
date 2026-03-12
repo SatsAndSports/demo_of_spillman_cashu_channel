@@ -157,7 +157,7 @@ func runClient(args []string) {
 	fta, _ := spilman.ComputeFundingTokenAmount(cap, string(kiJ), 64)
 	ss, _ := spilman.ComputeChannelSecret(aliceSecret, sp.ReceiverPubkey)
 	cpJ, _ := json.Marshal(map[string]interface{}{
-		"alice_pubkey": alicePub, "charlie_pubkey": sp.ReceiverPubkey, "mint": mintUrl, "unit": "sat", "capacity": cap,
+		"sender_pubkey": alicePub, "receiver_pubkey": sp.ReceiverPubkey, "mint": mintUrl, "unit": "sat", "capacity": cap,
 		"funding_token_amount": fta, "maximum_amount": 64, "expiry_timestamp": time.Now().Unix() + 7200, "setup_timestamp": time.Now().Unix(),
 		"keyset_id": ki["keysetId"], "input_fee_ppk": ki["inputFeePpk"],
 	})
@@ -175,7 +175,7 @@ func runClient(args []string) {
 	proofsJ, _ := spilman.ConstructProofs(string(sigsJ), string(swbJ), string(kiJ))
 	storedJ, _ := json.Marshal(map[string]interface{}{
 		"channel_id": cid, "params_json": string(cpJ), "keyset_info_json": string(kiJ), "funding_proofs_json": proofsJ,
-		"capacity": cap, "funding_token_amount": fta, "mint_url": mintUrl, "alice_pubkey_hex": alicePub,
+		"capacity": cap, "funding_token_amount": fta, "mint_url": mintUrl, "sender_pubkey_hex": alicePub,
 	})
 	host.SaveChannel(cid, string(storedJ), ss)
 

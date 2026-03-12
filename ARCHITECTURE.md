@@ -62,7 +62,7 @@ The channel ID is a SHA256 hash of all canonical channel parameters, using pipe-
 channel_id = SHA256(
   mint_url | unit | capacity | funding_token_amount |
   keyset_id | input_fee_ppk | maximum_amount |
-  setup_timestamp | alice_pubkey | charlie_pubkey |
+  setup_timestamp | sender_pubkey | receiver_pubkey |
   expiry_timestamp | channel_secret_hex
 )
 ```
@@ -209,7 +209,7 @@ trait SpilmanHost<C = String> {
     fn get_keyset_info(&self, mint: &str, keyset_id: &Id) -> Option<String>;
 
     // Cryptographic operations (host owns the secret key)
-    fn compute_channel_secret(&self, charlie_pubkey_hex: &str, alice_pubkey_hex: &str) -> Result<String, String>;
+    fn compute_channel_secret(&self, receiver_pubkey_hex: &str, sender_pubkey_hex: &str) -> Result<String, String>;
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
 }
 ```
@@ -226,7 +226,7 @@ trait SpilmanClientHost {
     fn list_channel_ids(&self) -> Vec<String>;
     fn delete_channel(&self, channel_id: &str);
     fn sign_with_tweaked_key(&self, signer_pubkey_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, String>;
-    fn compute_channel_secret(&self, alice_pubkey_hex: &str, charlie_pubkey_hex: &str) -> Result<String, String>;
+    fn compute_channel_secret(&self, sender_pubkey_hex: &str, receiver_pubkey_hex: &str) -> Result<String, String>;
 }
 ```
 

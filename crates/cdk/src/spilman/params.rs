@@ -40,9 +40,9 @@ pub(crate) struct Stage2P2bkTweakInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
     /// Alice's public key (sender)
-    pub alice_pubkey: crate::nuts::PublicKey,
+    pub sender_pubkey: crate::nuts::PublicKey,
     /// Charlie's public key (receiver)
-    pub charlie_pubkey: crate::nuts::PublicKey,
+    pub receiver_pubkey: crate::nuts::PublicKey,
     /// Mint URL (or "local" for in-process mint)
     pub mint: String,
     /// Currency unit for the channel
@@ -178,8 +178,8 @@ impl ChannelParameters {
     /// Create new channel parameters with a pre-computed channel secret
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        alice_pubkey: crate::nuts::PublicKey,
-        charlie_pubkey: crate::nuts::PublicKey,
+        sender_pubkey: crate::nuts::PublicKey,
+        receiver_pubkey: crate::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -218,8 +218,8 @@ impl ChannelParameters {
         }
 
         Ok(Self {
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             mint,
             unit,
             capacity,
@@ -243,11 +243,11 @@ impl ChannelParameters {
     /// * All other arguments are the same as `new`
     ///
     /// # Errors
-    /// Returns an error if the secret key's public key doesn't match either alice_pubkey or charlie_pubkey
+    /// Returns an error if the secret key's public key doesn't match either sender_pubkey or receiver_pubkey
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_secret_key(
-        alice_pubkey: crate::nuts::PublicKey,
-        charlie_pubkey: crate::nuts::PublicKey,
+        sender_pubkey: crate::nuts::PublicKey,
+        receiver_pubkey: crate::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -261,15 +261,15 @@ impl ChannelParameters {
         let my_pubkey = my_secret.public_key();
 
         // Determine which party we are and get the counterparty's pubkey
-        let their_pubkey = if my_pubkey == alice_pubkey {
+        let their_pubkey = if my_pubkey == sender_pubkey {
             // We are Alice, use Charlie's pubkey
-            &charlie_pubkey
-        } else if my_pubkey == charlie_pubkey {
+            &receiver_pubkey
+        } else if my_pubkey == receiver_pubkey {
             // We are Charlie, use Alice's pubkey
-            &alice_pubkey
+            &sender_pubkey
         } else {
             anyhow::bail!(
-                "Secret key's public key doesn't match either alice_pubkey or charlie_pubkey"
+                "Secret key's public key doesn't match either sender_pubkey or receiver_pubkey"
             );
         };
 
@@ -277,8 +277,8 @@ impl ChannelParameters {
         let channel_secret = compute_channel_secret(my_secret, their_pubkey);
 
         Self::new(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             mint,
             unit,
             capacity,
@@ -294,7 +294,7 @@ impl ChannelParameters {
     /// Create channel parameters from a JSON string and a secret key
     ///
     /// The JSON should contain: mint, unit, capacity, keyset_id, input_fee_ppk,
-    /// maximum_amount, setup_timestamp, alice_pubkey, charlie_pubkey, expiry_timestamp
+    /// maximum_amount, setup_timestamp, sender_pubkey, receiver_pubkey, expiry_timestamp
     /// (as produced by `get_channel_id_params_json`)
     ///
     /// Additional parameters needed:
@@ -309,29 +309,29 @@ impl ChannelParameters {
         let json: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
 
-        let alice_pubkey_hex = json["alice_pubkey"]
+        let sender_pubkey_hex = json["sender_pubkey"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'alice_pubkey' field"))?;
-        let alice_pubkey: crate::nuts::PublicKey = alice_pubkey_hex
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_pubkey' field"))?;
+        let sender_pubkey: crate::nuts::PublicKey = sender_pubkey_hex
             .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid alice_pubkey: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid sender_pubkey: {}", e))?;
 
-        let charlie_pubkey_hex = json["charlie_pubkey"]
+        let receiver_pubkey_hex = json["receiver_pubkey"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'charlie_pubkey' field"))?;
-        let charlie_pubkey: crate::nuts::PublicKey = charlie_pubkey_hex
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'receiver_pubkey' field"))?;
+        let receiver_pubkey: crate::nuts::PublicKey = receiver_pubkey_hex
             .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid receiver_pubkey: {}", e))?;
 
         // Determine counterparty and compute channel secret
         let my_pubkey = my_secret.public_key();
-        let their_pubkey = if my_pubkey == alice_pubkey {
-            &charlie_pubkey
-        } else if my_pubkey == charlie_pubkey {
-            &alice_pubkey
+        let their_pubkey = if my_pubkey == sender_pubkey {
+            &receiver_pubkey
+        } else if my_pubkey == receiver_pubkey {
+            &sender_pubkey
         } else {
             anyhow::bail!(
-                "Secret key's public key doesn't match either alice_pubkey or charlie_pubkey"
+                "Secret key's public key doesn't match either sender_pubkey or receiver_pubkey"
             );
         };
 
@@ -415,27 +415,27 @@ impl ChannelParameters {
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'setup_timestamp' field"))?;
 
-        let alice_pubkey_hex = json["alice_pubkey"]
+        let sender_pubkey_hex = json["sender_pubkey"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'alice_pubkey' field"))?;
-        let alice_pubkey: crate::nuts::PublicKey = alice_pubkey_hex
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_pubkey' field"))?;
+        let sender_pubkey: crate::nuts::PublicKey = sender_pubkey_hex
             .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid alice_pubkey: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid sender_pubkey: {}", e))?;
 
-        let charlie_pubkey_hex = json["charlie_pubkey"]
+        let receiver_pubkey_hex = json["receiver_pubkey"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'charlie_pubkey' field"))?;
-        let charlie_pubkey: crate::nuts::PublicKey = charlie_pubkey_hex
+            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'receiver_pubkey' field"))?;
+        let receiver_pubkey: crate::nuts::PublicKey = receiver_pubkey_hex
             .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid charlie_pubkey: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid receiver_pubkey: {}", e))?;
 
         let expiry_timestamp = json["expiry_timestamp"]
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'expiry_timestamp' field"))?;
 
         Self::new(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             mint,
             unit,
             capacity,
@@ -471,8 +471,8 @@ impl ChannelParameters {
             self.keyset_info.input_fee_ppk,
             self.maximum_amount_for_one_output,
             self.setup_timestamp,
-            self.alice_pubkey.to_hex(),
-            self.charlie_pubkey.to_hex(),
+            self.sender_pubkey.to_hex(),
+            self.receiver_pubkey.to_hex(),
             self.expiry_timestamp,
             hex::encode(self.channel_secret)
         );
@@ -496,8 +496,8 @@ impl ChannelParameters {
             "input_fee_ppk": self.keyset_info.input_fee_ppk,
             "maximum_amount": self.maximum_amount_for_one_output,
             "setup_timestamp": self.setup_timestamp,
-            "alice_pubkey": self.alice_pubkey.to_hex(),
-            "charlie_pubkey": self.charlie_pubkey.to_hex(),
+            "sender_pubkey": self.sender_pubkey.to_hex(),
+            "receiver_pubkey": self.receiver_pubkey.to_hex(),
             "expiry_timestamp": self.expiry_timestamp
         })
         .to_string()
@@ -550,8 +550,8 @@ impl ChannelParameters {
         index: usize,
     ) -> anyhow::Result<Stage2P2bkTweakInfo> {
         let role_pubkey = match context {
-            "sender_stage2" => &self.alice_pubkey,
-            "receiver_stage2" => &self.charlie_pubkey,
+            "sender_stage2" => &self.sender_pubkey,
+            "receiver_stage2" => &self.receiver_pubkey,
             _ => anyhow::bail!("Unknown stage2 context: {}", context),
         };
         let ephemeral_secret =
@@ -646,7 +646,7 @@ impl ChannelParameters {
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
     pub fn get_sender_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("sender_stage1")?;
-        derive_blinded_pubkey(&self.alice_pubkey, &r)
+        derive_blinded_pubkey(&self.sender_pubkey, &r)
     }
 
     /// Get the blinded receiver (Charlie) pubkey for stage 1 P2BK
@@ -659,7 +659,7 @@ impl ChannelParameters {
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
     pub fn get_receiver_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("receiver_stage1")?;
-        derive_blinded_pubkey(&self.charlie_pubkey, &r)
+        derive_blinded_pubkey(&self.receiver_pubkey, &r)
     }
 
     /// Derive the blinded sender secret key for stage 1 signing
@@ -701,7 +701,7 @@ impl ChannelParameters {
         &self,
     ) -> anyhow::Result<crate::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("sender_stage1_refund")?;
-        derive_blinded_pubkey(&self.alice_pubkey, &r)
+        derive_blinded_pubkey(&self.sender_pubkey, &r)
     }
 
     /// Derive the blinded sender secret key for stage 1 expiry refund
@@ -744,7 +744,7 @@ impl ChannelParameters {
     ) -> anyhow::Result<crate::nuts::PublicKey> {
         let tweak_info =
             self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
-        derive_blinded_pubkey(&self.alice_pubkey, &tweak_info.stage2_tweak_scalar)
+        derive_blinded_pubkey(&self.sender_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Get the blinded receiver (Charlie) pubkey for a specific stage 2 output
@@ -762,7 +762,7 @@ impl ChannelParameters {
     ) -> anyhow::Result<crate::nuts::PublicKey> {
         let tweak_info =
             self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
-        derive_blinded_pubkey(&self.charlie_pubkey, &tweak_info.stage2_tweak_scalar)
+        derive_blinded_pubkey(&self.receiver_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
     /// Derive the blinded sender secret key for a specific stage 2 output
@@ -986,9 +986,9 @@ mod tests {
     fn test_json_roundtrip_preserves_channel_id() {
         // Create keypairs for Alice and Charlie
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         // Create a keyset_info for testing (powers of 2 up to 64, with 100 ppk fee)
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
@@ -1000,8 +1000,8 @@ mod tests {
 
         // Create channel parameters (as Alice)
         let original_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1050,9 +1050,9 @@ mod tests {
 
         // Create keypairs for Alice and Charlie
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         // Create keyset_info
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
@@ -1063,8 +1063,8 @@ mod tests {
 
         // Alice creates params using her secret key
         let alice_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1140,9 +1140,9 @@ mod tests {
 
         // Create keypairs for Alice and Charlie
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         // Create keyset_info
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
@@ -1153,8 +1153,8 @@ mod tests {
 
         // Alice creates params
         let alice_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1210,9 +1210,9 @@ mod tests {
     fn test_stage2_ephemeral_shared_secret_matches_role_secret() {
         // Create keypairs for Alice and Charlie
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         // Create keyset_info
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
@@ -1222,8 +1222,8 @@ mod tests {
                 .expect("Failed to compute funding token amount");
 
         let params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1262,9 +1262,9 @@ mod tests {
         // Test that the refund blinded pubkey uses a different tweak than the sender pubkey
 
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
@@ -1273,8 +1273,8 @@ mod tests {
                 .expect("Failed to compute funding token amount");
 
         let params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1288,7 +1288,7 @@ mod tests {
         .expect("Failed to create params");
 
         // Get the three pubkeys
-        let raw_alice = params.alice_pubkey;
+        let raw_alice = params.sender_pubkey;
         let blinded_sender = params
             .get_sender_blinded_pubkey_for_stage1()
             .expect("Failed to get sender blinded pubkey");
@@ -1328,9 +1328,9 @@ mod tests {
         // Test that signing with refund blinded key verifies against refund blinded pubkey
 
         let alice_secret = SecretKey::generate();
-        let alice_pubkey = alice_secret.public_key();
+        let sender_pubkey = alice_secret.public_key();
         let charlie_secret = SecretKey::generate();
-        let charlie_pubkey = charlie_secret.public_key();
+        let receiver_pubkey = charlie_secret.public_key();
 
         let keyset_info = mock_keyset_info(vec![1, 2, 4, 8, 16, 32, 64], 100);
 
@@ -1340,8 +1340,8 @@ mod tests {
 
         // Alice creates params
         let alice_params = ChannelParameters::new_with_secret_key(
-            alice_pubkey,
-            charlie_pubkey,
+            sender_pubkey,
+            receiver_pubkey,
             "https://testmint.cash".to_string(),
             CurrencyUnit::Sat,
             1000, // capacity
@@ -1414,8 +1414,8 @@ mod tests {
         let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
         let params = ChannelParameters {
-            alice_pubkey: alice_sk.public_key(),
-            charlie_pubkey: charlie_sk.public_key(),
+            sender_pubkey: alice_sk.public_key(),
+            receiver_pubkey: charlie_sk.public_key(),
             mint: "https://mint.host".to_string(),
             unit: CurrencyUnit::Sat,
             capacity: 1000,

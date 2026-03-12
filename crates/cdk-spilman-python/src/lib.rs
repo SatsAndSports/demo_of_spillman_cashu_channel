@@ -502,14 +502,14 @@ impl SpilmanHost for PySpilmanHost {
 
     fn compute_channel_secret(
         &self,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
     ) -> Result<String, String> {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
                 py,
                 "compute_channel_secret",
-                (charlie_pubkey_hex, alice_pubkey_hex),
+                (receiver_pubkey_hex, sender_pubkey_hex),
             ) {
                 Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),
@@ -1058,7 +1058,7 @@ pub struct ClientOpenChannelResult {
     pub capacity: u64,
     pub funding_token_amount: u64,
     pub mint_url: String,
-    pub alice_pubkey_hex: String,
+    pub sender_pubkey_hex: String,
 }
 
 /// Information about a stored channel.
@@ -1081,7 +1081,7 @@ pub struct ClientChannelInfo {
 /// - list_channel_ids() -> List[str]
 /// - delete_channel(channel_id: str)
 /// - sign_with_tweaked_key(signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str
-/// - compute_channel_secret(alice_pubkey_hex: str, charlie_pubkey_hex: str) -> str
+/// - compute_channel_secret(sender_pubkey_hex: str, receiver_pubkey_hex: str) -> str
 struct PySpilmanClientHost {
     py_host: PyObject,
 }
@@ -1165,14 +1165,14 @@ impl SpilmanClientHost for PySpilmanClientHost {
 
     fn compute_channel_secret(
         &self,
-        alice_pubkey_hex: &str,
-        charlie_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
     ) -> Result<String, String> {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
                 py,
                 "compute_channel_secret",
-                (alice_pubkey_hex, charlie_pubkey_hex),
+                (sender_pubkey_hex, receiver_pubkey_hex),
             ) {
                 Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),
@@ -1199,7 +1199,7 @@ impl ClientBridge {
     /// Create a new ClientBridge.
     ///
     /// The bridge is stateless and keyless — it delegates all key operations
-    /// to the host. The caller passes alice_pubkey_hex per channel when
+    /// to the host. The caller passes sender_pubkey_hex per channel when
     /// opening channels.
     ///
     /// Args:
@@ -1225,20 +1225,20 @@ impl ClientBridge {
     ///
     /// Args:
     ///     token_string: Cashu token (cashuA... or cashuB...)
-    ///     charlie_pubkey_hex: Receiver's public key (from server's /channel/params)
-    ///     alice_pubkey_hex: Sender's public key (caller chooses which key for this channel)
+    ///     receiver_pubkey_hex: Receiver's public key (from server's /channel/params)
+    ///     sender_pubkey_hex: Sender's public key (caller chooses which key for this channel)
     ///     expiry_timestamp: Unix timestamp for channel expiry
     ///     keyset_info_json: Keyset info JSON (from mint's /v1/keys/{id})
     ///     max_amount: Maximum amount per output (from server policy, 0 = no limit)
     ///
     /// Returns:
-    ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url, alice_pubkey_hex
-    #[pyo3(signature = (token_string, charlie_pubkey_hex, alice_pubkey_hex, expiry_timestamp, keyset_info_json, max_amount))]
+    ///     ClientOpenChannelResult with channel_id, capacity, funding_token_amount, mint_url, sender_pubkey_hex
+    #[pyo3(signature = (token_string, receiver_pubkey_hex, sender_pubkey_hex, expiry_timestamp, keyset_info_json, max_amount))]
     fn open_channel_from_token(
         &self,
         token_string: &str,
-        charlie_pubkey_hex: &str,
-        alice_pubkey_hex: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
         expiry_timestamp: u64,
         keyset_info_json: &str,
         max_amount: u64,
@@ -1247,8 +1247,8 @@ impl ClientBridge {
             .inner
             .open_channel_from_token(
                 token_string,
-                charlie_pubkey_hex,
-                alice_pubkey_hex,
+                receiver_pubkey_hex,
+                sender_pubkey_hex,
                 expiry_timestamp,
                 keyset_info_json,
                 max_amount,
@@ -1260,7 +1260,7 @@ impl ClientBridge {
             capacity: result.capacity,
             funding_token_amount: result.funding_token_amount,
             mint_url: result.mint_url,
-            alice_pubkey_hex: result.alice_pubkey_hex,
+            sender_pubkey_hex: result.sender_pubkey_hex,
         })
     }
 

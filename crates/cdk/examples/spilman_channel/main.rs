@@ -38,9 +38,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. GENERATE KEYS FOR ALICE AND CHARLIE
     let alice_secret = SecretKey::generate();
-    let alice_pubkey = alice_secret.public_key();
+    let sender_pubkey = alice_secret.public_key();
     let charlie_secret = SecretKey::generate();
-    let charlie_pubkey = charlie_secret.public_key();
+    let receiver_pubkey = charlie_secret.public_key();
 
     // 2. SETUP INITIAL CHANNEL PARAMETERS
     println!("📋 Setting up Spilman channel parameters...");
@@ -70,8 +70,8 @@ async fn main() -> anyhow::Result<()> {
     )?;
 
     let channel_params = ChannelParameters::new_with_secret_key(
-        alice_pubkey,
-        charlie_pubkey,
+        sender_pubkey,
+        receiver_pubkey,
         mint_url.clone(),
         channel_unit.clone(),
         capacity,

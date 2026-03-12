@@ -484,10 +484,10 @@ func go_mark_channel_closed(userData unsafe.Pointer, channelId *C.char, expiryTi
 }
 
 //export go_compute_channel_secret
-func go_compute_channel_secret(userData unsafe.Pointer, charliePubkeyHex *C.char, alicePubkeyHex *C.char, resultOut **C.char) C.int {
+func go_compute_channel_secret(userData unsafe.Pointer, receiverPubkeyHex *C.char, senderPubkeyHex *C.char, resultOut **C.char) C.int {
 	h := cgo.Handle(userData)
 	host := h.Value().(SpilmanHost)
-	result, err := host.ComputeChannelSecret(C.GoString(alicePubkeyHex), C.GoString(charliePubkeyHex))
+	result, err := host.ComputeChannelSecret(C.GoString(senderPubkeyHex), C.GoString(receiverPubkeyHex))
 	if err != nil {
 		*resultOut = C.CString(err.Error())
 		return 0

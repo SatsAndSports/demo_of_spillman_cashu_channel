@@ -84,15 +84,15 @@ type SpilmanHost interface {
 
 	// ComputeChannelSecret computes the hashed ECDH channel secret.
 	//
-	// The host performs ECDH between Charlie's secret key (identified by
-	// charliePubkeyHex) and Alice's public key, then hashes the result:
-	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(charlie_secret, alice_pubkey))
+	// The host performs ECDH between the receiver's secret key (identified by
+	// receiverPubkeyHex) and the sender's public key, then hashes the result:
+	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(receiver_secret, sender_pubkey))
 	//
 	// For hosts that hold raw secret keys, use the standalone ComputeChannelSecret()
 	// function (wraps the Rust utility).
 	//
 	// Returns the hashed channel secret as a 64-char hex string (32 bytes).
-	ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error)
+	ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex string) (string, error)
 
 	// SignWithTweakedKey signs a message with a tweaked key (BIP-340 Schnorr).
 	//
@@ -104,7 +104,7 @@ type SpilmanHost interface {
 	// a convenience implementation.
 	//
 	// Arguments:
-	//   signerPubkeyHex: identifies which key to use (Charlie's pubkey for server-side)
+	//   signerPubkeyHex: identifies which key to use (receiver pubkey for server-side)
 	//   messageHex: SHA-256 hash of the SIG_ALL message (32 bytes, hex)
 	//   tweakScalarHex: P2BK blinding scalar to add to secret key (32 bytes, hex)
 	//

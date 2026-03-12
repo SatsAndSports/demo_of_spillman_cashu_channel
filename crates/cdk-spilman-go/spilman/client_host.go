@@ -47,7 +47,7 @@ type SpilmanClientHost interface {
 	// a convenience implementation.
 	//
 	// Arguments:
-	//   signerPubkeyHex: identifies which key to use (Alice's pubkey for this channel)
+	//   signerPubkeyHex: identifies which key to use (sender pubkey for this channel)
 	//   messageHex: SHA-256 hash of the SIG_ALL message (32 bytes, hex)
 	//   tweakScalarHex: P2BK blinding scalar to add to secret key (32 bytes, hex)
 	//
@@ -56,15 +56,15 @@ type SpilmanClientHost interface {
 
 	// ComputeChannelSecret computes the hashed ECDH channel secret.
 	//
-	// The host performs ECDH between Alice's secret key (identified by
-	// alicePubkeyHex) and Charlie's public key, then hashes the result:
-	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(alice_secret, charlie_pubkey))
+	// The host performs ECDH between the sender's secret key (identified by
+	// senderPubkeyHex) and the receiver's public key, then hashes the result:
+	//   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(sender_secret, receiver_pubkey))
 	//
 	// For hosts that hold raw secret keys, use ComputeChannelSecret() from
 	// the standalone functions (wraps the Rust utility).
 	//
 	// Returns the hashed channel secret as a 64-char hex string (32 bytes).
-	ComputeChannelSecret(alicePubkeyHex, charliePubkeyHex string) (string, error)
+	ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex string) (string, error)
 }
 
 // OpenChannelResult contains the result of opening a new channel.
@@ -73,7 +73,7 @@ type OpenChannelResult struct {
 	Capacity           uint64 `json:"capacity"`
 	FundingTokenAmount uint64 `json:"funding_token_amount"`
 	MintURL            string `json:"mint_url"`
-	AlicePubkeyHex     string `json:"alice_pubkey_hex"`
+	SenderPubkeyHex    string `json:"sender_pubkey_hex"`
 }
 
 // ClientChannelInfo contains information about a stored channel.

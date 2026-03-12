@@ -165,8 +165,8 @@ describe('WASM close retry with real mint', () => {
       input_fee_ppk: keysetInfo.inputFeePpk,
       maximum_amount: maximumAmount,
       setup_timestamp: setupTimestamp,
-      alice_pubkey: alice.pubkeyHex,
-      charlie_pubkey: charlie.pubkeyHex,
+      sender_pubkey: alice.pubkeyHex,
+      receiver_pubkey: charlie.pubkeyHex,
       expiry_timestamp: expiryTimestamp,
     };
     const channelParamsJson = JSON.stringify(channelParams);

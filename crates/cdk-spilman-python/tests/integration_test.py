@@ -93,12 +93,12 @@ class TestChannelSetup:
 
     def test_compute_channel_secret(self):
         """Test ECDH shared secret computation."""
-        alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
+        alice_secret, sender_pubkey = cdk_spilman.generate_keypair()
         bob_secret, bob_pubkey = cdk_spilman.generate_keypair()
 
         # Both parties should compute the same shared secret
         shared_alice = cdk_spilman.compute_channel_secret(alice_secret, bob_pubkey)
-        shared_bob = cdk_spilman.compute_channel_secret(bob_secret, alice_pubkey)
+        shared_bob = cdk_spilman.compute_channel_secret(bob_secret, sender_pubkey)
 
         assert shared_alice == shared_bob, "Shared secrets should match"
         assert len(shared_alice) == 64, f"Shared secret should be 64 hex chars, got {len(shared_alice)}"
@@ -110,10 +110,10 @@ class TestChannelSetup:
         mint_url = get_mint_url()
 
         # Generate keypairs
-        alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
+        alice_secret, sender_pubkey = cdk_spilman.generate_keypair()
         _, receiver_pubkey = cdk_spilman.generate_keypair()
 
-        print(f"Generated sender pubkey: {alice_pubkey[:16]}...")
+        print(f"Generated sender pubkey: {sender_pubkey[:16]}...")
         print(f"Generated receiver pubkey: {receiver_pubkey[:16]}...")
 
         # Fetch active keyset from mint
@@ -130,8 +130,8 @@ class TestChannelSetup:
         now = int(time.time())
         funding_token_amount = cdk_spilman.compute_funding_token_amount(100, keyset_json, 64)
         params = {
-            "alice_pubkey": alice_pubkey,
-            "charlie_pubkey": receiver_pubkey,
+            "sender_pubkey": sender_pubkey,
+            "receiver_pubkey": receiver_pubkey,
             "mint": mint_url,
             "unit": "sat",
             "capacity": 100,
@@ -166,7 +166,7 @@ class TestChannelSetup:
         """Test that channel ID computation is deterministic."""
         mint_url = get_mint_url()
 
-        alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
+        alice_secret, sender_pubkey = cdk_spilman.generate_keypair()
         _, receiver_pubkey = cdk_spilman.generate_keypair()
 
         keyset_info = fetch_active_keyset(mint_url, "sat")
@@ -178,8 +178,8 @@ class TestChannelSetup:
         now = int(time.time())
         funding_token_amount = cdk_spilman.compute_funding_token_amount(100, keyset_json, 64)
         params = {
-            "alice_pubkey": alice_pubkey,
-            "charlie_pubkey": receiver_pubkey,
+            "sender_pubkey": sender_pubkey,
+            "receiver_pubkey": receiver_pubkey,
             "mint": mint_url,
             "unit": "sat",
             "capacity": 100,
@@ -245,11 +245,11 @@ class MockClientHost:
             raise RuntimeError(f"No key registered for pubkey: {signer_pubkey_hex}")
         return cdk_spilman.sign_with_tweaked_key_util(secret_hex, message_hex, tweak_scalar_hex)
 
-    def compute_channel_secret(self, alice_pubkey_hex: str, charlie_pubkey_hex: str) -> str:
-        secret_hex = self.keys.get(alice_pubkey_hex)
+    def compute_channel_secret(self, sender_pubkey_hex: str, receiver_pubkey_hex: str) -> str:
+        secret_hex = self.keys.get(sender_pubkey_hex)
         if secret_hex is None:
-            raise RuntimeError(f"No key registered for pubkey: {alice_pubkey_hex}")
-        return cdk_spilman.compute_channel_secret(secret_hex, charlie_pubkey_hex)
+            raise RuntimeError(f"No key registered for pubkey: {sender_pubkey_hex}")
+        return cdk_spilman.compute_channel_secret(secret_hex, receiver_pubkey_hex)
 
 
 class MockServerHost:
@@ -337,8 +337,8 @@ class MockServerHost:
     def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
         raise RuntimeError("not used in this test")
 
-    def compute_channel_secret(self, charlie_pubkey_hex: str, alice_pubkey_hex: str) -> str:
-        return cdk_spilman.compute_channel_secret(self.secret_key_hex, alice_pubkey_hex)
+    def compute_channel_secret(self, receiver_pubkey_hex: str, sender_pubkey_hex: str) -> str:
+        return cdk_spilman.compute_channel_secret(self.secret_key_hex, sender_pubkey_hex)
 
     def sign_with_tweaked_key(self, signer_pubkey_hex: str, message_hex: str, tweak_scalar_hex: str) -> str:
         return cdk_spilman.sign_with_tweaked_key_util(self.secret_key_hex, message_hex, tweak_scalar_hex)
@@ -377,8 +377,8 @@ class TestClientBridge:
         print(f"Using keyset: {keyset_id}")
 
         # Generate Charlie (server/receiver) keypair
-        charlie_secret, charlie_pubkey = cdk_spilman.generate_keypair()
-        print(f"Charlie pubkey: {charlie_pubkey[:16]}...")
+        charlie_secret, receiver_pubkey = cdk_spilman.generate_keypair()
+        print(f"Charlie pubkey: {receiver_pubkey[:16]}...")
 
         # ================================================================
         # Step 1: Mint plain proofs and build cashuA token
@@ -400,19 +400,19 @@ class TestClientBridge:
         # ================================================================
 
         # Generate Alice keypair externally and register with host
-        alice_secret, alice_pubkey = cdk_spilman.generate_keypair()
+        alice_secret, sender_pubkey = cdk_spilman.generate_keypair()
 
         client_host = MockClientHost(mint_url)
-        client_host.register_key(alice_secret, alice_pubkey)
+        client_host.register_key(alice_secret, sender_pubkey)
 
         client_bridge = cdk_spilman.ClientBridge(client_host)
-        print(f"Client bridge created, alice_pubkey: {alice_pubkey[:16]}...")
+        print(f"Client bridge created, sender_pubkey: {sender_pubkey[:16]}...")
 
         expiry_timestamp = int(time.time()) + 7200  # 2 hours
         max_amount = 64
 
         result = client_bridge.open_channel_from_token(
-            token, charlie_pubkey, alice_pubkey, expiry_timestamp, keyset_json, max_amount
+            token, receiver_pubkey, sender_pubkey, expiry_timestamp, keyset_json, max_amount
         )
 
         print(
