@@ -558,7 +558,7 @@ impl ChannelParameters {
             self.derive_stage2_p2bk_ephemeral_secret_for_output(context, amount, index)?;
         let ephemeral_pubkey = ephemeral_secret.public_key();
         let ephemeral_shared_secret_x =
-            SharedSecret::new(role_pubkey, &ephemeral_secret).secret_bytes();
+            Self::derive_nut28_shared_secret_x(role_pubkey, &ephemeral_secret)?;
         let stage2_tweak_scalar =
             Self::derive__nut28_P2KB_shared_secret_scalar(&ephemeral_shared_secret_x, 0x00)?;
 
@@ -601,6 +601,15 @@ impl ChannelParameters {
         }
 
         anyhow::bail!("Failed to derive valid ephemeral secret for output after 256 attempts")
+    }
+
+    /// Derive the raw x-coordinate used by NUT-28 before the KDF step.
+    fn derive_nut28_shared_secret_x(
+        pubkey: &cashu::nuts::PublicKey,
+        secret: &SecretKey,
+    ) -> anyhow::Result<[u8; 32]> {
+        let shared_point = pubkey.mul_tweak(&SECP256K1, &secret.as_scalar())?;
+        Ok(shared_point.x_only_public_key().0.serialize())
     }
 
     /// Derive NUT-28 P2BK scalar from ephemeral shared secret x-coordinate.
@@ -829,6 +838,27 @@ impl ChannelParameters {
             ),
             _ => anyhow::bail!("Unknown context: {}", context),
         }
+    }
+
+    /// Get the deterministic NUT-28 ephemeral pubkey for a stage 1 output.
+    pub(crate) fn get_stage2_p2pk_e_for_stage1_output(
+        &self,
+        context: &str,
+        amount: u64,
+        index: usize,
+    ) -> Result<cashu::nuts::PublicKey, anyhow::Error> {
+        let tweak_info = match context {
+            "receiver" => {
+                self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?
+            }
+            "sender" => {
+                self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?
+            }
+            "funding" => anyhow::bail!("Funding context does not use per-proof NUT-28 metadata"),
+            _ => anyhow::bail!("Unknown context: {}", context),
+        };
+
+        Ok(tweak_info.ephemeral_pubkey)
     }
 
     /// Create a deterministic output with blinding using the channel ID and channel secret
@@ -1239,22 +1269,50 @@ mod tests {
         let sender_info = params
             .derive_stage2_p2bk_tweak_info_for_output("sender_stage2", 64, 0)
             .expect("Failed to derive sender stage2 tweak info");
-        let sender_shared_from_alice =
-            SharedSecret::new(&sender_info.ephemeral_pubkey, &alice_secret).secret_bytes();
+        let sender_shared_from_alice = ChannelParameters::derive_nut28_shared_secret_x(
+            &sender_info.ephemeral_pubkey,
+            &alice_secret,
+        )
+        .expect("Failed to derive sender raw NUT-28 shared secret");
         assert_eq!(
             sender_shared_from_alice, sender_info.ephemeral_shared_secret_x,
             "Alice should derive the same shared secret x for sender_stage2"
         );
+        #[cfg(feature = "wallet")]
+        {
+            let sender_kdf =
+                cashu::nuts::nut28::ecdh_kdf(&alice_secret, &sender_info.ephemeral_pubkey, 0)
+                    .expect("Failed to derive sender NUT-28 scalar");
+            assert_eq!(
+                sender_kdf.secret_bytes(),
+                sender_info.stage2_tweak_scalar.to_be_bytes(),
+                "Alice should derive the same NUT-28 scalar for sender_stage2"
+            );
+        }
 
         let receiver_info = params
             .derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", 64, 0)
             .expect("Failed to derive receiver stage2 tweak info");
-        let receiver_shared_from_charlie =
-            SharedSecret::new(&receiver_info.ephemeral_pubkey, &charlie_secret).secret_bytes();
+        let receiver_shared_from_charlie = ChannelParameters::derive_nut28_shared_secret_x(
+            &receiver_info.ephemeral_pubkey,
+            &charlie_secret,
+        )
+        .expect("Failed to derive receiver raw NUT-28 shared secret");
         assert_eq!(
             receiver_shared_from_charlie, receiver_info.ephemeral_shared_secret_x,
             "Charlie should derive the same shared secret x for receiver_stage2"
         );
+        #[cfg(feature = "wallet")]
+        {
+            let receiver_kdf =
+                cashu::nuts::nut28::ecdh_kdf(&charlie_secret, &receiver_info.ephemeral_pubkey, 0)
+                    .expect("Failed to derive receiver NUT-28 scalar");
+            assert_eq!(
+                receiver_kdf.secret_bytes(),
+                receiver_info.stage2_tweak_scalar.to_be_bytes(),
+                "Charlie should derive the same NUT-28 scalar for receiver_stage2"
+            );
+        }
     }
 
     #[test]

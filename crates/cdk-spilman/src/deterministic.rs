@@ -481,18 +481,27 @@ impl CommitmentOutputs {
         }
 
         // Build result with metadata for each proof
-        let result: Vec<ProofWithMetadata> = all_proofs
+        all_proofs
             .into_iter()
             .zip(all_outputs.iter())
-            .map(|(proof, (output, is_receiver))| ProofWithMetadata {
-                proof,
-                amount: output.amount,
-                index: output.index,
-                is_receiver: *is_receiver,
-            })
-            .collect();
+            .map(|(mut proof, (output, is_receiver))| {
+                let context = if *is_receiver { "receiver" } else { "sender" };
+                proof.p2pk_e = Some(
+                    self.receiver_outputs.params.get_stage2_p2pk_e_for_stage1_output(
+                        context,
+                        output.amount,
+                        output.index,
+                    )?,
+                );
 
-        Ok(result)
+                Ok(ProofWithMetadata {
+                    proof,
+                    amount: output.amount,
+                    index: output.index,
+                    is_receiver: *is_receiver,
+                })
+            })
+            .collect()
     }
 
     /// Restore blind signatures from the mint using NUT-09

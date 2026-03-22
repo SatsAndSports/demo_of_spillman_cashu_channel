@@ -377,9 +377,13 @@ impl SpilmanChannelSender {
                             vec![det_output.secret.clone()],
                             &params.keyset_info.active_keys,
                         )?;
-                        let proof = proofs
+                        let mut proof = proofs
                             .pop()
                             .ok_or_else(|| anyhow::anyhow!("construct_proofs returned no proofs"))?;
+
+                        proof.p2pk_e = Some(
+                            params.get_stage2_p2pk_e_for_stage1_output("sender", amount, index)?,
+                        );
 
                         recovered_proofs.push(proof);
                         index += 1;

@@ -2409,8 +2409,26 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     println!("✓ Full unilateral close retry with real mint PASSED!");
 }
 
-#[tokio::test]
-async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage2ReceiverProofMode {
+    P2pkEOnly,
+    SignatureOnly,
+    SignatureAndP2pkE,
+}
+
+impl Stage2ReceiverProofMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::P2pkEOnly => "p2pk_e only",
+            Self::SignatureOnly => "signature only",
+            Self::SignatureAndP2pkE => "signature and p2pk_e",
+        }
+    }
+}
+
+async fn create_stage2_receiver_proof_fixture(
+    proof_mode: Stage2ReceiverProofMode,
+) -> (Mint, SecretKey, Vec<crate::nuts::Proof>) {
     let test_mint = TestMintHelper::new().await.expect("create test mint");
     let mint = test_mint.mint().clone();
 
@@ -2548,32 +2566,137 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
         .unblind_all(close_response.signatures, &keys)
         .expect("unblind close outputs");
 
-    let mut receiver_proofs = Vec::new();
+    let receiver_proofs: Vec<_> = proofs_with_meta
+        .into_iter()
+        .filter(|p| p.is_receiver)
+        .map(|proof_meta| {
+            let mut proof = proof_meta.proof;
 
-    for proof_meta in proofs_with_meta.into_iter().filter(|p| p.is_receiver) {
-        let signing_key = params
-            .get_receiver_blinded_secret_key_for_stage2_output(
-                &charlie_secret,
-                proof_meta.amount,
-                proof_meta.index,
-            )
-            .expect("stage2 signing key");
-        let mut proof = proof_meta.proof;
-        proof
-            .sign_p2pk(signing_key)
-            .expect("sign stage2 proof");
-        receiver_proofs.push(proof);
+            match proof_mode {
+                Stage2ReceiverProofMode::P2pkEOnly => {
+                    assert!(
+                        proof.p2pk_e.is_some(),
+                        "stage2 proof should include deterministic p2pk_e"
+                    );
+                    assert!(
+                        proof.witness.is_none(),
+                        "stage2 proof should rely on wallet signing, not preattached witness"
+                    );
+                }
+                Stage2ReceiverProofMode::SignatureOnly => {
+                    assert!(
+                        proof.p2pk_e.is_some(),
+                        "stage2 proof should start with deterministic p2pk_e"
+                    );
+                    let signing_key = params
+                        .get_receiver_blinded_secret_key_for_stage2_output(
+                            &charlie_secret,
+                            proof_meta.amount,
+                            proof_meta.index,
+                        )
+                        .expect("stage2 signing key");
+                    proof.p2pk_e = None;
+                    proof.sign_p2pk(signing_key).expect("sign stage2 proof");
+                }
+                Stage2ReceiverProofMode::SignatureAndP2pkE => {
+                    assert!(
+                        proof.p2pk_e.is_some(),
+                        "stage2 proof should include deterministic p2pk_e"
+                    );
+                    let signing_key = params
+                        .get_receiver_blinded_secret_key_for_stage2_output(
+                            &charlie_secret,
+                            proof_meta.amount,
+                            proof_meta.index,
+                        )
+                        .expect("stage2 signing key");
+                    proof.sign_p2pk(signing_key).expect("sign stage2 proof");
+                }
+            }
+
+            proof
+        })
+        .collect();
+
+    (mint, charlie_secret, receiver_proofs)
+}
+
+fn assert_stage2_receiver_proofs_match_mode(
+    receiver_proofs: &[crate::nuts::Proof],
+    proof_mode: Stage2ReceiverProofMode,
+) {
+    assert!(
+        !receiver_proofs.is_empty(),
+        "Receiver should get stage2 proofs for {}",
+        proof_mode.label()
+    );
+
+    for (i, proof) in receiver_proofs.iter().enumerate() {
+        match proof_mode {
+            Stage2ReceiverProofMode::P2pkEOnly => {
+                assert!(
+                    proof.p2pk_e.is_some(),
+                    "receiver proof {} should include p2pk_e for {}",
+                    i,
+                    proof_mode.label()
+                );
+                assert!(
+                    proof.witness.is_none(),
+                    "receiver proof {} should omit witness for {}",
+                    i,
+                    proof_mode.label()
+                );
+            }
+            Stage2ReceiverProofMode::SignatureOnly => {
+                assert!(
+                    proof.p2pk_e.is_none(),
+                    "receiver proof {} should omit p2pk_e for {}",
+                    i,
+                    proof_mode.label()
+                );
+                assert!(
+                    proof.witness.is_some(),
+                    "receiver proof {} should include witness for {}",
+                    i,
+                    proof_mode.label()
+                );
+            }
+            Stage2ReceiverProofMode::SignatureAndP2pkE => {
+                assert!(
+                    proof.p2pk_e.is_some(),
+                    "receiver proof {} should include p2pk_e for {}",
+                    i,
+                    proof_mode.label()
+                );
+                assert!(
+                    proof.witness.is_some(),
+                    "receiver proof {} should include witness for {}",
+                    i,
+                    proof_mode.label()
+                );
+            }
+        }
     }
+}
 
-    assert!(!receiver_proofs.is_empty(), "Receiver should get stage2 proofs");
+async fn assert_wallet_can_receive_and_spend_stage2_receiver_proofs(
+    mint: Mint,
+    receiver_proofs: Vec<crate::nuts::Proof>,
+    receive_options: ReceiveOptions,
+    proof_mode: Stage2ReceiverProofMode,
+) {
+    assert_stage2_receiver_proofs_match_mode(&receiver_proofs, proof_mode);
 
     let receiver_total: u64 = receiver_proofs
         .iter()
         .map(|p| u64::from(p.amount))
         .sum();
-    assert!(receiver_total > 0, "Receiver proofs should have value");
+    assert!(
+        receiver_total > 0,
+        "Receiver proofs should have value for {}",
+        proof_mode.label()
+    );
 
-    // Wallet receive: attach P2PK signatures and store proofs
     let connector = DirectMintConnection::new(mint.clone());
     let store = Arc::new(memory::empty().await.expect("wallet store"));
     let seed = random::<[u8; 64]>();
@@ -2587,26 +2710,76 @@ async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
         .expect("wallet build");
 
     let received_amount = wallet
-        .receive_proofs(
-            receiver_proofs.clone(),
-            ReceiveOptions::default(),
-            None,
-            None,
-        )
+        .receive_proofs(receiver_proofs, receive_options, None, None)
         .await
         .expect("wallet receive");
 
-    assert!(received_amount > Amount::ZERO, "Wallet should receive value");
+    assert!(
+        received_amount > Amount::ZERO,
+        "Wallet should receive value for {}",
+        proof_mode.label()
+    );
 
-    // Spend via wallet (online swap)
     let send_amount = Amount::from(1u64);
-    assert!(received_amount >= send_amount, "Received amount too small");
+    assert!(
+        received_amount >= send_amount,
+        "Received amount too small for {}",
+        proof_mode.label()
+    );
 
     let prepared = wallet
         .prepare_send(send_amount, SendOptions::default())
         .await
         .expect("prepare send");
     let _token = prepared.confirm(None).await.expect("confirm send");
+}
+
+#[tokio::test]
+async fn test_stage2_receiver_can_sign_and_spend_with_wallet() {
+    let proof_mode = Stage2ReceiverProofMode::P2pkEOnly;
+    let (mint, charlie_secret, receiver_proofs) =
+        create_stage2_receiver_proof_fixture(proof_mode).await;
+
+    assert_wallet_can_receive_and_spend_stage2_receiver_proofs(
+        mint,
+        receiver_proofs,
+        ReceiveOptions {
+            p2pk_signing_keys: vec![charlie_secret],
+            ..Default::default()
+        },
+        proof_mode,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_stage2_receiver_signature_only_can_spend_with_wallet() {
+    let proof_mode = Stage2ReceiverProofMode::SignatureOnly;
+    let (mint, _charlie_secret, receiver_proofs) =
+        create_stage2_receiver_proof_fixture(proof_mode).await;
+
+    assert_wallet_can_receive_and_spend_stage2_receiver_proofs(
+        mint,
+        receiver_proofs,
+        ReceiveOptions::default(),
+        proof_mode,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_stage2_receiver_signature_and_p2pk_e_can_spend_with_wallet() {
+    let proof_mode = Stage2ReceiverProofMode::SignatureAndP2pkE;
+    let (mint, _charlie_secret, receiver_proofs) =
+        create_stage2_receiver_proof_fixture(proof_mode).await;
+
+    assert_wallet_can_receive_and_spend_stage2_receiver_proofs(
+        mint,
+        receiver_proofs,
+        ReceiveOptions::default(),
+        proof_mode,
+    )
+    .await;
 }
 
 // ========================================================================
@@ -2850,11 +3023,23 @@ mod close_balance_tests {
             .expect("receiver proofs should be valid JSON");
         assert!(!receiver_proofs.is_empty(), "Receiver should get proofs");
         for (i, proof) in receiver_proofs.iter().enumerate() {
+            let p2pk_e = proof.get("p2pk_e");
+            assert!(
+                p2pk_e.is_some() && !p2pk_e.unwrap().is_null(),
+                "Receiver proof {} should include deterministic p2pk_e metadata",
+                i
+            );
             let witness = proof.get("witness");
-            assert!(witness.is_some() && !witness.unwrap().is_null(),
-                "Receiver proof {} should have P2PK witness signature", i);
+            assert!(
+                witness.is_some() && !witness.unwrap().is_null(),
+                "Receiver proof {} should have P2PK witness signature",
+                i
+            );
         }
-        println!("✓ All {} receiver proofs have P2PK witness signatures", receiver_proofs.len());
+        println!(
+            "✓ All {} receiver proofs have p2pk_e metadata and P2PK witness signatures",
+            receiver_proofs.len()
+        );
 
         // Verify receiver proofs are spendable via wallet.receive_proofs()
         let typed_receiver_proofs: Vec<cdk_common::nuts::Proof> = serde_json::from_str(receiver_proofs_json)

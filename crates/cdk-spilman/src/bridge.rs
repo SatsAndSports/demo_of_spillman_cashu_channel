@@ -601,7 +601,14 @@ pub fn unblind_and_verify_stage1_response(
     let mut receiver_sum = 0;
     let mut sender_sum = 0;
 
-    for ((proof, is_receiver), (amount, index)) in proofs.into_iter().zip(is_receiver_flags).zip(amount_index_pairs) {
+    for ((mut proof, is_receiver), (amount, index)) in proofs.into_iter().zip(is_receiver_flags).zip(amount_index_pairs) {
+        let context = if is_receiver { "receiver" } else { "sender" };
+        proof.p2pk_e = Some(
+            params
+                .get_stage2_p2pk_e_for_stage1_output(context, amount, index)
+                .map_err(|e| BridgeError::Internal(e.to_string()))?,
+        );
+
         if is_receiver {
             let expected_pubkey = params.get_receiver_blinded_pubkey_for_stage2_output(amount, index).map_err(|e| BridgeError::Internal(e.to_string()))?;
             let secret_json: serde_json::Value = serde_json::from_str(&proof.secret.to_string()).map_err(|e| BridgeError::Internal(e.to_string()))?;
