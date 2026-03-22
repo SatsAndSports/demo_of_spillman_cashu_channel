@@ -27,7 +27,7 @@ type MyHost struct {
 
 func main() {
     host := &MyHost{}
-    bridge := spilman.NewBridge(host, serverSecretKeyHex)
+    bridge := spilman.NewBridge(host)
     defer bridge.Free()
 
     // Process a payment
@@ -44,13 +44,13 @@ func main() {
 import "github.com/cashubtc/cdk/crates/cdk-spilman-go/spilman"
 
 // Derive `_channel secret_` with receiver
-channelSecret, _ := spilman.ComputeChannelSecret(aliceSecret, charliePubkey)
+channelSecret, _ := spilman.ComputeChannelSecret(senderSecret, receiverPubkey)
 
 // Create funding outputs for minting
-funding, _ := spilman.CreateFundingOutputs(paramsJson, aliceSecret, keysetJson)
+funding, _ := spilman.CreateFundingOutputs(paramsJson, senderSecret, keysetJson)
 
 // Create signed payment
-signature, _ := spilman.CreateSignedBalanceUpdate(paramsJson, keysetJson, aliceSecret, proofsJson, balance)
+signature, _ := spilman.CreateSignedBalanceUpdate(paramsJson, keysetJson, senderSecret, proofsJson, balance)
 ```
 
 ## API Reference
@@ -60,7 +60,6 @@ signature, _ := spilman.CreateSignedBalanceUpdate(paramsJson, keysetJson, aliceS
 - `ComputeChannelSecret(secret, pubkey)` - Derive `_channel secret_`
 - `CreateFundingOutputs(params, secret, keyset)` - Create blinded outputs for funding
 - `CreateSignedBalanceUpdate(...)` - Sign a payment
-- `VerifyChannel(params, proofs, keyset)` - Validate channel funding
 
 ### Bridge Methods
 - `ProcessPayment(payment, context)`

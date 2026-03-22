@@ -77,7 +77,7 @@ pub trait SpilmanClientHost {
     /// negate the secret key before adding the tweak.
     ///
     /// For hosts that hold raw secret keys, the convenience function
-    /// `crate::spilman::bindings::sign_with_tweaked_key_util()` provides
+    /// `crate::bindings::sign_with_tweaked_key_util()` provides
     /// a standard implementation.
     ///
     /// # Arguments
@@ -102,7 +102,7 @@ pub trait SpilmanClientHost {
     ///   SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(sender_secret, receiver_pubkey))
     ///
     /// For hosts that hold raw secret keys, the convenience function
-    /// `crate::spilman::bindings::compute_channel_secret_from_hex()` provides
+    /// `crate::bindings::compute_channel_secret_from_hex()` provides
     /// a standard implementation.
     ///
     /// # Arguments
@@ -125,9 +125,13 @@ pub trait SpilmanClientHost {
 /// Result of opening a new channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenChannelResult {
+    /// Stable identifier for the newly opened channel.
     pub channel_id: String,
+    /// Maximum final value the receiver can claim from the channel.
     pub capacity: u64,
+    /// Nominal funding token amount required to support `capacity`.
     pub funding_token_amount: u64,
+    /// Mint URL associated with the channel's funding proofs.
     pub mint_url: String,
     /// Sender public key used for this channel.
     /// The caller passes this to `open_channel_from_token` and gets it back
@@ -138,10 +142,15 @@ pub struct OpenChannelResult {
 /// Information about a stored channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientChannelInfo {
+    /// Stable identifier for the stored channel.
     pub channel_id: String,
+    /// Maximum final value the receiver can claim from the channel.
     pub capacity: u64,
+    /// Nominal funding token amount backing the channel.
     pub funding_token_amount: u64,
+    /// Mint URL associated with the channel.
     pub mint_url: String,
+    /// Serialized channel parameters used to reconstruct the channel state.
     pub params_json: String,
 }
 
@@ -186,6 +195,7 @@ struct StoredChannel {
 /// The bridge itself is stateless — all channel state is stored via the host.
 /// The bridge never holds or sees Alice's secret key; all operations requiring
 /// the key are delegated to the host via callbacks.
+#[derive(Debug)]
 pub struct SpilmanClientBridge<H: SpilmanClientHost> {
     host: H,
 }

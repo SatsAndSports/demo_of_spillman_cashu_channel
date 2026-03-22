@@ -150,7 +150,7 @@ mod channel_status {
 
 mod channel_register {
     use super::*;
-    use cdk::spilman::create_signed_balance_update;
+    use cdk_spilman::create_signed_balance_update;
 
     #[tokio::test]
     async fn registers_channel_with_balance_zero() -> Result<()> {
@@ -317,8 +317,8 @@ mod minting {
 
 mod verification {
     use super::*;
-    use cdk::spilman::{verify_valid_channel, ChannelParameters, parse_keyset_info_from_json};
-    use cdk::util::hex;
+    use cashu::util::hex;
+    use cdk_spilman::{verify_valid_channel, ChannelParameters, parse_keyset_info_from_json};
 
     #[tokio::test]
     async fn detects_tampered_keyset_keys() -> Result<()> {
@@ -377,7 +377,7 @@ mod verification {
             let last_char = e_hex.chars().last().unwrap();
             let new_char = if last_char == 'a' { 'b' } else { 'a' };
             let new_e_hex = format!("{}{}", &e_hex[..e_hex.len()-1], new_char);
-            dleq.e = cdk::nuts::SecretKey::from_hex(&new_e_hex)?;
+            dleq.e = cashu::nuts::SecretKey::from_hex(&new_e_hex)?;
         }
 
         // Build params
@@ -429,7 +429,7 @@ mod verification {
             let last_char = e_hex.chars().last().unwrap();
             let new_char = if last_char == 'a' { 'b' } else { 'a' };
             let new_e_hex = format!("{}{}", &e_hex[..e_hex.len()-1], new_char);
-            dleq.e = cdk::nuts::SecretKey::from_hex(&new_e_hex)?;
+            dleq.e = cashu::nuts::SecretKey::from_hex(&new_e_hex)?;
         }
 
         let params = ChannelParameters::from_json_with_channel_secret(
@@ -619,7 +619,7 @@ mod payment {
 
 mod validation {
     use super::*;
-    use cdk::spilman::create_signed_balance_update;
+    use cdk_spilman::create_signed_balance_update;
 
     #[tokio::test]
     async fn returns_402_when_signature_does_not_match_balance() -> Result<()> {

@@ -8,14 +8,14 @@ use super::{
     DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, SpilmanChannelSender,
 };
 #[cfg(feature = "wallet")]
-use crate::dhke::construct_proofs as dhke_construct_proofs;
+use cashu::dhke::construct_proofs as dhke_construct_proofs;
 #[cfg(feature = "wallet")]
-use crate::nuts::{BlindSignature, BlindSignatureDleq};
-use crate::nuts::{CurrencyUnit, Id, Keys, Proof, PublicKey, SecretKey, SwapRequest, Token};
+use cashu::nuts::{BlindSignature, BlindSignatureDleq};
+use cashu::nuts::{CurrencyUnit, Id, Keys, Proof, PublicKey, SecretKey, SwapRequest, Token};
 #[cfg(feature = "wallet")]
-use crate::secret::Secret;
-use crate::util::{hex, unix_time};
-use crate::Amount;
+use cashu::secret::Secret;
+use cashu::util::{hex, unix_time};
+use cashu::Amount;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -175,15 +175,15 @@ pub fn create_plain_blinded_messages(
     amount_sat: u64,
     keyset_info_json: &str,
 ) -> Result<String, String> {
-    use cdk_common::amount::SplitTarget;
-    use cdk_common::nuts::PreMintSecrets;
+    use cashu::amount::SplitTarget;
+    use cashu::nuts::PreMintSecrets;
 
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
 
     // amounts must be ascending (smallest first) for FeeAndAmounts::split() to work correctly
     let mut amounts_asc = keyset_info.amounts_largest_first.clone();
     amounts_asc.reverse();
-    let fee_and_amounts: cdk_common::amount::FeeAndAmounts =
+    let fee_and_amounts: cashu::amount::FeeAndAmounts =
         (keyset_info.input_fee_ppk, amounts_asc).into();
 
     let premint_secrets = PreMintSecrets::random(
@@ -497,7 +497,7 @@ pub fn compute_channel_from_token(
 
     // Parse proofs using keyset info
     // We need to create a KeySetInfo (nut02) for the token's proofs() method
-    let nut02_keyset_info = crate::nuts::KeySetInfo {
+    let nut02_keyset_info = cashu::nuts::KeySetInfo {
         id: keyset_info.keyset_id,
         unit: unit.clone(),
         active: true,
@@ -868,8 +868,8 @@ pub fn complete_funding_swap(
 /// # Returns
 /// A cashuA token string (e.g. "cashuAeyJ0b2...")
 pub fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> Result<String, String> {
-    use crate::mint_url::MintUrl;
-    use crate::nuts::nut00::TokenV3;
+    use cashu::mint_url::MintUrl;
+    use cashu::nuts::nut00::TokenV3;
 
     let proofs: Vec<Proof> =
         serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
@@ -899,7 +899,7 @@ pub fn build_cashu_b_token(
     unit: &str,
     proofs_json: &str,
 ) -> Result<String, String> {
-    use crate::mint_url::MintUrl;
+    use cashu::mint_url::MintUrl;
 
     let proofs: Vec<Proof> =
         serde_json::from_str(proofs_json).map_err(|e| format!("Failed to parse proofs: {}", e))?;
@@ -1113,7 +1113,7 @@ pub fn create_unsigned_balance_update(
     proofs_json: &str,
     balance: u64,
 ) -> Result<String, String> {
-    use crate::nuts::nut10::SpendingConditionVerification;
+    use cashu::nuts::nut10::SpendingConditionVerification;
 
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
     let channel_secret_bytes = hex::decode(channel_secret_hex)

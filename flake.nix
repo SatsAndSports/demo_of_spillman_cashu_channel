@@ -406,34 +406,32 @@
 
         # Strict docs check - build docs with warnings as errors
         # Uses mkCargoDerivation for custom RUSTDOCFLAGS
-        strictDocs = craneLib.mkCargoDerivation (
-          commonCraneArgs
-          // {
-            pname = "cdk-strict-docs";
-            cargoArtifacts = workspaceDeps;
-            buildPhaseCargoCommand = ''
-              export RUSTDOCFLAGS="-D warnings"
-              cargo doc --no-deps \
-                -p cashu \
-                -p cdk-common \
-                -p cdk-sql-common \
-                -p cdk \
-                -p cdk-redb \
-                -p cdk-sqlite \
-                -p cdk-axum \
-                -p cdk-cln \
-                -p cdk-lnd \
-                -p cdk-lnbits \
-                -p cdk-fake-wallet \
-                -p cdk-mint-rpc \
-                -p cdk-payment-processor \
-                -p cdk-signatory \
-                -p cdk-cli \
-                -p cdk-mintd
-            '';
-            installPhaseCommand = "mkdir -p $out";
-          }
-        );
+        strictDocs = craneLib.mkCargoDerivation (commonCraneArgs // {
+          pname = "cdk-strict-docs";
+          cargoArtifacts = workspaceDeps;
+          buildPhaseCargoCommand = ''
+            export RUSTDOCFLAGS="-D warnings"
+            cargo doc --no-deps \
+              -p cashu \
+              -p cdk-common \
+              -p cdk-spilman \
+              -p cdk-sql-common \
+              -p cdk \
+              -p cdk-redb \
+              -p cdk-sqlite \
+              -p cdk-axum \
+              -p cdk-cln \
+              -p cdk-lnd \
+              -p cdk-lnbits \
+              -p cdk-fake-wallet \
+              -p cdk-mint-rpc \
+              -p cdk-payment-processor \
+              -p cdk-signatory \
+              -p cdk-cli \
+              -p cdk-mintd
+          '';
+          installPhaseCommand = "mkdir -p $out";
+        });
 
         # FFI Python tests
         ffiTests = craneLib.mkCargoDerivation (
@@ -492,6 +490,14 @@
           "cdk-common-no-default" = "-p cdk-common --no-default-features";
           "cdk-common-wallet" = "-p cdk-common --no-default-features --features wallet";
           "cdk-common-mint" = "-p cdk-common --no-default-features --features mint";
+
+          # Spilman crate
+          "cdk-spilman" = "-p cdk-spilman";
+          "cdk-spilman-no-default" = "-p cdk-spilman --no-default-features";
+          "cdk-spilman-wallet" = "-p cdk-spilman --no-default-features --features wallet";
+          "cdk-spilman-configurable-host" = "-p cdk-spilman --no-default-features --features configurable-host";
+          "cdk-spilman-configurable-host-reqwest" = "-p cdk-spilman --no-default-features --features configurable-host-reqwest";
+          "cdk-spilman-axum" = "-p cdk-spilman --no-default-features --features spilman-axum";
 
           # Core crate: cdk
           "cdk" = "-p cdk";

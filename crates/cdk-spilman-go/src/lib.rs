@@ -6,8 +6,8 @@
 // FFI functions have uniform safety requirements: callers must pass valid pointers
 #![allow(clippy::missing_safety_doc)]
 
-use cdk::nuts::SecretKey;
-use cdk::spilman::{
+use cashu::nuts::SecretKey;
+use cdk_spilman::{
     self, BridgeError, BridgeErrorResponse, ChannelFunding, ChannelPolicy, ChannelState,
     ClosingData, PaymentProof, SpilmanBridge, SpilmanClientBridge, SpilmanClientHost, SpilmanHost,
     SpilmanNetworking,
@@ -174,12 +174,12 @@ unsafe impl Send for CGoSpilmanHost {}
 unsafe impl Sync for CGoSpilmanHost {}
 
 impl SpilmanHost<String> for CGoSpilmanHost {
-    fn receiver_key_is_acceptable(&self, receiver_pubkey: &cdk::nuts::PublicKey) -> bool {
+    fn receiver_key_is_acceptable(&self, receiver_pubkey: &cashu::nuts::PublicKey) -> bool {
         let hex = CString::new(receiver_pubkey.to_hex()).unwrap();
         (self.callbacks.receiver_key_is_acceptable)(self.callbacks.user_data, hex.as_ptr()) != 0
     }
 
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &cdk::nuts::Id) -> bool {
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &cashu::nuts::Id) -> bool {
         let mint_c = CString::new(mint).unwrap();
         let kid_c = CString::new(keyset_id.to_string()).unwrap();
         (self.callbacks.mint_and_keyset_is_acceptable)(
@@ -390,8 +390,8 @@ impl SpilmanHost<String> for CGoSpilmanHost {
     fn get_active_keyset_ids(
         &self,
         mint: &str,
-        unit: &cdk::nuts::CurrencyUnit,
-    ) -> Vec<cdk::nuts::Id> {
+        unit: &cashu::nuts::CurrencyUnit,
+    ) -> Vec<cashu::nuts::Id> {
         let mint_c = CString::new(mint).unwrap();
         let unit_str = unit.to_string();
         let unit_c = CString::new(unit_str).unwrap();
@@ -411,7 +411,7 @@ impl SpilmanHost<String> for CGoSpilmanHost {
         }
     }
 
-    fn get_keyset_info(&self, mint: &str, keyset_id: &cdk::nuts::Id) -> Option<String> {
+    fn get_keyset_info(&self, mint: &str, keyset_id: &cashu::nuts::Id) -> Option<String> {
         let mint_c = CString::new(mint).unwrap();
         let kid_c = CString::new(keyset_id.to_string()).unwrap();
 
@@ -742,7 +742,7 @@ pub unsafe extern "C" fn spilman_create_signed_balance_update(
     let s = CStr::from_ptr(secret_hex).to_str().unwrap();
     let pr = CStr::from_ptr(proofs_json).to_str().unwrap();
 
-    match spilman::create_signed_balance_update(p, k, s, pr, balance) {
+    match cdk_spilman::create_signed_balance_update(p, k, s, pr, balance) {
         Ok(res) => CResult::success(res),
         Err(e) => CResult::error(e),
     }
@@ -790,7 +790,7 @@ pub unsafe extern "C" fn spilman_compute_channel_secret(
     let my_sk = CStr::from_ptr(my_secret_hex).to_str().unwrap();
     let their_pk = CStr::from_ptr(their_pubkey_hex).to_str().unwrap();
 
-    match spilman::compute_channel_secret_from_hex(my_sk, their_pk) {
+    match cdk_spilman::compute_channel_secret_from_hex(my_sk, their_pk) {
         Ok(s) => CResult::success(s),
         Err(e) => CResult::error(e.to_string()),
     }
@@ -804,7 +804,7 @@ pub unsafe extern "C" fn spilman_compute_funding_token_amount(
 ) -> CResult {
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match spilman::compute_funding_token_amount(capacity, k, maximum_amount) {
+    match cdk_spilman::compute_funding_token_amount(capacity, k, maximum_amount) {
         Ok(amount) => CResult::success(amount.to_string()),
         Err(e) => CResult::error(e),
     }
@@ -820,7 +820,7 @@ pub unsafe extern "C" fn spilman_channel_parameters_get_channel_id(
     let s = CStr::from_ptr(channel_secret_hex).to_str().unwrap();
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match spilman::channel_parameters_get_channel_id(p, s, k) {
+    match cdk_spilman::channel_parameters_get_channel_id(p, s, k) {
         Ok(id) => CResult::success(id),
         Err(e) => CResult::error(e),
     }
@@ -833,7 +833,7 @@ pub unsafe extern "C" fn spilman_create_plain_blinded_messages(
 ) -> CResult {
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match spilman::create_plain_blinded_messages(amount_sat, k) {
+    match cdk_spilman::create_plain_blinded_messages(amount_sat, k) {
         Ok(json) => CResult::success(json),
         Err(e) => CResult::error(e),
     }
@@ -849,7 +849,7 @@ pub unsafe extern "C" fn spilman_create_funding_outputs(
     let s = CStr::from_ptr(alice_secret_hex).to_str().unwrap();
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match spilman::create_funding_outputs(p, s, k) {
+    match cdk_spilman::create_funding_outputs(p, s, k) {
         Ok(json) => CResult::success(json),
         Err(e) => CResult::error(e),
     }
@@ -865,7 +865,7 @@ pub unsafe extern "C" fn spilman_construct_proofs(
     let secrets = CStr::from_ptr(secrets_with_blinding_json).to_str().unwrap();
     let k = CStr::from_ptr(keyset_info_json).to_str().unwrap();
 
-    match spilman::construct_proofs(sigs, secrets, k) {
+    match cdk_spilman::construct_proofs(sigs, secrets, k) {
         Ok(json) => CResult::success(json),
         Err(e) => CResult::error(e),
     }
@@ -879,7 +879,7 @@ pub unsafe extern "C" fn spilman_build_cashu_a_token(
     let m = CStr::from_ptr(mint_url).to_str().unwrap();
     let p = CStr::from_ptr(proofs_json).to_str().unwrap();
 
-    match spilman::build_cashu_a_token(m, p) {
+    match cdk_spilman::build_cashu_a_token(m, p) {
         Ok(token) => CResult::success(token),
         Err(e) => CResult::error(e),
     }
@@ -935,7 +935,7 @@ pub unsafe extern "C" fn spilman_mint_proofs_from_mint(
         Ok(response)
     };
 
-    match spilman::mint_proofs_from_mint(m, amount_sat, k, &http_fn) {
+    match cdk_spilman::mint_proofs_from_mint(m, amount_sat, k, &http_fn) {
         Ok(json) => CResult::success(json),
         Err(e) => CResult::error(e),
     }
@@ -1022,7 +1022,7 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
         );
     }
 
-    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
+    fn get_channel(&self, channel_id: &str) -> Option<cdk_spilman::ChannelData> {
         let id_c = CString::new(channel_id).unwrap();
         let ptr = (self.callbacks.get_channel)(self.callbacks.user_data, id_c.as_ptr());
         if ptr.is_null() {
@@ -1031,7 +1031,7 @@ impl SpilmanClientHost for CGoSpilmanClientHost {
         unsafe {
             let json_str = CString::from_raw(ptr).into_string().unwrap();
             let v: serde_json::Value = serde_json::from_str(&json_str).ok()?;
-            Some(cdk::spilman::ChannelData {
+            Some(cdk_spilman::ChannelData {
                 channel_json: v["channel_json"].as_str()?.to_string(),
                 channel_secret_hex: v["channel_secret_hex"].as_str()?.to_string(),
             })
@@ -1279,7 +1279,7 @@ pub unsafe extern "C" fn spilman_sign_with_tweaked_key_util(
     let msg = CStr::from_ptr(message_hex).to_str().unwrap();
     let tweak = CStr::from_ptr(tweak_scalar_hex).to_str().unwrap();
 
-    match cdk::spilman::sign_with_tweaked_key_util(secret, msg, tweak) {
+    match cdk_spilman::sign_with_tweaked_key_util(secret, msg, tweak) {
         Ok(sig) => CResult::success(sig),
         Err(e) => CResult::error(e),
     }

@@ -61,8 +61,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{CurrencyUnit, Id, PublicKey, SecretKey};
-use crate::spilman::{
+use cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey};
+use crate::{
     ChannelFunding, ChannelId, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanHost,
 };
 
@@ -156,8 +156,11 @@ pub type UsageMap = HashMap<String, u64>;
 /// Cached mint keyset metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeysetCacheEntry {
+    /// Serialized `KeysetInfo` JSON for this cached mint keyset.
     pub info_json: String,
+    /// Whether the mint reports this keyset as active.
     pub active: bool,
+    /// Currency unit associated with the keyset.
     pub unit: CurrencyUnit,
 }
 
@@ -245,6 +248,12 @@ pub struct MemoryStorage {
     closing: RwLock<HashMap<ChannelId, ClosingData>>,
     closed: RwLock<HashMap<ChannelId, ClosedDataView>>,
     keysets: RwLock<HashMap<(String, Id), KeysetCacheEntry>>,
+}
+
+impl std::fmt::Debug for MemoryStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryStorage").finish_non_exhaustive()
+    }
 }
 
 impl MemoryStorage {
@@ -460,6 +469,12 @@ pub struct SqliteStorage {
     /// Write-once cache: funding data is never updated or deleted, so cache
     /// entries are populated lazily on first access and never invalidated.
     funding_cache: std::sync::Mutex<HashMap<String, ChannelFunding>>,
+}
+
+impl std::fmt::Debug for SqliteStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqliteStorage").finish_non_exhaustive()
+    }
 }
 
 impl SqliteStorage {
@@ -885,6 +900,15 @@ pub struct ConfigurableHost {
     storage: Arc<dyn SpilmanStorage>,
 }
 
+impl std::fmt::Debug for ConfigurableHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfigurableHost")
+            .field("config", &self.config)
+            .field("server_pubkey", &self.server_pubkey)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConfigurableHost {
     /// Create a new host from an already-parsed config and a hex-encoded
     /// secret key.  The storage backend is determined by `config.storage`:
@@ -1126,12 +1150,19 @@ impl ConfigurableHost {
 /// Public view of closed channel data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedDataView {
+    /// Expiry timestamp for the channel commitment.
     pub expiry_timestamp: u64,
+    /// Final balance that was closed out of the channel.
     pub closed_amount: u64,
+    /// Total value remaining after stage 1 fee handling.
     pub value_after_stage1: u64,
+    /// Sum of proofs paid to the receiver.
     pub receiver_sum: u64,
+    /// Sum of proofs returned to the sender.
     pub sender_sum: u64,
+    /// Serialized receiver proofs JSON from the completed close.
     pub receiver_proofs_json: String,
+    /// Serialized sender proofs JSON from the completed close.
     pub sender_proofs_json: String,
 }
 

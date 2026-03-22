@@ -12,10 +12,10 @@ use axum::{
 use base64::Engine;
 use serde::Deserialize;
 
-use cdk::spilman::axum::{configurable_management_router, SpilmanState};
-use cdk::spilman::configurable_host::ConfigurableHost;
-use cdk::spilman::configurable_networking::ReqwestNetworking;
-use cdk::spilman::{ClosePreparationError, SpilmanBridge};
+use cdk_spilman::axum::{configurable_management_router, SpilmanState};
+use cdk_spilman::configurable_host::ConfigurableHost;
+use cdk_spilman::configurable_networking::ReqwestNetworking;
+use cdk_spilman::{ClosePreparationError, SpilmanBridge};
 
 // ============================================================================
 // Application State

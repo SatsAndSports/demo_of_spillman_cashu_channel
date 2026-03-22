@@ -6,13 +6,11 @@
 
 use serde::Serialize;
 
-use crate::nuts::{Proof, PublicKey, RestoreRequest, SecretKey, SwapRequest};
-use crate::Amount;
+use cashu::nuts::{Proof, PublicKey, RestoreRequest, SecretKey, SwapRequest};
+use cashu::Amount;
 
 use super::balance_update::BalanceUpdateMessage;
-use super::deterministic::{
-    CommitmentOutputs, DeterministicOutputsForOneContext, MintConnection,
-};
+use super::deterministic::{CommitmentOutputs, DeterministicOutputsForOneContext, MintConnection};
 use super::established_channel::EstablishedChannel;
 use super::params::ChannelParameters;
 
@@ -103,7 +101,7 @@ pub fn verify_valid_channel(
     funding_proofs: &[Proof],
     params: &ChannelParameters,
 ) -> ChannelVerificationResult {
-    use crate::nuts::Id;
+    use cashu::nuts::Id;
 
     let mut errors = Vec::new();
 
@@ -111,10 +109,10 @@ pub fn verify_valid_channel(
     // This prevents an attacker from providing fake keys while claiming a legitimate keyset ID
     let expected_keyset_id = params.keyset_info.keyset_id;
     let computed_keyset_id = match expected_keyset_id.get_version() {
-        crate::nuts::nut02::KeySetVersion::Version00 => {
+        cashu::nuts::nut02::KeySetVersion::Version00 => {
             Id::v1_from_keys(&params.keyset_info.active_keys)
         }
-        crate::nuts::nut02::KeySetVersion::Version01 => Id::v2_from_data(
+        cashu::nuts::nut02::KeySetVersion::Version01 => Id::v2_from_data(
             &params.keyset_info.active_keys,
             &params.keyset_info.unit,
             params.keyset_info.input_fee_ppk,
@@ -202,7 +200,11 @@ pub fn verify_valid_channel(
             actual: funding_proofs.len(),
         });
     } else {
-        for (i, (proof, expected)) in funding_proofs.iter().zip(expected_outputs.iter()).enumerate() {
+        for (i, (proof, expected)) in funding_proofs
+            .iter()
+            .zip(expected_outputs.iter())
+            .enumerate()
+        {
             if proof.secret != expected.secret {
                 errors.push(ChannelVerificationError::SecretMismatch {
                     proof_index: i,
@@ -235,6 +237,7 @@ pub fn verify_valid_channel(
 ///
 /// This struct holds Alice's secret key and the established channel state.
 /// It provides high-level methods for Alice's operations.
+#[derive(Debug)]
 pub struct SpilmanChannelSender {
     /// Alice's secret key for signing
     pub alice_secret: SecretKey,
@@ -312,7 +315,7 @@ impl SpilmanChannelSender {
     /// recover Alice's proofs by iterating over all possible (amount, index) pairs.
     ///
     /// The algorithm:
-    /// - For each amount in the keyset (ascending, filtered by max_amount):
+    /// - For each amount in the keyset (ascending, filtered by max_amount unless max_amount == 0):
     ///   - For index starting at 0:
     ///     - Try to restore the deterministic output for ("sender", amount, index)
     ///     - If restore fails (no signature), break to next amount
@@ -327,13 +330,14 @@ impl SpilmanChannelSender {
         let keyset_id = params.keyset_info.keyset_id;
         let max_amount = params.maximum_amount_for_one_output;
 
-        // Get amounts in ascending order (smallest first)
+        // Get amounts in ascending order (smallest first).
+        // A max_amount of 0 means "no limit", so we must not filter in that case.
         let mut amounts: Vec<u64> = params
             .keyset_info
             .amounts_largest_first
             .iter()
             .copied()
-            .filter(|&amt| amt <= max_amount)
+            .filter(|&amt| max_amount == 0 || amt <= max_amount)
             .collect();
         amounts.reverse(); // Now smallest first
 
@@ -361,22 +365,21 @@ impl SpilmanChannelSender {
                 match restore_response {
                     Ok(response) if !response.signatures.is_empty() => {
                         // Success! Unblind the signature to get the proof
-                        // SAFETY: We just checked !is_empty() so next() will succeed
                         let blind_signature = response
                             .signatures
                             .into_iter()
                             .next()
-                            .expect("signatures is non-empty");
+                            .ok_or_else(|| anyhow::anyhow!("mint restore response had no signatures"))?;
 
-                        let proof = crate::dhke::construct_proofs(
+                        let mut proofs = cashu::dhke::construct_proofs(
                             vec![blind_signature],
                             vec![det_output.blinding_factor.clone()],
                             vec![det_output.secret.clone()],
                             &params.keyset_info.active_keys,
-                        )?
-                        .into_iter()
-                        .next()
-                        .expect("construct_proofs returns same count as input");
+                        )?;
+                        let proof = proofs
+                            .pop()
+                            .ok_or_else(|| anyhow::anyhow!("construct_proofs returned no proofs"))?;
 
                         recovered_proofs.push(proof);
                         index += 1;
@@ -395,3 +398,122 @@ impl SpilmanChannelSender {
 
 // SpilmanChannelReceiver has been removed.
 // Server-side signing is now delegated to the SpilmanHost via sign_with_tweaked_key().
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use cashu::nuts::{CheckStateResponse, CurrencyUnit, RestoreResponse, SwapResponse};
+    use crate::params::mock_keyset_info;
+
+    struct RecordingMintConnection {
+        attempted_amounts: Mutex<Vec<u64>>,
+    }
+
+    impl RecordingMintConnection {
+        fn new() -> Self {
+            Self {
+                attempted_amounts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn attempted_amounts(&self) -> Vec<u64> {
+            self.attempted_amounts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl MintConnection for RecordingMintConnection {
+        async fn process_swap(
+            &self,
+            _request: cashu::nuts::SwapRequest,
+        ) -> anyhow::Result<SwapResponse> {
+            unreachable!("process_swap is not used in these tests")
+        }
+
+        async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<RestoreResponse> {
+            let amount = request
+                .outputs
+                .first()
+                .map(|output| u64::from(output.amount))
+                .expect("restore request should contain one output");
+            self.attempted_amounts.lock().unwrap().push(amount);
+
+            Ok(RestoreResponse {
+                outputs: request.outputs,
+                signatures: vec![],
+            })
+        }
+
+        async fn check_state(
+            &self,
+            _ys: Vec<cashu::nuts::PublicKey>,
+        ) -> anyhow::Result<CheckStateResponse> {
+            unreachable!("check_state is not used in these tests")
+        }
+    }
+
+    fn create_test_sender(maximum_amount_for_one_output: u64) -> SpilmanChannelSender {
+        let alice_secret = SecretKey::generate();
+        let sender_pubkey = alice_secret.public_key();
+
+        let charlie_secret = SecretKey::generate();
+        let receiver_pubkey = charlie_secret.public_key();
+
+        let keyset_info = mock_keyset_info(vec![1, 2, 4, 8], 0);
+        let capacity = 8;
+        let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+            capacity,
+            &keyset_info,
+            maximum_amount_for_one_output,
+        )
+        .unwrap();
+
+        let params = ChannelParameters::new_with_secret_key(
+            sender_pubkey,
+            receiver_pubkey,
+            "local".to_string(),
+            CurrencyUnit::Sat,
+            capacity,
+            funding_token_amount,
+            0,
+            0,
+            keyset_info,
+            maximum_amount_for_one_output,
+            &alice_secret,
+        )
+        .unwrap();
+
+        let channel = EstablishedChannel {
+            params,
+            funding_proofs: vec![],
+        };
+
+        SpilmanChannelSender::new(alice_secret, channel)
+    }
+
+    #[tokio::test]
+    async fn test_restore_sender_proofs_max_amount_zero_means_no_filtering() {
+        let sender = create_test_sender(0);
+        let mint = RecordingMintConnection::new();
+
+        let proofs = sender.restore_sender_proofs(&mint).await.unwrap();
+
+        assert!(proofs.is_empty(), "mock restore returns no proofs");
+        assert_eq!(mint.attempted_amounts(), vec![1, 2, 4, 8]);
+    }
+
+    #[tokio::test]
+    async fn test_restore_sender_proofs_respects_nonzero_max_amount() {
+        let sender = create_test_sender(4);
+        let mint = RecordingMintConnection::new();
+
+        let proofs = sender.restore_sender_proofs(&mint).await.unwrap();
+
+        assert!(proofs.is_empty(), "mock restore returns no proofs");
+        assert_eq!(mint.attempted_amounts(), vec![1, 2, 4]);
+    }
+}

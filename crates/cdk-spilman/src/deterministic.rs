@@ -9,11 +9,11 @@
 
 use async_trait::async_trait;
 
-use crate::dhke::blind_message;
-use crate::nuts::nut11::{Conditions, SigFlag};
-use crate::nuts::{BlindSignature, BlindedMessage, Id, RestoreRequest, SecretKey};
-use crate::secret::Secret;
-use crate::Amount;
+use cashu::dhke::blind_message;
+use cashu::nuts::nut11::{Conditions, SigFlag};
+use cashu::nuts::{BlindSignature, BlindedMessage, Id, RestoreRequest, SecretKey};
+use cashu::secret::Secret;
+use cashu::Amount;
 
 use super::keysets_and_amounts::OrderedListOfAmounts;
 use super::params::ChannelParameters;
@@ -24,18 +24,18 @@ pub trait MintConnection: Send + Sync {
     /// Process a swap request
     async fn process_swap(
         &self,
-        request: crate::nuts::SwapRequest,
-    ) -> anyhow::Result<crate::nuts::SwapResponse>;
+        request: cashu::nuts::SwapRequest,
+    ) -> anyhow::Result<cashu::nuts::SwapResponse>;
     /// Post a restore request
     async fn post_restore(
         &self,
         request: RestoreRequest,
-    ) -> anyhow::Result<crate::nuts::RestoreResponse>;
+    ) -> anyhow::Result<cashu::nuts::RestoreResponse>;
     /// Check proof state
     async fn check_state(
         &self,
-        ys: Vec<crate::nuts::PublicKey>,
-    ) -> anyhow::Result<crate::nuts::CheckStateResponse>;
+        ys: Vec<cashu::nuts::PublicKey>,
+    ) -> anyhow::Result<cashu::nuts::CheckStateResponse>;
 }
 
 /// Deterministic secret with blinding factor
@@ -56,7 +56,7 @@ impl DeterministicSecretWithBlinding {
     /// Create a simple P2PK output (1-of-1 signature)
     /// Used for commitment outputs (sender or receiver)
     pub fn new_p2pk(
-        pubkey: &crate::nuts::PublicKey,
+        pubkey: &cashu::nuts::PublicKey,
         nonce: String,
         blinding_factor: SecretKey,
         amount: u64,
@@ -275,7 +275,7 @@ pub struct CommitmentOutputs {
 #[derive(Debug, Clone)]
 pub struct ProofWithMetadata {
     /// The unblinded proof
-    pub proof: crate::nuts::Proof,
+    pub proof: cashu::nuts::Proof,
     /// The nominal amount of this proof
     pub amount: u64,
     /// The index within proofs of the same amount (for per-proof blinding)
@@ -371,9 +371,9 @@ impl CommitmentOutputs {
     /// The swap request is unsigned and needs to be signed by the sender (Alice) before sending
     pub fn create_swap_request(
         &self,
-        funding_proofs: Vec<crate::nuts::Proof>,
+        funding_proofs: Vec<cashu::nuts::Proof>,
         override_keyset_id: Option<Id>,
-    ) -> Result<crate::nuts::SwapRequest, anyhow::Error> {
+    ) -> Result<cashu::nuts::SwapRequest, anyhow::Error> {
         // Get blinded messages for receiver (Charlie)
         let mut outputs = self
             .receiver_outputs
@@ -391,7 +391,7 @@ impl CommitmentOutputs {
         outputs.sort_by_key(|bm| u64::from(bm.amount));
 
         // Create swap request with all funding proofs as inputs
-        Ok(crate::nuts::SwapRequest::new(funding_proofs, outputs))
+        Ok(cashu::nuts::SwapRequest::new(funding_proofs, outputs))
     }
 
     /// Unblind all outputs from a swap response
@@ -404,7 +404,7 @@ impl CommitmentOutputs {
     pub fn unblind_all(
         &self,
         blind_signatures: Vec<BlindSignature>,
-        active_keys: &crate::nuts::Keys,
+        active_keys: &cashu::nuts::Keys,
     ) -> Result<Vec<ProofWithMetadata>, anyhow::Error> {
         // Assert the number of signatures matches the expected number of outputs
         let expected_count =
@@ -434,8 +434,13 @@ impl CommitmentOutputs {
         // then Alice). For a given amount and partner, they are ordered by 'index'
         all_outputs.sort_by_key(|(output, _)| output.amount);
 
-        // Assert all_outputs has the correct length
-        assert_eq!(all_outputs.len(), blind_signatures.len());
+        if all_outputs.len() != blind_signatures.len() {
+            anyhow::bail!(
+                "Internal mismatch: derived {} outputs for {} blind signatures",
+                all_outputs.len(),
+                blind_signatures.len()
+            );
+        }
 
         // Extract secrets and blinding factors in sorted order
         let sorted_secrets: Vec<_> = all_outputs.iter().map(|(o, _)| o.secret.clone()).collect();
@@ -444,20 +449,36 @@ impl CommitmentOutputs {
             .map(|(o, _)| o.blinding_factor.clone())
             .collect();
 
-        // Assert sorted vectors have the correct length
-        assert_eq!(sorted_secrets.len(), blind_signatures.len());
-        assert_eq!(sorted_blinding.len(), blind_signatures.len());
+        if sorted_secrets.len() != blind_signatures.len() {
+            anyhow::bail!(
+                "Internal mismatch: derived {} secrets for {} blind signatures",
+                sorted_secrets.len(),
+                blind_signatures.len()
+            );
+        }
+        if sorted_blinding.len() != blind_signatures.len() {
+            anyhow::bail!(
+                "Internal mismatch: derived {} blinding factors for {} blind signatures",
+                sorted_blinding.len(),
+                blind_signatures.len()
+            );
+        }
 
         // Unblind all proofs in sorted order
-        let all_proofs = crate::dhke::construct_proofs(
+        let all_proofs = cashu::dhke::construct_proofs(
             blind_signatures,
             sorted_blinding,
             sorted_secrets,
             active_keys,
         )?;
 
-        // Assert result has the correct length
-        assert_eq!(all_proofs.len(), all_outputs.len());
+        if all_proofs.len() != all_outputs.len() {
+            anyhow::bail!(
+                "Internal mismatch: unblinded {} proofs for {} outputs",
+                all_proofs.len(),
+                all_outputs.len()
+            );
+        }
 
         // Build result with metadata for each proof
         let result: Vec<ProofWithMetadata> = all_proofs
@@ -530,9 +551,11 @@ impl CommitmentOutputs {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::super::keysets_and_amounts::KeysetInfo;
     use super::*;
-    use crate::nuts::{CurrencyUnit, Id, Keys};
+    use cashu::nuts::{CurrencyUnit, Id, Keys};
 
     fn create_test_params(input_fee_ppk: u64, power: u64) -> ChannelParameters {
         // Create a simple keyset with powers of the given base for testing
@@ -819,5 +842,172 @@ mod tests {
             "data and refund pubkeys should use different tweaks"
         );
         println!("✓ data and refund pubkeys are distinct (different tweaks)");
+    }
+
+    #[test]
+    fn test_funding_outputs_are_ascending_by_amount() {
+        // Funding outputs should be in ascending order of amount per NUT-03 recommendation.
+        // Use powers-of-2 keyset so e.g. 1000 = 512 + 256 + 128 + 64 + 32 + 8
+        let future_expiry = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let params = create_test_params_with_expiry(0, 2, future_expiry);
+        let funding_outputs = DeterministicOutputsForOneContext::new(
+            "funding".to_string(),
+            params.funding_token_amount,
+            params.clone(),
+        )
+        .expect("funding outputs");
+
+        let blinded_messages = funding_outputs
+            .get_blinded_messages(None)
+            .expect("get_blinded_messages");
+
+        assert!(
+            blinded_messages.len() > 1,
+            "need multiple outputs to test ordering"
+        );
+
+        let amounts: Vec<u64> = blinded_messages
+            .iter()
+            .map(|bm| u64::from(bm.amount))
+            .collect();
+
+        for i in 1..amounts.len() {
+            assert!(
+                amounts[i] >= amounts[i - 1],
+                "funding outputs not in ascending order: {:?}",
+                amounts
+            );
+        }
+        println!("✓ funding outputs are ascending: {:?}", amounts);
+    }
+
+    #[test]
+    fn test_commitment_outputs_are_ascending_receiver_before_sender() {
+        // Commitment swap outputs should be ascending by amount,
+        // with receiver (Charlie) before sender (Alice) for same amounts.
+        // Use powers-of-10 keyset to get repeated amounts (e.g. five 100-sat outputs).
+        let params = create_test_params(0, 10);
+        let balance = params.capacity / 2; // split roughly evenly
+
+        let commitment =
+            CommitmentOutputs::for_balance(balance, &params).expect("commitment outputs");
+
+        // We need dummy funding proofs to call create_swap_request.
+        // Build them from the funding outputs structure.
+        let funding = DeterministicOutputsForOneContext::new(
+            "funding".to_string(),
+            params.funding_token_amount,
+            params.clone(),
+        )
+        .expect("funding outputs");
+
+        // Create minimal dummy proofs with correct amounts
+        let dummy_proofs: Vec<cashu::nuts::Proof> = funding
+            .ordered_amounts
+            .iter_smallest_first()
+            .flat_map(|(&amount, &count)| {
+                (0..count).map(move |_| cashu::nuts::Proof {
+                    amount: Amount::from(amount),
+                    keyset_id: params.keyset_info.keyset_id,
+                    secret: Secret::new("dummy".to_string()),
+                    c: cashu::nuts::PublicKey::from_str(
+                        "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+                    )
+                    .unwrap(),
+                    witness: None,
+                    dleq: None,
+                    p2pk_e: None,
+                })
+            })
+            .collect();
+
+        let swap_request = commitment
+            .create_swap_request(dummy_proofs, None)
+            .expect("create_swap_request");
+
+        let outputs = swap_request.outputs();
+        let output_amounts: Vec<u64> = outputs
+            .iter()
+            .map(|bm| u64::from(bm.amount))
+            .collect();
+
+        // 1. Verify ascending order
+        for i in 1..output_amounts.len() {
+            assert!(
+                output_amounts[i] >= output_amounts[i - 1],
+                "commitment outputs not in ascending order: {:?}",
+                output_amounts
+            );
+        }
+        println!("✓ commitment outputs are ascending: {:?}", output_amounts);
+
+        // 2. Verify receiver comes before sender for same amounts.
+        // We can check this by getting each party's blinded messages separately
+        // and confirming the interleaved order matches: for each amount group,
+        // receiver outputs appear first.
+        let receiver_msgs = commitment
+            .receiver_outputs
+            .get_blinded_messages(None)
+            .expect("receiver msgs");
+        let sender_msgs = commitment
+            .sender_outputs
+            .get_blinded_messages(None)
+            .expect("sender msgs");
+
+        // Build a set of B_ values (blinded points) for each party
+        let receiver_b_set: std::collections::HashSet<String> = receiver_msgs
+            .iter()
+            .map(|bm| format!("{:?}", bm.blinded_secret))
+            .collect();
+        let sender_b_set: std::collections::HashSet<String> = sender_msgs
+            .iter()
+            .map(|bm| format!("{:?}", bm.blinded_secret))
+            .collect();
+
+        // Walk through the combined outputs grouped by amount.
+        // Within each amount group, all receiver outputs should precede all sender outputs.
+        let mut i = 0;
+        while i < outputs.len() {
+            let current_amount = u64::from(outputs[i].amount);
+            let group_start = i;
+
+            // Collect the group of outputs with this amount
+            while i < outputs.len()
+                && u64::from(outputs[i].amount) == current_amount
+            {
+                i += 1;
+            }
+
+            // Within this group, check that all receiver outputs come before sender outputs
+            let mut seen_sender = false;
+            for j in group_start..i {
+                let b_key = format!("{:?}", outputs[j].blinded_secret);
+                let is_receiver = receiver_b_set.contains(&b_key);
+                let is_sender = sender_b_set.contains(&b_key);
+
+                if is_receiver {
+                    assert!(
+                        !seen_sender,
+                        "receiver output at position {} follows a sender output for amount {}",
+                        j, current_amount
+                    );
+                }
+                if is_sender {
+                    seen_sender = true;
+                }
+
+                // At least one should match (unless the amount only belongs to one party)
+                assert!(
+                    is_receiver || is_sender,
+                    "output at position {} doesn't match receiver or sender for amount {}",
+                    j, current_amount
+                );
+            }
+        }
+        println!("✓ receiver outputs precede sender outputs within each amount group");
     }
 }

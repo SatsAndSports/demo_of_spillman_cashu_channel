@@ -4,13 +4,14 @@ This guide covers setting up the development environment for Spilman payment cha
 
 ## Quick Start
 
-```bash
-# Clone the repo
-git clone https://github.com/cashubtc/cdk.git
-cd cdk
+From the repository root:
 
-# Run the Spilman-specific tests
-cargo test -p cdk spilman
+```bash
+# Run the standalone Spilman crate tests
+cargo test -p cdk-spilman --features configurable-host
+
+# Run compatibility-facade coverage for `cdk::spilman`
+cargo test -p cdk --features configurable-host spilman
 ```
 
 ## Native Development (Recommended for Pi)
@@ -169,7 +170,10 @@ make test-server-ts    # Builds WASM and copies to integration-kits/ts/wasm
 # Spilman unit tests + Rust server integration
 make test-rust-only
 
-# Comprehensive Spilman tests (includes configurable-host and SQLite)
+# Standalone Spilman crate tests (includes configurable-host and SQLite)
+cargo test -p cdk-spilman --features configurable-host
+
+# Compatibility facade coverage for older `cdk::spilman` imports
 cargo test -p cdk --features configurable-host spilman
 ```
 
@@ -209,7 +213,8 @@ make test-server-all
 ```
 cdk/
 ├── crates/
-│   ├── cdk/src/spilman/                      # Core implementation
+│   ├── cdk-spilman/                          # Core Rust implementation
+│   ├── cdk/                                  # Temporary Rust compatibility facade
 │   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
 │   ├── cdk-wasm/                             # WASM bindings (JS/TS)
 │   ├── cdk-spilman-python/                   # Python bindings

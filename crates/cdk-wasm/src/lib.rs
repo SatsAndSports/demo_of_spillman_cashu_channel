@@ -2,11 +2,12 @@
 
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
 use async_trait::async_trait;
 
-use cdk::nuts::{Id, PublicKey, SecretKey, Proof, CurrencyUnit};
-use cdk::spilman::{
+use cashu::nuts::{CurrencyUnit, Id, Proof, PublicKey, SecretKey};
+use cdk_spilman::{
     compute_funding_token_amount as rust_compute_funding_token_amount,
     BalanceUpdateMessage, BridgeError, BridgeErrorResponse, ChannelFunding, ChannelParameters,
     ChannelPolicy, ChannelState, ClosingData, EstablishedChannel, PaymentProof,
@@ -14,7 +15,7 @@ use cdk::spilman::{
     SpilmanClientBridge as RustSpilmanClientBridge, SpilmanClientHost as RustSpilmanClientHost,
     SpilmanHost,
 };
-use cdk::util::hex;
+use cashu::util::hex;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -242,11 +243,11 @@ impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
     fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
         self.js_host.save_channel(channel_id, channel_json, channel_secret_hex);
     }
-    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
+    fn get_channel(&self, channel_id: &str) -> Option<cdk_spilman::ChannelData> {
         let val = self.js_host.get_channel(channel_id);
         if val.is_null() || val.is_undefined() { return None; }
         let arr = js_sys::Array::from(&val);
-        Some(cdk::spilman::ChannelData { channel_json: arr.get(0).as_string()?, channel_secret_hex: arr.get(1).as_string()? })
+        Some(cdk_spilman::ChannelData { channel_json: arr.get(0).as_string()?, channel_secret_hex: arr.get(1).as_string()? })
     }
     fn list_channel_ids(&self) -> Vec<String> {
         js_sys::Array::from(&self.js_host.list_channel_ids()).iter().filter_map(|v| v.as_string()).collect()
@@ -380,15 +381,15 @@ impl WasmSpilmanClientBridge {
 
 #[wasm_bindgen]
 pub fn compute_channel_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> Result<String, JsValue> {
-    cdk::spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn sign_with_tweaked_key(secret_key_hex: &str, message_hex: &str, tweak_scalar_hex: &str) -> Result<String, JsValue> {
-    cdk::spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn channel_parameters_get_channel_id(params_json: &str, channel_secret_hex: &str, keyset_info_json: &str) -> Result<String, JsValue> {
-    cdk::spilman::channel_parameters_get_channel_id(params_json, channel_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::channel_parameters_get_channel_id(params_json, channel_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn compute_funding_token_amount(capacity: u64, keyset_info_json: &str, maximum_amount: u64) -> Result<u64, JsValue> {
@@ -401,33 +402,33 @@ pub fn compute_funding_token_nominal(capacity: u64, keyset_info_json: &str, maxi
 }
 #[wasm_bindgen]
 pub fn create_funding_outputs(params_json: &str, my_secret_hex: &str, keyset_info_json: &str) -> Result<String, JsValue> {
-    cdk::spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn construct_proofs(sigs_json: &str, swb_json: &str, keyset_json: &str) -> Result<String, JsValue> {
-    cdk::spilman::construct_proofs(sigs_json, swb_json, keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))
+    cdk_spilman::construct_proofs(sigs_json, swb_json, keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn get_sender_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
     let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let p = ChannelParameters::from_json_with_secret_key(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &s).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let p = ChannelParameters::from_json_with_secret_key(params_json, cdk_spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &s).map_err(|e| JsValue::from_str(&e.to_string()))?;
     p.get_sender_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn get_receiver_blinded_secret_key_for_stage2_output(params_json: &str, keyset_json: &str, secret_hex: &str, channel_secret_hex: &str, amount: u64, index: u32) -> Result<String, JsValue> {
     let s = SecretKey::from_hex(secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let cs: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
-    let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let p = ChannelParameters::from_json_with_channel_secret(params_json, cdk_spilman::parse_keyset_info_from_json(keyset_json).map_err(|e| JsValue::from_str(&e.to_string()))?, cs).map_err(|e| JsValue::from_str(&e.to_string()))?;
     p.get_receiver_blinded_secret_key_for_stage2_output(&s, amount, index as usize).map(|k| k.to_secret_hex()).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn spilman_channel_sender_create_signed_balance_update(params_json: &str, keyset_info_json: &str, alice_secret_hex: &str, funding_proofs_json: &str, charlie_balance: u64) -> Result<String, JsValue> {
-    cdk::spilman::create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, funding_proofs_json, charlie_balance).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::create_signed_balance_update(params_json, keyset_info_json, alice_secret_hex, funding_proofs_json, charlie_balance).map_err(|e| JsValue::from_str(&e))
 }
 #[wasm_bindgen]
 pub fn verify_balance_update_signature(params_json: &str, channel_secret_hex: &str, funding_proofs_json: &str, keyset_info_json: &str, channel_id: &str, balance: u64, signature: &str) -> Result<bool, JsValue> {
     let secret: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
-    let params = cdk::spilman::ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let params = cdk_spilman::ChannelParameters::from_json_with_channel_secret(params_json, cdk_spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let channel = EstablishedChannel::new(params, serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?).map_err(|e| JsValue::from_str(&e.to_string()))?;
     BalanceUpdateMessage { channel_id: channel_id.to_string(), amount: balance, signature: signature.parse().map_err(|e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| JsValue::from_str(&e.to_string()))? }.verify_sender_signature(&channel).map(|_| true).map_err(|e| JsValue::from_str(&e.to_string()))
 }
@@ -439,11 +440,11 @@ pub fn verify_proof_dleq(proof_json: &str, mint_pubkey_hex: &str) -> Result<bool
 #[wasm_bindgen]
 pub fn verify_channel(params_json: &str, channel_secret_hex: &str, funding_proofs_json: &str, keyset_info_json: &str) -> Result<String, JsValue> {
     let secret: [u8; 32] = hex::decode(channel_secret_hex).map_err(|e| JsValue::from_str(&e.to_string()))?.try_into().map_err(|_| JsValue::from_str("Invalid secret"))?;
-    let params = ChannelParameters::from_json_with_channel_secret(params_json, cdk::spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let result = cdk::spilman::verify_valid_channel(&serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &params);
+    let params = ChannelParameters::from_json_with_channel_secret(params_json, cdk_spilman::parse_keyset_info_from_json(keyset_info_json).map_err(|e| JsValue::from_str(&e.to_string()))?, secret).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let result = cdk_spilman::verify_valid_channel(&serde_json::from_str::<Vec<Proof>>(funding_proofs_json).map_err(|e| JsValue::from_str(&e.to_string()))?, &params);
     serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 #[wasm_bindgen]
 pub fn build_cashu_b_token(mint_url: &str, unit: &str, proofs_json: &str) -> Result<String, JsValue> {
-    cdk::spilman::build_cashu_b_token(mint_url, unit, proofs_json).map_err(|e| JsValue::from_str(&e))
+    cdk_spilman::build_cashu_b_token(mint_url, unit, proofs_json).map_err(|e| JsValue::from_str(&e))
 }

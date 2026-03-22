@@ -2,8 +2,8 @@
 //!
 //! Represents a signed balance update in a Spilman payment channel
 
-use crate::nuts::nut10::SpendingConditionVerification;
-use crate::nuts::SwapRequest;
+use cashu::nuts::nut10::SpendingConditionVerification;
+use cashu::nuts::SwapRequest;
 use bitcoin::secp256k1::schnorr::Signature;
 
 use super::deterministic::CommitmentOutputs;
@@ -19,7 +19,7 @@ pub fn get_signatures_from_swap_request(
         .ok_or_else(|| anyhow::anyhow!("No inputs in swap request"))?;
 
     let signatures =
-        if let Some(crate::nuts::Witness::P2PKWitness(p2pk_witness)) = &first_proof.witness {
+        if let Some(cashu::nuts::Witness::P2PKWitness(p2pk_witness)) = &first_proof.witness {
             // Parse all signature strings into Signature objects
             p2pk_witness
                 .signatures

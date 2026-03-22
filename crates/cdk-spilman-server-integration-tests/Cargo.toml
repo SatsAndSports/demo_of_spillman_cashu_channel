@@ -15,8 +15,8 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dependencies]
-cdk = { workspace = true, features = ["mint", "wallet"] }
-cdk-common = { workspace = true }
+cashu = { workspace = true }
+cdk-spilman = { workspace = true, features = ["wallet"] }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["full", "process"] }
 serde = { workspace = true }

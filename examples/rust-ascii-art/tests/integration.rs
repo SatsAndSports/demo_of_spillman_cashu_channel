@@ -7,8 +7,8 @@
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cdk::nuts::SecretKey;
-use cdk::spilman::{
+use cashu::nuts::SecretKey;
+use cdk_spilman::{
     channel_parameters_get_channel_id, compute_channel_secret_from_hex,
     compute_funding_token_amount, create_funding_outputs,
 };

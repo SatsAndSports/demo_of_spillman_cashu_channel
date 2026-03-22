@@ -24,7 +24,7 @@ Spilman channels enable **streaming micropayments** between a client (payer) and
 
 ### Path 1: Rust (Standard)
 
-The easiest way to build a Rust server is using `ConfigurableHost` and the library-provided Axum router.
+The Rust server implementation lives in the `cdk-spilman` crate. The easiest way to build a Rust server is using `ConfigurableHost` and the library-provided Axum router.
 
 1.  **Define Pricing**: Create a `config.yaml` file (see schema in [ARCHITECTURE.md](ARCHITECTURE.md)).
 2.  **Setup Host & Bridge**:
@@ -44,19 +44,24 @@ Use the [TypeScript Integration Kit](integration-kits/ts/) for Express applicati
 
 1.  **Setup Kit**:
     ```typescript
-    const config = loadSpilmanConfig("config.yaml");
-    const stores = createSqliteStores("spilman.db");
-    const host = createSpilmanHost(config, stores);
-    const bridge = new SpilmanBridge(host);
+    const sp = await ConfigurableSpilman.fromYaml("config.yaml", secretKeyHex);
     ```
 2.  **Use Management Router**:
     ```typescript
-    app.use("/channel", createSpilmanManagementRouter({ host, bridge, ... }));
+    app.use("/channel", sp.router);
     ```
 
-### Path 3: Custom Implementation
+### Path 3: Python
 
-If you are using Python, Go, or a custom stack, you must implement the `SpilmanHost` interface defined in `ARCHITECTURE.md`.
+Use the [Python Integration Kit](integration-kits/python/) for Flask or FastAPI applications. See `examples/python-ascii-art/` for a working demo.
+
+### Path 4: Go
+
+Use the [Go Integration Kit](integration-kits/go/) for Go HTTP servers. See `examples/go-ascii-art/` for a working demo.
+
+### Path 5: Custom Implementation
+
+For other stacks, implement the `SpilmanHost` interface defined in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 *   **Policy**: Implement hooks to check if mints, keysets, and pubkeys are acceptable.
 *   **Pricing**: Implement `get_amount_due` based on your service's usage metrics.
@@ -133,7 +138,7 @@ let payment = bridge.process_payment_via_json(payment_json, "{}")?;
 // ... do work ...
 
 // Record actual usage
-host.record_payment(channel_id, balance, &signature, &serde_json::to_string(&increments)?);
+host.record_payment(channel_id, PaymentProof { balance, signature }, &serde_json::to_string(&increments)?);
 ```
 
 **Behavior**: The first call validates that the payment covers **prior** accumulated
@@ -162,6 +167,7 @@ will be rejected until topped up.
 | **CashuTube** | `web/blossom-server/` (TypeScript streaming server) |
 | **ASCII Art** | `examples/rust-ascii-art/` (Standard Rust server) |
 | **Python Demo** | `examples/python-ascii-art/` |
+| **TypeScript Demo** | `examples/ts-ascii-art/` (TypeScript/Node.js server) |
 | **Go Demo** | `examples/go-ascii-art/` |
 
 ---

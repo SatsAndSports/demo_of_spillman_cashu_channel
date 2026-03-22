@@ -14,8 +14,8 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use cdk::nuts::{Proof, SecretKey};
-use cdk::spilman::{
+use cashu::nuts::{Proof, SecretKey};
+use cdk_spilman::{
     channel_parameters_get_channel_id, compute_funding_token_amount,
     compute_channel_secret_from_hex, construct_proofs, create_funding_outputs,
     create_signed_balance_update, parse_keyset_info_from_json, KeysetInfo,
@@ -708,4 +708,3 @@ pub fn now_seconds() -> u64 {
         .unwrap()
         .as_secs()
 }
-

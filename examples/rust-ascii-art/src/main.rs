@@ -19,9 +19,9 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use cdk::spilman::configurable_host::ConfigurableHost;
-use cdk::spilman::configurable_networking::ReqwestNetworking;
-use cdk::spilman::SpilmanBridge;
+use cdk_spilman::configurable_host::ConfigurableHost;
+use cdk_spilman::configurable_networking::ReqwestNetworking;
+use cdk_spilman::SpilmanBridge;
 
 use routes::{create_router, AppStateInner};
 

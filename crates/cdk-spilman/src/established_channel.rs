@@ -2,7 +2,7 @@
 //!
 //! Contains the complete channel state after funding
 
-use crate::nuts::Proof;
+use cashu::nuts::Proof;
 
 use super::deterministic::MintConnection;
 use super::params::ChannelParameters;
@@ -69,7 +69,7 @@ impl EstablishedChannel {
     /// This returns the Y value of the first funding proof for use with NUT-07 state checks.
     fn get_one_funding_token_y_for_state_check(
         &self,
-    ) -> Result<crate::nuts::PublicKey, anyhow::Error> {
+    ) -> Result<cashu::nuts::PublicKey, anyhow::Error> {
         let proof = self
             .funding_proofs
             .first()
@@ -87,7 +87,7 @@ impl EstablishedChannel {
     pub async fn check_funding_token_state<M>(
         &self,
         mint_connection: &M,
-    ) -> Result<crate::nuts::ProofState, anyhow::Error>
+    ) -> Result<cashu::nuts::ProofState, anyhow::Error>
     where
         M: MintConnection + ?Sized,
     {

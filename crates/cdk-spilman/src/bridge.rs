@@ -12,9 +12,9 @@ use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
     DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo,
 };
-use crate::nuts::nut10::SpendingConditionVerification;
-use crate::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SwapRequest};
-use crate::util::hex;
+use cashu::nuts::nut10::SpendingConditionVerification;
+use cashu::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SwapRequest};
+use cashu::util::hex;
 use async_trait::async_trait;
 use std::str::FromStr;
 
@@ -71,7 +71,7 @@ pub trait SpilmanHost<C = String> {
     fn receiver_key_is_acceptable(&self, receiver_pubkey: &PublicKey) -> bool;
 
     /// Check if the mint and keyset are acceptable
-    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &crate::nuts::Id) -> bool;
+    fn mint_and_keyset_is_acceptable(&self, mint: &str, keyset_id: &cashu::nuts::Id) -> bool;
 
     /// Get cached funding data for a channel
     fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding>;
@@ -173,6 +173,7 @@ pub trait SpilmanAsyncNetworking {
 }
 
 /// Bridge for processing Spilman payments
+#[derive(Debug)]
 pub struct SpilmanBridge<H: SpilmanHost<C>, C = String> {
     host: H,
     _phantom: std::marker::PhantomData<C>,
@@ -587,7 +588,7 @@ pub fn unblind_and_verify_stage1_response(
         amount_index_pairs.push((swb.amount, swb.index));
     }
 
-    let proofs = crate::dhke::construct_proofs(blind_signatures, blinding_factors, secrets, &output_keyset_info.active_keys)
+    let proofs = cashu::dhke::construct_proofs(blind_signatures, blinding_factors, secrets, &output_keyset_info.active_keys)
         .map_err(|e| BridgeError::Internal(format!("Failed to construct proofs: {}", e)))?;
 
     for (i, proof) in proofs.iter().enumerate() {
@@ -820,8 +821,10 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let capacity = params_val["capacity"].as_u64().ok_or(BridgeError::InvalidRequest("Missing capacity".into()))?;
         let expiry_timestamp = params_val["expiry_timestamp"].as_u64().ok_or(BridgeError::InvalidRequest("Missing expiry_timestamp".into()))?;
         let maximum_amount = params_val["maximum_amount"].as_u64().ok_or(BridgeError::InvalidRequest("Missing maximum_amount".into()))?;
-        let receiver_pubkey = PublicKey::from_hex(params_val["receiver_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing receiver_pubkey".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
+        let receiver_pubkey_hex = params_val["receiver_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing receiver_pubkey".into()))?;
+        let receiver_pubkey = PublicKey::from_hex(receiver_pubkey_hex).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
         if !self.host.receiver_key_is_acceptable(&receiver_pubkey) { return Err(BridgeError::ReceiverKeyNotAcceptable); }
+        let sender_pubkey_hex = params_val["sender_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing sender_pubkey".into()))?;
         let keyset_id = Id::from_str(params_val["keyset_id"].as_str().ok_or(BridgeError::InvalidRequest("Missing keyset_id".into()))?).map_err(|e| BridgeError::InvalidRequest(e.to_string()))?;
         let mint = params_val["mint"].as_str().ok_or(BridgeError::InvalidRequest("Missing mint".into()))?;
         if !self.host.mint_and_keyset_is_acceptable(mint, &keyset_id) { return Err(BridgeError::MintOrKeysetNotAcceptable); }
@@ -832,18 +835,24 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let now = self.host.now_seconds();
         if expiry_timestamp < now + policy.min_expiry_in_seconds { return Err(BridgeError::ExpiryTooSoon { expiry_timestamp, min_expiry: now + policy.min_expiry_in_seconds, now }); }
         if balance > capacity { return Err(BridgeError::BalanceExceedsCapacity { balance, capacity }); }
-        let channel_secret_hex = self.host.compute_channel_secret(params_val["receiver_pubkey"].as_str().unwrap(), params_val["sender_pubkey"].as_str().ok_or(BridgeError::InvalidRequest("Missing sender_pubkey".into()))?).map_err(BridgeError::ServerMisconfigured)?;
+        let channel_secret_hex = self.host.compute_channel_secret(receiver_pubkey_hex, sender_pubkey_hex).map_err(BridgeError::ServerMisconfigured)?;
         let channel_secret: [u8; 32] = hex::decode(&channel_secret_hex).map_err(|e| BridgeError::Internal(e.to_string()))?.try_into().map_err(|_| BridgeError::Internal("Invalid secret length".into()))?;
         let params = ChannelParameters::from_json_with_channel_secret(&params_val.to_string(), super::parse_keyset_info_from_json(&keyset_info_json).map_err(BridgeError::InvalidRequest)?, channel_secret).map_err(|e| BridgeError::Internal(e.to_string()))?;
         if params.get_channel_id() != channel_id { return Err(BridgeError::ChannelIdMismatch); }
         let verif = verify_valid_channel(proofs, &params);
-        if !verif.valid { return Err(BridgeError::ValidationFailed(serde_json::to_string(&verif.errors).unwrap())); }
-        self.verify_signature(&params_val.to_string(), &serde_json::to_string(proofs).unwrap(), &channel_secret_hex, &keyset_info_json, channel_id, balance, signature).map_err(BridgeError::InvalidSignature)?;
-        let funding = ChannelFunding { params_json: params_val.to_string(), funding_proofs_json: serde_json::to_string(proofs).unwrap(), channel_secret_hex, keyset_info_json };
+        if !verif.valid {
+            let errors_json = serde_json::to_string(&verif.errors)
+                .unwrap_or_else(|_| "[]".to_string());
+            return Err(BridgeError::ValidationFailed(errors_json));
+        }
+        let proofs_json = serde_json::to_string(proofs).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        self.verify_signature(&params_val.to_string(), &proofs_json, &channel_secret_hex, &keyset_info_json, channel_id, balance, signature).map_err(BridgeError::InvalidSignature)?;
+        let funding = ChannelFunding { params_json: params_val.to_string(), funding_proofs_json: proofs_json, channel_secret_hex, keyset_info_json };
         self.host.save_funding(channel_id, funding.clone(), PaymentProof { balance, signature: signature.to_string() });
         Ok(funding)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_signature(&self, params_json: &str, proofs_json: &str, secret_hex: &str, keyset_json: &str, channel_id: &str, balance: u64, signature: &str) -> Result<(), String> {
         let secret: [u8; 32] = hex::decode(secret_hex).map_err(|e| e.to_string())?.try_into().map_err(|_| "Invalid secret length")?;
         let params = ChannelParameters::from_json_with_channel_secret(params_json, super::parse_keyset_info_from_json(keyset_json).map_err(|e| e.to_string())?, secret).map_err(|e| e.to_string())?;
@@ -932,8 +941,8 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
 
     fn finalize_close(&self, channel_id: &str, expiry_timestamp: u64, payment: PaymentProof, resp_json: &str, prep: &PreparedClose) -> Result<CloseSuccess, CloseError> {
         use super::parse_keyset_info_from_json;
-        use crate::nuts::SecretKey;
-        use crate::secret::Secret;
+        use cashu::nuts::SecretKey;
+        use cashu::secret::Secret;
         use bitcoin::hashes::{sha256::Hash as Sha256Hash, Hash};
 
         let resp: serde_json::Value = serde_json::from_str(resp_json).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
@@ -974,7 +983,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
             let msg_hex = hex::encode(msg_hash.as_byte_array());
             let sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &msg_hex, &tweak_hex)
                 .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to sign receiver proof: {}", e), status: 500 })?;
-            proof.witness = Some(crate::nuts::Witness::P2PKWitness(crate::nuts::P2PKWitness { signatures: vec![sig] }));
+            proof.witness = Some(cashu::nuts::Witness::P2PKWitness(cashu::nuts::P2PKWitness { signatures: vec![sig] }));
             signed_receiver_proofs.push(proof);
         }
 
@@ -1062,7 +1071,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nuts::{Id, PublicKey, SecretKey};
+    use cashu::nuts::{Id, PublicKey, SecretKey};
     struct MockHost { ra: bool, ma: bool }
     impl SpilmanHost<String> for MockHost {
         fn receiver_key_is_acceptable(&self, _: &PublicKey) -> bool { self.ra }

@@ -9,17 +9,22 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::nuts::{CurrencyUnit, Id};
-use crate::spilman::configurable_host::{ConfigurableHost, KeysetCacheEntry};
-use crate::spilman::SpilmanAsyncNetworking;
+use cashu::nuts::{CurrencyUnit, Id};
+use crate::configurable_host::{ConfigurableHost, KeysetCacheEntry};
+use crate::SpilmanAsyncNetworking;
 
 /// Keyset with full key data, as fetched from a mint.
 #[derive(Debug, Clone)]
 pub struct MintKeysetWithKeys {
+    /// Mint-assigned keyset identifier.
     pub id: Id,
+    /// Currency unit supported by this keyset.
     pub unit: CurrencyUnit,
+    /// Whether the mint reports this keyset as active.
     pub active: bool,
+    /// Input fee rate in parts per thousand.
     pub input_fee_ppk: u64,
+    /// Raw key map payload returned by the mint.
     pub keys: serde_json::Value,
 }
 
@@ -102,7 +107,7 @@ pub async fn fetch_all_keysets_from_mint(
 
 /// Build the keyset info JSON blob expected by the bridge.
 ///
-/// This produces the format consumed by [`parse_keyset_info_from_json`](crate::spilman::parse_keyset_info_from_json).
+/// This produces the format consumed by [`parse_keyset_info_from_json`](crate::parse_keyset_info_from_json).
 pub fn build_keyset_info_json(
     keyset_id: &Id,
     unit: &CurrencyUnit,
@@ -152,6 +157,7 @@ pub async fn fetch_and_cache_keysets(
 /// host.initialize_keysets().await?;
 /// let networking = Arc::new(ReqwestNetworking::new(host.clone()));
 /// ```
+#[derive(Debug)]
 pub struct ReqwestNetworking {
     host: Arc<ConfigurableHost>,
 }

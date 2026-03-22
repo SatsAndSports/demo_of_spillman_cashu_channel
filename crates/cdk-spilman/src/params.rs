@@ -7,16 +7,16 @@ pub type ChannelId = String;
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{CurrencyUnit, SecretKey};
-#[cfg(test)]
-use crate::nuts::{Id, Keys, PublicKey};
-use crate::util::hex;
-#[cfg(test)]
-use crate::Amount;
-use crate::SECP256K1;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{Parity, Scalar};
+use cashu::nuts::{CurrencyUnit, SecretKey};
+#[cfg(test)]
+use cashu::nuts::{Id, Keys, PublicKey};
+use cashu::util::hex;
+#[cfg(test)]
+use cashu::Amount;
+use cashu::SECP256K1;
 #[cfg(test)]
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -29,7 +29,7 @@ pub(crate) struct Stage2P2bkTweakInfo {
     #[allow(dead_code)]
     pub(crate) ephemeral_secret: SecretKey,
     #[allow(dead_code)]
-    pub(crate) ephemeral_pubkey: crate::nuts::PublicKey,
+    pub(crate) ephemeral_pubkey: cashu::nuts::PublicKey,
     #[allow(dead_code)]
     pub(crate) ephemeral_shared_secret_x: [u8; 32],
     #[allow(dead_code)]
@@ -40,9 +40,9 @@ pub(crate) struct Stage2P2bkTweakInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
     /// Alice's public key (sender)
-    pub sender_pubkey: crate::nuts::PublicKey,
+    pub sender_pubkey: cashu::nuts::PublicKey,
     /// Charlie's public key (receiver)
-    pub receiver_pubkey: crate::nuts::PublicKey,
+    pub receiver_pubkey: cashu::nuts::PublicKey,
     /// Mint URL (or "local" for in-process mint)
     pub mint: String,
     /// Currency unit for the channel
@@ -70,8 +70,8 @@ pub struct ChannelParameters {
 ///
 /// Returns: SHA256("Cashu_Spilman_channel_secret_v1" || ECDH(my_secret, their_pubkey))
 pub fn compute_channel_secret(
-    my_secret: &crate::nuts::SecretKey,
-    their_pubkey: &crate::nuts::PublicKey,
+    my_secret: &cashu::nuts::SecretKey,
+    their_pubkey: &cashu::nuts::PublicKey,
 ) -> [u8; 32] {
     let raw_ecdh = SharedSecret::new(their_pubkey, my_secret).secret_bytes();
     let mut input = Vec::new();
@@ -151,9 +151,9 @@ fn derive_blinded_secret_key(secret: &SecretKey, r: &Scalar) -> anyhow::Result<S
 ///
 /// This ensures that `k*G = P'` where `k` is the blinded secret key.
 fn derive_blinded_pubkey(
-    pubkey: &crate::nuts::PublicKey,
+    pubkey: &cashu::nuts::PublicKey,
     r: &Scalar,
-) -> anyhow::Result<crate::nuts::PublicKey> {
+) -> anyhow::Result<cashu::nuts::PublicKey> {
     // Get parity of the public key
     let inner_pubkey: &bitcoin::secp256k1::PublicKey = pubkey;
     let (_, parity) = inner_pubkey.x_only_public_key();
@@ -178,8 +178,8 @@ impl ChannelParameters {
     /// Create new channel parameters with a pre-computed channel secret
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        sender_pubkey: crate::nuts::PublicKey,
-        receiver_pubkey: crate::nuts::PublicKey,
+        sender_pubkey: cashu::nuts::PublicKey,
+        receiver_pubkey: cashu::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -246,8 +246,8 @@ impl ChannelParameters {
     /// Returns an error if the secret key's public key doesn't match either sender_pubkey or receiver_pubkey
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_secret_key(
-        sender_pubkey: crate::nuts::PublicKey,
-        receiver_pubkey: crate::nuts::PublicKey,
+        sender_pubkey: cashu::nuts::PublicKey,
+        receiver_pubkey: cashu::nuts::PublicKey,
         mint: String,
         unit: CurrencyUnit,
         capacity: u64,
@@ -312,14 +312,14 @@ impl ChannelParameters {
         let sender_pubkey_hex = json["sender_pubkey"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_pubkey' field"))?;
-        let sender_pubkey: crate::nuts::PublicKey = sender_pubkey_hex
+        let sender_pubkey: cashu::nuts::PublicKey = sender_pubkey_hex
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid sender_pubkey: {}", e))?;
 
         let receiver_pubkey_hex = json["receiver_pubkey"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'receiver_pubkey' field"))?;
-        let receiver_pubkey: crate::nuts::PublicKey = receiver_pubkey_hex
+        let receiver_pubkey: cashu::nuts::PublicKey = receiver_pubkey_hex
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid receiver_pubkey: {}", e))?;
 
@@ -356,7 +356,7 @@ impl ChannelParameters {
             .as_str()
             .or_else(|| json["keysetId"].as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'keyset_id' field"))?;
-        let json_keyset_id: crate::nuts::Id = keyset_id_str
+        let json_keyset_id: cashu::nuts::Id = keyset_id_str
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid keyset_id: {}", e))?;
 
@@ -418,14 +418,14 @@ impl ChannelParameters {
         let sender_pubkey_hex = json["sender_pubkey"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'sender_pubkey' field"))?;
-        let sender_pubkey: crate::nuts::PublicKey = sender_pubkey_hex
+        let sender_pubkey: cashu::nuts::PublicKey = sender_pubkey_hex
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid sender_pubkey: {}", e))?;
 
         let receiver_pubkey_hex = json["receiver_pubkey"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'receiver_pubkey' field"))?;
-        let receiver_pubkey: crate::nuts::PublicKey = receiver_pubkey_hex
+        let receiver_pubkey: cashu::nuts::PublicKey = receiver_pubkey_hex
             .parse()
             .map_err(|e| anyhow::anyhow!("Invalid receiver_pubkey: {}", e))?;
 
@@ -644,7 +644,7 @@ impl ChannelParameters {
     /// The formula matches `derive_blinded_secret_key`:
     /// - If even Y: P' = P + r*G (matches k = p + r)
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
-    pub fn get_sender_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+    pub fn get_sender_blinded_pubkey_for_stage1(&self) -> anyhow::Result<cashu::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("sender_stage1")?;
         derive_blinded_pubkey(&self.sender_pubkey, &r)
     }
@@ -657,7 +657,7 @@ impl ChannelParameters {
     /// The formula matches `derive_blinded_secret_key`:
     /// - If even Y: P' = P + r*G (matches k = p + r)
     /// - If odd Y:  P' = -P + r*G (matches k = -p + r)
-    pub fn get_receiver_blinded_pubkey_for_stage1(&self) -> anyhow::Result<crate::nuts::PublicKey> {
+    pub fn get_receiver_blinded_pubkey_for_stage1(&self) -> anyhow::Result<cashu::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("receiver_stage1")?;
         derive_blinded_pubkey(&self.receiver_pubkey, &r)
     }
@@ -699,7 +699,7 @@ impl ChannelParameters {
     /// cannot correlate Alice's refund to the normal channel close.
     pub fn get_sender_blinded_pubkey_for_stage1_refund(
         &self,
-    ) -> anyhow::Result<crate::nuts::PublicKey> {
+    ) -> anyhow::Result<cashu::nuts::PublicKey> {
         let r = self.derive_blinding_scalar("sender_stage1_refund")?;
         derive_blinded_pubkey(&self.sender_pubkey, &r)
     }
@@ -741,7 +741,7 @@ impl ChannelParameters {
         &self,
         amount: u64,
         index: usize,
-    ) -> anyhow::Result<crate::nuts::PublicKey> {
+    ) -> anyhow::Result<cashu::nuts::PublicKey> {
         let tweak_info =
             self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
         derive_blinded_pubkey(&self.sender_pubkey, &tweak_info.stage2_tweak_scalar)
@@ -759,7 +759,7 @@ impl ChannelParameters {
         &self,
         amount: u64,
         index: usize,
-    ) -> anyhow::Result<crate::nuts::PublicKey> {
+    ) -> anyhow::Result<cashu::nuts::PublicKey> {
         let tweak_info =
             self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
         derive_blinded_pubkey(&self.receiver_pubkey, &tweak_info.stage2_tweak_scalar)
@@ -820,7 +820,7 @@ impl ChannelParameters {
         context: &str,
         amount: u64,
         index: usize,
-    ) -> Result<crate::nuts::PublicKey, anyhow::Error> {
+    ) -> Result<cashu::nuts::PublicKey, anyhow::Error> {
         match context {
             "receiver" => self.get_receiver_blinded_pubkey_for_stage2_output(amount, index),
             "sender" => self.get_sender_blinded_pubkey_for_stage2_output(amount, index),
@@ -1136,7 +1136,7 @@ mod tests {
     #[test]
     fn test_p2bk_signature_roundtrip() {
         use bitcoin::secp256k1::Message;
-        use bitcoin::secp256k1::SECP256K1;
+        use cashu::SECP256K1;
 
         // Create keypairs for Alice and Charlie
         let alice_secret = SecretKey::generate();
@@ -1177,7 +1177,7 @@ mod tests {
         let msg = Message::from_digest_slice(msg_hash.as_ref()).unwrap();
 
         // Get the secp256k1 keypair for signing
-        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(SECP256K1, &*blinded_secret);
+        let keypair = bitcoin::secp256k1::Keypair::from_secret_key(&SECP256K1, &*blinded_secret);
         let signature = SECP256K1.sign_schnorr(&msg, &keypair);
 
         println!("Message: {}", hex::encode(msg_hash.to_byte_array()));
@@ -1323,7 +1323,7 @@ mod tests {
     #[test]
     fn test_refund_signature_roundtrip() {
         use bitcoin::secp256k1::Message;
-        use bitcoin::secp256k1::SECP256K1;
+        use cashu::SECP256K1;
 
         // Test that signing with refund blinded key verifies against refund blinded pubkey
 
@@ -1365,7 +1365,7 @@ mod tests {
 
         // Sign with refund blinded key
         let keypair =
-            bitcoin::secp256k1::Keypair::from_secret_key(SECP256K1, &*blinded_refund_secret);
+            bitcoin::secp256k1::Keypair::from_secret_key(&SECP256K1, &*blinded_refund_secret);
         let signature = SECP256K1.sign_schnorr(&msg, &keypair);
 
         println!("Message: {}", hex::encode(msg_hash.to_byte_array()));

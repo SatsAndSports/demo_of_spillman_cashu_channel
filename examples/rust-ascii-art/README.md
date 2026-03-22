@@ -2,7 +2,7 @@
 
 A demo server implementing Spilman payment channels in Rust using Axum.
 
-This example demonstrates how to build a Spilman channel server using the `cdk` crate with minimal dependencies.
+This example demonstrates how to build a Spilman channel server using the `cdk-spilman` crate directly, without going through the temporary `cdk::spilman` compatibility facade.
 
 ## Features
 
@@ -68,14 +68,14 @@ MINT_URL=http://my-mint:3338 make test-integration
 
 ## Minimal Dependencies
 
-This example uses `cdk` with `default-features = false` and the `spilman-axum` + `configurable-host-reqwest` features, which provides the host implementation, the networking battery, and the pre-built management router:
+This example uses `cdk-spilman` with `default-features = false` and the `spilman-axum` + `configurable-host-reqwest` features, which provides the host implementation, the networking battery, and the pre-built management router:
 
 ```toml
 [dependencies]
-cdk = { version = "0.14", default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
+cdk-spilman = { version = "0.15.1", default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
 ```
 
-This pulls in only the core Cashu types, Spilman implementation, Axum router, YAML config support, SQLite persistence, and `reqwest` for mint communication, without the full `wallet` or `mint` crate code.
+This pulls in the Spilman implementation, Axum router, YAML config support, SQLite persistence, and `reqwest` for mint communication, without routing new code through the legacy `cdk::spilman` path.
 
 ## Environment Variables
 

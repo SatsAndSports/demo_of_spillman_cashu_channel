@@ -27,6 +27,12 @@ pub struct SpilmanState<H: SpilmanHost<C>, N, C = String> {
     pub networking: Arc<N>,
 }
 
+impl<H: SpilmanHost<C>, N, C> std::fmt::Debug for SpilmanState<H, N, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SpilmanState").finish_non_exhaustive()
+    }
+}
+
 impl<H: SpilmanHost<C>, N, C> Clone for SpilmanState<H, N, C> {
     fn clone(&self) -> Self {
         Self {

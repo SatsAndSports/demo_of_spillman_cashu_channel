@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::nuts::{CurrencyUnit, Id, Keys};
+use cashu::nuts::{CurrencyUnit, Id, Keys};
 
 /// Result of inverse_deterministic_value_after_fees
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,12 +261,12 @@ impl KeysetInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Amount;
+    use cashu::Amount;
     use std::str::FromStr;
 
     // Helper to create a simple KeysetInfo for testing
     fn mock_keyset_info(amounts: Vec<u64>, input_fee_ppk: u64) -> KeysetInfo {
-        use crate::nuts::{Id, Keys, PublicKey};
+        use cashu::nuts::{Id, Keys, PublicKey};
         use std::collections::BTreeMap;
 
         // Create dummy keys map

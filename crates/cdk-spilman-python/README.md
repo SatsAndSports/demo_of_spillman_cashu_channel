@@ -27,7 +27,7 @@ class MyHost:
     # ... see Architecture docs for full list
 
 # Create bridge with your host
-bridge = SpilmanBridge(MyHost(), server_secret_key_hex)
+bridge = SpilmanBridge(MyHost())
 
 # Process a payment
 try:
@@ -53,10 +53,10 @@ from cdk_spilman import (
 channel_secret = compute_channel_secret(sender_secret, receiver_pubkey)
 
 # Create funding outputs for minting
-funding = create_funding_outputs(params_json, alice_secret, keyset_json)
+funding = create_funding_outputs(params_json, sender_secret, keyset_json)
 
 # Sign a payment
-payment = create_signed_balance_update(params_json, keyset_json, alice_secret, proofs_json, balance)
+payment = create_signed_balance_update(params_json, keyset_json, sender_secret, proofs_json, balance)
 ```
 
 ## API Reference
@@ -69,4 +69,3 @@ payment = create_signed_balance_update(params_json, keyset_json, alice_secret, p
 - `compute_channel_secret(secret, pubkey)` - Derive `_channel secret_`
 - `create_funding_outputs(params, secret, keyset)` - Create blinded outputs for funding
 - `create_signed_balance_update(...)` - Sign a payment
-- `verify_channel(params, proofs, keyset)` - Validate channel funding

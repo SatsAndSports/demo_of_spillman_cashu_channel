@@ -10,7 +10,8 @@ name = "rust-ascii-art"
 path = "src/main.rs"
 
 [dependencies]
-cdk = { workspace = true, default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
+cashu = { workspace = true }
+cdk-spilman = { workspace = true, features = ["spilman-axum", "configurable-host-reqwest"] }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }

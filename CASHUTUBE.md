@@ -103,9 +103,9 @@ pricing:
 | Endpoint | Description |
 |----------|-------------|
 | `GET /channel/params` | Returns receiver pubkey, pricing, and mint info |
-| `GET /channel/:id/status` | Returns channel capacity, balance, and usage |
-| `POST /channel/:id/close` | Cooperative close |
-| `POST /channel/:id/unilateral-close` | Server-initiated unilateral close |
+| `GET /channel/:channel_id/status` | Returns channel capacity, balance, and usage |
+| `POST /channel/:channel_id/close` | Cooperative close |
+| `POST /channel/:channel_id/unilateral-close` | Server-initiated unilateral close |
 | `GET /videos` | List registered videos with metadata |
 | `GET /<sha256>` | Fetch blob (requires payment header) |
 

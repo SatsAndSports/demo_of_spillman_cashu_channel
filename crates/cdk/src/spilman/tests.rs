@@ -5,7 +5,7 @@
 
 use cdk_common::dhke::construct_proofs;
 use cdk_common::nuts::{Conditions, CurrencyUnit, SigFlag, SpendingConditions};
-use cdk_common::Amount;
+use cdk_common::{Amount, MeltQuoteRequest, MeltQuoteResponse, MintQuoteRequest, MintQuoteResponse};
 
 use crate::nuts::SecretKey;
 use crate::wallet::{MintConnector, ReceiveOptions, SendOptions, WalletBuilder};
@@ -24,12 +24,10 @@ use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use crate::nuts::{
-    CheckStateRequest, CheckStateResponse, Id, KeySet, KeysetResponse, MeltQuoteBolt11Request,
-    MeltQuoteBolt11Response, MeltQuoteBolt12Request, MeltQuoteCustomRequest,
-    MeltQuoteCustomResponse, MeltRequest, MintInfo, MintQuoteBolt11Request,
-    MintQuoteBolt11Response, MintQuoteBolt12Request, MintQuoteBolt12Response,
-    MintQuoteCustomRequest, MintQuoteCustomResponse, MintRequest, MintResponse, PaymentMethod,
-    RestoreRequest, RestoreResponse, SwapRequest, SwapResponse,
+    BatchCheckMintQuoteRequest, BatchMintRequest, CheckStateRequest, CheckStateResponse, Id,
+    KeySet, KeysetResponse, MeltQuoteBolt11Response, MeltRequest, MintInfo,
+    MintQuoteBolt11Response, MintRequest, MintResponse, PaymentMethod, RestoreRequest,
+    RestoreResponse, SwapRequest, SwapResponse,
 };
 use crate::Mint;
 
@@ -3022,15 +3020,32 @@ impl MintConnector for DirectMintConnection {
 
     async fn post_mint_quote(
         &self,
-        _request: MintQuoteBolt11Request,
-    ) -> Result<MintQuoteBolt11Response<String>, crate::Error> {
+        _request: MintQuoteRequest,
+    ) -> Result<MintQuoteResponse<String>, crate::Error> {
+        Err(crate::Error::UnsupportedPaymentMethod)
+    }
+
+    async fn post_batch_check_mint_quote_status(
+        &self,
+        _method: &PaymentMethod,
+        _request: BatchCheckMintQuoteRequest<String>,
+    ) -> Result<Vec<MintQuoteBolt11Response<String>>, crate::Error> {
+        Err(crate::Error::UnsupportedPaymentMethod)
+    }
+
+    async fn post_batch_mint(
+        &self,
+        _method: &PaymentMethod,
+        _request: BatchMintRequest<String>,
+    ) -> Result<MintResponse, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 
     async fn get_mint_quote_status(
         &self,
+        _method: PaymentMethod,
         _quote_id: &str,
-    ) -> Result<MintQuoteBolt11Response<String>, crate::Error> {
+    ) -> Result<MintQuoteResponse<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 
@@ -3044,15 +3059,16 @@ impl MintConnector for DirectMintConnection {
 
     async fn post_melt_quote(
         &self,
-        _request: MeltQuoteBolt11Request,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
+        _request: MeltQuoteRequest,
+    ) -> Result<MeltQuoteResponse<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 
     async fn get_melt_quote_status(
         &self,
+        _method: PaymentMethod,
         _quote_id: &str,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
+    ) -> Result<MeltQuoteResponse<String>, crate::Error> {
         Err(crate::Error::UnsupportedPaymentMethod)
     }
 
@@ -3088,63 +3104,4 @@ impl MintConnector for DirectMintConnection {
     }
 
     async fn set_auth_wallet(&self, _wallet: Option<crate::wallet::AuthWallet>) {}
-
-    async fn post_mint_bolt12_quote(
-        &self,
-        _request: MintQuoteBolt12Request,
-    ) -> Result<MintQuoteBolt12Response<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn get_mint_quote_bolt12_status(
-        &self,
-        _quote_id: &str,
-    ) -> Result<MintQuoteBolt12Response<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn post_melt_bolt12_quote(
-        &self,
-        _request: MeltQuoteBolt12Request,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn get_melt_bolt12_quote_status(
-        &self,
-        _quote_id: &str,
-    ) -> Result<MeltQuoteBolt11Response<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn post_mint_custom_quote(
-        &self,
-        _method: &PaymentMethod,
-        _request: MintQuoteCustomRequest,
-    ) -> Result<MintQuoteCustomResponse<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn post_melt_custom_quote(
-        &self,
-        _request: MeltQuoteCustomRequest,
-    ) -> Result<MeltQuoteCustomResponse<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn get_mint_quote_custom_status(
-        &self,
-        _method: &str,
-        _quote_id: &str,
-    ) -> Result<MintQuoteCustomResponse<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
-
-    async fn get_melt_quote_custom_status(
-        &self,
-        _method: &str,
-        _quote_id: &str,
-    ) -> Result<MeltQuoteCustomResponse<String>, crate::Error> {
-        Err(crate::Error::UnsupportedPaymentMethod)
-    }
 }

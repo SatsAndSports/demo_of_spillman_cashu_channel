@@ -12,8 +12,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use std::str::FromStr;
 
-use cdk::nuts::{Id, PublicKey, SecretKey};
-use cdk::spilman::{
+use cashu::nuts::{Id, PublicKey, SecretKey};
+use spilman_core::{
     self, BridgeError, BridgeErrorResponse, ChannelPolicy, ChannelState, ClosingData,
     SpilmanBridge as RustSpilmanBridge, SpilmanClientBridge as RustSpilmanClientBridge,
     SpilmanClientHost, SpilmanHost,
@@ -38,8 +38,8 @@ pub struct PaymentSuccess {
     pub capacity: u64,
 }
 
-impl From<cdk::spilman::PaymentSuccess> for PaymentSuccess {
-    fn from(r: cdk::spilman::PaymentSuccess) -> Self {
+impl From<spilman_core::PaymentSuccess> for PaymentSuccess {
+    fn from(r: spilman_core::PaymentSuccess) -> Self {
         Self {
             channel_id: r.channel_id,
             balance: r.balance,
@@ -60,8 +60,8 @@ pub struct PaymentValidationResult {
     pub sender_signature: String,
 }
 
-impl From<cdk::spilman::PaymentValidationResult> for PaymentValidationResult {
-    fn from(r: cdk::spilman::PaymentValidationResult) -> Self {
+impl From<spilman_core::PaymentValidationResult> for PaymentValidationResult {
+    fn from(r: spilman_core::PaymentValidationResult) -> Self {
         Self {
             channel_id: r.channel_id,
             balance: r.balance,
@@ -81,8 +81,8 @@ pub struct FundChannelResult {
     pub already_known: bool,
 }
 
-impl From<cdk::spilman::FundChannelResult> for FundChannelResult {
-    fn from(r: cdk::spilman::FundChannelResult) -> Self {
+impl From<spilman_core::FundChannelResult> for FundChannelResult {
+    fn from(r: spilman_core::FundChannelResult) -> Self {
         Self {
             channel_id: r.channel_id,
             capacity: r.capacity,
@@ -103,8 +103,8 @@ pub struct CloseSuccess {
     pub already_closed: bool,
 }
 
-impl From<cdk::spilman::CloseSuccess> for CloseSuccess {
-    fn from(r: cdk::spilman::CloseSuccess) -> Self {
+impl From<spilman_core::CloseSuccess> for CloseSuccess {
+    fn from(r: spilman_core::CloseSuccess) -> Self {
         Self {
             channel_id: r.channel_id,
             total_value: r.total_value,
@@ -147,7 +147,7 @@ struct PySpilmanHost {
 }
 
 impl SpilmanHost for PySpilmanHost {
-    fn get_active_keyset_ids(&self, mint: &str, unit: &cdk::nuts::CurrencyUnit) -> Vec<Id> {
+    fn get_active_keyset_ids(&self, mint: &str, unit: &cashu::nuts::CurrencyUnit) -> Vec<Id> {
         let unit_str = unit.to_string();
 
         Python::with_gil(|py| {
@@ -249,7 +249,7 @@ impl SpilmanHost for PySpilmanHost {
         })
     }
 
-    fn get_funding(&self, channel_id: &str) -> Option<cdk::spilman::ChannelFunding> {
+    fn get_funding(&self, channel_id: &str) -> Option<spilman_core::ChannelFunding> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -265,7 +265,7 @@ impl SpilmanHost for PySpilmanHost {
                 return None;
             }
 
-            Some(cdk::spilman::ChannelFunding {
+            Some(spilman_core::ChannelFunding {
                 params_json: tuple.get_item(0).ok()?.extract::<String>().ok()?,
                 funding_proofs_json: tuple.get_item(1).ok()?.extract::<String>().ok()?,
                 channel_secret_hex: tuple.get_item(2).ok()?.extract::<String>().ok()?,
@@ -277,8 +277,8 @@ impl SpilmanHost for PySpilmanHost {
     fn save_funding(
         &self,
         channel_id: &str,
-        funding: cdk::spilman::ChannelFunding,
-        initial_payment: cdk::spilman::PaymentProof,
+        funding: spilman_core::ChannelFunding,
+        initial_payment: spilman_core::PaymentProof,
     ) {
         Python::with_gil(|py| {
             let _ = self.py_host.call_method1(
@@ -313,7 +313,7 @@ impl SpilmanHost for PySpilmanHost {
     fn record_payment(
         &self,
         channel_id: &str,
-        payment: cdk::spilman::PaymentProof,
+        payment: spilman_core::PaymentProof,
         context_json: &String,
     ) {
         Python::with_gil(|py| {
@@ -353,7 +353,7 @@ impl SpilmanHost for PySpilmanHost {
         &self,
         channel_id: &str,
         expiry_timestamp: u64,
-        payment: cdk::spilman::PaymentProof,
+        payment: spilman_core::PaymentProof,
     ) -> Result<(), String> {
         Python::with_gil(|py| {
             match self.py_host.call_method1(
@@ -443,7 +443,7 @@ impl SpilmanHost for PySpilmanHost {
     fn get_balance_and_signature_for_unilateral_exit(
         &self,
         channel_id: &str,
-    ) -> Option<cdk::spilman::PaymentProof> {
+    ) -> Option<spilman_core::PaymentProof> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -463,7 +463,7 @@ impl SpilmanHost for PySpilmanHost {
                 return None;
             }
 
-            Some(cdk::spilman::PaymentProof {
+            Some(spilman_core::PaymentProof {
                 balance: tuple.get_item(0).ok()?.extract::<u64>().ok()?,
                 signature: tuple.get_item(1).ok()?.extract::<String>().ok()?,
             })
@@ -536,7 +536,7 @@ impl SpilmanHost for PySpilmanHost {
     }
 }
 
-impl cdk::spilman::SpilmanNetworking for PySpilmanHost {
+impl spilman_core::SpilmanNetworking for PySpilmanHost {
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
         Python::with_gil(|py| {
             match self
@@ -835,7 +835,7 @@ fn secret_key_to_pubkey(secret_hex: &str) -> PyResult<String> {
 ///     Shared secret as hex string (64 chars)
 #[pyfunction]
 fn compute_channel_secret(my_secret_hex: &str, their_pubkey_hex: &str) -> PyResult<String> {
-    spilman::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
+    spilman_core::compute_channel_secret_from_hex(my_secret_hex, their_pubkey_hex)
         .map_err(PyValueError::new_err)
 }
 
@@ -857,7 +857,7 @@ fn compute_funding_token_amount(
     keyset_info_json: &str,
     maximum_amount: u64,
 ) -> PyResult<u64> {
-    spilman::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount)
+    spilman_core::compute_funding_token_amount(capacity, keyset_info_json, maximum_amount)
         .map_err(PyValueError::new_err)
 }
 
@@ -876,8 +876,12 @@ fn channel_parameters_get_channel_id(
     channel_secret_hex: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    spilman::channel_parameters_get_channel_id(params_json, channel_secret_hex, keyset_info_json)
-        .map_err(PyValueError::new_err)
+    spilman_core::channel_parameters_get_channel_id(
+        params_json,
+        channel_secret_hex,
+        keyset_info_json,
+    )
+    .map_err(PyValueError::new_err)
 }
 
 /// Create funding outputs (blinded messages) for minting.
@@ -895,7 +899,7 @@ fn create_funding_outputs(
     my_secret_hex: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    spilman::create_funding_outputs(params_json, my_secret_hex, keyset_info_json)
+    spilman_core::create_funding_outputs(params_json, my_secret_hex, keyset_info_json)
         .map_err(PyValueError::new_err)
 }
 
@@ -914,7 +918,7 @@ fn construct_proofs(
     secrets_with_blinding_json: &str,
     keyset_info_json: &str,
 ) -> PyResult<String> {
-    spilman::construct_proofs(
+    spilman_core::construct_proofs(
         signatures_json,
         secrets_with_blinding_json,
         keyset_info_json,
@@ -941,7 +945,7 @@ fn create_signed_balance_update(
     proofs_json: &str,
     balance: u64,
 ) -> PyResult<String> {
-    spilman::create_signed_balance_update(
+    spilman_core::create_signed_balance_update(
         params_json,
         keyset_info_json,
         secret_hex,
@@ -965,7 +969,7 @@ fn create_signed_balance_update(
 ///     JSON with blinded_messages and secrets_with_blinding arrays
 #[pyfunction]
 fn create_plain_blinded_messages(amount_sat: u64, keyset_info_json: &str) -> PyResult<String> {
-    spilman::create_plain_blinded_messages(amount_sat, keyset_info_json)
+    spilman_core::create_plain_blinded_messages(amount_sat, keyset_info_json)
         .map_err(PyValueError::new_err)
 }
 
@@ -979,7 +983,7 @@ fn create_plain_blinded_messages(amount_sat: u64, keyset_info_json: &str) -> PyR
 ///     A cashuA token string (e.g. "cashuAeyJ0b2...")
 #[pyfunction]
 fn build_cashu_a_token(mint_url: &str, proofs_json: &str) -> PyResult<String> {
-    spilman::build_cashu_a_token(mint_url, proofs_json).map_err(PyValueError::new_err)
+    spilman_core::build_cashu_a_token(mint_url, proofs_json).map_err(PyValueError::new_err)
 }
 
 /// Mint plain proofs from a Cashu mint via HTTP.
@@ -1016,7 +1020,7 @@ fn mint_proofs_from_mint(
 
     // Release the GIL during the Rust execution (which includes sleeping for poll)
     py.allow_threads(|| {
-        spilman::mint_proofs_from_mint(mint_url, amount_sat, keyset_info_json, &http_fn)
+        spilman_core::mint_proofs_from_mint(mint_url, amount_sat, keyset_info_json, &http_fn)
             .map_err(PyValueError::new_err)
     })
 }
@@ -1042,7 +1046,7 @@ fn sign_with_tweaked_key_util(
     message_hex: &str,
     tweak_scalar_hex: &str,
 ) -> PyResult<String> {
-    spilman::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex)
+    spilman_core::sign_with_tweaked_key_util(secret_key_hex, message_hex, tweak_scalar_hex)
         .map_err(PyValueError::new_err)
 }
 
@@ -1109,7 +1113,7 @@ impl SpilmanClientHost for PySpilmanClientHost {
         });
     }
 
-    fn get_channel(&self, channel_id: &str) -> Option<cdk::spilman::ChannelData> {
+    fn get_channel(&self, channel_id: &str) -> Option<spilman_core::ChannelData> {
         Python::with_gil(|py| {
             let result = self
                 .py_host
@@ -1120,7 +1124,7 @@ impl SpilmanClientHost for PySpilmanClientHost {
                 None
             } else {
                 let tuple = result.extract::<(String, String)>(py).ok()?;
-                Some(cdk::spilman::ChannelData {
+                Some(spilman_core::ChannelData {
                     channel_json: tuple.0,
                     channel_secret_hex: tuple.1,
                 })

@@ -28,11 +28,11 @@ class MyHost {
 }
 
 // 3. Create the bridge
-const bridge = new wasm.WasmSpilmanBridge(new MyHost(), serverSecretKeyHex);
+const bridge = new wasm.WasmSpilmanBridge(new MyHost());
 
 // 4. Process a payment
 try {
-  const result = bridge.process_payment_via_json(paymentJson, contextJson);
+  const result = bridge.processPayment(paymentJson, contextJson);
   console.log("Payment accepted. New balance:", result.balance);
 } catch (e) {
   console.error(e.status, e.reason); // Structured error object
@@ -43,14 +43,14 @@ try {
 
 ```javascript
 // Compute `_channel secret_` with receiver
-const sharedSecret = wasm.compute_channel_secret(aliceSecret, charliePubkey);
+const sharedSecret = wasm.compute_channel_secret(senderSecret, receiverPubkey);
 
 // Create funding outputs for minting
-const funding = wasm.create_funding_outputs(paramsJson, aliceSecret, keysetJson);
+const funding = wasm.create_funding_outputs(paramsJson, senderSecret, keysetJson);
 
 // Sign a payment
 const payment = wasm.spilman_channel_sender_create_signed_balance_update(
-  paramsJson, keysetJson, aliceSecret, proofsJson, balance
+  paramsJson, keysetJson, senderSecret, proofsJson, balance
 );
 ```
 
@@ -60,7 +60,6 @@ const payment = wasm.spilman_channel_sender_create_signed_balance_update(
 - `WasmSpilmanBridge` - Main bridge for server-side payment validation
 
 ### Core Functions
-- `generate_keypair()` - Generate a new secp256k1 keypair
 - `compute_channel_secret(secret, pubkey)` - Derive `_channel secret_`
 - `verify_channel(params, proofs, keyset)` - Validate channel funding
 - `spilman_channel_sender_create_signed_balance_update(...)` - Sign a payment

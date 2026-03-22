@@ -16,7 +16,7 @@ This example shows a minimal server and client using the Python integration kit.
 
 2. Run a Cashu mint (default `http://localhost:3338`):
    ```bash
-   make run-mint-cdk
+   cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
    ```
 
 ## Setup
