@@ -12,7 +12,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -122,8 +122,8 @@ impl MintProcess {
         cmd.arg("cdk")
             .arg(port.to_string())
             .current_dir(&root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
 
         for (var, val) in &fee_env_vars {
             cmd.env(var, val);
@@ -134,7 +134,7 @@ impl MintProcess {
             .context("Failed to spawn mint process")?;
 
         let url = format!("http://localhost:{}", port);
-        let mut mint = Self { child, port, url };
+        let mint = Self { child, port, url };
 
         // Wait for mint to be ready
         mint.wait_for_ready().await?;
@@ -143,7 +143,7 @@ impl MintProcess {
     }
 
     /// Wait for the mint to be ready by polling /v1/info
-    async fn wait_for_ready(&mut self) -> Result<()> {
+    async fn wait_for_ready(&self) -> Result<()> {
         let client = reqwest::Client::new();
         let info_url = format!("{}/v1/info", self.url);
 
@@ -215,7 +215,7 @@ impl ServerProcess {
         };
 
         let base_url = format!("http://localhost:{}", port);
-        let mut server = Self {
+        let server = Self {
             child,
             port,
             base_url,
@@ -279,8 +279,8 @@ impl ServerProcess {
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(&server_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .group_spawn()
             .context("Failed to spawn TypeScript server")
     }
@@ -292,8 +292,8 @@ impl ServerProcess {
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .group_spawn()
             .context("Failed to spawn Rust server")
     }
@@ -314,8 +314,8 @@ impl ServerProcess {
             .env("PORT", port.to_string())
             .env("MINT_URL", mint_url)
             .current_dir(&server_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .group_spawn()
             .context("Failed to spawn Python server")
     }
@@ -330,14 +330,14 @@ impl ServerProcess {
             .env("MINT_URL", mint_url)
             .env("LD_LIBRARY_PATH", &ld_library_path)
             .current_dir(&server_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .group_spawn()
             .context("Failed to spawn Go server")
     }
 
     /// Wait for the server to be ready by polling /channel/params
-    async fn wait_for_ready(&mut self) -> Result<()> {
+    async fn wait_for_ready(&self) -> Result<()> {
         let client = reqwest::Client::new();
         let params_url = format!("{}/channel/params", self.base_url);
 
@@ -357,29 +357,10 @@ impl ServerProcess {
             }
         }
 
-        // Dump any output from the server for debugging
-        self.dump_output();
-
         Err(anyhow!(
             "{} server failed to become ready within 30 seconds",
             self.server_type.name()
         ))
-    }
-
-    /// Dump stdout/stderr for debugging
-    fn dump_output(&mut self) {
-        if let Some(stdout) = self.child.inner().stdout.take() {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().take(20).flatten() {
-                tracing::error!("Server stdout: {}", line);
-            }
-        }
-        if let Some(stderr) = self.child.inner().stderr.take() {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().take(20).flatten() {
-                tracing::error!("Server stderr: {}", line);
-            }
-        }
     }
 }
 
