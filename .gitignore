@@ -1,4 +1,6 @@
 **/target
+**/node_modules/
+**/dist/
 .DS_Store
 .direnv
 .jj
@@ -26,8 +28,26 @@ fuzz/artifacts/
 fuzz/corpus/
 
 
-# Python ffi
-__pycache__
+# Python artifacts
+**/__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
 libcdk_ffi*
 cdk_ffi.py
 
+# Test logs
+testing/
+
+# Build sentinels
+.wasm-built
+.kit-ts-built
+
+# Go artifacts
+examples/go-ascii-art/main
+examples/go-ascii-art/demo
+
+# WASM for TS
+integration-kits/ts/wasm/

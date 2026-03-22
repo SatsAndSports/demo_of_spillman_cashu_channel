@@ -23,16 +23,16 @@ async fn test_p2pk_basic_sig_inputs() {
     let mint = test_mint.mint();
 
     // Generate keypair for P2PK
-    let (alice_secret, alice_pubkey) = create_test_keypair();
-    println!("Alice pubkey: {}", alice_pubkey);
+    let (alice_secret, sender_pubkey) = create_test_keypair();
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Create regular unencumbered proofs that we'll swap for P2PK proofs
     let input_amount = Amount::from(20);
     let input_proofs = test_mint.mint_proofs(input_amount).await.unwrap();
 
-    // Step 2: Create P2PK blinded messages (outputs locked to alice_pubkey) with default SIG_INPUTS
+    // Step 2: Create P2PK blinded messages (outputs locked to sender_pubkey) with default SIG_INPUTS
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         None, // No additional conditions - uses default SIG_INPUTS
     );
     println!("Created P2PK spending conditions with default SIG_INPUTS flag");

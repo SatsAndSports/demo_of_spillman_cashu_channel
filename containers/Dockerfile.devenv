@@ -1,0 +1,39 @@
+# Rust development environment for CDK Spilman channels
+#
+# Multi-architecture support: works on x86_64, ARM64, and ARM (Raspberry Pi)
+# Uses debian:bookworm-slim base instead of rust base image for cross-platform compatibility
+#
+# Build (from repo root):
+#   podman build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
+#
+# Usage:
+#   podman run --rm -v .:/app -w /app cdk-devenv cargo build
+#   podman run --rm -v .:/app -w /app cdk-devenv cargo test
+
+FROM debian:bookworm-slim
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    curl \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup (works on any architecture)
+# Using CARGO_HOME and RUSTUP_HOME for proper installation
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
+
+# Install toolchain and components from rust-toolchain.toml
+# This layer is cached unless rust-toolchain.toml changes
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
+RUN cd /tmp && rustup show && rm rust-toolchain.toml
+
+WORKDIR /app

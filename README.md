@@ -1,137 +1,74 @@
-> [!Warning]
-> This project is in early development, it does however work with real sats! Always use amounts you don't mind losing.
+# Spilman Channels for Cashu
 
-[![crates.io](https://img.shields.io/crates/v/cdk.svg)](https://crates.io/crates/cdk) [![Documentation](https://docs.rs/cdk/badge.svg)](https://docs.rs/cdk) [![License](https://img.shields.io/github/license/cashubtc/cdk)](https://github.com/cashubtc/cdk/blob/main/LICENSE)
+> Unidirectional payment channels for Cashu ecash — enabling instant, off-chain micropayments.
 
-# Cashu Development Kit
+This repository contains the reference implementation of Spilman-style payment channels for the [Cashu](https://cashu.space) protocol. It enables services to accept streaming micropayments without round-trip latency or on-chain settlement for every request.
 
-CDK is a collection of rust crates for [Cashu](https://github.com/cashubtc) wallets and mints written in Rust.
+**Status: Early Alpha**
+Experimental protocol. APIs and data models are subject to breaking changes.
 
-**ALPHA** This library is in early development, the api will change and should be used with caution.
+## Key Features
 
-## Quick Start
+- **Efficiency**: Unlimited micropayments via a single funding transaction.
+- **Privacy**: Uses P2BK (Pay-to-Blinded-Key) to prevent mint correlation.
+- **Portability**: Core protocol in Rust with bindings for WASM (JS/TS), Python, and Go.
+- **Deterministic**: Both parties independently compute commitment outputs using a common `_channel secret_`.
 
-CDK uses Nix flakes to manage development environments. We provide a lean default shell for standard development and a full-stack shell for integration testing.
+---
 
-```bash
-# Enter the lean development shell (Rust + PostgreSQL)
-nix develop
+## Documentation
 
-# OR enter the full regtest environment (Bitcoind + Lightning Nodes)
-nix develop .#regtest
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Cryptographic protocol and system design |
+| [INTEGRATION.md](INTEGRATION.md) | Server and Client integration guide |
+| [CASHUTUBE.md](CASHUTUBE.md) | Video streaming demo and API reference |
+| [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) | Contributor guide and environment setup |
+
+---
+
+## Quick Start (Rust)
+
+1. **Add Dependency**:
+   ```toml
+   cdk = { version = "0.14", features = ["configurable-host", "spilman-axum"] }
+   ```
+
+2. **Run ASCII Art Server**:
+   ```bash
+   cd examples/rust-ascii-art
+   cargo run
+   ```
+
+3. **Run TypeScript Demo**:
+   ```bash
+   cd examples/ts-ascii-art
+   npm install && npm start
+   ```
+
+## Project Structure
+
 ```
-
-For more details on available environments, see the [Development Guide](DEVELOPMENT.md).
-
-## Project structure
-
-The project is split up into several crates in the `crates/` directory:
-
-* Libraries:
-    * [**cashu**](./crates/cashu/): Core Cashu protocol implementation.
-    * [**cdk**](./crates/cdk/): Rust implementation of Cashu protocol.
-    * [**cdk-sqlite**](./crates/cdk-sqlite/): SQLite Storage backend.
-    * [**cdk-postgres**](./crates/cdk-postgres/): PostgreSQL Storage backend.
-    * [**cdk-redb**](./crates/cdk-redb/): Redb Storage backend.
-    * [**cdk-axum**](./crates/cdk-axum/): Axum webserver for mint.
-    * [**cdk-cln**](./crates/cdk-cln/): CLN Lightning backend for mint.
-    * [**cdk-lnd**](./crates/cdk-lnd/): Lnd Lightning backend for mint.
-    * [**cdk-lnbits**](./crates/cdk-lnbits/): [LNbits](https://lnbits.com/) Lightning backend for mint. **Note: Only LNBits v1 API is supported.**
-    * [**cdk-ldk-node**](./crates/cdk-ldk-node/): LDK Node Lightning backend for mint.
-    * [**cdk-fake-wallet**](./crates/cdk-fake-wallet/): Fake Lightning backend for mint. To be used only for testing, quotes are automatically filled.
-    * [**cdk-common**](./crates/cdk-common/): Common utilities and shared code.
-    * [**cdk-sql-common**](./crates/cdk-sql-common/): Common SQL utilities for storage backends.
-    * [**cdk-signatory**](./crates/cdk-signatory/): Signing utilities and cryptographic operations.
-    * [**cdk-payment-processor**](./crates/cdk-payment-processor/): Payment processing functionality.
-    * [**cdk-prometheus**](./crates/cdk-prometheus/): Prometheus metrics integration.
-    * [**cdk-ffi**](./crates/cdk-ffi/): Foreign Function Interface bindings for other languages.
-    * [**cdk-integration-tests**](./crates/cdk-integration-tests/): Integration test suite.
-    * [**cdk-mint-rpc**](./crates/cdk-mint-rpc/): Mint management gRPC server and cli.
-* Binaries:
-    * [**cdk-cli**](./crates/cdk-cli/): Cashu wallet CLI.
-    * [**cdk-mintd**](./crates/cdk-mintd/): Cashu Mint Binary.
-    * [**cdk-mint-cli**](./crates/cdk-mint-rpc/): Cashu Mint management gRPC client cli.
-
-
-## Implemented [NUTs](https://github.com/cashubtc/nuts/):
-
-### Mandatory
-
-| NUT #    | Description                       |
-|----------|-----------------------------------|
-| [00][00] | Cryptography and Models           |
-| [01][01] | Mint public keys                  |
-| [02][02] | Keysets and fees                  |
-| [03][03] | Swapping tokens                   |
-| [04][04] | Minting tokens                    |
-| [05][05] | Melting tokens                    |
-| [06][06] | Mint info                         |
-
-### Optional
-
-| # | Description | Status
-| --- | --- | --- |
-| [07][07] | Token state check | :heavy_check_mark: |
-| [08][08] | Overpaid Lightning fees | :heavy_check_mark: |
-| [09][09] | Signature restore | :heavy_check_mark: |
-| [10][10] | Spending conditions | :heavy_check_mark: |
-| [11][11] | Pay-To-Pubkey (P2PK) | :heavy_check_mark: |
-| [12][12] | DLEQ proofs | :heavy_check_mark: |
-| [13][13] | Deterministic secrets | :heavy_check_mark: |
-| [14][14] | Hashed Timelock Contracts (HTLCs) | :heavy_check_mark: |
-| [15][15] | Partial multi-path payments (MPP) | :heavy_check_mark: |
-| [16][16] | Animated QR codes | :x: |
-| [17][17] | WebSocket subscriptions  | :heavy_check_mark: |
-| [18][18] | Payment Requests  | :heavy_check_mark: |
-| [19][19] | Cached responses  | :heavy_check_mark: |
-| [20][20] | Signature on Mint Quote  | :heavy_check_mark: |
-| [21][21] | Clear Authentication | :heavy_check_mark: |
-| [22][22] | Blind Authentication  | :heavy_check_mark: |
-| [23][23] | Payment Method: BOLT11 | :heavy_check_mark: |
-| [25][25] | Payment Method: BOLT12 | :heavy_check_mark: |
-| [26][26] | Payment Request Bech32m Encoding | :heavy_check_mark: |
-| [27][27] | Nostr Mint Backup | :heavy_check_mark: |
-| [28][28] | Pay to Blinded Key (P2BK) | :heavy_check_mark: |
-
+cdk/
+├── crates/
+│   ├── cdk/src/spilman/           # Core protocol implementation
+│   ├── cdk-wasm/                   # WASM bindings
+│   ├── cdk-spilman-python/         # Python bindings (PyO3)
+│   └── cdk-spilman-go/             # Go bindings (CGO)
+├── integration-kits/
+│   ├── ts/                         # TypeScript/Express integration kit
+│   ├── python/                     # Python integration kit
+│   └── go/                         # Go integration kit
+├── examples/
+│   ├── rust-ascii-art/             # Rust demo (native)
+│   ├── ts-ascii-art/               # TypeScript demo
+│   ├── python-ascii-art/           # Python demo
+│   └── go-ascii-art/               # Go demo
+├── web/
+│   └── blossom-server/             # Video streaming demo (separate repo)
+└── dev-mint/                       # CDK mint dev config
+```
 
 ## License
 
-Code is under the [MIT License](LICENSE)
-
-## Contribution
-
-All contributions are welcome.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, shall be licensed as above, without any additional terms or conditions.
-
-Please see the [development guide](DEVELOPMENT.md).
-
-
-[00]: https://github.com/cashubtc/nuts/blob/main/00.md
-[01]: https://github.com/cashubtc/nuts/blob/main/01.md
-[02]: https://github.com/cashubtc/nuts/blob/main/02.md
-[03]: https://github.com/cashubtc/nuts/blob/main/03.md
-[04]: https://github.com/cashubtc/nuts/blob/main/04.md
-[05]: https://github.com/cashubtc/nuts/blob/main/05.md
-[06]: https://github.com/cashubtc/nuts/blob/main/06.md
-[07]: https://github.com/cashubtc/nuts/blob/main/07.md
-[08]: https://github.com/cashubtc/nuts/blob/main/08.md
-[09]: https://github.com/cashubtc/nuts/blob/main/09.md
-[10]: https://github.com/cashubtc/nuts/blob/main/10.md
-[11]: https://github.com/cashubtc/nuts/blob/main/11.md
-[12]: https://github.com/cashubtc/nuts/blob/main/12.md
-[13]: https://github.com/cashubtc/nuts/blob/main/13.md
-[14]: https://github.com/cashubtc/nuts/blob/main/14.md
-[15]: https://github.com/cashubtc/nuts/blob/main/15.md
-[16]: https://github.com/cashubtc/nuts/blob/main/16.md
-[17]: https://github.com/cashubtc/nuts/blob/main/17.md
-[18]: https://github.com/cashubtc/nuts/blob/main/18.md
-[19]: https://github.com/cashubtc/nuts/blob/main/19.md
-[20]: https://github.com/cashubtc/nuts/blob/main/20.md
-[21]: https://github.com/cashubtc/nuts/blob/main/21.md
-[22]: https://github.com/cashubtc/nuts/blob/main/22.md
-[23]: https://github.com/cashubtc/nuts/blob/main/23.md
-[25]: https://github.com/cashubtc/nuts/blob/main/25.md
-[26]: https://github.com/cashubtc/nuts/blob/main/26.md
-[27]: https://github.com/cashubtc/nuts/blob/main/27.md
-[28]: https://github.com/cashubtc/nuts/blob/main/28.md
+Code is licensed under MIT.

@@ -21,12 +21,12 @@ async fn test_htlc_sig_all_requiring_preimage_and_one_signature() {
     let mint = test_mint.mint();
 
     // Generate keypair for Alice
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
 
     // Create hash and preimage
     let (hash, preimage) = create_test_hash_and_preimage();
 
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
     println!("Hash: {}", hash);
     println!("Preimage: {}", preimage);
 
@@ -39,7 +39,7 @@ async fn test_htlc_sig_all_requiring_preimage_and_one_signature() {
         &hash,
         Some(Conditions {
             locktime: None,
-            pubkeys: Some(vec![alice_pubkey]),
+            pubkeys: Some(vec![sender_pubkey]),
             refund_keys: None,
             num_sigs: None,            // Default (1)
             sig_flag: SigFlag::SigAll, // <-- SIG_ALL flag
@@ -154,7 +154,7 @@ async fn test_htlc_sig_all_wrong_preimage() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (hash, _correct_preimage) = create_test_hash_and_preimage();
 
     // Mint regular proofs and swap for HTLC SIG_ALL proofs
@@ -165,7 +165,7 @@ async fn test_htlc_sig_all_wrong_preimage() {
         &hash,
         Some(Conditions {
             locktime: None,
-            pubkeys: Some(vec![alice_pubkey]),
+            pubkeys: Some(vec![sender_pubkey]),
             refund_keys: None,
             num_sigs: None,
             sig_flag: SigFlag::SigAll,
@@ -220,7 +220,7 @@ async fn test_htlc_sig_all_locktime_after_expiry() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (_alice_secret, alice_pubkey) = create_test_keypair();
+    let (_alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
     let (hash, _preimage) = create_test_hash_and_preimage();
 
@@ -234,7 +234,7 @@ async fn test_htlc_sig_all_locktime_after_expiry() {
         &hash,
         Some(Conditions {
             locktime: Some(past_locktime),
-            pubkeys: Some(vec![alice_pubkey]),
+            pubkeys: Some(vec![sender_pubkey]),
             refund_keys: Some(vec![bob_pubkey]),
             num_sigs: None,
             sig_flag: SigFlag::SigAll,
@@ -293,9 +293,9 @@ async fn test_htlc_sig_all_multisig_2of3() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
-    let (_charlie_secret, charlie_pubkey) = create_test_keypair();
+    let (_charlie_secret, receiver_pubkey) = create_test_keypair();
     let (hash, preimage) = create_test_hash_and_preimage();
 
     // Create HTLC requiring preimage + 2-of-3 signatures (Alice, Bob, Charlie) with SIG_ALL
@@ -306,7 +306,7 @@ async fn test_htlc_sig_all_multisig_2of3() {
         &hash,
         Some(Conditions {
             locktime: None,
-            pubkeys: Some(vec![alice_pubkey, bob_pubkey, charlie_pubkey]),
+            pubkeys: Some(vec![sender_pubkey, bob_pubkey, receiver_pubkey]),
             refund_keys: None,
             num_sigs: Some(2), // Require 2 of 3
             sig_flag: SigFlag::SigAll,
@@ -388,7 +388,7 @@ async fn test_htlc_sig_all_receiver_path_after_locktime() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (_bob_secret, bob_pubkey) = create_test_keypair();
     let (hash, preimage) = create_test_hash_and_preimage();
 
@@ -403,7 +403,7 @@ async fn test_htlc_sig_all_receiver_path_after_locktime() {
         &hash,
         Some(Conditions {
             locktime: Some(past_locktime),
-            pubkeys: Some(vec![alice_pubkey]),
+            pubkeys: Some(vec![sender_pubkey]),
             refund_keys: Some(vec![bob_pubkey]),
             num_sigs: None,
             sig_flag: SigFlag::SigAll,

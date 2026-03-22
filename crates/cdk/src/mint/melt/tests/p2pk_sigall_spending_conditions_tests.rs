@@ -22,17 +22,17 @@ async fn test_p2pk_sig_all_requires_transaction_signature() {
     let mint = test_mint.mint();
 
     // Generate keypair for P2PK
-    let (alice_secret, alice_pubkey) = create_test_keypair();
-    println!("Alice pubkey: {}", alice_pubkey);
+    let (alice_secret, sender_pubkey) = create_test_keypair();
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Create regular unencumbered proofs that we'll swap for P2PK proofs
     // Invoice is 10 sats, fee reserve is 100% (10 sats), so we need 20 sats total
     let input_amount = Amount::from(20);
     let input_proofs = test_mint.mint_proofs(input_amount).await.unwrap();
 
-    // Step 2: Create P2PK blinded messages (outputs locked to alice_pubkey) with SIG_ALL
+    // Step 2: Create P2PK blinded messages (outputs locked to sender_pubkey) with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                  // no locktime

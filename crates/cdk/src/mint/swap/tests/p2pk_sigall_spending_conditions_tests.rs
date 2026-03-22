@@ -22,16 +22,16 @@ async fn test_p2pk_sig_all_requires_transaction_signature() {
     let mint = test_mint.mint();
 
     // Generate keypair for P2PK
-    let (alice_secret, alice_pubkey) = create_test_keypair();
-    println!("Alice pubkey: {}", alice_pubkey);
+    let (alice_secret, sender_pubkey) = create_test_keypair();
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Create regular unencumbered proofs that we'll swap for P2PK proofs
     let input_amount = Amount::from(10);
     let input_proofs = test_mint.mint_proofs(input_amount).await.unwrap();
 
-    // Step 2: Create P2PK blinded messages (outputs locked to alice_pubkey) with SIG_ALL
+    // Step 2: Create P2PK blinded messages (outputs locked to sender_pubkey) with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                  // no locktime
@@ -142,7 +142,7 @@ async fn test_p2pk_sig_all_multisig_2of3() {
     let mint = test_mint.mint();
 
     // Generate 3 keypairs for the multisig
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
     let (_carol_secret, carol_pubkey) = create_test_keypair();
 
@@ -150,7 +150,7 @@ async fn test_p2pk_sig_all_multisig_2of3() {
     let (dave_secret, _dave_pubkey) = create_test_keypair();
     let (eve_secret, _eve_pubkey) = create_test_keypair();
 
-    println!("Alice: {}", alice_pubkey);
+    println!("Alice: {}", sender_pubkey);
     println!("Bob: {}", bob_pubkey);
     println!("Carol: {}", carol_pubkey);
 
@@ -163,7 +163,7 @@ async fn test_p2pk_sig_all_multisig_2of3() {
     // Additional keys: Bob, Carol
     // Requires 2 signatures total
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                                 // no locktime
@@ -271,9 +271,9 @@ async fn test_p2pk_sig_all_signed_by_wrong_person() {
     let mint = test_mint.mint();
 
     // Generate keypairs for Alice and Bob
-    let (_alice_secret, alice_pubkey) = create_test_keypair();
+    let (_alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, _bob_pubkey) = create_test_keypair();
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
     println!("Bob will try to spend Alice's proofs");
 
     // Step 1: Mint regular proofs
@@ -282,7 +282,7 @@ async fn test_p2pk_sig_all_signed_by_wrong_person() {
 
     // Step 2: Create P2PK blinded messages locked to Alice's pubkey with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                  // no locktime
@@ -344,10 +344,10 @@ async fn test_p2pk_sig_all_duplicate_signatures() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (_bob_secret, bob_pubkey) = create_test_keypair();
 
-    println!("Alice: {}", alice_pubkey);
+    println!("Alice: {}", sender_pubkey);
     println!("Bob: {}", bob_pubkey);
 
     // Step 1: Mint regular proofs
@@ -356,7 +356,7 @@ async fn test_p2pk_sig_all_duplicate_signatures() {
 
     // Step 2: Create 2-of-2 multisig (Alice and Bob, need both) with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                   // no locktime
@@ -427,13 +427,13 @@ async fn test_p2pk_sig_all_locktime_before_expiry() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
 
     // Set locktime 1 hour in the future
     let locktime = unix_time() + 3600;
 
-    println!("Alice (primary): {}", alice_pubkey);
+    println!("Alice (primary): {}", sender_pubkey);
     println!("Bob (refund): {}", bob_pubkey);
     println!("Current time: {}", unix_time());
     println!("Locktime: {} (expires in 1 hour)", locktime);
@@ -444,7 +444,7 @@ async fn test_p2pk_sig_all_locktime_before_expiry() {
 
     // Step 2: Create conditions with Alice as primary and Bob as refund key with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 Some(locktime),         // locktime in the future
@@ -528,13 +528,13 @@ async fn test_p2pk_sig_all_locktime_after_expiry() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (_bob_secret, bob_pubkey) = create_test_keypair();
 
     // Set locktime in the past (already expired)
     let locktime = unix_time() - 3600;
 
-    println!("Alice (primary): {}", alice_pubkey);
+    println!("Alice (primary): {}", sender_pubkey);
     println!("Bob (refund): {}", bob_pubkey);
     println!("Current time: {}", unix_time());
     println!("Locktime: {} (expired 1 hour ago)", locktime);
@@ -545,7 +545,7 @@ async fn test_p2pk_sig_all_locktime_after_expiry() {
 
     // Step 2: Create conditions with Alice as primary and Bob as refund key with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime),            // locktime in the past (expired)
             pubkeys: None,                       // no additional pubkeys
@@ -611,12 +611,12 @@ async fn test_p2pk_sig_all_locktime_after_expiry_no_refund_anyone_can_spend() {
     let test_mint = TestMintHelper::new().await.unwrap();
     let mint = test_mint.mint();
 
-    let (_alice_secret, alice_pubkey) = create_test_keypair();
+    let (_alice_secret, sender_pubkey) = create_test_keypair();
 
     // Set locktime in the past (already expired)
     let locktime = unix_time() - 3600;
 
-    println!("Alice (primary): {}", alice_pubkey);
+    println!("Alice (primary): {}", sender_pubkey);
     println!("Current time: {}", unix_time());
     println!("Locktime: {} (expired 1 hour ago)", locktime);
     println!("No refund keys configured - anyone can spend after locktime");
@@ -627,7 +627,7 @@ async fn test_p2pk_sig_all_locktime_after_expiry_no_refund_anyone_can_spend() {
 
     // Step 2: Create conditions with Alice as primary, NO refund keys, with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime),  // locktime in the past (expired)
             pubkeys: None,             // no additional pubkeys
@@ -691,7 +691,7 @@ async fn test_p2pk_sig_all_multisig_locktime() {
     let mint = test_mint.mint();
 
     // Before locktime: Need 2-of-3 from (Alice, Bob, Carol)
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
     let (_carol_secret, carol_pubkey) = create_test_keypair();
 
@@ -714,7 +714,7 @@ async fn test_p2pk_sig_all_multisig_locktime() {
     // Before locktime: 2-of-3 (Alice, Bob, Carol)
     // After locktime: 1-of-2 (Dave, Eve)
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime),                         // Already expired
             pubkeys: Some(vec![bob_pubkey, carol_pubkey]), // Bob and Carol (with Alice = 3 total)
@@ -787,10 +787,10 @@ async fn test_p2pk_sig_all_mixed_proofs_different_data() {
     let mint = test_mint.mint();
 
     // Create two different keypairs
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
 
-    println!("Alice pubkey: {}", alice_pubkey);
+    println!("Alice pubkey: {}", sender_pubkey);
     println!("Bob pubkey: {}", bob_pubkey);
 
     // Step 1: Mint regular proofs for Alice
@@ -799,7 +799,7 @@ async fn test_p2pk_sig_all_mixed_proofs_different_data() {
 
     // Step 2: Create Alice's P2PK spending conditions with SIG_ALL
     let alice_spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: None,
             pubkeys: None,
@@ -955,7 +955,7 @@ async fn test_p2pk_sig_all_multisig_before_locktime() {
     let mint = test_mint.mint();
 
     // Create 3 keypairs for primary multisig (Alice, Bob, Carol)
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
     let (_carol_secret, carol_pubkey) = create_test_keypair();
 
@@ -978,7 +978,7 @@ async fn test_p2pk_sig_all_multisig_before_locktime() {
     // Before locktime: 2-of-3 (Alice, Bob, Carol)
     // After locktime: 1-of-2 (Dave, Eve)
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime),                         // 1 hour in the future
             pubkeys: Some(vec![bob_pubkey, carol_pubkey]), // Bob and Carol (with Alice = 3 total)
@@ -1062,7 +1062,7 @@ async fn test_p2pk_sig_all_more_signatures_than_required() {
     let mint = test_mint.mint();
 
     // Create 3 keypairs for multisig (Alice, Bob, Carol)
-    let (alice_secret, alice_pubkey) = create_test_keypair();
+    let (alice_secret, sender_pubkey) = create_test_keypair();
     let (bob_secret, bob_pubkey) = create_test_keypair();
     let (carol_secret, carol_pubkey) = create_test_keypair();
 
@@ -1074,7 +1074,7 @@ async fn test_p2pk_sig_all_more_signatures_than_required() {
 
     // Step 2: Create 2-of-3 multisig conditions with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: None,
             pubkeys: Some(vec![bob_pubkey, carol_pubkey]), // Bob and Carol (with Alice = 3 total)
@@ -1145,7 +1145,7 @@ async fn test_p2pk_sig_all_refund_multisig_2of2() {
     let mint = test_mint.mint();
 
     // Primary key (Alice)
-    let (_alice_secret, alice_pubkey) = create_test_keypair();
+    let (_alice_secret, sender_pubkey) = create_test_keypair();
 
     // Refund keys (Dave, Eve) - need both after locktime
     let (dave_secret, dave_pubkey) = create_test_keypair();
@@ -1164,7 +1164,7 @@ async fn test_p2pk_sig_all_refund_multisig_2of2() {
 
     // Step 2: Create conditions with 2-of-2 refund multisig and SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(Conditions {
             locktime: Some(locktime), // Already expired
             pubkeys: None,
@@ -1248,8 +1248,8 @@ async fn test_sig_all_should_reject_if_the_output_amounts_are_swapped() {
     let mint = test_mint.mint();
 
     // Generate keypair for Alice
-    let (alice_secret, alice_pubkey) = create_test_keypair();
-    println!("Alice pubkey: {}", alice_pubkey);
+    let (alice_secret, sender_pubkey) = create_test_keypair();
+    println!("Alice pubkey: {}", sender_pubkey);
 
     // Step 1: Mint regular proofs (10 sats = 8+2)
     let input_amount = Amount::from(10);
@@ -1258,7 +1258,7 @@ async fn test_sig_all_should_reject_if_the_output_amounts_are_swapped() {
 
     // Step 2: Create P2PK spending conditions with SIG_ALL
     let spending_conditions = SpendingConditions::new_p2pk(
-        alice_pubkey,
+        sender_pubkey,
         Some(
             Conditions::new(
                 None,                  // no locktime

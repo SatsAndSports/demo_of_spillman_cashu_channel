@@ -1,0 +1,45 @@
+[package]
+name = "cdk-spilman-server-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Integration tests for Spilman payment channel servers"
+
+# This crate is for tests only - no lib to publish
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[dependencies]
+cdk = { workspace = true, features = ["mint", "wallet"] }
+cdk-common = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["full", "process"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+rand = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures = { workspace = true }
+command-group = { version = "5.0", features = ["tokio"] }
+libc = "0.2"
+
+[dev-dependencies]
+test-log = { version = "0.2", features = ["trace"] }
+
+[lints.rust]
+# We need unsafe for libc::atexit to register cleanup handlers
+unsafe_code = "warn"
+
+[lints.clippy]
+unwrap_used = "allow"
+
+[lints.rustdoc]
+missing_docs = "warn"
+bare_urls = "warn"
