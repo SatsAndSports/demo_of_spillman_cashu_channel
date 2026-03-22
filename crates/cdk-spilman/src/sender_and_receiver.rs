@@ -12,7 +12,7 @@ use cashu::Amount;
 use super::balance_update::BalanceUpdateMessage;
 use super::deterministic::{CommitmentOutputs, DeterministicOutputsForOneContext, MintConnection};
 use super::established_channel::EstablishedChannel;
-use super::params::ChannelParameters;
+use super::params::{ChannelParameters, Stage2Role};
 
 // ============================================================================
 // Channel Verification
@@ -381,9 +381,12 @@ impl SpilmanChannelSender {
                             .pop()
                             .ok_or_else(|| anyhow::anyhow!("construct_proofs returned no proofs"))?;
 
-                        proof.p2pk_e = Some(
-                            params.get_stage2_p2pk_e_for_stage1_output("sender", amount, index)?,
-                        );
+                        params.attach_stage2_p2pk_e(
+                            &mut proof,
+                            Stage2Role::Sender,
+                            amount,
+                            index,
+                        )?;
 
                         recovered_proofs.push(proof);
                         index += 1;

@@ -16,7 +16,7 @@ use cashu::secret::Secret;
 use cashu::Amount;
 
 use super::keysets_and_amounts::OrderedListOfAmounts;
-use super::params::ChannelParameters;
+use super::params::{ChannelParameters, Stage2Role};
 
 /// Trait for mint connection operations needed by Spilman channels
 #[async_trait]
@@ -485,14 +485,17 @@ impl CommitmentOutputs {
             .into_iter()
             .zip(all_outputs.iter())
             .map(|(mut proof, (output, is_receiver))| {
-                let context = if *is_receiver { "receiver" } else { "sender" };
-                proof.p2pk_e = Some(
-                    self.receiver_outputs.params.get_stage2_p2pk_e_for_stage1_output(
-                        context,
-                        output.amount,
-                        output.index,
-                    )?,
-                );
+                let role = if *is_receiver {
+                    Stage2Role::Receiver
+                } else {
+                    Stage2Role::Sender
+                };
+                self.receiver_outputs.params.attach_stage2_p2pk_e(
+                    &mut proof,
+                    role,
+                    output.amount,
+                    output.index,
+                )?;
 
                 Ok(ProofWithMetadata {
                     proof,

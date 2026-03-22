@@ -36,6 +36,28 @@ pub(crate) struct Stage2P2bkTweakInfo {
     pub(crate) stage2_tweak_scalar: Scalar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage2Role {
+    Sender,
+    Receiver,
+}
+
+impl Stage2Role {
+    fn stage2_context(self) -> &'static str {
+        match self {
+            Self::Sender => "sender_stage2",
+            Self::Receiver => "receiver_stage2",
+        }
+    }
+
+    fn pubkey(self, params: &ChannelParameters) -> &cashu::nuts::PublicKey {
+        match self {
+            Self::Sender => &params.sender_pubkey,
+            Self::Receiver => &params.receiver_pubkey,
+        }
+    }
+}
+
 /// Parameters for a Spilman payment channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
@@ -513,7 +535,7 @@ impl ChannelParameters {
     /// Retries with incrementing retry_counter until a valid scalar in [1, n-1] is found.
     ///
     /// Note: This produces a SHARED blinding scalar for all proofs with the same context.
-    /// For per-proof blinding (stage2), use `derive_stage2_p2bk_tweak_info_for_output()` instead.
+    /// For per-proof blinding (stage2), use `stage2_tweak_info_for_role()` instead.
     fn derive_blinding_scalar(&self, context: &str) -> anyhow::Result<Scalar> {
         let channel_id = self.get_channel_id();
 
@@ -543,19 +565,18 @@ impl ChannelParameters {
     ///
     /// Uses the per-output ephemeral secret to compute a NUT-28 shared-secret tweak
     /// alongside the deterministic ephemeral key material for later metadata use.
-    pub(crate) fn derive_stage2_p2bk_tweak_info_for_output(
+    pub(crate) fn stage2_tweak_info_for_role(
         &self,
-        context: &str,
+        role: Stage2Role,
         amount: u64,
         index: usize,
     ) -> anyhow::Result<Stage2P2bkTweakInfo> {
-        let role_pubkey = match context {
-            "sender_stage2" => &self.sender_pubkey,
-            "receiver_stage2" => &self.receiver_pubkey,
-            _ => anyhow::bail!("Unknown stage2 context: {}", context),
-        };
-        let ephemeral_secret =
-            self.derive_stage2_p2bk_ephemeral_secret_for_output(context, amount, index)?;
+        let role_pubkey = role.pubkey(self);
+        let ephemeral_secret = self.derive_stage2_p2bk_ephemeral_secret_for_output(
+            role.stage2_context(),
+            amount,
+            index,
+        )?;
         let ephemeral_pubkey = ephemeral_secret.public_key();
         let ephemeral_shared_secret_x =
             Self::derive_nut28_shared_secret_x(role_pubkey, &ephemeral_secret)?;
@@ -751,8 +772,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<cashu::nuts::PublicKey> {
-        let tweak_info =
-            self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
+        let tweak_info = self.stage2_tweak_info_for_role(Stage2Role::Sender, amount, index)?;
         derive_blinded_pubkey(&self.sender_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
@@ -769,8 +789,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<cashu::nuts::PublicKey> {
-        let tweak_info =
-            self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
+        let tweak_info = self.stage2_tweak_info_for_role(Stage2Role::Receiver, amount, index)?;
         derive_blinded_pubkey(&self.receiver_pubkey, &tweak_info.stage2_tweak_scalar)
     }
 
@@ -784,8 +803,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let tweak_info =
-            self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?;
+        let tweak_info = self.stage2_tweak_info_for_role(Stage2Role::Sender, amount, index)?;
         derive_blinded_secret_key(alice_secret, &tweak_info.stage2_tweak_scalar)
     }
 
@@ -799,8 +817,7 @@ impl ChannelParameters {
         amount: u64,
         index: usize,
     ) -> anyhow::Result<SecretKey> {
-        let tweak_info =
-            self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?;
+        let tweak_info = self.stage2_tweak_info_for_role(Stage2Role::Receiver, amount, index)?;
         derive_blinded_secret_key(charlie_secret, &tweak_info.stage2_tweak_scalar)
     }
 
@@ -840,25 +857,26 @@ impl ChannelParameters {
         }
     }
 
-    /// Get the deterministic NUT-28 ephemeral pubkey for a stage 1 output.
-    pub(crate) fn get_stage2_p2pk_e_for_stage1_output(
+    pub(crate) fn stage2_p2pk_e_for_role(
         &self,
-        context: &str,
+        role: Stage2Role,
         amount: u64,
         index: usize,
     ) -> Result<cashu::nuts::PublicKey, anyhow::Error> {
-        let tweak_info = match context {
-            "receiver" => {
-                self.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", amount, index)?
-            }
-            "sender" => {
-                self.derive_stage2_p2bk_tweak_info_for_output("sender_stage2", amount, index)?
-            }
-            "funding" => anyhow::bail!("Funding context does not use per-proof NUT-28 metadata"),
-            _ => anyhow::bail!("Unknown context: {}", context),
-        };
+        let tweak_info = self.stage2_tweak_info_for_role(role, amount, index)?;
 
         Ok(tweak_info.ephemeral_pubkey)
+    }
+
+    pub(crate) fn attach_stage2_p2pk_e(
+        &self,
+        proof: &mut cashu::nuts::Proof,
+        role: Stage2Role,
+        amount: u64,
+        index: usize,
+    ) -> Result<(), anyhow::Error> {
+        proof.p2pk_e = Some(self.stage2_p2pk_e_for_role(role, amount, index)?);
+        Ok(())
     }
 
     /// Create a deterministic output with blinding using the channel ID and channel secret
@@ -1267,7 +1285,7 @@ mod tests {
         .expect("Failed to create channel params");
 
         let sender_info = params
-            .derive_stage2_p2bk_tweak_info_for_output("sender_stage2", 64, 0)
+            .stage2_tweak_info_for_role(Stage2Role::Sender, 64, 0)
             .expect("Failed to derive sender stage2 tweak info");
         let sender_shared_from_alice = ChannelParameters::derive_nut28_shared_secret_x(
             &sender_info.ephemeral_pubkey,
@@ -1291,7 +1309,7 @@ mod tests {
         }
 
         let receiver_info = params
-            .derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", 64, 0)
+            .stage2_tweak_info_for_role(Stage2Role::Receiver, 64, 0)
             .expect("Failed to derive receiver stage2 tweak info");
         let receiver_shared_from_charlie = ChannelParameters::derive_nut28_shared_secret_x(
             &receiver_info.ephemeral_pubkey,

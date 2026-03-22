@@ -12,6 +12,7 @@ use super::{
     verify_valid_channel, BalanceUpdateMessage, ChannelParameters, CommitmentOutputs,
     DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo,
 };
+use super::params::Stage2Role;
 use cashu::nuts::nut10::SpendingConditionVerification;
 use cashu::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SwapRequest};
 use cashu::util::hex;
@@ -602,12 +603,14 @@ pub fn unblind_and_verify_stage1_response(
     let mut sender_sum = 0;
 
     for ((mut proof, is_receiver), (amount, index)) in proofs.into_iter().zip(is_receiver_flags).zip(amount_index_pairs) {
-        let context = if is_receiver { "receiver" } else { "sender" };
-        proof.p2pk_e = Some(
-            params
-                .get_stage2_p2pk_e_for_stage1_output(context, amount, index)
-                .map_err(|e| BridgeError::Internal(e.to_string()))?,
-        );
+        let role = if is_receiver {
+            Stage2Role::Receiver
+        } else {
+            Stage2Role::Sender
+        };
+        params
+            .attach_stage2_p2pk_e(&mut proof, role, amount, index)
+            .map_err(|e| BridgeError::Internal(e.to_string()))?;
 
         if is_receiver {
             let expected_pubkey = params.get_receiver_blinded_pubkey_for_stage2_output(amount, index).map_err(|e| BridgeError::Internal(e.to_string()))?;
@@ -946,11 +949,43 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         Ok(PreparedClose { channel_id: channel_id.to_string(), balance, mint_url, swap_request: serde_json::to_value(&close_data.swap_request).unwrap_or(serde_json::Value::Null), secrets_with_blinding: close_data.secrets_with_blinding.iter().map(|(s, is_r)| serde_json::json!({ "secret": s.secret.to_string(), "blinding_factor": hex::encode(s.blinding_factor.secret_bytes()), "amount": s.amount, "index": s.index, "is_receiver": is_r })).collect(), output_keyset_info: serde_json::to_value(&close_data.output_keyset_info).unwrap_or(serde_json::Value::Null), params_json: funding.params_json, keyset_info_json: funding.keyset_info_json, channel_secret: funding.channel_secret_hex })
     }
 
+    fn sign_receiver_close_proof(
+        &self,
+        params: &ChannelParameters,
+        proof_meta: &ProofWithMeta,
+    ) -> Result<Proof, CloseError> {
+        use bitcoin::hashes::{sha256::Hash as Sha256Hash, Hash};
+
+        let mut proof = proof_meta.proof.clone();
+        params
+            .attach_stage2_p2pk_e(
+                &mut proof,
+                Stage2Role::Receiver,
+                proof_meta.amount,
+                proof_meta.index,
+            )
+            .map_err(|e| {
+                CloseError::unblind_failed(format!("Failed to attach stage2 metadata: {}", e))
+            })?;
+        let tweak_info = params
+            .stage2_tweak_info_for_role(Stage2Role::Receiver, proof_meta.amount, proof_meta.index)
+            .map_err(|e| {
+                CloseError::unblind_failed(format!("Failed to derive stage2 tweak: {}", e))
+            })?;
+        let tweak_hex = hex::encode(tweak_info.stage2_tweak_scalar.to_be_bytes());
+        let msg_hash = Sha256Hash::hash(&proof.secret.to_bytes());
+        let msg_hex = hex::encode(msg_hash.as_byte_array());
+        let sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &msg_hex, &tweak_hex)
+            .map_err(|e| CloseError::unblind_failed(format!("Failed to sign receiver proof: {}", e)))?;
+        proof.witness = Some(cashu::nuts::Witness::P2PKWitness(cashu::nuts::P2PKWitness { signatures: vec![sig] }));
+
+        Ok(proof)
+    }
+
     fn finalize_close(&self, channel_id: &str, expiry_timestamp: u64, payment: PaymentProof, resp_json: &str, prep: &PreparedClose) -> Result<CloseSuccess, CloseError> {
         use super::parse_keyset_info_from_json;
         use cashu::nuts::SecretKey;
         use cashu::secret::Secret;
-        use bitcoin::hashes::{sha256::Hash as Sha256Hash, Hash};
 
         let resp: serde_json::Value = serde_json::from_str(resp_json).map_err(|e| CloseError::UnblindFailed { reason: e.to_string(), status: 500 })?;
         let sigs_value = resp.get("signatures").ok_or_else(|| CloseError::UnblindFailed { reason: "Missing signatures".into(), status: 500 })?;
@@ -982,16 +1017,7 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         // Sign each receiver proof with P2PK witness using the host's tweaked signing
         let mut signed_receiver_proofs: Vec<Proof> = Vec::with_capacity(result.receiver_proofs.len());
         for pm in &result.receiver_proofs {
-            let mut proof = pm.proof.clone();
-            let tweak_info = params.derive_stage2_p2bk_tweak_info_for_output("receiver_stage2", pm.amount, pm.index)
-                .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to derive stage2 tweak: {}", e), status: 500 })?;
-            let tweak_hex = hex::encode(tweak_info.stage2_tweak_scalar.to_be_bytes());
-            let msg_hash = Sha256Hash::hash(&proof.secret.to_bytes());
-            let msg_hex = hex::encode(msg_hash.as_byte_array());
-            let sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &msg_hex, &tweak_hex)
-                .map_err(|e| CloseError::UnblindFailed { reason: format!("Failed to sign receiver proof: {}", e), status: 500 })?;
-            proof.witness = Some(cashu::nuts::Witness::P2PKWitness(cashu::nuts::P2PKWitness { signatures: vec![sig] }));
-            signed_receiver_proofs.push(proof);
+            signed_receiver_proofs.push(self.sign_receiver_close_proof(&params, pm)?);
         }
 
         let sender_proofs: Vec<&Proof> = result.sender_proofs.iter().map(|pm| &pm.proof).collect();
