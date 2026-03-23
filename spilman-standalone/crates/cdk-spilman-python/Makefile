@@ -74,6 +74,10 @@ build: venv
 # Tests
 # ============================================================================
 
+# Unit tests (no mint required)
+test-unit: build
+	$(PYTHON) -m pytest tests/keysets_cache_test.py -v
+
 # Integration tests (requires mint running at MINT_URL)
 test-integration: build
 	MINT_URL=$(MINT_URL) $(PYTHON) -m pytest tests/ -v

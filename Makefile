@@ -238,7 +238,7 @@ run-ts-client:
 test-unit-spilman:
 	cargo test -p cdk-spilman --features configurable-host
 
-# Run standalone workspace skeleton checks
+# Run standalone workspace tests
 test-standalone-core:
 	cargo test -p cdk-spilman --manifest-path spilman-standalone/Cargo.toml
 
@@ -251,10 +251,16 @@ test-standalone-wasm:
 test-standalone-rust-demo:
 	cargo test -p rust-ascii-art --manifest-path spilman-standalone/Cargo.toml
 
-test-standalone: test-standalone-core test-standalone-interop test-standalone-wasm test-standalone-rust-demo
+test-standalone-go:
+	$(MAKE) -C spilman-standalone/crates/cdk-spilman-go test-dev
+
+test-standalone-python:
+	$(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-unit
+
+test-standalone: test-standalone-core test-standalone-interop test-standalone-wasm test-standalone-rust-demo test-standalone-go test-standalone-python
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL STANDALONE SKELETON TESTS PASSED"
+	@echo "  ALL STANDALONE TESTS PASSED"
 	@echo "========================================="
 
 # Run Rust ASCII Art integration tests (requires mint)
