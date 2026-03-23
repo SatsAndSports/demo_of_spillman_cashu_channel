@@ -257,10 +257,27 @@ test-standalone-go:
 test-standalone-python:
 	$(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-unit
 
+# Standalone integration tests (require mint via MINT_URL or CDK_REPO_ROOT)
+# Default CDK_REPO_ROOT to this repo so it works out of the box during transition
+STANDALONE_CDK_REPO_ROOT ?= $(shell pwd)
+STANDALONE_MINT_RUNNER := CDK_REPO_ROOT=$(STANDALONE_CDK_REPO_ROOT) spilman-standalone/scripts/run_with_mint.sh
+
+test-standalone-integration-python:
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-integration
+
+test-standalone-integration-go:
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-spilman-go test-integration-dev
+
 test-standalone: test-standalone-core test-standalone-interop test-standalone-wasm test-standalone-rust-demo test-standalone-go test-standalone-python
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE TESTS PASSED"
+	@echo "========================================="
+
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL STANDALONE TESTS (incl. integration) PASSED"
 	@echo "========================================="
 
 # Run Rust ASCII Art integration tests (requires mint)
@@ -271,13 +288,11 @@ test-integration-rust: build-mintd
 test-unit-go: build-go
 	$(MAKE) -C $(GO_CRATE_DIR) test-dev
 
-# Run Go integration tests (basic tests, requires mint)
-test-integration-go: build-go build-mintd
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(GO_CRATE_DIR) test-integration-dev
+# Run Go integration tests (uses standalone workspace)
+test-integration-go: test-standalone-integration-go
 
-# Run Python integration tests (basic tests, requires mint)
-test-integration-python: build-python build-mintd
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(PYTHON_CRATE_DIR) test-integration
+# Run Python integration tests (uses standalone workspace)
+test-integration-python: test-standalone-integration-python
 
 # Run TypeScript integration tests (basic tests, requires mint)
 test-integration-ts: build-wasm build-kit-ts build-mintd
