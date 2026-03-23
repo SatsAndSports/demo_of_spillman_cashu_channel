@@ -296,9 +296,10 @@ test-standalone-server-go:
 test-standalone-server-rust:
 	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
 
-# Note: test-standalone-demo-ts and test-standalone-server-ts excluded
-# due to known TS demo ESM/WASM runtime issue (see NON_FORK_PLAN.md)
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-server-python test-standalone-server-go test-standalone-server-rust
+test-standalone-server-ts:
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE TESTS PASSED"
@@ -319,7 +320,6 @@ test-integration-go: test-standalone-integration-go
 test-integration-python: test-standalone-integration-python
 
 # Run TypeScript integration tests (uses standalone workspace)
-# Note: test-standalone-integration-ts works; demo still has pre-existing ESM issue
 test-integration-ts: test-standalone-integration-ts
 
 # Run all integration tests (Go, Python, TS, Rust)
@@ -334,8 +334,8 @@ test-integration-all: test-integration-rust test-integration-go test-integration
 # ===========================================================================
 
 # Test TypeScript server
-test-server-ts: build-mintd build-wasm build-kit-ts
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+# Test TypeScript server (uses standalone workspace)
+test-server-ts: test-standalone-server-ts
 
 # Test Rust server (uses standalone workspace)
 test-server-rust: test-standalone-server-rust
@@ -363,8 +363,7 @@ test-demo-python: test-standalone-demo-python
 
 test-demo-go: test-standalone-demo-go
 
-test-demo-ts: build-wasm build-mintd
-	@bash scripts/ts-parallel-demo.sh cdk
+test-demo-ts: test-standalone-demo-ts
 
 # Test all demos
 test-demo-all: test-demo-python test-demo-go test-demo-ts

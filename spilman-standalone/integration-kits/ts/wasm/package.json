@@ -3,6 +3,7 @@
   "description": "WASM bindings for Cashu payment channels",
   "version": "0.15.1",
   "license": "MIT",
+  "type": "module",
   "files": [
     "cdk_wasm_bg.wasm",
     "cdk_wasm.js",
