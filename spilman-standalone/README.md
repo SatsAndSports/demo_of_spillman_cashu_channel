@@ -6,8 +6,8 @@ Included members:
 - `examples/rust-ascii-art`
 
 Temporary note:
-- `cashu` is still patched to the local fork via `[patch.crates-io]` in `Cargo.toml`
-- this keeps the skeleton buildable while the split is in progress
+- `cashu` currently comes from the upstream `cashubtc/cdk` repo at a pinned git revision
+- this keeps the skeleton off the local fork while the split is in progress
 
 Smoke checks:
 
