@@ -280,7 +280,14 @@ test-standalone-demo-python: test-standalone-python
 test-standalone-demo-go: test-standalone-go
 	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/go-parallel-demo.sh
 
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-demo-python test-standalone-demo-go
+test-standalone-integration-ts:
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-wasm test-integration
+
+test-standalone-demo-ts:
+	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/ts-parallel-demo.sh
+
+# Note: test-standalone-demo-ts excluded due to known TS demo ESM/WASM runtime issue (see NON_FORK_PLAN.md)
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE TESTS (incl. integration + demos) PASSED"
@@ -300,9 +307,9 @@ test-integration-go: test-standalone-integration-go
 # Run Python integration tests (uses standalone workspace)
 test-integration-python: test-standalone-integration-python
 
-# Run TypeScript integration tests (basic tests, requires mint)
-test-integration-ts: build-wasm build-kit-ts build-mintd
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(WASM_CRATE) test-integration
+# Run TypeScript integration tests (uses standalone workspace)
+# Note: test-standalone-integration-ts works; demo still has pre-existing ESM issue
+test-integration-ts: test-standalone-integration-ts
 
 # Run all integration tests (Go, Python, TS, Rust)
 test-integration-all: test-integration-rust test-integration-go test-integration-python test-integration-ts
