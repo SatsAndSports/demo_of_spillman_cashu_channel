@@ -242,13 +242,16 @@ test-unit-spilman:
 test-standalone-core:
 	cargo test -p cdk-spilman --manifest-path spilman-standalone/Cargo.toml
 
+test-standalone-interop:
+	cargo test -p cdk-spilman-interop-tests --manifest-path spilman-standalone/Cargo.toml
+
 test-standalone-wasm:
 	cargo test -p cdk-wasm --manifest-path spilman-standalone/Cargo.toml
 
 test-standalone-rust-demo:
 	cargo test -p rust-ascii-art --manifest-path spilman-standalone/Cargo.toml
 
-test-standalone: test-standalone-core test-standalone-wasm test-standalone-rust-demo
+test-standalone: test-standalone-core test-standalone-interop test-standalone-wasm test-standalone-rust-demo
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE SKELETON TESTS PASSED"

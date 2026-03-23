@@ -2,6 +2,7 @@ This is a standalone-workspace skeleton for the first-wave Spilman crates.
 
 Included members:
 - `crates/cdk-spilman`
+- `crates/cdk-spilman-interop-tests`
 - `crates/cdk-wasm`
 - `examples/rust-ascii-art`
 
@@ -13,6 +14,7 @@ Smoke checks:
 
 ```bash
 cargo test -p cdk-spilman
+cargo test -p cdk-spilman-interop-tests
 cargo test -p cdk-wasm --no-run
 cargo test -p rust-ascii-art --no-run
 ```

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/cdk-spilman",
+    "crates/cdk-spilman-interop-tests",
     "crates/cdk-wasm",
     "examples/rust-ascii-art",
 ]
