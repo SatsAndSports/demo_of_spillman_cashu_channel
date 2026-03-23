@@ -12,12 +12,12 @@
 MINT_URL ?= http://localhost:3338
 PORT ?= 5002
 
-# Root of the main repo (for examples and integration kits not yet moved)
-REPO_ROOT ?= ../../..
+# Standalone workspace root
+STANDALONE_ROOT ?= ../..
 
 # Directories
-EXAMPLE_DIR := $(REPO_ROOT)/examples/python-ascii-art
-INTEGRATION_KIT_DIR := $(REPO_ROOT)/integration-kits/python
+EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/python-ascii-art
+INTEGRATION_KIT_DIR := $(STANDALONE_ROOT)/integration-kits/python
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
@@ -37,7 +37,7 @@ help:
 	@echo "Environment variables:"
 	@echo "  MINT_URL    Mint URL (default: $(MINT_URL))"
 	@echo "  PORT        Server port (default: $(PORT))"
-	@echo "  REPO_ROOT   Path to main repo root (default: $(REPO_ROOT))"
+	@echo "  STANDALONE_ROOT  Standalone workspace root (default: $(STANDALONE_ROOT))"
 
 # ============================================================================
 # Build

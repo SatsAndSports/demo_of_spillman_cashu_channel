@@ -274,10 +274,16 @@ test-standalone: test-standalone-core test-standalone-interop test-standalone-wa
 	@echo "  ALL STANDALONE TESTS PASSED"
 	@echo "========================================="
 
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go
+test-standalone-demo-python: test-standalone-python
+	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/python-parallel-demo.sh
+
+test-standalone-demo-go: test-standalone-go
+	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/go-parallel-demo.sh
+
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-demo-python test-standalone-demo-go
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL STANDALONE TESTS (incl. integration) PASSED"
+	@echo "  ALL STANDALONE TESTS (incl. integration + demos) PASSED"
 	@echo "========================================="
 
 # Run Rust ASCII Art integration tests (requires mint)
@@ -338,11 +344,9 @@ test-server-all: test-server-ts test-server-rust test-server-python test-server-
 
 # --- Demo Tests with CDK Mint (default) ---
 
-test-demo-python: build-python build-mintd
-	@bash scripts/python-parallel-demo.sh cdk
+test-demo-python: test-standalone-demo-python
 
-test-demo-go: build-go build-mintd
-	@bash scripts/go-parallel-demo.sh cdk
+test-demo-go: test-standalone-demo-go
 
 test-demo-ts: build-wasm build-mintd
 	@bash scripts/ts-parallel-demo.sh cdk

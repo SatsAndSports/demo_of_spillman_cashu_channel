@@ -12,12 +12,12 @@
 MINT_URL ?= http://localhost:3338
 SERVER_URL ?= http://localhost:5001
 
-# Root of the main repo (for examples not yet moved)
-REPO_ROOT ?= ../../..
+# Standalone workspace root
+STANDALONE_ROOT ?= ../..
 
 # Directories (relative to this Makefile)
 SPILMAN_PKG := ./spilman
-EXAMPLE_DIR := $(REPO_ROOT)/examples/go-ascii-art
+EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/go-ascii-art
 
 # Standalone workspace target dir
 STANDALONE_TARGET := ../../target
@@ -46,7 +46,7 @@ help:
 	@echo "Environment variables:"
 	@echo "  MINT_URL    Mint URL (default: $(MINT_URL))"
 	@echo "  SERVER_URL  Server URL for client (default: $(SERVER_URL))"
-	@echo "  REPO_ROOT   Path to main repo root (default: $(REPO_ROOT))"
+	@echo "  STANDALONE_ROOT  Standalone workspace root (default: $(STANDALONE_ROOT))"
 
 # ============================================================================
 # Unit Tests (standalone - uses packaged static libs)
