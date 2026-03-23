@@ -1219,7 +1219,6 @@ dependencies = [
  "cdk-npubcash",
  "cdk-prometheus",
  "cdk-signatory",
- "cdk-spilman",
  "cdk-sqlite",
  "ciborium",
  "criterion",

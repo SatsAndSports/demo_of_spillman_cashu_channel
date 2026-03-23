@@ -236,7 +236,7 @@ run-ts-client:
 
 # Run Spilman unit tests (Rust)
 test-unit-spilman:
-	cargo test -p cdk-spilman --features configurable-host && cargo test -p cdk spilman_tests
+	cargo test -p cdk-spilman --features configurable-host
 
 # Run standalone workspace skeleton checks
 test-standalone-core:

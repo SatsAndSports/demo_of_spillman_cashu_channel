@@ -27,10 +27,6 @@ pub mod wallet;
 #[cfg(test)]
 mod test_helpers;
 
-#[cfg(all(test, feature = "wallet", feature = "mint"))]
-#[path = "spilman/tests.rs"]
-mod spilman_tests;
-
 #[cfg(all(feature = "bip353", not(target_arch = "wasm32")))]
 mod bip353;
 
