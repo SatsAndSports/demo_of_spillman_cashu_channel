@@ -16,7 +16,7 @@ SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
 REPO_ROOT=$(pwd)
-GO_DEMO_DIR="examples/go-ascii-art"
+GO_DEMO_DIR="spilman-standalone/examples/go-ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 # 3. Build Go demo
 echo "--- Building Go demo ---"
-(cd "$GO_DEMO_DIR" && go build -tags spilman_dev -o main .)
+(cd "$GO_DEMO_DIR" && LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug" go build -tags spilman_dev -o main .)
 
 # 4. Find two distinct free ports
 echo "--- Finding free ports ---"
@@ -59,7 +59,7 @@ echo "--- Starting Go Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
 export SERVER_URL="http://localhost:$SERVER_PORT"
-export LD_LIBRARY_PATH="$REPO_ROOT/target/debug"
+export LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug"
 
 cd "$GO_DEMO_DIR"
 ./main server > "$REPO_ROOT/$SERVER_LOG" 2>&1 &
@@ -88,7 +88,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Go-Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    (cd "$GO_DEMO_DIR" && MINT_URL="http://localhost:$MINT_PORT" SERVER_URL="http://localhost:$SERVER_PORT" LD_LIBRARY_PATH="$REPO_ROOT/target/debug" ./main client "$MSG" --close) > "$LOG" 2>&1 &
+    (cd "$GO_DEMO_DIR" && MINT_URL="http://localhost:$MINT_PORT" SERVER_URL="http://localhost:$SERVER_PORT" LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug" ./main client "$MSG" --close) > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 

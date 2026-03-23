@@ -69,8 +69,9 @@ install:
 	else \
 		echo "TS kit dist/ already exists, skipping tsc"; \
 	fi
+	cd $(KIT_DIR) && npm link
 	rm -rf $(EXAMPLE_DIR)/node_modules/cdk-spilman-kit
-	cd $(EXAMPLE_DIR) && npm install --no-package-lock --no-fund --no-audit
+	cd $(EXAMPLE_DIR) && npm install --no-package-lock --no-fund --no-audit && npm link cdk-spilman-kit
 
 # ============================================================================
 # Tests

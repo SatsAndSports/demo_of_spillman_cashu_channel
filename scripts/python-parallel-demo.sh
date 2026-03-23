@@ -16,7 +16,7 @@ SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
 REPO_ROOT=$(pwd)
-PYTHON="crates/cdk-spilman-python/.venv/bin/python"
+PYTHON="spilman-standalone/crates/cdk-spilman-python/.venv/bin/python"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -54,9 +54,9 @@ echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
 echo "--- Starting Python Server (logging to $SERVER_LOG) ---"
 export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
-export CONFIG_PATH="examples/python-ascii-art/config.yaml"
-export PYTHONPATH="$REPO_ROOT/integration-kits/python:$REPO_ROOT/crates/cdk-spilman-python"
-$PYTHON examples/python-ascii-art/server.py > "$SERVER_LOG" 2>&1 &
+export CONFIG_PATH="spilman-standalone/examples/python-ascii-art/config.yaml"
+export PYTHONPATH="$REPO_ROOT/spilman-standalone/integration-kits/python:$REPO_ROOT/spilman-standalone/crates/cdk-spilman-python"
+$PYTHON spilman-standalone/examples/python-ascii-art/server.py > "$SERVER_LOG" 2>&1 &
 
 # Wait for server to be ready
 echo "Waiting for server to start on port $SERVER_PORT..."
@@ -81,7 +81,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    SERVER_URL="http://localhost:$SERVER_PORT" PYTHONPATH="$REPO_ROOT/integration-kits/python:$REPO_ROOT/crates/cdk-spilman-python" $PYTHON examples/python-ascii-art/client.py "$MSG" --close > "$LOG" 2>&1 &
+    SERVER_URL="http://localhost:$SERVER_PORT" PYTHONPATH="$REPO_ROOT/spilman-standalone/integration-kits/python:$REPO_ROOT/spilman-standalone/crates/cdk-spilman-python" $PYTHON spilman-standalone/examples/python-ascii-art/client.py "$MSG" --close > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 

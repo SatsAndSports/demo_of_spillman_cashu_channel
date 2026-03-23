@@ -38,13 +38,13 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 
 2. **Run ASCII Art Server**:
    ```bash
-   cd examples/rust-ascii-art
+   cd spilman-standalone/examples/rust-ascii-art
    cargo run
    ```
 
 3. **Run TypeScript Demo**:
    ```bash
-   cd examples/ts-ascii-art
+   cd spilman-standalone/examples/ts-ascii-art
    npm install && npm start
    ```
 
@@ -55,19 +55,23 @@ cdk/
 ├── crates/
 │   ├── cdk-spilman/                # Core Rust protocol implementation
 │   ├── cdk/                        # Upstream CDK code plus wallet interop tests
-│   ├── cdk-wasm/                   # WASM bindings
-│   ├── cdk-spilman-python/         # Python bindings (PyO3)
-│   ├── cdk-spilman-go/             # Go bindings (CGO)
-│   └── cdk-spilman-server-integration-tests/ # Multi-server test client
-├── integration-kits/
-│   ├── ts/                         # TypeScript/Express integration kit
-│   ├── python/                     # Python integration kit
-│   └── go/                         # Go integration kit
-├── examples/
-│   ├── rust-ascii-art/             # Rust demo (native)
-│   ├── ts-ascii-art/               # TypeScript demo
-│   ├── python-ascii-art/           # Python demo
-│   └── go-ascii-art/               # Go demo
+│   └── cdk/                        # Upstream CDK code
+├── spilman-standalone/
+│   ├── crates/
+│   │   ├── cdk-spilman/            # Core Rust protocol implementation
+│   │   ├── cdk-wasm/               # WASM bindings
+│   │   ├── cdk-spilman-python/     # Python bindings (PyO3)
+│   │   ├── cdk-spilman-go/         # Go bindings (CGO)
+│   │   └── cdk-spilman-server-integration-tests/ # Multi-server test client
+│   ├── integration-kits/
+│   │   ├── ts/                     # TypeScript/Express integration kit
+│   │   ├── python/                 # Python integration kit
+│   │   └── go/                     # Go integration kit
+│   └── examples/
+│       ├── rust-ascii-art/         # Rust demo (native)
+│       ├── ts-ascii-art/           # TypeScript demo
+│       ├── python-ascii-art/       # Python demo
+│       └── go-ascii-art/           # Go demo
 ├── web/
 │   └── blossom-server/             # Video streaming demo (separate repo)
 └── dev-mint/                       # CDK mint dev config

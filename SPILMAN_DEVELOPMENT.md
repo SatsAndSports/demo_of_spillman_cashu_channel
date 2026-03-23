@@ -8,10 +8,7 @@ From the repository root:
 
 ```bash
 # Run the standalone Spilman crate tests
-cargo test -p cdk-spilman --features configurable-host
-
-# Run `cdk` wallet interop coverage against `cdk-spilman`
-cargo test -p cdk spilman_tests
+make test-standalone
 ```
 
 ## Native Development (Recommended for Pi)
@@ -150,14 +147,9 @@ docker compose up mint
 The WASM bindings are used by both browser clients and Node.js servers. The root Makefile uses sentinel-based dependency tracking for fast builds.
 
 ```bash
-# Build WASM - instant if nothing changed
-make build-wasm
-```
-
-Test targets automatically build/copy WASM as needed:
-```bash
-make test-blossom      # Builds WASM and copies to blossom-server
-make test-server-ts    # Builds WASM and copies to integration-kits/ts/wasm
+# Build and test the standalone workspace
+make test-standalone
+make test-standalone-all
 ```
 
 ---
@@ -167,14 +159,11 @@ make test-server-ts    # Builds WASM and copies to integration-kits/ts/wasm
 ### Rust Tests
 
 ```bash
-# Spilman unit tests + Rust server integration
-make test-rust-only
+# Standalone Rust-side suite
+make test-standalone
 
-# Standalone Spilman crate tests (includes configurable-host and SQLite)
-cargo test -p cdk-spilman --features configurable-host
-
-# `cdk` wallet interop coverage against the standalone library
-cargo test -p cdk spilman_tests
+# Standalone full suite (includes live mint integration)
+make test-standalone-all
 ```
 
 ### Blossom Server Tests
@@ -193,7 +182,7 @@ npm test
 
 ### Server Integration Tests (Rust)
 
-The `cdk-spilman-server-integration-tests` crate validates all four server implementations (TypeScript, Rust, Python, Go).
+The standalone `cdk-spilman-server-integration-tests` crate validates all four server implementations (TypeScript, Rust, Python, Go).
 
 ```bash
 # Test individual servers
@@ -214,18 +203,21 @@ make test-server-all
 cdk/
 ├── crates/
 │   ├── cdk-spilman/                          # Core Rust implementation
-│   ├── cdk/                                  # Upstream CDK code + wallet interop tests
-│   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
-│   ├── cdk-wasm/                             # WASM bindings (JS/TS)
-│   ├── cdk-spilman-python/                   # Python bindings
-│   └── cdk-spilman-go/                       # Go bindings
-├── integration-kits/
-│   └── ts/                                   # TypeScript kit (Express)
-├── examples/
-│   ├── rust-ascii-art/                       # Rust server (native)
-│   ├── ts-ascii-art/                         # TypeScript server + client
-│   ├── python-ascii-art/                     # Python server + client
-│   └── go-ascii-art/                         # Go server + client
+│   └── cdk/                                  # Upstream CDK code
+├── spilman-standalone/
+│   ├── crates/
+│   │   ├── cdk-spilman/                      # Core Rust implementation
+│   │   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
+│   │   ├── cdk-wasm/                         # WASM bindings (JS/TS)
+│   │   ├── cdk-spilman-python/               # Python bindings
+│   │   └── cdk-spilman-go/                   # Go bindings
+│   ├── integration-kits/
+│   │   └── ts/                               # TypeScript kit (Express)
+│   └── examples/
+│       ├── rust-ascii-art/                   # Rust server (native)
+│       ├── ts-ascii-art/                     # TypeScript server + client
+│       ├── python-ascii-art/                 # Python server + client
+│       └── go-ascii-art/                     # Go server + client
 ├── web/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output

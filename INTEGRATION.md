@@ -40,7 +40,7 @@ The Rust server implementation lives in the `cdk-spilman` crate. The easiest way
 
 ### Path 2: TypeScript (Standard)
 
-Use the [TypeScript Integration Kit](integration-kits/ts/) for Express applications.
+Use the [TypeScript Integration Kit](spilman-standalone/integration-kits/ts/) for Express applications.
 
 1.  **Setup Kit**:
     ```typescript
@@ -53,11 +53,11 @@ Use the [TypeScript Integration Kit](integration-kits/ts/) for Express applicati
 
 ### Path 3: Python
 
-Use the [Python Integration Kit](integration-kits/python/) for Flask or FastAPI applications. See `examples/python-ascii-art/` for a working demo.
+Use the [Python Integration Kit](spilman-standalone/integration-kits/python/) for Flask or FastAPI applications. See `spilman-standalone/examples/python-ascii-art/` for a working demo.
 
 ### Path 4: Go
 
-Use the [Go Integration Kit](integration-kits/go/) for Go HTTP servers. See `examples/go-ascii-art/` for a working demo.
+Use the [Go Integration Kit](spilman-standalone/integration-kits/go/) for Go HTTP servers. See `spilman-standalone/examples/go-ascii-art/` for a working demo.
 
 ### Path 5: Custom Implementation
 
@@ -165,10 +165,10 @@ will be rejected until topped up.
 | Component | Location |
 |-----------|----------|
 | **CashuTube** | `web/blossom-server/` (TypeScript streaming server) |
-| **ASCII Art** | `examples/rust-ascii-art/` (Standard Rust server) |
-| **Python Demo** | `examples/python-ascii-art/` |
-| **TypeScript Demo** | `examples/ts-ascii-art/` (TypeScript/Node.js server) |
-| **Go Demo** | `examples/go-ascii-art/` |
+| **ASCII Art** | `spilman-standalone/examples/rust-ascii-art/` (Standard Rust server) |
+| **Python Demo** | `spilman-standalone/examples/python-ascii-art/` |
+| **TypeScript Demo** | `spilman-standalone/examples/ts-ascii-art/` (TypeScript/Node.js server) |
+| **Go Demo** | `spilman-standalone/examples/go-ascii-art/` |
 
 ---
 

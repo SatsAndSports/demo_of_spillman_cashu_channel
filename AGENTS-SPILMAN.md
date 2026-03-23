@@ -6,42 +6,36 @@ This document provides context for AI coding assistants working on this codebase
 
 ## Project Summary
 
-This workspace contains **Spilman-style unidirectional payment channels** for Cashu ecash. The core Rust implementation lives in the standalone `crates/cdk-spilman/` crate, with bindings for WASM (TypeScript), Python, and Go. The `cdk` crate keeps only wallet interop tests for the standalone library.
+This workspace contains **Spilman-style unidirectional payment channels** for Cashu ecash. The core Rust implementation and bindings now live under `spilman-standalone/`, while the root `cdk` crate remains only as upstream reference code during the migration.
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Video streaming (47 tests)
-- **Rust ASCII Art** (`examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost`
-- **TypeScript ASCII Art** (`examples/ts-ascii-art/`) - Node.js server using `ConfigurableSpilman`
-- **Python ASCII Art** (`examples/python-ascii-art/`) - Python server using `ConfigurableSpilman`
-- **Go ASCII Art** (`examples/go-ascii-art/`) - Go server using `ConfigurableSpilman`
+- **Rust ASCII Art** (`spilman-standalone/examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost`
+- **TypeScript ASCII Art** (`spilman-standalone/examples/ts-ascii-art/`) - Node.js server using `ConfigurableSpilman`
+- **Python ASCII Art** (`spilman-standalone/examples/python-ascii-art/`) - Python server using `ConfigurableSpilman`
+- **Go ASCII Art** (`spilman-standalone/examples/go-ascii-art/`) - Go server using `ConfigurableSpilman`
 
-**Integration tests:** `crates/cdk-spilman-server-integration-tests/` - Rust test client testing all servers.
+**Integration tests:** `spilman-standalone/crates/cdk-spilman-server-integration-tests/` - Rust test client testing all servers.
 
 ## Key Directories
 
 | Path | Purpose |
 |------|---------|
-| `crates/cdk-spilman/` | Core Rust implementation |
-| `crates/cdk/src/spilman/tests.rs` | `cdk` wallet interoperability coverage |
-| `crates/cdk-spilman-server-integration-tests/` | Multi-server test suite |
-| `crates/cdk-wasm/` | WASM bindings |
-| `integration-kits/` | Framework-specific kits (Express, etc.) |
-| `examples/` | Demo implementations |
+| `spilman-standalone/crates/cdk-spilman/` | Core Rust implementation |
+| `spilman-standalone/crates/cdk-spilman-interop-tests/` | Upstream `cdk` interoperability coverage |
+| `spilman-standalone/crates/cdk-spilman-server-integration-tests/` | Multi-server test suite |
+| `spilman-standalone/crates/cdk-wasm/` | WASM bindings |
+| `spilman-standalone/integration-kits/` | Framework-specific kits (Express, etc.) |
+| `spilman-standalone/examples/` | Demo implementations |
 
 ## Running Commands
 
 ```bash
-# Start CDK mint
-cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
+# Run standalone unit/interop suite
+make test-standalone
 
-# Run standalone Spilman unit tests
-cargo test -p cdk-spilman --features configurable-host
-
-# Run `cdk` wallet interop tests against `cdk-spilman`
-cargo test -p cdk spilman_tests
-
-# Build WASM
-make build-wasm
+# Run full standalone suite (includes live mint integration)
+make test-standalone-all
 
 # Run server integration tests
 make test-server-ts

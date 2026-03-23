@@ -43,8 +43,8 @@ trap cleanup EXIT
 
 # Install npm dependencies
 echo "--- Installing npm dependencies ---"
-(cd "$KIT_DIR" && npm install --silent --no-package-lock --no-fund --no-audit)
-(cd "$TS_DEMO_DIR" && rm -rf node_modules/cdk-spilman-kit && npm install --silent --no-package-lock --no-fund --no-audit)
+(cd "$KIT_DIR" && npm install --silent --no-package-lock --no-fund --no-audit && npm link)
+(cd "$TS_DEMO_DIR" && rm -rf node_modules/cdk-spilman-kit && npm install --silent --no-package-lock --no-fund --no-audit && npm link cdk-spilman-kit)
 
 # Find a free port for the server
 SERVER_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')

@@ -34,13 +34,14 @@ endif
 COMPOSE_FILE := -f docker-compose.spilman.yml
 
 # Directories
-PYTHON_CRATE_DIR := crates/cdk-spilman-python
-GO_CRATE_DIR := crates/cdk-spilman-go
-GO_DEMO_DIR := examples/go-ascii-art
-TS_DEMO_DIR := examples/ts-ascii-art
-PYTHON_DEMO_DIR := examples/python-ascii-art
+STANDALONE_ROOT := spilman-standalone
+PYTHON_CRATE_DIR := $(STANDALONE_ROOT)/crates/cdk-spilman-python
+GO_CRATE_DIR := $(STANDALONE_ROOT)/crates/cdk-spilman-go
+GO_DEMO_DIR := $(STANDALONE_ROOT)/examples/go-ascii-art
+TS_DEMO_DIR := $(STANDALONE_ROOT)/examples/ts-ascii-art
+PYTHON_DEMO_DIR := $(STANDALONE_ROOT)/examples/python-ascii-art
 BLOSSOM_DIR := web/blossom-server
-WASM_CRATE := crates/cdk-wasm
+WASM_CRATE := $(STANDALONE_ROOT)/crates/cdk-wasm
 NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
 
 # Python tools (single venv lives in the Python crate)
@@ -99,7 +100,7 @@ install-python: build-python-wheel
 
 # Build Go bindings (Rust library, debug)
 build-go:
-	cargo build -p cdk-spilman-go
+	cargo build -p cdk-spilman-go --manifest-path $(STANDALONE_ROOT)/Cargo.toml
 
 # Build Go distribution libraries (optimized, stripped)
 build-go-dist:
@@ -131,21 +132,21 @@ build-mintd:
 
 # Build Rust ASCII Art server
 build-rust-server:
-	cargo build -p rust-ascii-art
+	cargo build -p rust-ascii-art --manifest-path $(STANDALONE_ROOT)/Cargo.toml
 
 # --- WASM Bindings ---
 
 # WASM build artifacts
 BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
-TS_KIT_WASM := integration-kits/ts/wasm/cdk_wasm_bg.wasm
+TS_KIT_WASM := $(STANDALONE_ROOT)/integration-kits/ts/wasm/cdk_wasm_bg.wasm
 
 # Source files that WASM depends on
-WASM_SOURCES := $(shell find crates/cdk-wasm/src crates/cdk/src crates/cdk-spilman/src -name '*.rs' 2>/dev/null)
+WASM_SOURCES := $(shell find $(WASM_CRATE)/src crates/cdk/src crates/cdk-spilman/src -name '*.rs' 2>/dev/null)
 
 # Sentinel file tracks when WASM was last built
-.wasm-built: $(WASM_SOURCES) crates/cdk-wasm/Cargo.toml crates/cdk/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.lock
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-nodejs
+.wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml crates/cdk/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.lock
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-web
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-nodejs
 	@touch .wasm-built
 	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
 
@@ -161,8 +162,8 @@ $(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 
 # Build WASM and copy to TS integration kit
 $(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
-	@mkdir -p integration-kits/ts/wasm
-	cp web/wasm-nodejs/cdk_wasm* integration-kits/ts/wasm/
+	@mkdir -p $(STANDALONE_ROOT)/integration-kits/ts/wasm
+	cp web/wasm-nodejs/cdk_wasm* $(STANDALONE_ROOT)/integration-kits/ts/wasm/
 	@echo "WASM copied to TS integration kit"
 
 build-blossom-wasm: build-wasm $(BLOSSOM_WASM) build-kit-ts
@@ -173,7 +174,7 @@ build-ts-wasm: .wasm-built $(TS_KIT_WASM)
 # --- TS Integration Kit ---
 
 # Build TS integration kit (compiles TypeScript to dist/)
-TS_KIT_DIR := integration-kits/ts
+TS_KIT_DIR := $(STANDALONE_ROOT)/integration-kits/ts
 TS_KIT_SOURCES := $(shell find $(TS_KIT_DIR)/src -name '*.ts' 2>/dev/null)
 
 .kit-ts-built: $(TS_KIT_SOURCES) $(TS_KIT_WASM)
@@ -217,10 +218,10 @@ run-python-client:
 
 run-go-server: build-go
 	fuser -k 5001/tcp || true
-	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run -tags spilman_dev . server
+	cd $(GO_DEMO_DIR) && go mod tidy && LD_LIBRARY_PATH=$(shell pwd)/$(STANDALONE_ROOT)/target/debug go run -tags spilman_dev . server
 
 run-go-client:
-	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/target/debug go run -tags spilman_dev . client "Hello Go"
+	cd $(GO_DEMO_DIR) && LD_LIBRARY_PATH=$(shell pwd)/$(STANDALONE_ROOT)/target/debug go run -tags spilman_dev . client "Hello Go"
 
 # --- TypeScript Demo ---
 
@@ -287,16 +288,16 @@ test-standalone-demo-ts:
 	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/ts-parallel-demo.sh
 
 # Standalone server integration tests (shared Rust harness against each server type)
-test-standalone-server-python:
+test-standalone-server-python: test-standalone-python
 	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
 
-test-standalone-server-go:
+test-standalone-server-go: test-standalone-go
 	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
 
-test-standalone-server-rust:
+test-standalone-server-rust: test-standalone-rust-demo
 	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
 
-test-standalone-server-ts:
+test-standalone-server-ts: test-standalone-integration-ts
 	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
 
 test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts

@@ -15,7 +15,7 @@ LOG_DIR="./testing/ts-demo-$MINT_TYPE"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
-TS_DEMO_DIR="examples/ts-ascii-art"
+TS_DEMO_DIR="spilman-standalone/examples/ts-ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -38,7 +38,7 @@ trap cleanup EXIT
 
 # 3. Install npm dependencies
 echo "--- Installing npm dependencies ---"
-(cd "integration-kits/ts" && npm install --silent)
+(cd "spilman-standalone/integration-kits/ts" && npm install --silent)
 (cd "$TS_DEMO_DIR" && rm -rf node_modules/cdk-spilman-kit && npm install --silent)
 
 # 4. Find two distinct free ports

@@ -292,6 +292,15 @@ impl ServerProcess {
             }
         }
 
+        let status = Command::new("npm")
+            .arg("link")
+            .current_dir(&kit_dir)
+            .status()
+            .context("Failed to run npm link for TypeScript kit")?;
+        if !status.success() {
+            return Err(anyhow!("npm link failed for TypeScript kit"));
+        }
+
         let node_modules = server_dir.join("node_modules");
         let kit_module = node_modules.join("cdk-spilman-kit");
         let mut needs_install = !node_modules.exists();
@@ -319,6 +328,15 @@ impl ServerProcess {
             if !status.success() {
                 return Err(anyhow!("npm install failed for TypeScript demo"));
             }
+        }
+
+        let status = Command::new("npm")
+            .args(["link", "cdk-spilman-kit"])
+            .current_dir(&server_dir)
+            .status()
+            .context("Failed to run npm link cdk-spilman-kit for TypeScript demo")?;
+        if !status.success() {
+            return Err(anyhow!("npm link cdk-spilman-kit failed for TypeScript demo"));
         }
 
         Command::new("npx")

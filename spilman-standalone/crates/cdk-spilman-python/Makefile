@@ -22,7 +22,7 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: check-venv build venv test-integration run-server run-client clean help
+.PHONY: check-venv build sync-env venv test-integration run-server run-client clean help
 
 # Default target
 help:
@@ -66,8 +66,12 @@ check-venv:
 
 venv: check-venv
 
+# Refresh editable installs for local Python sources.
+sync-env: venv
+	$(PIP) install -e $(INTEGRATION_KIT_DIR)
+
 # Build and install the package into the local venv
-build: venv
+build: sync-env
 	. $(VENV_DIR)/bin/activate && maturin develop
 
 # ============================================================================
