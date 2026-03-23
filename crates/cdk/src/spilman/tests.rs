@@ -6,16 +6,15 @@
 use cdk_common::dhke::construct_proofs;
 use cdk_common::nuts::{Conditions, CurrencyUnit, SigFlag, SpendingConditions};
 use cdk_common::{Amount, MeltQuoteRequest, MeltQuoteResponse, MintQuoteRequest, MintQuoteResponse};
+use cdk_spilman::{
+    ChannelParameters, CommitmentOutputs, DeterministicOutputsForOneContext, KeysetInfo,
+};
 
 use crate::nuts::SecretKey;
 use crate::wallet::{MintConnector, ReceiveOptions, SendOptions, WalletBuilder};
 use crate::test_helpers::mint::create_test_blinded_messages;
 use crate::test_helpers::nut10::{unzip3, TestMintHelper};
 use crate::util::unix_time;
-
-use super::deterministic::{CommitmentOutputs, DeterministicOutputsForOneContext};
-use super::keysets_and_amounts::KeysetInfo;
-use super::params::ChannelParameters;
 
 use async_trait::async_trait;
 use cdk_sqlite::wallet::memory;
@@ -758,7 +757,7 @@ fn test_sender_can_derive_secret_keys_for_stage2_outputs() {
 /// 6. Verify we got valid funding and change proofs
 #[tokio::test]
 async fn test_swap_to_funding() {
-    use super::bindings::{
+    use cdk_spilman::{
         complete_funding_swap, compute_channel_from_token, create_funding_swap,
         parse_keyset_info_from_json,
     };
@@ -832,7 +831,7 @@ async fn test_swap_to_funding() {
     let max_amount = 64u64;
 
     // Compute channel secret via the utility function (what the host would do)
-    let channel_secret_hex = super::bindings::compute_channel_secret_from_hex(
+    let channel_secret_hex = cdk_spilman::compute_channel_secret_from_hex(
         &alice_secret.to_secret_hex(),
         &receiver_pubkey.to_hex(),
     )
@@ -987,8 +986,11 @@ async fn test_swap_to_funding() {
 /// updates, builds payment headers, and verifies them against the server bridge.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_client_bridge() {
-    use super::bridge::{BridgeError, ChannelFunding, ChannelState, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
-    use super::client_bridge::{base64_decode, SpilmanClientBridge, SpilmanClientHost};
+    use cdk_spilman::{
+        base64_decode, BridgeError, ChannelData, ChannelFunding, ChannelPolicy, ChannelState,
+        ClosingData, PaymentProof, SpilmanBridge, SpilmanClientBridge, SpilmanClientHost,
+        SpilmanHost, SpilmanNetworking,
+    };
     use cdk_common::nuts::{CurrencyUnit as CU, Id, PublicKey, Token};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1047,10 +1049,10 @@ async fn test_client_bridge() {
         fn get_channel(
             &self,
             channel_id: &str,
-        ) -> Option<super::client_bridge::ChannelData> {
+        ) -> Option<ChannelData> {
             let channels = self.channels.lock().unwrap();
             let (json, secret) = channels.get(channel_id)?;
-            Some(super::client_bridge::ChannelData {
+            Some(ChannelData {
                 channel_json: json.clone(),
                 channel_secret_hex: secret.clone(),
             })
@@ -1079,7 +1081,7 @@ async fn test_client_bridge() {
                 .ok_or_else(|| {
                     format!("No key registered for pubkey: {}", signer_pubkey_hex)
                 })?;
-            super::bindings::sign_with_tweaked_key_util(
+            cdk_spilman::sign_with_tweaked_key_util(
                 &secret_hex,
                 message_hex,
                 tweak_scalar_hex,
@@ -1103,7 +1105,7 @@ async fn test_client_bridge() {
                         sender_pubkey_hex
                     )
                 })?;
-            super::bindings::compute_channel_secret_from_hex(
+            cdk_spilman::compute_channel_secret_from_hex(
                 &secret_hex,
                 receiver_pubkey_hex,
             )
@@ -1184,11 +1186,11 @@ async fn test_client_bridge() {
         fn get_closing_data(
             &self,
             _channel_id: &str,
-        ) -> Option<super::bridge::ClosingData> {
+        ) -> Option<ClosingData> {
             None
         }
-        fn get_channel_policy(&self, _unit: &str) -> Option<super::bridge::ChannelPolicy> {
-            Some(super::bridge::ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy { min_expiry_in_seconds: 3600, min_capacity: 10, max_amount_per_output: None })
         }
         fn now_seconds(&self) -> u64 {
             crate::util::unix_time()
@@ -1223,7 +1225,7 @@ async fn test_client_bridge() {
             _receiver_pubkey_hex: &str,
             sender_pubkey_hex: &str,
         ) -> Result<String, String> {
-            super::bindings::compute_channel_secret_from_hex(
+            cdk_spilman::compute_channel_secret_from_hex(
                 &self.charlie_secret_hex,
                 sender_pubkey_hex,
             )
@@ -1235,7 +1237,7 @@ async fn test_client_bridge() {
             message_hex: &str,
             tweak_scalar_hex: &str,
         ) -> Result<String, String> {
-            super::bindings::sign_with_tweaked_key_util(
+            cdk_spilman::sign_with_tweaked_key_util(
                 &self.charlie_secret_hex,
                 message_hex,
                 tweak_scalar_hex,
@@ -1572,8 +1574,8 @@ async fn test_client_bridge() {
 /// with real mint rejection and real mint acceptance.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cooperative_close_full_retry_with_real_mint() {
-    use super::bindings;
-    use super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use cdk_spilman as bindings;
+    use cdk_spilman::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -1849,7 +1851,7 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     // We use a two-pass approach: first compute the ideal funding amount,
     // then mint proofs, calculate the fee, and rebuild params with the
     // post-fee funding_token_amount so everything is consistent.
-    let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
+    let keyset_info_a = KeysetInfo::new(
         keyset_a_id,
         CurrencyUnit::Sat,
         keyset_a_keys.clone(),
@@ -1991,9 +1993,9 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
     );
 
     // Create signed balance update (Alice authorizes the close balance)
-    let channel = super::EstablishedChannel::new(params.clone(), funding_proofs.clone())
+    let channel = cdk_spilman::EstablishedChannel::new(params.clone(), funding_proofs.clone())
         .expect("established channel");
-    let sender = super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+    let sender = cdk_spilman::SpilmanChannelSender::new(alice_secret.clone(), channel);
     let balance = 5u64; // Charlie gets 5, Alice gets the rest
     let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
 
@@ -2099,8 +2101,8 @@ async fn test_cooperative_close_full_retry_with_real_mint() {
 /// close path. The server uses its stored highest payment to close the channel.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unilateral_close_full_retry_with_real_mint() {
-    use super::bindings;
-    use super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use cdk_spilman as bindings;
+    use cdk_spilman::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -2253,7 +2255,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     let charlie_secret = SecretKey::generate();
     let receiver_pubkey = charlie_secret.public_key();
 
-    let keyset_info_a = super::keysets_and_amounts::KeysetInfo::new(
+    let keyset_info_a = KeysetInfo::new(
         keyset_a_id,
         CurrencyUnit::Sat,
         keyset_a_keys.clone(),
@@ -2303,9 +2305,9 @@ async fn test_unilateral_close_full_retry_with_real_mint() {
     ).expect("construct proofs");
 
     // Create signed balance update (this is what the server stores from payments)
-    let channel = super::EstablishedChannel::new(params.clone(), funding_proofs.clone())
+    let channel = cdk_spilman::EstablishedChannel::new(params.clone(), funding_proofs.clone())
         .expect("established channel");
-    let sender_obj = super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+    let sender_obj = cdk_spilman::SpilmanChannelSender::new(alice_secret.clone(), channel);
     let balance = 5u64;
     let (balance_update, _) = sender_obj.create_signed_balance_update(balance).unwrap();
 
@@ -2788,8 +2790,8 @@ async fn test_stage2_receiver_signature_and_p2pk_e_can_spend_with_wallet() {
 
 mod close_balance_tests {
     use super::*;
-    use super::super::bindings;
-    use super::super::bridge::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
+    use cdk_spilman as bindings;
+    use cdk_spilman::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanBridge, SpilmanHost, SpilmanNetworking};
     use crate::util::unix_time;
     use cdk_common::nuts::{CurrencyUnit as CU, Id, Keys, PublicKey};
     use std::cell::{Cell, RefCell};
@@ -2960,8 +2962,8 @@ mod close_balance_tests {
         let secrets: Vec<crate::secret::Secret> = swb.iter().map(|s| s.secret.clone()).collect();
         let funding_proofs = cdk_common::dhke::construct_proofs(swap_response.signatures, blinding_factors, secrets, &keyset_keys).expect("construct proofs");
 
-        let channel = super::super::EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("established channel");
-        let sender = super::super::SpilmanChannelSender::new(alice_secret.clone(), channel);
+        let channel = cdk_spilman::EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("established channel");
+        let sender = cdk_spilman::SpilmanChannelSender::new(alice_secret.clone(), channel);
 
         let overpayment_balance = 50u64;
         let (overpay_update, _) = sender.create_signed_balance_update(overpayment_balance).unwrap();
@@ -3045,7 +3047,7 @@ mod close_balance_tests {
         let typed_receiver_proofs: Vec<cdk_common::nuts::Proof> = serde_json::from_str(receiver_proofs_json)
             .expect("parse receiver proofs as typed");
 
-        let connector = super::DirectMintConnection::new((**shared_mint).clone());
+        let connector = DirectMintConnection::new((**shared_mint).clone());
         let store = Arc::new(memory::empty().await.expect("wallet store"));
         let seed = random::<[u8; 64]>();
         let wallet = WalletBuilder::new()
@@ -3071,7 +3073,7 @@ mod close_balance_tests {
 /// uses the amount_due (from closing_data), not the latest payment balance.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cooperative_close_with_overpayment() {
-    use super::bridge::ChannelState;
+    use cdk_spilman::ChannelState;
 
     let s = close_balance_tests::setup_overpayment_scenario().await;
 
@@ -3117,7 +3119,7 @@ async fn test_cooperative_close_with_overpayment() {
 /// We verify closed_balance == 50 (not 10) and proofs are spendable.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unilateral_close_uses_latest_payment_balance() {
-    use super::bridge::ChannelState;
+    use cdk_spilman::ChannelState;
 
     let s = close_balance_tests::setup_overpayment_scenario().await;
 

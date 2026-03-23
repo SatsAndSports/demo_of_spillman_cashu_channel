@@ -6,7 +6,7 @@ This document provides context for AI coding assistants working on this codebase
 
 ## Project Summary
 
-This workspace contains **Spilman-style unidirectional payment channels** for Cashu ecash. The core Rust implementation now lives in the standalone `crates/cdk-spilman/` crate, with bindings for WASM (TypeScript), Python, and Go. A temporary `cdk::spilman` facade remains in `crates/cdk/` for compatibility coverage.
+This workspace contains **Spilman-style unidirectional payment channels** for Cashu ecash. The core Rust implementation lives in the standalone `crates/cdk-spilman/` crate, with bindings for WASM (TypeScript), Python, and Go. The `cdk` crate keeps only wallet interop tests for the standalone library.
 
 **Primary demos:**
 - **CashuTube** (`web/blossom-server/`) - Video streaming (47 tests)
@@ -22,7 +22,7 @@ This workspace contains **Spilman-style unidirectional payment channels** for Ca
 | Path | Purpose |
 |------|---------|
 | `crates/cdk-spilman/` | Core Rust implementation |
-| `crates/cdk/src/spilman/` | Temporary Rust compatibility facade |
+| `crates/cdk/src/spilman/tests.rs` | `cdk` wallet interoperability coverage |
 | `crates/cdk-spilman-server-integration-tests/` | Multi-server test suite |
 | `crates/cdk-wasm/` | WASM bindings |
 | `integration-kits/` | Framework-specific kits (Express, etc.) |
@@ -37,8 +37,8 @@ cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.tom
 # Run standalone Spilman unit tests
 cargo test -p cdk-spilman --features configurable-host
 
-# Run compatibility-facade tests
-cargo test -p cdk --features configurable-host spilman
+# Run `cdk` wallet interop tests against `cdk-spilman`
+cargo test -p cdk spilman_tests
 
 # Build WASM
 make build-wasm

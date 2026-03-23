@@ -4,7 +4,7 @@
 
 This repository contains the reference implementation of Spilman-style payment channels for the [Cashu](https://cashu.space) protocol. It enables services to accept streaming micropayments without round-trip latency or on-chain settlement for every request.
 
-The primary Rust implementation now lives in the standalone `cdk-spilman` crate in this workspace. The old `cdk::spilman` namespace remains available as a temporary compatibility facade while Rust consumers migrate.
+The primary Rust implementation lives in the standalone `cdk-spilman` crate in this workspace.
 
 **Status: Early Alpha**
 Experimental protocol. APIs and data models are subject to breaking changes.
@@ -54,7 +54,7 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 cdk/
 ├── crates/
 │   ├── cdk-spilman/                # Core Rust protocol implementation
-│   ├── cdk/                        # Temporary Rust compatibility facade + upstream CDK code
+│   ├── cdk/                        # Upstream CDK code plus wallet interop tests
 │   ├── cdk-wasm/                   # WASM bindings
 │   ├── cdk-spilman-python/         # Python bindings (PyO3)
 │   ├── cdk-spilman-go/             # Go bindings (CGO)

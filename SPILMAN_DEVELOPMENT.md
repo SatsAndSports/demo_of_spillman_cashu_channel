@@ -10,8 +10,8 @@ From the repository root:
 # Run the standalone Spilman crate tests
 cargo test -p cdk-spilman --features configurable-host
 
-# Run compatibility-facade coverage for `cdk::spilman`
-cargo test -p cdk --features configurable-host spilman
+# Run `cdk` wallet interop coverage against `cdk-spilman`
+cargo test -p cdk spilman_tests
 ```
 
 ## Native Development (Recommended for Pi)
@@ -173,8 +173,8 @@ make test-rust-only
 # Standalone Spilman crate tests (includes configurable-host and SQLite)
 cargo test -p cdk-spilman --features configurable-host
 
-# Compatibility facade coverage for older `cdk::spilman` imports
-cargo test -p cdk --features configurable-host spilman
+# `cdk` wallet interop coverage against the standalone library
+cargo test -p cdk spilman_tests
 ```
 
 ### Blossom Server Tests
@@ -214,7 +214,7 @@ make test-server-all
 cdk/
 ├── crates/
 │   ├── cdk-spilman/                          # Core Rust implementation
-│   ├── cdk/                                  # Temporary Rust compatibility facade
+│   ├── cdk/                                  # Upstream CDK code + wallet interop tests
 │   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
 │   ├── cdk-wasm/                             # WASM bindings (JS/TS)
 │   ├── cdk-spilman-python/                   # Python bindings

@@ -2,7 +2,7 @@
 
 A demo server implementing Spilman payment channels in Rust using Axum.
 
-This example demonstrates how to build a Spilman channel server using the `cdk-spilman` crate directly, without going through the temporary `cdk::spilman` compatibility facade.
+This example demonstrates how to build a Spilman channel server using the `cdk-spilman` crate directly.
 
 ## Features
 
@@ -75,7 +75,7 @@ This example uses `cdk-spilman` with `default-features = false` and the `spilman
 cdk-spilman = { version = "0.15.1", default-features = false, features = ["spilman-axum", "configurable-host-reqwest"] }
 ```
 
-This pulls in the Spilman implementation, Axum router, YAML config support, SQLite persistence, and `reqwest` for mint communication, without routing new code through the legacy `cdk::spilman` path.
+This pulls in the Spilman implementation, Axum router, YAML config support, SQLite persistence, and `reqwest` for mint communication.
 
 ## Environment Variables
 

@@ -236,7 +236,7 @@ run-ts-client:
 
 # Run Spilman unit tests (Rust)
 test-unit-spilman:
-	cargo test -p cdk-spilman --features configurable-host && cargo test -p cdk --features configurable-host spilman
+	cargo test -p cdk-spilman --features configurable-host && cargo test -p cdk spilman_tests
 
 # Run Rust ASCII Art integration tests (requires mint)
 test-integration-rust: build-mintd
