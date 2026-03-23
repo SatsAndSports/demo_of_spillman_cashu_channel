@@ -1,12 +1,12 @@
 [package]
 name = "cdk-spilman"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.15.1"
+edition = "2021"
+license = "MIT"
 description = "Standalone Spilman payment channels library for Cashu"
-homepage.workspace = true
-repository.workspace = true
-rust-version.workspace = true
+homepage = "https://github.com/cashubtc/cdk"
+repository = "https://github.com/cashubtc/cdk.git"
+rust-version = "1.85.0"
 
 [features]
 default = []
@@ -21,7 +21,7 @@ async-trait.workspace = true
 axum = { workspace = true, optional = true, features = ["macros"] }
 base64 = "0.22"
 bitcoin.workspace = true
-cashu = { workspace = true, default-features = false }
+cashu = { version = "=0.15.1", default-features = false }
 reqwest = { workspace = true, optional = true }
 rusqlite = { version = "0.31", optional = true, features = ["bundled"] }
 serde.workspace = true

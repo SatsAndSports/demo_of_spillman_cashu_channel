@@ -1,16 +1,16 @@
 [package]
 name = "cdk-wasm"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.15.1"
+edition = "2021"
+license = "MIT"
 description = "WASM bindings for Cashu payment channels"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-cashu = { workspace = true }
-cdk-spilman = { workspace = true, features = ["wallet"] }
+cashu = { version = "=0.15.1", default-features = false }
+cdk-spilman = { path = "../cdk-spilman", version = "=0.15.1", features = ["wallet"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
