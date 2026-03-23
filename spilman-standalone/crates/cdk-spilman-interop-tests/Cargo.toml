@@ -14,6 +14,7 @@ cdk-common = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9
 cdk-fake-wallet = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9796c75365cde97157d464331da1", package = "cdk-fake-wallet" }
 cdk-sqlite = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9796c75365cde97157d464331da1", package = "cdk-sqlite", default-features = false, features = ["mint", "wallet"] }
 cdk-spilman = { path = "../cdk-spilman", features = ["wallet"] }
+hex = "0.4"
 rand = "0.9.1"
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true

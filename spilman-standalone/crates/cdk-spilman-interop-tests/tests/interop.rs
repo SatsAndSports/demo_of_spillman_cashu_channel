@@ -30,8 +30,9 @@ use cdk_common::{MeltQuoteRequest, MeltQuoteResponse, MintQuoteRequest};
 use cdk_fake_wallet::FakeWallet;
 use cdk_spilman::{
     complete_funding_swap, compute_channel_from_token, create_funding_swap, ChannelParameters,
-    CommitmentOutputs,
-    DeterministicOutputsForOneContext, KeysetInfo,
+    ChannelFunding, ChannelPolicy, ChannelState, ClosingData, CommitmentOutputs,
+    DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, PaymentProof, SpilmanBridge,
+    SpilmanChannelSender, SpilmanHost, SpilmanNetworking,
 };
 use cdk_sqlite::wallet::memory;
 use rand::random;
@@ -975,4 +976,1438 @@ async fn test_stage2_receiver_signature_and_p2pk_e_can_spend_with_wallet() -> an
         ReceiveOptions::default(),
     )
     .await
+}
+
+// ====================================================================
+// Client bridge test: end-to-end client+server flow
+// ====================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_bridge() -> anyhow::Result<()> {
+    use cdk::nuts::nut00::token::Token;
+    use cdk::nuts::PublicKey;
+    use cdk_spilman::{
+        base64_decode, BridgeError, ChannelData, SpilmanClientBridge, SpilmanClientHost,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+
+    // ====================================================================
+    // Test Client Host: wraps an in-process mint
+    // ====================================================================
+
+    struct TestClientHost {
+        mint: Arc<Mint>,
+        channels: Mutex<HashMap<String, (String, String)>>,
+        keys: Mutex<HashMap<String, String>>,
+    }
+
+    impl TestClientHost {
+        fn register_key(&self, secret_hex: &str, pubkey_hex: &str) {
+            self.keys
+                .lock()
+                .unwrap()
+                .insert(pubkey_hex.to_string(), secret_hex.to_string());
+        }
+    }
+
+    impl SpilmanClientHost for TestClientHost {
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            let swap_request: SwapRequest = serde_json::from_str(swap_request_json)
+                .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| format!("Mint swap failed: {}", e))?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+
+        fn save_channel(&self, channel_id: &str, channel_json: &str, channel_secret_hex: &str) {
+            self.channels.lock().unwrap().insert(
+                channel_id.to_string(),
+                (channel_json.to_string(), channel_secret_hex.to_string()),
+            );
+        }
+
+        fn get_channel(&self, channel_id: &str) -> Option<ChannelData> {
+            let channels = self.channels.lock().unwrap();
+            let (json, secret) = channels.get(channel_id)?;
+            Some(ChannelData {
+                channel_json: json.clone(),
+                channel_secret_hex: secret.clone(),
+            })
+        }
+
+        fn list_channel_ids(&self) -> Vec<String> {
+            self.channels.lock().unwrap().keys().cloned().collect()
+        }
+
+        fn delete_channel(&self, channel_id: &str) {
+            self.channels.lock().unwrap().remove(channel_id);
+        }
+
+        fn sign_with_tweaked_key(
+            &self,
+            signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            let secret_hex = self
+                .keys
+                .lock()
+                .unwrap()
+                .get(signer_pubkey_hex)
+                .cloned()
+                .ok_or_else(|| format!("No key registered for pubkey: {}", signer_pubkey_hex))?;
+            cdk_spilman::sign_with_tweaked_key_util(&secret_hex, message_hex, tweak_scalar_hex)
+        }
+
+        fn compute_channel_secret(
+            &self,
+            sender_pubkey_hex: &str,
+            receiver_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            let secret_hex = self
+                .keys
+                .lock()
+                .unwrap()
+                .get(sender_pubkey_hex)
+                .cloned()
+                .ok_or_else(|| format!("No key registered for pubkey: {}", sender_pubkey_hex))?;
+            cdk_spilman::compute_channel_secret_from_hex(&secret_hex, receiver_pubkey_hex)
+        }
+    }
+
+    // ====================================================================
+    // Test Server Host: wraps keyset info + stores channels
+    // ====================================================================
+
+    struct TestServerHost {
+        keyset_ids: Vec<Id>,
+        keyset_infos: HashMap<Id, String>,
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        payments: Mutex<HashMap<String, PaymentProof>>,
+        charlie_secret_hex: String,
+        amount_due: Arc<AtomicU64>,
+    }
+
+    impl SpilmanHost<String> for TestServerHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(
+                    |(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                        ChannelFunding {
+                            params_json,
+                            funding_proofs_json,
+                            channel_secret_hex,
+                            keyset_info_json,
+                        }
+                    },
+                )
+        }
+        fn save_funding(
+            &self,
+            channel_id: &str,
+            funding: ChannelFunding,
+            _initial_payment: PaymentProof,
+        ) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
+                ),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
+            self.amount_due.load(Ordering::Relaxed)
+        }
+        fn record_payment(
+            &self,
+            channel_id: &str,
+            payment: PaymentProof,
+            _context_json: &String,
+        ) {
+            self.payments
+                .lock()
+                .unwrap()
+                .insert(channel_id.to_string(), payment);
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            ChannelState::Open
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            _expiry_timestamp: u64,
+            _payment: PaymentProof,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            None
+        }
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy {
+                min_expiry_in_seconds: 3600,
+                min_capacity: 10,
+                max_amount_per_output: None,
+            })
+        }
+        fn now_seconds(&self) -> u64 {
+            unix_time()
+        }
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            channel_id: &str,
+        ) -> Option<PaymentProof> {
+            self.payments.lock().unwrap().get(channel_id).cloned()
+        }
+        fn get_active_keyset_ids(
+            &self,
+            _mint: &str,
+            _unit: &CurrencyUnit,
+        ) -> Vec<Id> {
+            self.keyset_ids.clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _expiry_timestamp: u64,
+            _balance: u64,
+            _receiver_proofs_json: &str,
+            _sender_proofs_json: &str,
+            _receiver_sum: u64,
+            _sender_sum: u64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        fn compute_channel_secret(
+            &self,
+            _receiver_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            cdk_spilman::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                sender_pubkey_hex,
+            )
+        }
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            cdk_spilman::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
+    }
+
+    impl SpilmanNetworking for TestServerHost {
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            _swap_request_json: &str,
+        ) -> Result<String, String> {
+            Err("not used in this test".to_string())
+        }
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    // ====================================================================
+    // Setup
+    // ====================================================================
+
+    let charlie_secret = cdk::nuts::SecretKey::generate();
+    let receiver_pubkey = charlie_secret.public_key();
+
+    let shared_mint = Arc::new(create_test_mint().await?);
+
+    let active_keyset_id = shared_mint
+        .get_active_keysets()
+        .get(&CurrencyUnit::Sat)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("missing SAT keyset"))?;
+    let keyset_pubkeys = shared_mint.keyset_pubkeys(&active_keyset_id)?;
+    let keyset = keyset_pubkeys.keysets.first().ok_or_else(|| anyhow::anyhow!("missing keyset"))?;
+    let shared_keys = keyset.keys.clone();
+    let shared_fee_ppk = shared_mint
+        .keysets()
+        .keysets
+        .iter()
+        .find(|k| k.id == active_keyset_id)
+        .ok_or_else(|| anyhow::anyhow!("missing keyset info"))?
+        .input_fee_ppk;
+
+    let keyset_info_json = serde_json::json!({
+        "keysetId": active_keyset_id.to_string(),
+        "unit": "sat",
+        "inputFeePpk": shared_fee_ppk,
+        "keys": shared_keys.iter().map(|(amt, pk)| {
+            (u64::from(*amt).to_string(), pk.to_hex())
+        }).collect::<HashMap<_, _>>()
+    })
+    .to_string();
+
+    let input_amount = Amount::from(100u64);
+    let proofs = mint_test_proofs(&shared_mint, input_amount).await?;
+    let token = Token::new(
+        "http://localhost:3338".parse().unwrap(),
+        proofs,
+        None,
+        CurrencyUnit::Sat,
+    );
+    let token_string = token.to_string();
+
+    let alice_secret = cdk::nuts::SecretKey::generate();
+    let sender_pubkey_hex = alice_secret.public_key().to_hex();
+
+    let client_host = TestClientHost {
+        mint: Arc::clone(&shared_mint),
+        channels: Mutex::new(HashMap::new()),
+        keys: Mutex::new(HashMap::new()),
+    };
+    client_host.register_key(&alice_secret.to_secret_hex(), &sender_pubkey_hex);
+
+    let client_bridge = SpilmanClientBridge::new(client_host);
+
+    // ====================================================================
+    // Open channel from token
+    // ====================================================================
+
+    let expiry_timestamp = unix_time() + 7200;
+    let max_amount = 64u64;
+
+    let open_result = client_bridge
+        .open_channel_from_token(
+            &token_string,
+            &receiver_pubkey.to_hex(),
+            &sender_pubkey_hex,
+            expiry_timestamp,
+            &keyset_info_json,
+            max_amount,
+        )
+        .map_err(anyhow::Error::msg)?;
+
+    assert!(open_result.capacity > 0);
+    assert!(open_result.capacity <= 100);
+
+    let channels = client_bridge.list_channels();
+    assert_eq!(channels.len(), 1);
+    assert_eq!(channels[0], open_result.channel_id);
+
+    let info = client_bridge
+        .get_channel_info(&open_result.channel_id)
+        .ok_or_else(|| anyhow::anyhow!("missing channel info"))?;
+    assert_eq!(info.capacity, open_result.capacity);
+
+    // ====================================================================
+    // Sign balance updates
+    // ====================================================================
+
+    let update_json = client_bridge
+        .sign_balance_update(&open_result.channel_id, 10)
+        .map_err(anyhow::Error::msg)?;
+
+    let update: serde_json::Value = serde_json::from_str(&update_json)?;
+    assert_eq!(update["channel_id"].as_str().unwrap(), open_result.channel_id);
+    assert_eq!(update["amount"].as_u64().unwrap(), 10);
+    assert!(update["signature"].as_str().is_some());
+
+    // ====================================================================
+    // Build payment header (with funding)
+    // ====================================================================
+
+    let header_with_funding = client_bridge
+        .build_payment_header(&open_result.channel_id, 10, true)
+        .map_err(anyhow::Error::msg)?;
+
+    let decoded = base64_decode(&header_with_funding).map_err(anyhow::Error::msg)?;
+    let header_json: serde_json::Value = serde_json::from_str(&decoded)?;
+
+    assert_eq!(header_json["channel_id"].as_str().unwrap(), open_result.channel_id);
+    assert_eq!(header_json["balance"].as_u64().unwrap(), 10);
+    assert!(header_json["signature"].as_str().is_some());
+    assert!(header_json["params"].is_object());
+    assert!(header_json["funding_proofs"].is_array());
+
+    // ====================================================================
+    // Build payment header (without funding)
+    // ====================================================================
+
+    let header_no_funding = client_bridge
+        .build_payment_header(&open_result.channel_id, 20, false)
+        .map_err(anyhow::Error::msg)?;
+
+    let decoded2 = base64_decode(&header_no_funding).map_err(anyhow::Error::msg)?;
+    let header_json2: serde_json::Value = serde_json::from_str(&decoded2)?;
+
+    assert_eq!(header_json2["balance"].as_u64().unwrap(), 20);
+    assert!(header_json2.get("params").is_none());
+    assert!(header_json2.get("funding_proofs").is_none());
+
+    // ====================================================================
+    // Feed headers into server-side SpilmanBridge (end-to-end!)
+    // ====================================================================
+
+    let mut keyset_infos = HashMap::new();
+    keyset_infos.insert(active_keyset_id, keyset_info_json.clone());
+
+    let amount_due = Arc::new(AtomicU64::new(0));
+    let server_host = TestServerHost {
+        keyset_ids: vec![active_keyset_id],
+        keyset_infos,
+        funding_data: Mutex::new(HashMap::new()),
+        payments: Mutex::new(HashMap::new()),
+        charlie_secret_hex: charlie_secret.to_secret_hex(),
+        amount_due: amount_due.clone(),
+    };
+
+    let server_bridge = SpilmanBridge::new(server_host);
+
+    let payment_result = server_bridge
+        .process_payment_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    assert_eq!(payment_result.channel_id, open_result.channel_id);
+    assert_eq!(payment_result.balance, 10);
+    assert_eq!(payment_result.capacity, open_result.capacity);
+
+    let payment_result2 = server_bridge
+        .process_payment_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    assert_eq!(payment_result2.balance, 20);
+
+    // ====================================================================
+    // Amount due checks
+    // ====================================================================
+
+    amount_due.store(15, Ordering::Relaxed);
+
+    let due = server_bridge
+        .verify_payment_covers_amount_due_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    assert_eq!(due, 15);
+
+    let ok = server_bridge
+        .payment_covers_amount_due_via_base64_header(
+            &header_no_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    assert!(ok);
+
+    let ok = server_bridge
+        .payment_covers_amount_due_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    assert!(!ok);
+
+    let err = server_bridge
+        .verify_payment_covers_amount_due_via_base64_header(
+            &header_with_funding,
+            &serde_json::json!({"type": "test"}).to_string(),
+        )
+        .unwrap_err();
+    match err {
+        BridgeError::InsufficientBalance { balance, amount_due } => {
+            assert_eq!(balance, 10);
+            assert_eq!(amount_due, 15);
+        }
+        other => panic!("Unexpected error: {:?}", other),
+    }
+
+    // ====================================================================
+    // Remove channel
+    // ====================================================================
+
+    client_bridge.remove_channel(&open_result.channel_id);
+    assert!(client_bridge.get_channel_info(&open_result.channel_id).is_none());
+    assert_eq!(client_bridge.list_channels().len(), 0);
+
+    Ok(())
+}
+
+// ====================================================================
+// Close-balance tests: cooperative and unilateral close with overpayment
+// ====================================================================
+
+mod close_balance_tests {
+    use super::*;
+    use cdk::nuts::{CurrencyUnit as CU, PublicKey};
+    use cdk_spilman as bindings;
+    use std::cell::{Cell, RefCell};
+    use std::sync::Mutex;
+
+    pub(super) struct OverpaymentTestHost {
+        pub mint: Arc<Mint>,
+        keyset_id: Id,
+        keyset_infos: HashMap<Id, String>,
+        funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        pub channel_state: RefCell<ChannelState>,
+        closing_data: RefCell<Option<ClosingData>>,
+        stored_payment: RefCell<Option<PaymentProof>>,
+        amount_due: Cell<u64>,
+        charlie_secret_hex: String,
+        pub swap_call_count: Cell<u32>,
+        pub closed_data: RefCell<Option<(u64, u64, String, String)>>,
+    }
+
+    impl SpilmanHost<String> for OverpaymentTestHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(
+                    |(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                        ChannelFunding {
+                            params_json,
+                            funding_proofs_json,
+                            channel_secret_hex,
+                            keyset_info_json,
+                        }
+                    },
+                )
+        }
+        fn save_funding(
+            &self,
+            channel_id: &str,
+            funding: ChannelFunding,
+            _initial_payment: PaymentProof,
+        ) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
+                ),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
+            self.amount_due.get()
+        }
+        fn record_payment(
+            &self,
+            _channel_id: &str,
+            payment: PaymentProof,
+            _context_json: &String,
+        ) {
+            *self.stored_payment.borrow_mut() = Some(payment);
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            self.channel_state.borrow().clone()
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            expiry_timestamp: u64,
+            payment: PaymentProof,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.stored_payment.borrow_mut() = Some(payment.clone());
+            *self.closing_data.borrow_mut() = Some(ClosingData {
+                expiry_timestamp,
+                balance: payment.balance,
+                signature: payment.signature,
+            });
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            self.closing_data.borrow().clone()
+        }
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy {
+                min_expiry_in_seconds: 3600,
+                min_capacity: 10,
+                max_amount_per_output: None,
+            })
+        }
+        fn now_seconds(&self) -> u64 {
+            unix_time()
+        }
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<PaymentProof> {
+            self.stored_payment.borrow().clone()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CU) -> Vec<Id> {
+            vec![self.keyset_id]
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _expiry_timestamp: u64,
+            balance: u64,
+            receiver_proofs_json: &str,
+            sender_proofs_json: &str,
+            receiver_sum: u64,
+            sender_sum: u64,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closed;
+            *self.closed_data.borrow_mut() = Some((
+                balance,
+                receiver_sum + sender_sum,
+                receiver_proofs_json.to_string(),
+                sender_proofs_json.to_string(),
+            ));
+            Ok(())
+        }
+        fn compute_channel_secret(
+            &self,
+            _receiver_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                sender_pubkey_hex,
+            )
+        }
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
+    }
+
+    impl SpilmanNetworking for OverpaymentTestHost {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            let swap_request: SwapRequest = serde_json::from_str(swap_request_json)
+                .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+    }
+
+    fn keyset_info_json_from_mint(mint: &Mint, keyset_id: Id) -> String {
+        let pubkeys = mint.keyset_pubkeys(&keyset_id).expect("keyset pubkeys");
+        let keyset = pubkeys.keysets.first().expect("keyset");
+        let keys = &keyset.keys;
+        let fee_ppk = mint
+            .keysets()
+            .keysets
+            .iter()
+            .find(|k| k.id == keyset_id)
+            .expect("keyset info")
+            .input_fee_ppk;
+        serde_json::json!({
+            "keysetId": keyset_id.to_string(),
+            "unit": "sat",
+            "inputFeePpk": fee_ppk,
+            "keys": keys.iter().map(|(amt, pk)| {
+                (u64::from(*amt).to_string(), pk.to_hex())
+            }).collect::<HashMap<String, String>>()
+        })
+        .to_string()
+    }
+
+    pub(super) struct OverpaymentScenario {
+        pub bridge: SpilmanBridge<OverpaymentTestHost, String>,
+        pub shared_mint: Arc<Mint>,
+        pub channel_id: String,
+        pub overpayment_balance: u64,
+        pub amount_due: u64,
+        pub close_signature: String,
+    }
+
+    pub(super) async fn setup_overpayment_scenario() -> OverpaymentScenario {
+        let shared_mint = Arc::new(create_test_mint().await.unwrap());
+
+        let keyset_id = shared_mint
+            .get_active_keysets()
+            .get(&CurrencyUnit::Sat)
+            .cloned()
+            .expect("SAT keyset");
+        let keyset_info_json = keyset_info_json_from_mint(&shared_mint, keyset_id);
+        let keyset_keys: Keys = {
+            let pubkeys = shared_mint.keyset_pubkeys(&keyset_id).unwrap();
+            pubkeys.keysets.first().unwrap().keys.clone()
+        };
+        let fee_ppk = shared_mint
+            .keysets()
+            .keysets
+            .iter()
+            .find(|k| k.id == keyset_id)
+            .unwrap()
+            .input_fee_ppk;
+
+        let alice_secret = cdk::nuts::SecretKey::generate();
+        let sender_pubkey = alice_secret.public_key();
+        let charlie_secret = cdk::nuts::SecretKey::generate();
+        let receiver_pubkey = charlie_secret.public_key();
+
+        let mint_amount = 200u64;
+        let input_proofs = mint_test_proofs(&shared_mint, Amount::from(mint_amount))
+            .await
+            .expect("mint proofs");
+        let num_inputs = input_proofs.len() as u64;
+        let actual_fee = (fee_ppk * num_inputs).div_ceil(1000);
+        let actual_funding = mint_amount - actual_fee;
+
+        let capacity = 100u64;
+        let expiry_timestamp = unix_time() + 7200;
+        let keyset_info =
+            KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys.clone(), fee_ppk, None);
+
+        let params = ChannelParameters::new_with_secret_key(
+            sender_pubkey,
+            receiver_pubkey,
+            "http://localhost:3338".to_string(),
+            CurrencyUnit::Sat,
+            capacity,
+            actual_funding,
+            expiry_timestamp,
+            unix_time(),
+            keyset_info,
+            64,
+            &alice_secret,
+        )
+        .expect("channel params");
+        let channel_id = params.get_channel_id();
+        let channel_secret = params.channel_secret;
+
+        let funding_outputs = DeterministicOutputsForOneContext::new(
+            "funding".to_string(),
+            actual_funding,
+            params.clone(),
+        )
+        .expect("funding outputs");
+        let funding_messages = funding_outputs
+            .get_blinded_messages(None)
+            .expect("blinded messages");
+        let swap_request = SwapRequest::new(input_proofs, funding_messages);
+        let swap_response = shared_mint
+            .process_swap_request(swap_request)
+            .await
+            .expect("funding swap");
+
+        let swb = funding_outputs
+            .get_secrets_with_blinding()
+            .expect("secrets");
+        let blinding_factors = swb.iter().map(|s| s.blinding_factor.clone()).collect();
+        let secrets = swb.iter().map(|s| s.secret.clone()).collect();
+        let funding_proofs =
+            construct_proofs(swap_response.signatures, blinding_factors, secrets, &keyset_keys)
+                .expect("construct proofs");
+
+        let channel =
+            EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("channel");
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
+
+        let overpayment_balance = 50u64;
+        let (overpay_update, _) = sender
+            .create_signed_balance_update(overpayment_balance)
+            .unwrap();
+
+        let amount_due = 10u64;
+        let (close_update, _) = sender.create_signed_balance_update(amount_due).unwrap();
+
+        let params_json = params.get_channel_id_params_json();
+        let funding_proofs_json = serde_json::to_string(&funding_proofs).unwrap();
+        let channel_secret_hex = hex::encode(channel_secret);
+
+        let mut keyset_infos = HashMap::new();
+        keyset_infos.insert(keyset_id, keyset_info_json);
+
+        let mut funding_data_map = HashMap::new();
+        funding_data_map.insert(
+            channel_id.clone(),
+            (
+                params_json,
+                funding_proofs_json,
+                channel_secret_hex,
+                keyset_infos.get(&keyset_id).unwrap().clone(),
+            ),
+        );
+
+        let host = OverpaymentTestHost {
+            mint: Arc::clone(&shared_mint),
+            keyset_id,
+            keyset_infos,
+            funding_data: Mutex::new(funding_data_map),
+            channel_state: RefCell::new(ChannelState::Open),
+            closing_data: RefCell::new(None),
+            stored_payment: RefCell::new(Some(PaymentProof {
+                balance: overpayment_balance,
+                signature: overpay_update.signature.to_string(),
+            })),
+            amount_due: Cell::new(amount_due),
+            charlie_secret_hex: charlie_secret.to_secret_hex(),
+            swap_call_count: Cell::new(0),
+            closed_data: RefCell::new(None),
+        };
+
+        let bridge = SpilmanBridge::new(host);
+
+        OverpaymentScenario {
+            bridge,
+            shared_mint,
+            channel_id,
+            overpayment_balance,
+            amount_due,
+            close_signature: close_update.signature.to_string(),
+        }
+    }
+
+    pub(super) async fn verify_receiver_proofs_spendable(
+        receiver_proofs_json: &str,
+        shared_mint: &Arc<Mint>,
+    ) -> Amount {
+        let receiver_proofs: Vec<serde_json::Value> =
+            serde_json::from_str(receiver_proofs_json).expect("receiver proofs JSON");
+        assert!(!receiver_proofs.is_empty(), "Receiver should get proofs");
+        for (i, proof) in receiver_proofs.iter().enumerate() {
+            let p2pk_e = proof.get("p2pk_e");
+            assert!(
+                p2pk_e.is_some() && !p2pk_e.unwrap().is_null(),
+                "Receiver proof {} should include p2pk_e",
+                i
+            );
+            let witness = proof.get("witness");
+            assert!(
+                witness.is_some() && !witness.unwrap().is_null(),
+                "Receiver proof {} should have witness",
+                i
+            );
+        }
+
+        let typed_receiver_proofs: Vec<Proof> =
+            serde_json::from_str(receiver_proofs_json).expect("parse receiver proofs");
+
+        let connector = DirectMintConnection::new((**shared_mint).clone());
+        let store = Arc::new(memory::empty().await.expect("wallet store"));
+        let seed = random::<[u8; 64]>();
+        let wallet = WalletBuilder::new()
+            .mint_url("http://localhost:3338".parse().unwrap())
+            .unit(CurrencyUnit::Sat)
+            .localstore(store)
+            .seed(seed)
+            .client(connector)
+            .build()
+            .expect("wallet build");
+
+        let received_amount = wallet
+            .receive_proofs(typed_receiver_proofs, ReceiveOptions::default(), None, None)
+            .await
+            .expect("wallet should accept signed receiver proofs");
+        assert!(received_amount > Amount::ZERO);
+        received_amount
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cooperative_close_with_overpayment() -> anyhow::Result<()> {
+    let s = close_balance_tests::setup_overpayment_scenario().await;
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.amount_due,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let result = s
+        .bridge
+        .execute_cooperative_close(&payment_json, s.bridge.host());
+    let success = result.expect("Cooperative close should succeed");
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 1);
+    assert!(matches!(
+        *s.bridge.host().channel_state.borrow(),
+        ChannelState::Closed
+    ));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
+        closed
+            .as_ref()
+            .expect("mark_channel_closed should have been called");
+
+    assert_eq!(
+        *closed_balance, s.amount_due,
+        "Closed balance should be amount_due ({}), not overpayment ({})",
+        s.amount_due, s.overpayment_balance
+    );
+    assert!(success.receiver_sum > 0);
+    assert!(success.receiver_sum < 20);
+
+    close_balance_tests::verify_receiver_proofs_spendable(receiver_proofs_json, &s.shared_mint)
+        .await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unilateral_close_uses_latest_payment_balance() -> anyhow::Result<()> {
+    let s = close_balance_tests::setup_overpayment_scenario().await;
+
+    let result = s
+        .bridge
+        .execute_unilateral_close(&s.channel_id, s.bridge.host());
+    let success = result.expect("Unilateral close should succeed");
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 1);
+    assert!(matches!(
+        *s.bridge.host().channel_state.borrow(),
+        ChannelState::Closed
+    ));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
+        closed
+            .as_ref()
+            .expect("mark_channel_closed should have been called");
+
+    assert_eq!(
+        *closed_balance, s.overpayment_balance,
+        "Closed balance should be latest payment ({}), not amount_due ({})",
+        s.overpayment_balance, s.amount_due
+    );
+    assert!(success.receiver_sum > 0);
+    assert!(success.receiver_sum > 30);
+
+    close_balance_tests::verify_receiver_proofs_spendable(receiver_proofs_json, &s.shared_mint)
+        .await;
+    Ok(())
+}
+
+// ====================================================================
+// Keyset-rotation retry tests: cooperative and unilateral close
+// ====================================================================
+
+mod retry_tests {
+    use super::*;
+    use cdk::nuts::PublicKey;
+    use cdk_spilman as bindings;
+    use std::cell::{Cell, RefCell};
+    use std::sync::Mutex;
+
+    pub(super) struct RetryTestHost {
+        pub mint: Arc<Mint>,
+        pub active_keyset_ids: RefCell<Vec<Id>>,
+        pub fresh_keyset_id: Id,
+        pub keyset_infos: HashMap<Id, String>,
+        pub funding_data: Mutex<HashMap<String, (String, String, String, String)>>,
+        pub channel_state: RefCell<ChannelState>,
+        pub closing_data: RefCell<Option<ClosingData>>,
+        pub stored_payment: RefCell<Option<PaymentProof>>,
+        pub amount_due: Cell<u64>,
+        pub charlie_secret_hex: String,
+        pub swap_call_count: Cell<u32>,
+        pub refresh_count: Cell<u32>,
+        pub closed_data: RefCell<Option<(u64, u64, String, String)>>,
+    }
+
+    impl SpilmanHost<String> for RetryTestHost {
+        fn receiver_key_is_acceptable(&self, _receiver_pubkey: &PublicKey) -> bool {
+            true
+        }
+        fn mint_and_keyset_is_acceptable(&self, _mint: &str, _keyset_id: &Id) -> bool {
+            true
+        }
+        fn get_funding(&self, channel_id: &str) -> Option<ChannelFunding> {
+            self.funding_data
+                .lock()
+                .unwrap()
+                .get(channel_id)
+                .cloned()
+                .map(
+                    |(params_json, funding_proofs_json, channel_secret_hex, keyset_info_json)| {
+                        ChannelFunding {
+                            params_json,
+                            funding_proofs_json,
+                            channel_secret_hex,
+                            keyset_info_json,
+                        }
+                    },
+                )
+        }
+        fn save_funding(
+            &self,
+            channel_id: &str,
+            funding: ChannelFunding,
+            _initial_payment: PaymentProof,
+        ) {
+            self.funding_data.lock().unwrap().insert(
+                channel_id.to_string(),
+                (
+                    funding.params_json,
+                    funding.funding_proofs_json,
+                    funding.channel_secret_hex,
+                    funding.keyset_info_json,
+                ),
+            );
+        }
+        fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
+            self.amount_due.get()
+        }
+        fn record_payment(
+            &self,
+            _channel_id: &str,
+            payment: PaymentProof,
+            _context_json: &String,
+        ) {
+            *self.stored_payment.borrow_mut() = Some(payment);
+        }
+        fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
+            self.channel_state.borrow().clone()
+        }
+        fn mark_channel_closing(
+            &self,
+            _channel_id: &str,
+            expiry_timestamp: u64,
+            payment: PaymentProof,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closing;
+            *self.stored_payment.borrow_mut() = Some(payment.clone());
+            *self.closing_data.borrow_mut() = Some(ClosingData {
+                expiry_timestamp,
+                balance: payment.balance,
+                signature: payment.signature,
+            });
+            Ok(())
+        }
+        fn get_closing_data(&self, _channel_id: &str) -> Option<ClosingData> {
+            self.closing_data.borrow().clone()
+        }
+        fn get_channel_policy(&self, _unit: &str) -> Option<ChannelPolicy> {
+            Some(ChannelPolicy {
+                min_expiry_in_seconds: 3600,
+                min_capacity: 10,
+                max_amount_per_output: None,
+            })
+        }
+        fn now_seconds(&self) -> u64 {
+            unix_time()
+        }
+        fn get_balance_and_signature_for_unilateral_exit(
+            &self,
+            _channel_id: &str,
+        ) -> Option<PaymentProof> {
+            self.stored_payment.borrow().clone()
+        }
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
+            self.active_keyset_ids.borrow().clone()
+        }
+        fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
+            self.keyset_infos.get(keyset_id).cloned()
+        }
+        fn mark_channel_closed(
+            &self,
+            _channel_id: &str,
+            _expiry_timestamp: u64,
+            balance: u64,
+            receiver_proofs_json: &str,
+            sender_proofs_json: &str,
+            receiver_sum: u64,
+            sender_sum: u64,
+        ) -> Result<(), String> {
+            *self.channel_state.borrow_mut() = ChannelState::Closed;
+            *self.closed_data.borrow_mut() = Some((
+                balance,
+                receiver_sum + sender_sum,
+                receiver_proofs_json.to_string(),
+                sender_proofs_json.to_string(),
+            ));
+            Ok(())
+        }
+        fn compute_channel_secret(
+            &self,
+            _receiver_pubkey_hex: &str,
+            sender_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            bindings::compute_channel_secret_from_hex(
+                &self.charlie_secret_hex,
+                sender_pubkey_hex,
+            )
+        }
+        fn sign_with_tweaked_key(
+            &self,
+            _signer_pubkey_hex: &str,
+            message_hex: &str,
+            tweak_scalar_hex: &str,
+        ) -> Result<String, String> {
+            bindings::sign_with_tweaked_key_util(
+                &self.charlie_secret_hex,
+                message_hex,
+                tweak_scalar_hex,
+            )
+        }
+    }
+
+    impl SpilmanNetworking for RetryTestHost {
+        fn refresh_all_keysets(&self, _mint: &str) -> Result<(), String> {
+            *self.active_keyset_ids.borrow_mut() = vec![self.fresh_keyset_id];
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+        fn call_mint_swap(
+            &self,
+            _mint_url: &str,
+            swap_request_json: &str,
+        ) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            let swap_request: SwapRequest = serde_json::from_str(swap_request_json)
+                .map_err(|e| format!("Failed to parse swap request: {}", e))?;
+            let mint = Arc::clone(&self.mint);
+            let response = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { mint.process_swap_request(swap_request).await })
+            })
+            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            serde_json::to_string(&response)
+                .map_err(|e| format!("Failed to serialize swap response: {}", e))
+        }
+    }
+
+    fn keyset_info_json_from_mint(mint: &Mint, keyset_id: Id) -> String {
+        let pubkeys = mint.keyset_pubkeys(&keyset_id).expect("keyset pubkeys");
+        let keyset = pubkeys.keysets.first().expect("keyset");
+        let keys = &keyset.keys;
+        let fee_ppk = mint
+            .keysets()
+            .keysets
+            .iter()
+            .find(|k| k.id == keyset_id)
+            .expect("keyset info")
+            .input_fee_ppk;
+        serde_json::json!({
+            "keysetId": keyset_id.to_string(),
+            "unit": "sat",
+            "inputFeePpk": fee_ppk,
+            "keys": keys.iter().map(|(amt, pk)| {
+                (u64::from(*amt).to_string(), pk.to_hex())
+            }).collect::<HashMap<String, String>>()
+        })
+        .to_string()
+    }
+
+    pub(super) struct RetryScenario {
+        pub bridge: SpilmanBridge<RetryTestHost, String>,
+        pub channel_id: String,
+        pub balance: u64,
+        pub close_signature: String,
+    }
+
+    pub(super) async fn setup_retry_scenario() -> RetryScenario {
+        let shared_mint = Arc::new(create_test_mint().await.unwrap());
+
+        let keyset_a_id = shared_mint
+            .get_active_keysets()
+            .get(&CurrencyUnit::Sat)
+            .cloned()
+            .expect("SAT keyset");
+        let keyset_a_info_json = keyset_info_json_from_mint(&shared_mint, keyset_a_id);
+        let keyset_a_keys: Keys = {
+            let pubkeys = shared_mint.keyset_pubkeys(&keyset_a_id).unwrap();
+            pubkeys.keysets.first().unwrap().keys.clone()
+        };
+        let keyset_a_fee_ppk = shared_mint
+            .keysets()
+            .keysets
+            .iter()
+            .find(|k| k.id == keyset_a_id)
+            .unwrap()
+            .input_fee_ppk;
+
+        let alice_secret = cdk::nuts::SecretKey::generate();
+        let sender_pubkey = alice_secret.public_key();
+        let charlie_secret = cdk::nuts::SecretKey::generate();
+        let receiver_pubkey = charlie_secret.public_key();
+
+        let keyset_info_a = KeysetInfo::new(
+            keyset_a_id,
+            CurrencyUnit::Sat,
+            keyset_a_keys.clone(),
+            keyset_a_fee_ppk,
+            None,
+        );
+        let capacity = 10u64;
+        let expiry_timestamp = unix_time() + 7200;
+        let mint_amount = 100u64;
+
+        let input_proofs = mint_test_proofs(&shared_mint, Amount::from(mint_amount))
+            .await
+            .expect("mint proofs");
+        let num_inputs = input_proofs.len() as u64;
+        let actual_fee = (keyset_a_fee_ppk * num_inputs).div_ceil(1000);
+        let actual_funding = mint_amount - actual_fee;
+
+        let params = ChannelParameters::new_with_secret_key(
+            sender_pubkey,
+            receiver_pubkey,
+            "http://localhost:3338".to_string(),
+            CurrencyUnit::Sat,
+            capacity,
+            actual_funding,
+            expiry_timestamp,
+            unix_time(),
+            keyset_info_a,
+            64,
+            &alice_secret,
+        )
+        .expect("channel params");
+        let channel_id = params.get_channel_id();
+        let channel_secret = params.channel_secret;
+
+        let adjusted_outputs = DeterministicOutputsForOneContext::new(
+            "funding".to_string(),
+            actual_funding,
+            params.clone(),
+        )
+        .expect("funding outputs");
+        let adjusted_messages = adjusted_outputs
+            .get_blinded_messages(None)
+            .expect("blinded msgs");
+        let swap_request = SwapRequest::new(input_proofs, adjusted_messages);
+        let swap_response = shared_mint
+            .process_swap_request(swap_request)
+            .await
+            .expect("funding swap");
+
+        let swb = adjusted_outputs
+            .get_secrets_with_blinding()
+            .expect("secrets");
+        let blinding_factors = swb.iter().map(|s| s.blinding_factor.clone()).collect();
+        let secrets = swb.iter().map(|s| s.secret.clone()).collect();
+        let funding_proofs = construct_proofs(
+            swap_response.signatures,
+            blinding_factors,
+            secrets,
+            &keyset_a_keys,
+        )
+        .expect("construct proofs");
+
+        let channel =
+            EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("channel");
+        let sender = SpilmanChannelSender::new(alice_secret.clone(), channel);
+        let balance = 5u64;
+        let (balance_update, _) = sender.create_signed_balance_update(balance).unwrap();
+
+        // Rotate keyset: A -> inactive, B -> active
+        let keyset_b_info = shared_mint
+            .rotate_keyset(
+                CurrencyUnit::Sat,
+                vec![1, 2, 4, 8, 16, 32, 64],
+                keyset_a_fee_ppk,
+                false,
+                None,
+            )
+            .await
+            .expect("rotate keyset");
+        let keyset_b_id = keyset_b_info.id;
+        let keyset_b_info_json = keyset_info_json_from_mint(&shared_mint, keyset_b_id);
+
+        let mut keyset_infos = HashMap::new();
+        keyset_infos.insert(keyset_a_id, keyset_a_info_json);
+        keyset_infos.insert(keyset_b_id, keyset_b_info_json);
+
+        let params_json = params.get_channel_id_params_json();
+        let funding_proofs_json = serde_json::to_string(&funding_proofs).unwrap();
+        let channel_secret_hex = hex::encode(channel_secret);
+
+        let mut funding_data_map = HashMap::new();
+        funding_data_map.insert(
+            channel_id.clone(),
+            (
+                params_json,
+                funding_proofs_json,
+                channel_secret_hex,
+                keyset_infos.get(&keyset_a_id).unwrap().clone(),
+            ),
+        );
+
+        let host = RetryTestHost {
+            mint: Arc::clone(&shared_mint),
+            active_keyset_ids: RefCell::new(vec![keyset_a_id]),
+            fresh_keyset_id: keyset_b_id,
+            keyset_infos,
+            funding_data: Mutex::new(funding_data_map),
+            channel_state: RefCell::new(ChannelState::Open),
+            closing_data: RefCell::new(None),
+            stored_payment: RefCell::new(Some(PaymentProof {
+                balance,
+                signature: balance_update.signature.to_string(),
+            })),
+            amount_due: Cell::new(balance),
+            charlie_secret_hex: charlie_secret.to_secret_hex(),
+            swap_call_count: Cell::new(0),
+            refresh_count: Cell::new(0),
+            closed_data: RefCell::new(None),
+        };
+
+        let bridge = SpilmanBridge::new(host);
+
+        RetryScenario {
+            bridge,
+            channel_id,
+            balance,
+            close_signature: balance_update.signature.to_string(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cooperative_close_full_retry_with_real_mint() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let result = s
+        .bridge
+        .execute_cooperative_close(&payment_json, s.bridge.host());
+    let success = result.expect("Cooperative close should succeed after retry");
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 2);
+    assert_eq!(s.bridge.host().refresh_count.get(), 1);
+    assert!(matches!(
+        *s.bridge.host().channel_state.borrow(),
+        ChannelState::Closed
+    ));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, closed_total, ref receiver_proofs, ref sender_proofs) = closed
+        .as_ref()
+        .expect("mark_channel_closed should have been called");
+    assert_eq!(*closed_balance, s.balance);
+    assert!(*closed_total > 0);
+
+    let receiver: Vec<serde_json::Value> = serde_json::from_str(receiver_proofs)?;
+    let sender: Vec<serde_json::Value> = serde_json::from_str(sender_proofs)?;
+    assert!(!receiver.is_empty());
+
+    for (i, proof) in receiver.iter().enumerate() {
+        let witness = proof.get("witness");
+        assert!(
+            witness.is_some() && !witness.unwrap().is_null(),
+            "Receiver proof {} should have witness",
+            i
+        );
+    }
+
+    assert_eq!(success.channel_id, s.channel_id);
+    assert!(success.total_value > 0);
+    assert!(success.receiver_sum > 0);
+    let _ = sender;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unilateral_close_full_retry_with_real_mint() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    let result = s
+        .bridge
+        .execute_unilateral_close(&s.channel_id, s.bridge.host());
+    let success = result.expect("Unilateral close should succeed after retry");
+
+    assert_eq!(s.bridge.host().swap_call_count.get(), 2);
+    assert_eq!(s.bridge.host().refresh_count.get(), 1);
+    assert!(matches!(
+        *s.bridge.host().channel_state.borrow(),
+        ChannelState::Closed
+    ));
+
+    let closed = s.bridge.host().closed_data.borrow();
+    let (closed_balance, closed_total, ref receiver_proofs, ref sender_proofs) = closed
+        .as_ref()
+        .expect("mark_channel_closed should have been called");
+    assert_eq!(*closed_balance, s.balance);
+    assert!(*closed_total > 0);
+
+    let receiver: Vec<serde_json::Value> = serde_json::from_str(receiver_proofs)?;
+    let sender: Vec<serde_json::Value> = serde_json::from_str(sender_proofs)?;
+    assert!(!receiver.is_empty());
+
+    for (i, proof) in receiver.iter().enumerate() {
+        let witness = proof.get("witness");
+        assert!(
+            witness.is_some() && !witness.unwrap().is_null(),
+            "Receiver proof {} should have witness",
+            i
+        );
+    }
+
+    assert_eq!(success.channel_id, s.channel_id);
+    assert!(success.total_value > 0);
+    assert!(success.receiver_sum > 0);
+    let _ = sender;
+    Ok(())
 }
