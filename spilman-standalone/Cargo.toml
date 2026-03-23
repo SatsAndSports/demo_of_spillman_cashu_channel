@@ -1,0 +1,54 @@
+[workspace]
+members = [
+    "crates/cdk-spilman",
+    "crates/cdk-wasm",
+    "examples/rust-ascii-art",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT"
+version = "0.15.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+use_debug = "warn"
+large_enum_variant = "warn"
+
+[workspace.lints.rustdoc]
+bare_urls = "warn"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.8.1", features = ["ws"] }
+bitcoin = { version = "0.32.2", features = ["base64", "serde", "rand", "rand-std"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "rustls-tls-native-roots",
+    "socks",
+    "zstd",
+    "brotli",
+    "gzip",
+    "deflate",
+] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "test-util", "sync"] }
+tracing = { version = "0.1", default-features = false, features = ["attributes", "log"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+uuid = { version = "1.17", features = ["v4", "serde"] }
+
+[patch.crates-io]
+cashu = { path = "../crates/cashu" }

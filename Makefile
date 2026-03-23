@@ -238,6 +238,22 @@ run-ts-client:
 test-unit-spilman:
 	cargo test -p cdk-spilman --features configurable-host && cargo test -p cdk spilman_tests
 
+# Run standalone workspace skeleton checks
+test-standalone-core:
+	cargo test -p cdk-spilman --manifest-path spilman-standalone/Cargo.toml
+
+test-standalone-wasm:
+	cargo test -p cdk-wasm --manifest-path spilman-standalone/Cargo.toml
+
+test-standalone-rust-demo:
+	cargo test -p rust-ascii-art --manifest-path spilman-standalone/Cargo.toml
+
+test-standalone: test-standalone-core test-standalone-wasm test-standalone-rust-demo
+	@echo ""
+	@echo "========================================="
+	@echo "  ALL STANDALONE SKELETON TESTS PASSED"
+	@echo "========================================="
+
 # Run Rust ASCII Art integration tests (requires mint)
 test-integration-rust: build-mintd
 	./scripts/run_with_mint.sh cdk cargo test -p rust-ascii-art --test integration -- --nocapture
