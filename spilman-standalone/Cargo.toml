@@ -4,6 +4,7 @@ members = [
     "crates/cdk-spilman-go",
     "crates/cdk-spilman-interop-tests",
     "crates/cdk-spilman-python",
+    "crates/cdk-spilman-server-integration-tests",
     "crates/cdk-wasm",
     "examples/rust-ascii-art",
 ]

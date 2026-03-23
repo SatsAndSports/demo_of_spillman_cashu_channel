@@ -286,11 +286,22 @@ test-standalone-integration-ts:
 test-standalone-demo-ts:
 	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/ts-parallel-demo.sh
 
-# Note: test-standalone-demo-ts excluded due to known TS demo ESM/WASM runtime issue (see NON_FORK_PLAN.md)
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go
+# Standalone server integration tests (shared Rust harness against each server type)
+test-standalone-server-python:
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+
+test-standalone-server-go:
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+
+test-standalone-server-rust:
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+
+# Note: test-standalone-demo-ts and test-standalone-server-ts excluded
+# due to known TS demo ESM/WASM runtime issue (see NON_FORK_PLAN.md)
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-server-python test-standalone-server-go test-standalone-server-rust
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL STANDALONE TESTS (incl. integration + demos) PASSED"
+	@echo "  ALL STANDALONE TESTS PASSED"
 	@echo "========================================="
 
 # Run Rust ASCII Art integration tests (requires mint)
@@ -326,17 +337,14 @@ test-integration-all: test-integration-rust test-integration-go test-integration
 test-server-ts: build-mintd build-wasm build-kit-ts
 	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
 
-# Test Rust server
-test-server-rust: build-mintd build-rust-server
-	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+# Test Rust server (uses standalone workspace)
+test-server-rust: test-standalone-server-rust
 
-# Test Python server
-test-server-python: build-mintd build-python
-	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+# Test Python server (uses standalone workspace)
+test-server-python: test-standalone-server-python
 
-# Test Go server
-test-server-go: build-mintd build-go
-	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --test integration -- --nocapture
+# Test Go server (uses standalone workspace)
+test-server-go: test-standalone-server-go
 
 # Test all servers
 test-server-all: test-server-ts test-server-rust test-server-python test-server-go
