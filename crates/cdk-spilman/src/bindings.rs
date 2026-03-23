@@ -1113,8 +1113,6 @@ pub fn create_unsigned_balance_update(
     proofs_json: &str,
     balance: u64,
 ) -> Result<String, String> {
-    use cashu::nuts::nut10::SpendingConditionVerification;
-
     let keyset_info = parse_keyset_info_from_json(keyset_info_json)?;
     let channel_secret_bytes = hex::decode(channel_secret_hex)
         .map_err(|e| format!("Invalid channel secret hex: {}", e))?;
@@ -1147,7 +1145,7 @@ pub fn create_unsigned_balance_update(
         .map_err(|e| format!("create_swap_request failed: {}", e))?;
 
     // Compute the SIG_ALL message hash
-    let message_hex = swap_request.sig_all_message_hash_hex();
+    let message_hex = super::balance_update::sig_all_message_hash_hex(&swap_request);
 
     // Compute the tweak scalar (P2BK blinding for sender_stage1)
     let tweak = params
@@ -1206,8 +1204,7 @@ pub fn attach_signature_to_balance_update(
     )?;
 
     // Attach the signature to the first input's witness
-    swap_request
-        .attach_signature_to_first_input(signature_hex)
+    super::balance_update::attach_signature_to_first_input(&mut swap_request, signature_hex)
         .map_err(|e| format!("attach_signature_to_first_input failed: {}", e))?;
 
     // Extract the composite signature from the now-signed swap request

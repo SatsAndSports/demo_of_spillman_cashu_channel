@@ -13,7 +13,6 @@ use super::{
     DeterministicSecretWithBlinding, EstablishedChannel, KeysetInfo,
 };
 use super::params::Stage2Role;
-use cashu::nuts::nut10::SpendingConditionVerification;
 use cashu::nuts::{BlindSignature, CurrencyUnit, Id, Proof, PublicKey, SwapRequest};
 use cashu::util::hex;
 use async_trait::async_trait;
@@ -885,12 +884,12 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         let sig: bitcoin::secp256k1::schnorr::Signature = signature.parse().map_err(|e: <bitcoin::secp256k1::schnorr::Signature as FromStr>::Err| BridgeError::InvalidSignature(e.to_string()))?;
         let commitment = CommitmentOutputs::for_balance(balance, &params).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let mut swap = commitment.create_swap_request(proofs.clone(), Some(out_keyset.keyset_id)).map_err(|e| BridgeError::Internal(e.to_string()))?;
-        swap.attach_signature_to_first_input(&sig.to_string()).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        super::balance_update::attach_signature_to_first_input(&mut swap, &sig.to_string()).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let channel = EstablishedChannel::new(params.clone(), proofs).map_err(|e| BridgeError::Internal(e.to_string()))?;
         BalanceUpdateMessage { channel_id: channel_id.to_string(), amount: balance, signature: sig }.verify_sender_signature(&channel).map_err(|e| BridgeError::InvalidSignature(e.to_string()))?;
         let tweak = hex::encode(params.derive_receiver_blinding_scalar_for_stage1().map_err(|e| BridgeError::Internal(e.to_string()))?.to_be_bytes());
-        let server_sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &swap.sig_all_message_hash_hex(), &tweak).map_err(BridgeError::ServerMisconfigured)?;
-        swap.attach_signature_to_first_input(&server_sig).map_err(|e| BridgeError::Internal(e.to_string()))?;
+        let server_sig = self.host.sign_with_tweaked_key(&params.receiver_pubkey.to_hex(), &super::balance_update::sig_all_message_hash_hex(&swap), &tweak).map_err(BridgeError::ServerMisconfigured)?;
+        super::balance_update::attach_signature_to_first_input(&mut swap, &server_sig).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let expected_total = params.get_value_after_stage1_with_keyset(&out_keyset).map_err(|e| BridgeError::Internal(e.to_string()))?;
         let mut swb: Vec<_> = commitment.receiver_outputs.get_secrets_with_blinding().map_err(|e| BridgeError::Internal(e.to_string()))?.into_iter().map(|s| (s, true)).chain(commitment.sender_outputs.get_secrets_with_blinding().map_err(|e| BridgeError::Internal(e.to_string()))?.into_iter().map(|s| (s, false))).collect();
         swb.sort_by_key(|(s, _)| s.amount);

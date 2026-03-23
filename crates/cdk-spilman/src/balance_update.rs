@@ -2,9 +2,9 @@
 //!
 //! Represents a signed balance update in a Spilman payment channel
 
-use cashu::nuts::nut10::SpendingConditionVerification;
-use cashu::nuts::SwapRequest;
 use bitcoin::secp256k1::schnorr::Signature;
+use cashu::nuts::nut10::SpendingConditionVerification;
+use cashu::nuts::{P2PKWitness, SwapRequest, Witness};
 
 use super::deterministic::CommitmentOutputs;
 use super::established_channel::EstablishedChannel;
@@ -31,6 +31,39 @@ pub fn get_signatures_from_swap_request(
         };
 
     Ok(signatures)
+}
+
+pub(crate) fn sig_all_message_hash_hex<T>(value: &T) -> String
+where
+    T: SpendingConditionVerification,
+{
+    use bitcoin::hashes::{sha256, Hash};
+
+    let msg = value.sig_all_msg_to_sign();
+    let hash = sha256::Hash::hash(msg.as_bytes());
+
+    cashu::util::hex::encode(hash.to_byte_array())
+}
+
+pub(crate) fn attach_signature_to_first_input(
+    swap_request: &mut SwapRequest,
+    sig_hex: &str,
+) -> Result<(), anyhow::Error> {
+    let first_input = swap_request
+        .inputs_mut()
+        .first_mut()
+        .ok_or_else(|| anyhow::anyhow!("Swap request has no inputs"))?;
+
+    match first_input.witness.as_mut() {
+        Some(witness) => witness.add_signatures(vec![sig_hex.to_string()]),
+        None => {
+            let mut p2pk_witness = Witness::P2PKWitness(P2PKWitness::default());
+            p2pk_witness.add_signatures(vec![sig_hex.to_string()]);
+            first_input.witness = Some(p2pk_witness);
+        }
+    }
+
+    Ok(())
 }
 
 /// A balance update message from Alice to Charlie
