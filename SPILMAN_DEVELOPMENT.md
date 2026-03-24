@@ -36,58 +36,6 @@ Then run tests as usual:
 make test-rust-only
 ```
 
-## Containerized Development (No Local Rust Required)
-
-For developers without a local Rust toolchain, or for reproducible builds, you can run everything in containers using Podman or Docker.
-
-### Prerequisites
-
-**Podman:**
-- Podman 4.0+ and podman-compose
-- **Note:** Containerized tests are not supported on **Raspiblitz/Raspberry Pi** due to cgroup restrictions. Pi users should use [Native Development](#native-development-recommended-for-pi) instead.
-
-**Docker:**
-- Docker 20.10+ with Docker Compose v2 (`docker compose`)
-- User must be in the `docker` group: `sudo usermod -aG docker $USER`
-
-### Full Suite Execution
-
-```bash
-# Run the full integration test suite - default: Podman
-make test-containerized
-
-# Using Docker instead
-make test-containerized CONTAINER_ENGINE=docker
-```
-
-This command:
-1. Builds the `cdk-devenv` image (Rust toolchain + dependencies)
-2. Compiles all binaries inside the container
-3. Starts the mint and server in isolated containers
-4. Runs the integration test suite
-5. Cleans up automatically
-
-### Volume Caching
-
-Two volumes persist between runs to speed up incremental compilation:
-- `cdk_cargo-cache` - Downloaded crate dependencies
-- `cdk_target-cache` - Compiled artifacts
-
-To force a clean build:
-```bash
-podman volume rm cdk_cargo-cache cdk_target-cache
-```
-
-### Volume Files
-
-| File | Purpose |
-|------|---------|
-| `containers/Dockerfile.devenv` | Rust toolchain image |
-| `containers/mint-config.toml` | Mint configuration for containerized tests |
-| `docker-compose.spilman.yml` | Service orchestration (build, mint, server, tests) |
-
----
-
 ## Running a Mint
 
 The demos and tests require a Cashu mint. Choose one of:
@@ -204,7 +152,6 @@ make test-server-all
 
 ```
 cdk/
-├── crates/                                   # Temporary upstream reference subset pending removal
 ├── spilman-standalone/
 │   ├── crates/
 │   │   ├── cdk-spilman/                      # Core Rust implementation

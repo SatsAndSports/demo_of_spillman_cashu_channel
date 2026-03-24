@@ -3,7 +3,7 @@
 # Starts an ephemeral mint, runs a command with MINT_URL set, then cleans up.
 #
 # Usage: ./scripts/run_with_mint.sh <mint_type> <command...>
-# Example: ./scripts/run_with_mint.sh cdk make -C web/blossom-server test-full
+# Example: ./scripts/run_with_mint.sh standalone make -C web/blossom-server test-full
 #          ./scripts/run_with_mint.sh nutmix make -C web/blossom-server test-full
 #
 # The mint runs in the background. On command completion (success or failure),
@@ -11,12 +11,12 @@
 
 set -e
 
-MINT_TYPE="${1:-cdk}"
+MINT_TYPE="${1:-standalone}"
 shift
 
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <mint_type> <command...>" >&2
-    echo "Example: $0 cdk make -C web/blossom-server test-full" >&2
+    echo "Example: $0 standalone make -C web/blossom-server test-full" >&2
     exit 1
 fi
 

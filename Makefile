@@ -21,18 +21,6 @@
 # Configuration
 # ===========================================================================
 
-# Container engine: podman (default) or docker
-# Override: make test-containerized CONTAINER_ENGINE=docker
-CONTAINER_ENGINE := podman
-
-ifeq ($(CONTAINER_ENGINE),podman)
-    COMPOSE_CMD := podman-compose
-else
-    COMPOSE_CMD := docker compose
-endif
-
-COMPOSE_FILE := -f docker-compose.spilman.yml
-
 # Directories
 STANDALONE_ROOT := spilman-standalone
 PYTHON_CRATE_DIR := $(STANDALONE_ROOT)/crates/cdk-spilman-python
@@ -56,9 +44,9 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 
 .PHONY: venv \
 	build-python build-python-wheel install-python \
-	build-go build-mintd build-rust-server \
+	build-go build-rust-server \
 	build-wasm build-blossom-wasm build-ts-wasm build-kit-ts \
-	build-devenv build-nutmix-setup \
+	build-nutmix-setup \
 	run-python-server run-python-client \
 	run-go-server run-go-client \
 	run-ts-server run-ts-client \
@@ -70,8 +58,7 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 	test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native \
 	test-blossom test-blossom-nutmix \
 	test-all test-all-with-blossom test-all-nutmix-native test-all-with-nutmix \
-	test-containerized \
-	clean clean-logs clean-nutmix-setup clean-containers \
+	clean clean-logs clean-nutmix-setup \
 	list-orphans kill-orphans ensure-nutmix-image
 
 # ===========================================================================
@@ -125,10 +112,6 @@ build-go-dist-all:
 	./scripts/build-go-libs.sh all
 
 # --- Rust Builds ---
-
-# Build CDK mint daemon
-build-mintd:
-	cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
 
 # Build Rust ASCII Art server
 build-rust-server:
@@ -184,11 +167,7 @@ TS_KIT_SOURCES := $(shell find $(TS_KIT_DIR)/src -name '*.ts' 2>/dev/null)
 
 build-kit-ts: .kit-ts-built
 
-# --- Container/NutMix Builds ---
-
-# Build container dev environment image
-build-devenv:
-	$(CONTAINER_ENGINE) build --network=host -f containers/Dockerfile.devenv -t cdk-devenv .
+# --- NutMix Builds ---
 
 # Build NutMix setup tool
 build-nutmix-setup:
@@ -356,7 +335,7 @@ test-server-all: test-server-ts test-server-rust test-server-python test-server-
 # Test Targets - Demo Tests (simple client/server sanity check)
 # ===========================================================================
 
-# --- Demo Tests with CDK Mint (default) ---
+# --- Demo Tests with standalone test mint (default) ---
 
 test-demo-python: test-standalone-demo-python
 
@@ -400,7 +379,7 @@ test-demo-ts-nutmix-native: build-wasm
 
 # Test blossom server with standalone test mint
 test-blossom:
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
+	./scripts/run_with_mint.sh standalone $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # Test blossom server with NutMix
 test-blossom-nutmix: build-nutmix-setup
@@ -420,18 +399,18 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "  ALL RUST-ONLY TESTS PASSED"
 	@echo "========================================="
 
-# All tests with CDK mint (does not require blossom-server repo)
+# All tests with standalone test mint (does not require blossom-server repo)
 test-all: test-unit-spilman test-integration-all test-server-all test-demo-all
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL TESTS PASSED (CDK mint)"
+	@echo "  ALL TESTS PASSED (standalone test mint)"
 	@echo "========================================="
 
 # All tests including blossom (requires web/blossom-server repo)
 test-all-with-blossom: test-unit-spilman test-integration-all test-blossom test-server-all test-demo-all
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL TESTS PASSED (CDK mint + blossom)"
+	@echo "  ALL TESTS PASSED (standalone test mint + blossom)"
 	@echo "========================================="
 
 # All tests with NutMix (native mode - for Docker test image)
@@ -441,43 +420,12 @@ test-all-nutmix-native: test-demo-python-nutmix-native test-demo-go-nutmix-nativ
 	@echo "  ALL TESTS PASSED (NutMix native)"
 	@echo "========================================="
 
-# All tests with both CDK mint and NutMix (requires blossom-server repo)
+# All tests with both standalone test mint and NutMix (requires blossom-server repo)
 test-all-with-nutmix: test-all-with-blossom test-blossom-nutmix
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL TESTS PASSED (CDK + NutMix)"
+	@echo "  ALL TESTS PASSED (standalone + NutMix)"
 	@echo "========================================="
-
-# Containerized tests (Rust-only, no local Rust required)
-test-containerized: build-devenv
-	@echo "Checking that ports 33380 and 50080 are available..."
-	@python3 -c "import socket, sys; ports=[33380, 50080]; \
-		busy = [p for p in ports if not socket.socket().connect_ex(('127.0.0.1', p))]; \
-		[print(f'  Port {p}: OK') for p in ports if p not in busy]; \
-		[print(f'  Port {p}: IN USE - please free this port first', file=sys.stderr) for p in busy]; \
-		sys.exit(1 if busy else 0)" || \
-		(echo ""; echo "ERROR: Required ports are already in use. Free ports 33380 and 50080 and try again."; exit 1)
-	@echo "Ports are available."
-	@echo ""
-	@echo "=== Building ===" && \
-	$(COMPOSE_CMD) $(COMPOSE_FILE) run --rm build && \
-	echo "" && \
-	echo "=== Running tests ===" && \
-	$(COMPOSE_CMD) $(COMPOSE_FILE) up --force-recreate --abort-on-container-exit --exit-code-from test-rust mint rust-server test-rust; \
-	status=$$?; \
-	$(COMPOSE_CMD) $(COMPOSE_FILE) down; \
-	if [ $$status -eq 0 ]; then \
-		echo ""; \
-		echo "========================================="; \
-		echo "  CONTAINERIZED TESTS PASSED"; \
-		echo "========================================="; \
-	else \
-		echo ""; \
-		echo "========================================="; \
-		echo "  CONTAINERIZED TESTS FAILED"; \
-		echo "========================================="; \
-	fi; \
-	exit $$status
 
 # ===========================================================================
 # Cleanup Targets
@@ -492,15 +440,8 @@ clean-logs:
 clean-nutmix-setup:
 	rm -f $(NUTMIX_SETUP_DIR)/nutmix-setup-units
 
-# Clean containers and devenv image
-clean-containers:
-	$(COMPOSE_CMD) $(COMPOSE_FILE) down -v
-	$(CONTAINER_ENGINE) rmi cdk-devenv 2>/dev/null || true
-	@echo "Containers and devenv image cleaned up."
-
 # Full clean
 clean: clean-nutmix-setup clean-logs
-	cargo clean
 	cargo clean --manifest-path $(STANDALONE_ROOT)/Cargo.toml
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
@@ -524,8 +465,6 @@ list-orphans:
 	@echo "=== Orphaned test processes ==="
 	@echo "cdk-spilman-test-mintd:"
 	@pgrep -af "cdk-spilman-test-mintd" | grep -v pgrep || echo "  (none)"
-	@echo "cdk-mintd:"
-	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
 	@echo "rust-ascii-art:"
 	@pgrep -af "rust-ascii-art" | grep -v pgrep || echo "  (none)"
 	@echo "python server.py:"
@@ -543,5 +482,4 @@ kill-orphans:
 	-@pkill -f "tsx.*server" 2>/dev/null || true
 	-@pkill -f "ascii-art" 2>/dev/null || true
 	-@pkill -f "cdk-spilman-test-mintd" 2>/dev/null || true
-	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
 	@echo "Done. Run 'make list-orphans' to verify."

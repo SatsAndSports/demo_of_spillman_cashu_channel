@@ -7,20 +7,9 @@ This repo now has two roles:
 
 `web/blossom-server/` is a nested git repo that consumes standalone-managed WASM and TS kit assets.
 
-## Remaining Root Crates
+## Legacy Root Subset
 
-Only these root crates remain while root removal is in progress:
-
-- `cashu`
-- `cdk`
-- `cdk-common`
-- `cdk-axum`
-- `cdk-fake-wallet`
-- `cdk-http-client`
-- `cdk-mintd`
-- `cdk-signatory`
-- `cdk-sql-common`
-- `cdk-sqlite`
+An old upstream-reference subset still exists under `crates/`, but it is no longer part of the active Spilman workflow and is slated for deletion.
 
 If a task appears to require removed crates or old fork-local Spilman code, prefer `spilman-standalone/` instead.
 
@@ -32,9 +21,6 @@ cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.to
 
 # Auto-spawn mint for a command
 spilman-standalone/scripts/run_with_mint.sh <command...>
-
-# Legacy root subset sanity check
-cargo check -p cdk-mintd --locked
 
 # Standalone suites
 make test-standalone
@@ -65,7 +51,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 | `spilman-standalone/crates/cdk-wasm/` | WASM bindings |
 | `spilman-standalone/integration-kits/` | Python / Go / TS integration kits |
 | `spilman-standalone/examples/` | Demo servers |
-| `crates/cdk-mintd/` | Legacy root mint subset pending removal |
 | `web/blossom-server/` | Nested repo for CashuTube / blossom tests |
 
 ## Mint Infrastructure
@@ -73,7 +58,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Prefer `MINT_URL` when an external mint is available.
 - Otherwise, standalone flows auto-build and spawn `cdk-spilman-test-mintd`.
 - The standalone test mint is intentionally minimal: `fakewallet` + in-memory sqlite + mint/swap coverage.
-- The root `cdk-mintd` subset is now legacy cleanup material and should not be the default choice for new work.
+- The old root `crates/` subset is now legacy cleanup material and should not be the default choice for new work.
 
 ## Rust Workspace Conventions
 

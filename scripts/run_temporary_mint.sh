@@ -3,12 +3,13 @@
 # Starts a temporary mint with auto-cleanup on exit.
 #
 # Usage: ./scripts/run_temporary_mint.sh <mint_type> <port>
-# Example: ./scripts/run_temporary_mint.sh cdk 12345
+# Example: ./scripts/run_temporary_mint.sh standalone 12345
 #          ./scripts/run_temporary_mint.sh nutmix 12345
 #          ./scripts/run_temporary_mint.sh nutmix-native 12345
 #
 # Supported mint types:
-#   cdk           - standalone fakewallet test mint
+#   standalone    - standalone fakewallet test mint
+#   cdk           - alias for standalone (legacy name)
 #   nutmix        - NutMix via Docker Compose (for local development)
 #   nutmix-native - NutMix with PostgreSQL directly (for Docker test image)
 #
@@ -18,7 +19,7 @@
 set -e
 set -u
 
-MINT_TYPE="${1:-cdk}"
+MINT_TYPE="${1:-standalone}"
 MINT_PORT="${2:-3338}"
 
 # Locate repo root (script is in scripts/)
@@ -62,7 +63,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 case "$MINT_TYPE" in
-    cdk)
+    standalone|cdk)
         STANDALONE_MANIFEST="$REPO_ROOT/spilman-standalone/Cargo.toml"
         MINT_BIN="$REPO_ROOT/spilman-standalone/target/debug/cdk-spilman-test-mintd"
 
