@@ -128,7 +128,7 @@ build-go-dist-all:
 
 # Build CDK mint daemon
 build-mintd:
-	cargo build -p cdk-mintd --features fakewallet
+	cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
 
 # Build Rust ASCII Art server
 build-rust-server:

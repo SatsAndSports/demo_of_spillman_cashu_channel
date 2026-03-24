@@ -69,7 +69,7 @@ fi
 
 # Build cdk-mintd if needed
 echo "Building cdk-mintd from $CDK_REPO_ROOT..."
-cargo build -p cdk-mintd --features fakewallet --manifest-path "$CDK_MANIFEST" 2>&1
+cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite --manifest-path "$CDK_MANIFEST" 2>&1
 
 MINTD_BIN="$CDK_REPO_ROOT/target/debug/cdk-mintd"
 if [ ! -f "$MINTD_BIN" ]; then

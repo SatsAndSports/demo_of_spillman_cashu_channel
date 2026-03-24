@@ -4,11 +4,11 @@
 # It uses a FakeWallet backend that auto-pays invoices for easy testing.
 #
 # Usage:
-#   cargo build -p cdk-mintd --features fakewallet
+#   cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
 #   ./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
 #
 # Or in release mode:
-#   cargo build -p cdk-mintd --features fakewallet --release
+#   cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite --release
 #   ./target/release/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
 
 [info]

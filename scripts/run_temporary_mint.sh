@@ -56,7 +56,7 @@ case "$MINT_TYPE" in
         CONFIG_FILE="$MINT_WORK_DIR/config.toml"
         MINT_BIN="$REPO_ROOT/target/debug/cdk-mintd"
         if [ ! -f "$MINT_BIN" ]; then
-            echo "ERROR: $MINT_BIN not found. Run: cargo build -p cdk-mintd --features fakewallet" >&2
+            echo "ERROR: $MINT_BIN not found. Run: cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite" >&2
             exit 1
         fi
         

@@ -98,7 +98,7 @@ The easiest option with a pre-configured development setup:
 
 ```bash
 # Build with fakewallet (auto-pays invoices for testing)
-cargo build -p cdk-mintd --features fakewallet
+cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
 
 # Start the mint
 ./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint

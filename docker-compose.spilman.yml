@@ -39,7 +39,7 @@ services:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
-    command: ["sh", "-c", "cargo build -p cdk-mintd --features fakewallet -p rust-ascii-art && cargo test -p cdk-spilman-server-integration-tests --test integration --no-run"]
+    command: ["sh", "-c", "cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite && cargo build -p rust-ascii-art --manifest-path spilman-standalone/Cargo.toml && cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration --no-run"]
 
   # ============================================================
   # CDK Mint Daemon

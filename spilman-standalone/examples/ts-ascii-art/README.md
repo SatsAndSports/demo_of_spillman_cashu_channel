@@ -16,7 +16,7 @@ This example demonstrates Spilman unidirectional payment channels using TypeScri
 
 2. Run a Cashu mint (default `http://localhost:3338`):
    ```bash
-   cargo run -p cdk-mintd --features fakewallet -- --config dev-mint/config.dev.toml --work-dir dev-mint
+   cargo run -p cdk-mintd --no-default-features --features fakewallet,sqlite -- --config dev-mint/config.dev.toml --work-dir dev-mint
    ```
 
 ## Quick Start
