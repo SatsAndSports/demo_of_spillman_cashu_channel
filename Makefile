@@ -141,10 +141,10 @@ BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
 TS_KIT_WASM := $(STANDALONE_ROOT)/integration-kits/ts/wasm/cdk_wasm_bg.wasm
 
 # Source files that WASM depends on
-WASM_SOURCES := $(shell find $(WASM_CRATE)/src crates/cdk/src crates/cdk-spilman/src -name '*.rs' 2>/dev/null)
+WASM_SOURCES := $(shell find $(WASM_CRATE)/src $(STANDALONE_ROOT)/crates/cdk-spilman/src -name '*.rs' 2>/dev/null)
 
 # Sentinel file tracks when WASM was last built
-.wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml crates/cdk/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.lock
+.wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml $(STANDALONE_ROOT)/crates/cdk-spilman/Cargo.toml $(STANDALONE_ROOT)/Cargo.toml $(STANDALONE_ROOT)/Cargo.lock
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-web
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-nodejs
 	@touch .wasm-built

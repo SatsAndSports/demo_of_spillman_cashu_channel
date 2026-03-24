@@ -597,7 +597,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b098575ebe77cb6d14fc7f32749631a6e44edbef6b796f89b020e99ba20d425"
 dependencies = [
  "axum-core 0.5.5",
- "axum-macros",
  "base64 0.22.1",
  "bytes",
  "form_urlencoded",
@@ -661,17 +660,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-macros"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "604fde5e028fea851ce1d8570bbdc034bec850d157f7569d10f347d06808c05c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
 ]
 
 [[package]]
@@ -1747,26 +1735,6 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "cdk-spilman"
-version = "0.15.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum 0.8.7",
- "base64 0.22.1",
- "bitcoin 0.32.8",
- "cashu",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yml",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -4159,16 +4127,6 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "libyml"
-version = "0.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3302702afa434ffa30847a83305f0a69d6abd74293b6554c18ec85c7ef30c980"
-dependencies = [
- "anyhow",
- "version_check",
 ]
 
 [[package]]
@@ -6678,21 +6636,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
-]
-
-[[package]]
-name = "serde_yml"
-version = "0.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e2dd588bf1597a252c3b920e0143eb99b0f76e4e082f4c92ce34fbc9e71ddd"
-dependencies = [
- "indexmap 2.12.1",
- "itoa",
- "libyml",
- "memchr",
- "ryu",
- "serde",
- "version_check",
 ]
 
 [[package]]
