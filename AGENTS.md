@@ -1,27 +1,23 @@
-# AGENTS.md - Spilman / Transitional Root
+# AGENTS.md - Spilman / Root Workspace
 
 This repo now has one active role:
 
-- `spilman-standalone/` is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
+- repo root is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
 
-The remaining root-level files are transitional wrappers/scripts/docs that exist only until the standalone workspace is flattened to repo root.
-
-`web/blossom-server/` is a nested git repo that consumes standalone-managed WASM and TS kit assets.
-
-If a task appears to require old fork-local Spilman or CDK root paths, prefer `spilman-standalone/` instead.
+`web/blossom-server/` is a nested git repo that consumes root-managed WASM and TS kit assets.
 
 ## Common Commands
 
 ```bash
 # Standalone test mint
-cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml
+cargo build -p cdk-spilman-test-mint --manifest-path Cargo.toml
 
 # Auto-spawn mint for a command
-spilman-standalone/scripts/run_with_mint.sh <command...>
+scripts/run_with_mint.sh <command...>
 
 # Standalone lint / format
-cargo fmt --manifest-path spilman-standalone/Cargo.toml --all -- --check
-cargo clippy --manifest-path spilman-standalone/Cargo.toml --workspace --all-targets -- -D warnings
+cargo fmt --manifest-path Cargo.toml --all -- --check
+cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
 # Standalone suites
 make test-standalone
@@ -41,13 +37,13 @@ make build-blossom-wasm
 
 | Path | Purpose |
 |---|---|
-| `spilman-standalone/crates/cdk-spilman/` | Canonical Rust Spilman implementation |
-| `spilman-standalone/crates/cdk-spilman-test-mint/` | Standalone fakewallet+sqlite test mint |
-| `spilman-standalone/crates/cdk-spilman-interop-tests/` | Upstream `cdk` interoperability tests |
-| `spilman-standalone/crates/cdk-spilman-server-integration-tests/` | Shared multi-server harness |
-| `spilman-standalone/crates/cdk-wasm/` | WASM bindings |
-| `spilman-standalone/integration-kits/` | Python / Go / TS integration kits |
-| `spilman-standalone/examples/` | Demo servers |
+| `crates/cdk-spilman/` | Canonical Rust Spilman implementation |
+| `crates/cdk-spilman-test-mint/` | Standalone fakewallet+sqlite test mint |
+| `crates/cdk-spilman-interop-tests/` | Upstream `cdk` interoperability tests |
+| `crates/cdk-spilman-server-integration-tests/` | Shared multi-server harness |
+| `crates/cdk-wasm/` | WASM bindings |
+| `integration-kits/` | Python / Go / TS integration kits |
+| `examples/` | Demo servers |
 | `web/blossom-server/` | Nested repo for CashuTube / blossom tests |
 
 ## Mint Infrastructure
@@ -71,10 +67,8 @@ make build-blossom-wasm
 
 ## Project Notes
 
-- root `cdk` no longer carries Spilman-specific code
-- root duplicate crates for Spilman/bindings/demos were removed
-- blossom tests run through `web/blossom-server/Makefile` and expect standalone-managed assets
-- if you need live-mint integration for standalone tests, start with `spilman-standalone/scripts/run_with_mint.sh`
+- blossom tests run through `web/blossom-server/Makefile` and expect root-managed assets
+- if you need live-mint integration for standalone tests, start with `scripts/run_with_mint.sh`
 - active tests should use the standalone test mint, not the root `cdk-mintd` path
 
 ## Commit Style

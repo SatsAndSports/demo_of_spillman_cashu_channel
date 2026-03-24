@@ -3,19 +3,30 @@
 # ts-parallel-demo.sh
 # Automated test for Spilman TypeScript Demo with dynamic ports and parallel clients.
 #
-# Usage: ./scripts/ts-parallel-demo.sh [cdk|nutmix]
+# Usage: ./scripts/ts-parallel-demo.sh [standalone|nutmix|nutmix-native]
+#        MINT_URL=http://localhost:3338 ./scripts/ts-parallel-demo.sh
 
 set -e
 set -u
 set -o pipefail
 
 # 1. Configuration
-MINT_TYPE="${1:-cdk}"
-LOG_DIR="./testing/ts-demo-$MINT_TYPE"
+MINT_TYPE="${1:-standalone}"
+USE_EXTERNAL_MINT=false
+if [ $# -eq 0 ] && [ -n "${MINT_URL:-}" ]; then
+    USE_EXTERNAL_MINT=true
+fi
+
+MINT_LABEL="$MINT_TYPE"
+if [ "$USE_EXTERNAL_MINT" = true ]; then
+    MINT_LABEL="external"
+fi
+
+LOG_DIR="./testing/ts-demo-$MINT_LABEL"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
-TS_DEMO_DIR="spilman-standalone/examples/ts-ascii-art"
+TS_DEMO_DIR="examples/ts-ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -38,25 +49,31 @@ trap cleanup EXIT
 
 # 3. Install npm dependencies
 echo "--- Installing npm dependencies ---"
-(cd "spilman-standalone/integration-kits/ts" && npm install --silent)
+(cd "integration-kits/ts" && npm install --silent)
 (cd "$TS_DEMO_DIR" && rm -rf node_modules/cdk-spilman-kit && npm install --silent)
 
-# 4. Find two distinct free ports
+# 4. Find free ports
 echo "--- Finding free ports ---"
-read -r MINT_PORT SERVER_PORT < <(python3 -c 'import socket; s1=socket.socket(); s1.bind(("", 0)); s2=socket.socket(); s2.bind(("", 0)); print(f"{s1.getsockname()[1]} {s2.getsockname()[1]}"); s1.close(); s2.close()')
-echo "MINT_PORT:   $MINT_PORT"
-echo "SERVER_PORT: $SERVER_PORT"
+if [ "$USE_EXTERNAL_MINT" = true ]; then
+    SERVER_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    echo "MINT_URL:    $MINT_URL"
+    echo "SERVER_PORT: $SERVER_PORT"
+else
+    read -r MINT_PORT SERVER_PORT < <(python3 -c 'import socket; s1=socket.socket(); s1.bind(("", 0)); s2=socket.socket(); s2.bind(("", 0)); print(f"{s1.getsockname()[1]} {s2.getsockname()[1]}"); s1.close(); s2.close()')
+    echo "MINT_PORT:   $MINT_PORT"
+    echo "SERVER_PORT: $SERVER_PORT"
 
-# 5. Start Mint
-echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
-./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
+    # 5. Start Mint
+    echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
+    ./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
-# Wait for mint to be fully ready
-./scripts/wait_for_mint.sh "$MINT_LOG" 120 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+    # Wait for mint to be fully ready
+    ./scripts/wait_for_mint.sh "$MINT_LOG" 120 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+    export MINT_URL="http://localhost:$MINT_PORT"
+fi
 
 # 6. Start TypeScript Server
 echo "--- Starting TypeScript Server (logging to $SERVER_LOG) ---"
-export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
 
 (cd "$TS_DEMO_DIR" && npm run server) > "$SERVER_LOG" 2>&1 &
@@ -84,7 +101,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="TS-Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    (cd "$TS_DEMO_DIR" && MINT_URL="http://localhost:$MINT_PORT" SERVER_URL="http://localhost:$SERVER_PORT" npm run client -- "$MSG") > "$LOG" 2>&1 &
+    (cd "$TS_DEMO_DIR" && MINT_URL="$MINT_URL" SERVER_URL="http://localhost:$SERVER_PORT" npm run client -- "$MSG") > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 

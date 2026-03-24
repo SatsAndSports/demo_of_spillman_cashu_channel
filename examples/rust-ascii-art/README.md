@@ -45,7 +45,7 @@ Integration tests require a Cashu mint running:
 
 ```bash
 # Start the standalone test mint (from repo root)
-cargo run -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
+cargo run -p cdk-spilman-test-mint --manifest-path Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
 
 # In another terminal, run integration tests
 make test-integration

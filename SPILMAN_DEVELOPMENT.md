@@ -46,10 +46,10 @@ The easiest option with the standalone fakewallet+sqlite test mint:
 
 ```bash
 # Build the standalone mint
-cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml
+cargo build -p cdk-spilman-test-mint --manifest-path Cargo.toml
 
 # Start the mint on the default test port
-./spilman-standalone/target/debug/cdk-spilman-test-mintd --listen-port 3338 --base-url http://127.0.0.1:3338
+./target/debug/cdk-spilman-test-mintd --listen-port 3338 --base-url http://127.0.0.1:3338
 ```
 
 When it is ready, it prints a one-line summary like:
@@ -63,7 +63,7 @@ The standalone mint uses a fixed mnemonic for reproducible keyset IDs:
 - **msat keyset:** `01f4bb1e9a93272802cbecb0e4609ea6b9ac080faa4d483fcf0c0ed36c60793677`
 - **usd keyset:** `01e96c7f95d941041f444a99b69f8030b5a9d1f6c6591eb0df388366a065df37c5`
 
-For test commands that should auto-spawn a mint, prefer `spilman-standalone/scripts/run_with_mint.sh`.
+For test commands that should auto-spawn a mint, prefer `scripts/run_with_mint.sh`.
 
 ### NutMix (Go-based)
 
@@ -152,23 +152,22 @@ make test-server-all
 
 ```
 cdk/
-├── spilman-standalone/
-│   ├── crates/
-│   │   ├── cdk-spilman/                      # Core Rust implementation
-│   │   ├── cdk-spilman-test-mint/            # Standalone fakewallet+sqlite test mint
-│   │   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
-│   │   ├── cdk-wasm/                         # WASM bindings (JS/TS)
-│   │   ├── cdk-spilman-python/               # Python bindings
-│   │   └── cdk-spilman-go/                   # Go bindings
-│   ├── integration-kits/
-│   │   ├── ts/                               # TypeScript kit (Express)
-│   │   ├── python/                           # Python integration kit
-│   │   └── go/                               # Go integration kit
-│   └── examples/
-│       ├── rust-ascii-art/                   # Rust server (native)
-│       ├── ts-ascii-art/                     # TypeScript server + client
-│       ├── python-ascii-art/                 # Python server + client
-│       └── go-ascii-art/                     # Go server + client
+├── crates/
+│   ├── cdk-spilman/                          # Core Rust implementation
+│   ├── cdk-spilman-test-mint/                # Standalone fakewallet+sqlite test mint
+│   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
+│   ├── cdk-wasm/                             # WASM bindings (JS/TS)
+│   ├── cdk-spilman-python/                   # Python bindings
+│   └── cdk-spilman-go/                       # Go bindings
+├── integration-kits/
+│   ├── ts/                                   # TypeScript kit (Express)
+│   ├── python/                               # Python integration kit
+│   └── go/                                   # Go integration kit
+├── examples/
+│   ├── rust-ascii-art/                       # Rust server (native)
+│   ├── ts-ascii-art/                         # TypeScript server + client
+│   ├── python-ascii-art/                     # Python server + client
+│   └── go-ascii-art/                         # Go server + client
 ├── web/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output

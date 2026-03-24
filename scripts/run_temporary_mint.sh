@@ -28,7 +28,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 print_mint_summary() {
     local source="$1"
     local mint_url="$2"
-    local helper="$REPO_ROOT/spilman-standalone/scripts/print_mint_summary.py"
+    local helper="$REPO_ROOT/scripts/print_mint_summary.py"
 
     if ! python3 "$helper" "$source" "$mint_url"; then
         echo "MINT_READY source=$source url=$mint_url name=\"unknown\" version=\"unknown\" units=[]" >&2
@@ -64,8 +64,8 @@ trap cleanup EXIT INT TERM
 
 case "$MINT_TYPE" in
     standalone|cdk)
-        STANDALONE_MANIFEST="$REPO_ROOT/spilman-standalone/Cargo.toml"
-        MINT_BIN="$REPO_ROOT/spilman-standalone/target/debug/cdk-spilman-test-mintd"
+        STANDALONE_MANIFEST="$REPO_ROOT/Cargo.toml"
+        MINT_BIN="$REPO_ROOT/target/debug/cdk-spilman-test-mintd"
 
         echo "Building standalone test mint..." >&2
         cargo build -p cdk-spilman-test-mint --manifest-path "$STANDALONE_MANIFEST" >&2

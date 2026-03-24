@@ -13,10 +13,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PACKAGE_DIR="$ROOT_DIR/spilman-standalone/crates/cdk-spilman-go/packaged/lib"
+PACKAGE_DIR="$ROOT_DIR/crates/cdk-spilman-go/packaged/lib"
 CRATE_NAME="cdk-spilman-go"
 LIB_NAME="libcdk_spilman_go"
-STANDALONE_MANIFEST="$ROOT_DIR/spilman-standalone/Cargo.toml"
+STANDALONE_MANIFEST="$ROOT_DIR/Cargo.toml"
 
 # Detect current platform
 detect_platform() {
@@ -78,7 +78,7 @@ build_platform() {
         echo "  Native build..."
         cargo build --profile release-smaller -p "$CRATE_NAME" --manifest-path "$STANDALONE_MANIFEST"
         
-        local src="$ROOT_DIR/spilman-standalone/target/release-smaller/${LIB_NAME}.${ext}"
+        local src="$ROOT_DIR/target/release-smaller/${LIB_NAME}.${ext}"
         local dst="$output_dir/${LIB_NAME}.${ext}"
         
         if [ ! -f "$src" ]; then
@@ -109,7 +109,7 @@ build_platform() {
         echo "  Cross-compiling with 'cross'..."
         cross build --profile release-smaller -p "$CRATE_NAME" --target "$target" --manifest-path "$STANDALONE_MANIFEST"
         
-        local src="$ROOT_DIR/spilman-standalone/target/$target/release-smaller/${LIB_NAME}.${ext}"
+        local src="$ROOT_DIR/target/$target/release-smaller/${LIB_NAME}.${ext}"
         local dst="$output_dir/${LIB_NAME}.${ext}"
         
         if [ ! -f "$src" ]; then

@@ -22,14 +22,14 @@
 # ===========================================================================
 
 # Directories
-STANDALONE_ROOT := spilman-standalone
-PYTHON_CRATE_DIR := $(STANDALONE_ROOT)/crates/cdk-spilman-python
-GO_CRATE_DIR := $(STANDALONE_ROOT)/crates/cdk-spilman-go
-GO_DEMO_DIR := $(STANDALONE_ROOT)/examples/go-ascii-art
-TS_DEMO_DIR := $(STANDALONE_ROOT)/examples/ts-ascii-art
-PYTHON_DEMO_DIR := $(STANDALONE_ROOT)/examples/python-ascii-art
+STANDALONE_ROOT := .
+PYTHON_CRATE_DIR := crates/cdk-spilman-python
+GO_CRATE_DIR := crates/cdk-spilman-go
+GO_DEMO_DIR := examples/go-ascii-art
+TS_DEMO_DIR := examples/ts-ascii-art
+PYTHON_DEMO_DIR := examples/python-ascii-art
 BLOSSOM_DIR := web/blossom-server
-WASM_CRATE := $(STANDALONE_ROOT)/crates/cdk-wasm
+WASM_CRATE := crates/cdk-wasm
 NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
 
 # Python tools (single venv lives in the Python crate)
@@ -87,7 +87,7 @@ install-python: build-python-wheel
 
 # Build Go bindings (Rust library, debug)
 build-go:
-	cargo build -p cdk-spilman-go --manifest-path $(STANDALONE_ROOT)/Cargo.toml
+	cargo build -p cdk-spilman-go --manifest-path Cargo.toml
 
 # Build Go distribution libraries (optimized, stripped)
 build-go-dist:
@@ -115,7 +115,7 @@ build-go-dist-all:
 
 # Build Rust ASCII Art server
 build-rust-server:
-	cargo build -p rust-ascii-art --manifest-path $(STANDALONE_ROOT)/Cargo.toml
+	cargo build -p rust-ascii-art --manifest-path Cargo.toml
 
 # --- WASM Bindings ---
 
@@ -127,9 +127,9 @@ TS_KIT_WASM := $(STANDALONE_ROOT)/integration-kits/ts/wasm/cdk_wasm_bg.wasm
 WASM_SOURCES := $(shell find $(WASM_CRATE)/src $(STANDALONE_ROOT)/crates/cdk-spilman/src -name '*.rs' 2>/dev/null)
 
 # Sentinel file tracks when WASM was last built
-.wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml $(STANDALONE_ROOT)/crates/cdk-spilman/Cargo.toml $(STANDALONE_ROOT)/Cargo.toml $(STANDALONE_ROOT)/Cargo.lock
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-web
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../../web/wasm-nodejs
+.wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.toml Cargo.lock
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
+	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-nodejs
 	@touch .wasm-built
 	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
 
@@ -220,31 +220,31 @@ test-unit-spilman:
 
 # Run standalone workspace tests
 test-standalone-core:
-	cargo test -p cdk-spilman --manifest-path spilman-standalone/Cargo.toml
+	cargo test -p cdk-spilman --manifest-path Cargo.toml
 
 test-standalone-interop:
-	cargo test -p cdk-spilman-interop-tests --manifest-path spilman-standalone/Cargo.toml
+	cargo test -p cdk-spilman-interop-tests --manifest-path Cargo.toml
 
 test-standalone-wasm:
-	cargo test -p cdk-wasm --manifest-path spilman-standalone/Cargo.toml
+	cargo test -p cdk-wasm --manifest-path Cargo.toml
 
 test-standalone-rust-demo:
-	cargo test -p rust-ascii-art --manifest-path spilman-standalone/Cargo.toml
+	cargo test -p rust-ascii-art --manifest-path Cargo.toml
 
 test-standalone-go:
-	$(MAKE) -C spilman-standalone/crates/cdk-spilman-go test-dev
+	$(MAKE) -C crates/cdk-spilman-go test-dev
 
 test-standalone-python:
-	$(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-unit
+	$(MAKE) -C crates/cdk-spilman-python test-unit
 
 # Standalone integration tests (require mint via MINT_URL or auto-spawned standalone test mint)
-STANDALONE_MINT_RUNNER := spilman-standalone/scripts/run_with_mint.sh
+STANDALONE_MINT_RUNNER := scripts/run_with_mint.sh
 
 test-standalone-integration-python:
-	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-integration
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C crates/cdk-spilman-python test-integration
 
 test-standalone-integration-go:
-	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-spilman-go test-integration-dev
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C crates/cdk-spilman-go test-integration-dev
 
 test-standalone: test-standalone-core test-standalone-interop test-standalone-wasm test-standalone-rust-demo test-standalone-go test-standalone-python
 	@echo ""
@@ -253,29 +253,29 @@ test-standalone: test-standalone-core test-standalone-interop test-standalone-wa
 	@echo "========================================="
 
 test-standalone-demo-python: test-standalone-python
-	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/python-parallel-demo.sh
+	$(STANDALONE_MINT_RUNNER) scripts/python-parallel-demo.sh
 
 test-standalone-demo-go: test-standalone-go
-	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/go-parallel-demo.sh
+	$(STANDALONE_MINT_RUNNER) scripts/go-parallel-demo.sh
 
 test-standalone-integration-ts:
-	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-wasm test-integration
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C crates/cdk-wasm test-integration
 
 test-standalone-demo-ts:
-	$(STANDALONE_MINT_RUNNER) spilman-standalone/scripts/ts-parallel-demo.sh
+	$(STANDALONE_MINT_RUNNER) scripts/ts-parallel-demo.sh
 
 # Standalone server integration tests (shared Rust harness against each server type)
 test-standalone-server-python: test-standalone-python
-	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-server-go: test-standalone-go
-	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+	SERVER_TYPE=go cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-server-rust: test-standalone-rust-demo
-	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-server-ts: test-standalone-integration-ts
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path spilman-standalone/Cargo.toml --test integration -- --nocapture
+	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
 	@echo ""
@@ -285,7 +285,7 @@ test-standalone-all: test-standalone test-standalone-integration-python test-sta
 
 # Run Rust ASCII Art integration tests (requires mint)
 test-integration-rust:
-	$(STANDALONE_MINT_RUNNER) cargo test -p rust-ascii-art --manifest-path $(STANDALONE_ROOT)/Cargo.toml --test integration -- --nocapture
+	$(STANDALONE_MINT_RUNNER) cargo test -p rust-ascii-art --manifest-path Cargo.toml --test integration -- --nocapture
 
 # Run Go unit tests (delegates to Go Makefile)
 test-unit-go: build-go
@@ -434,7 +434,6 @@ test-all-with-nutmix: test-all-with-blossom test-blossom-nutmix
 # Clean test logs
 clean-logs:
 	rm -rf testing/
-	rm -rf $(STANDALONE_ROOT)/testing/
 
 # Clean NutMix setup tool
 clean-nutmix-setup:
@@ -442,7 +441,7 @@ clean-nutmix-setup:
 
 # Full clean
 clean: clean-nutmix-setup clean-logs
-	cargo clean --manifest-path $(STANDALONE_ROOT)/Cargo.toml
+	cargo clean --manifest-path Cargo.toml
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(PYTHON_VENV)

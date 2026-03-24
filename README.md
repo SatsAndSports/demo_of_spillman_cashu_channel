@@ -4,8 +4,8 @@
 
 This repository contains the reference implementation of Spilman-style payment channels for the [Cashu](https://cashu.space) protocol. It enables services to accept streaming micropayments without round-trip latency or on-chain settlement for every request.
 
-The primary Rust implementation lives in the standalone `cdk-spilman` crate in this workspace.
-Active demos, test harnesses, and the local test mint now live under `spilman-standalone/`; the remaining root-only material is temporary cleanup material.
+The primary Rust implementation lives in the `cdk-spilman` crate in this workspace.
+Active demos, test harnesses, and the local test mint now live directly at repo root.
 
 **Status: Early Alpha**
 Experimental protocol. APIs and data models are subject to breaking changes.
@@ -39,13 +39,13 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 
 2. **Run ASCII Art Server**:
    ```bash
-   cd spilman-standalone/examples/rust-ascii-art
+   cd examples/rust-ascii-art
    cargo run
    ```
 
 3. **Run TypeScript Demo**:
    ```bash
-   cd spilman-standalone/examples/ts-ascii-art
+   cd examples/ts-ascii-art
    npm install && npm start
    ```
 
@@ -53,23 +53,22 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 
 ```
 cdk/
-├── spilman-standalone/
-│   ├── crates/
-│   │   ├── cdk-spilman/            # Canonical core Rust protocol implementation
-│   │   ├── cdk-spilman-test-mint/  # Standalone local test mint
-│   │   ├── cdk-wasm/               # WASM bindings
-│   │   ├── cdk-spilman-python/     # Python bindings (PyO3)
-│   │   ├── cdk-spilman-go/         # Go bindings (CGO)
-│   │   └── cdk-spilman-server-integration-tests/ # Multi-server test client
-│   ├── integration-kits/
-│   │   ├── ts/                     # TypeScript/Express integration kit
-│   │   ├── python/                 # Python integration kit
-│   │   └── go/                     # Go integration kit
-│   └── examples/
-│       ├── rust-ascii-art/         # Rust demo (native)
-│       ├── ts-ascii-art/           # TypeScript demo
-│       ├── python-ascii-art/       # Python demo
-│       └── go-ascii-art/           # Go demo
+├── crates/
+│   ├── cdk-spilman/                # Canonical core Rust protocol implementation
+│   ├── cdk-spilman-test-mint/      # Standalone local test mint
+│   ├── cdk-wasm/                   # WASM bindings
+│   ├── cdk-spilman-python/         # Python bindings (PyO3)
+│   ├── cdk-spilman-go/             # Go bindings (CGO)
+│   └── cdk-spilman-server-integration-tests/ # Multi-server test client
+├── integration-kits/
+│   ├── ts/                         # TypeScript/Express integration kit
+│   ├── python/                     # Python integration kit
+│   └── go/                         # Go integration kit
+├── examples/
+│   ├── rust-ascii-art/             # Rust demo (native)
+│   ├── ts-ascii-art/               # TypeScript demo
+│   ├── python-ascii-art/           # Python demo
+│   └── go-ascii-art/               # Go demo
 ├── web/
 │   └── blossom-server/             # Video streaming demo (nested repo)
 ```

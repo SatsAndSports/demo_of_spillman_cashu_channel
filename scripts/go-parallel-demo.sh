@@ -3,20 +3,31 @@
 # go-parallel-demo.sh
 # Automated test for Spilman Go Demo with dynamic ports and parallel clients.
 #
-# Usage: ./scripts/go-parallel-demo.sh [cdk|nutmix]
+# Usage: ./scripts/go-parallel-demo.sh [standalone|nutmix|nutmix-native]
+#        MINT_URL=http://localhost:3338 ./scripts/go-parallel-demo.sh
 
 set -e
 set -u
 set -o pipefail
 
 # 1. Configuration
-MINT_TYPE="${1:-cdk}"
-LOG_DIR="./testing/go-demo-$MINT_TYPE"
+MINT_TYPE="${1:-standalone}"
+USE_EXTERNAL_MINT=false
+if [ $# -eq 0 ] && [ -n "${MINT_URL:-}" ]; then
+    USE_EXTERNAL_MINT=true
+fi
+
+MINT_LABEL="$MINT_TYPE"
+if [ "$USE_EXTERNAL_MINT" = true ]; then
+    MINT_LABEL="external"
+fi
+
+LOG_DIR="./testing/go-demo-$MINT_LABEL"
 SERVER_LOG="$LOG_DIR/server.log"
 MINT_LOG="$LOG_DIR/mint.log"
 CLIENT_COUNT=3
 REPO_ROOT=$(pwd)
-GO_DEMO_DIR="spilman-standalone/examples/go-ascii-art"
+GO_DEMO_DIR="examples/go-ascii-art"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -39,27 +50,33 @@ trap cleanup EXIT
 
 # 3. Build Go demo
 echo "--- Building Go demo ---"
-(cd "$GO_DEMO_DIR" && LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug" go build -tags spilman_dev -o main .)
+(cd "$GO_DEMO_DIR" && LD_LIBRARY_PATH="$REPO_ROOT/target/debug" go build -tags spilman_dev -o main .)
 
-# 4. Find two distinct free ports
+# 4. Find free ports
 echo "--- Finding free ports ---"
-read -r MINT_PORT SERVER_PORT < <(python3 -c 'import socket; s1=socket.socket(); s1.bind(("", 0)); s2=socket.socket(); s2.bind(("", 0)); print(f"{s1.getsockname()[1]} {s2.getsockname()[1]}"); s1.close(); s2.close()')
-echo "MINT_PORT:   $MINT_PORT"
-echo "SERVER_PORT: $SERVER_PORT"
+if [ "$USE_EXTERNAL_MINT" = true ]; then
+    SERVER_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+    echo "MINT_URL:    $MINT_URL"
+    echo "SERVER_PORT: $SERVER_PORT"
+else
+    read -r MINT_PORT SERVER_PORT < <(python3 -c 'import socket; s1=socket.socket(); s1.bind(("", 0)); s2=socket.socket(); s2.bind(("", 0)); print(f"{s1.getsockname()[1]} {s2.getsockname()[1]}"); s1.close(); s2.close()')
+    echo "MINT_PORT:   $MINT_PORT"
+    echo "SERVER_PORT: $SERVER_PORT"
 
-# 5. Start Mint
-echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
-./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
+    # 5. Start Mint
+    echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
+    ./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
-# Wait for mint to be fully ready
-./scripts/wait_for_mint.sh "$MINT_LOG" 120 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+    # Wait for mint to be fully ready
+    ./scripts/wait_for_mint.sh "$MINT_LOG" 120 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+    export MINT_URL="http://localhost:$MINT_PORT"
+fi
 
 # 6. Start Go Server
 echo "--- Starting Go Server (logging to $SERVER_LOG) ---"
-export MINT_URL="http://localhost:$MINT_PORT"
 export PORT="$SERVER_PORT"
 export SERVER_URL="http://localhost:$SERVER_PORT"
-export LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug"
+export LD_LIBRARY_PATH="$REPO_ROOT/target/debug"
 
 cd "$GO_DEMO_DIR"
 ./main server > "$REPO_ROOT/$SERVER_LOG" 2>&1 &
@@ -88,7 +105,7 @@ for i in $(seq 1 $CLIENT_COUNT); do
     MSG="Go-Parallel-$i"
     LOG="$LOG_DIR/client_$i.log"
     echo "Starting Client $i with message: '$MSG'..."
-    (cd "$GO_DEMO_DIR" && MINT_URL="http://localhost:$MINT_PORT" SERVER_URL="http://localhost:$SERVER_PORT" LD_LIBRARY_PATH="$REPO_ROOT/spilman-standalone/target/debug" ./main client "$MSG" --close) > "$LOG" 2>&1 &
+    (cd "$GO_DEMO_DIR" && MINT_URL="$MINT_URL" SERVER_URL="http://localhost:$SERVER_PORT" LD_LIBRARY_PATH="$REPO_ROOT/target/debug" ./main client "$MSG" --close) > "$LOG" 2>&1 &
     PIDS+=($!)
 done
 

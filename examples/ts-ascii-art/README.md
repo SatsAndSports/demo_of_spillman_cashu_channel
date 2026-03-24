@@ -16,7 +16,7 @@ This example demonstrates Spilman unidirectional payment channels using TypeScri
 
 2. Run a Cashu mint (default `http://localhost:3338`):
    ```bash
-   cargo run -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
+   cargo run -p cdk-spilman-test-mint --manifest-path Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
    ```
 
 ## Quick Start

@@ -34,7 +34,7 @@ pub fn find_available_port() -> Result<u16> {
 
 /// Get the standalone workspace root directory.
 ///
-/// This crate is at `spilman-standalone/crates/cdk-spilman-server-integration-tests`,
+/// This crate is at `crates/cdk-spilman-server-integration-tests`,
 /// so the workspace root is two levels up from `CARGO_MANIFEST_DIR`.
 pub fn project_root() -> PathBuf {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());

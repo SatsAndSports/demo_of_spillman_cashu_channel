@@ -1,31 +1,66 @@
 #!/bin/bash
 # run_with_mint.sh
-# Starts an ephemeral mint, runs a command with MINT_URL set, then cleans up.
-#
-# Usage: ./scripts/run_with_mint.sh <mint_type> <command...>
-# Example: ./scripts/run_with_mint.sh standalone make -C web/blossom-server test-full
-#          ./scripts/run_with_mint.sh nutmix make -C web/blossom-server test-full
-#
-# The mint runs in the background. On command completion (success or failure),
-# the mint is automatically stopped and cleaned up.
+# Runs a command with MINT_URL set, either using an external mint or spawning one.
 
 set -e
-
-MINT_TYPE="${1:-standalone}"
-shift
-
-if [ $# -eq 0 ]; then
-    echo "Usage: $0 <mint_type> <command...>" >&2
-    echo "Example: $0 standalone make -C web/blossom-server test-full" >&2
-    exit 1
-fi
+set -u
+set -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Find a free port
-PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
+print_mint_summary() {
+    local source="$1"
+    local mint_url="$2"
+    local helper="$REPO_ROOT/scripts/print_mint_summary.py"
 
-# Create log directory and file
+    if ! python3 "$helper" "$source" "$mint_url"; then
+        echo "MINT_READY source=$source url=$mint_url name=\"unknown\" version=\"unknown\" units=[]"
+    fi
+}
+
+is_mint_type() {
+    case "$1" in
+        standalone|cdk|nutmix|nutmix-native) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+usage() {
+    echo "Usage:" >&2
+    echo "  $0 [standalone|nutmix|nutmix-native] <command...>" >&2
+    echo "  MINT_URL=http://host:port $0 <command...>" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  $0 standalone make -C web/blossom-server test-full" >&2
+    echo "  $0 nutmix make test-blossom-nutmix" >&2
+    echo "  MINT_URL=http://localhost:3338 $0 make test-standalone-integration-python" >&2
+}
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+EXPLICIT_MINT_TYPE=false
+MINT_TYPE="standalone"
+
+if is_mint_type "$1"; then
+    EXPLICIT_MINT_TYPE=true
+    MINT_TYPE="$1"
+    shift
+fi
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+if [ "$EXPLICIT_MINT_TYPE" = false ] && [ -n "${MINT_URL:-}" ]; then
+    print_mint_summary "external" "$MINT_URL"
+    exec "$@"
+fi
+
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 LOG_DIR="$REPO_ROOT/testing"
 mkdir -p "$LOG_DIR"
 MINT_LOG="$LOG_DIR/mint-${MINT_TYPE}-${PORT}.log"
@@ -34,7 +69,6 @@ MINT_URL_LOCAL="http://127.0.0.1:$PORT"
 echo "Starting $MINT_TYPE mint on port $PORT..."
 echo "Mint logs: $MINT_LOG"
 
-# Start mint in background with output redirected to log file
 "$REPO_ROOT/scripts/run_temporary_mint.sh" "$MINT_TYPE" "$PORT" > "$MINT_LOG" 2>&1 &
 MINT_PID=$!
 
@@ -43,7 +77,6 @@ cleanup() {
     echo "Stopping mint (PID $MINT_PID)..."
     kill "$MINT_PID" 2>/dev/null || true
     wait "$MINT_PID" 2>/dev/null || true
-    # On failure, show tail of mint log to help debug
     if [ $exit_code -ne 0 ] && [ -f "$MINT_LOG" ]; then
         echo ""
         echo "=== Last 30 lines of mint log ($MINT_LOG) ==="
@@ -52,11 +85,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Wait for mint to be fully ready
 "$REPO_ROOT/scripts/wait_for_mint.sh" "$MINT_LOG" 120
 
 echo "Running: $*"
 echo ""
 
-# Run command with MINT_URL set
 MINT_URL="$MINT_URL_LOCAL" "$@"
