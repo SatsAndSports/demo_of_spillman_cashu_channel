@@ -3,6 +3,7 @@ name = "cdk-wasm"
 version = "0.15.1"
 edition = "2021"
 license = "MIT"
+repository.workspace = true
 description = "WASM bindings for Cashu payment channels"
 
 [lib]

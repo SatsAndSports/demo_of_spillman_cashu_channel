@@ -15,6 +15,7 @@ resolver = "2"
 edition = "2021"
 rust-version = "1.85.0"
 license = "MIT"
+repository = "https://github.com/SatsAndSports/demo_of_spillman_cashu_channel"
 version = "0.15.1"
 
 [workspace.lints.rust]
