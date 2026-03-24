@@ -174,10 +174,10 @@ make test-blossom          # Uses CDK mint (default)
 make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
 ```
 
-Or manually:
+Or manually from the nested blossom repo:
 ```bash
 cd web/blossom-server
-corepack pnpm test
+make test-full
 ```
 
 ### Server Integration Tests (Rust)

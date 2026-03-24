@@ -8,7 +8,7 @@
 #
 # Test target patterns:
 #   test-unit-*           Unit tests
-#   test-server-*         Server integration tests (52-test Rust client suite)
+#   test-server-*         Server integration tests (54-test Rust client suite)
 #   test-demo-*           Demo tests (simple client/server sanity check)
 #   test-blossom*         Blossom server tests
 #   test-all*             Aggregate test suites
@@ -488,6 +488,7 @@ test-containerized: build-devenv
 # Clean test logs
 clean-logs:
 	rm -rf testing/
+	rm -rf $(STANDALONE_ROOT)/testing/
 
 # Clean NutMix setup tool
 clean-nutmix-setup:
@@ -502,14 +503,18 @@ clean-containers:
 # Full clean
 clean: clean-nutmix-setup clean-logs
 	cargo clean
+	cargo clean --manifest-path $(STANDALONE_ROOT)/Cargo.toml
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(PYTHON_VENV)
+	rm -rf $(PYTHON_CRATE_DIR)/.pytest_cache
 	rm -f .wasm-built .kit-ts-built
 	rm -rf web/wasm-web web/wasm-nodejs
-	rm -rf integration-kits/ts/node_modules integration-kits/ts/dist examples/ts-ascii-art/node_modules
-	rm -rf integration-kits/ts/wasm
-	rm -f examples/*-ascii-art/*.db
+	rm -rf $(STANDALONE_ROOT)/integration-kits/ts/node_modules $(STANDALONE_ROOT)/integration-kits/ts/dist $(TS_DEMO_DIR)/node_modules $(TS_DEMO_DIR)/dist
+	rm -rf $(STANDALONE_ROOT)/integration-kits/python/*.egg-info
+	find $(PYTHON_CRATE_DIR) $(STANDALONE_ROOT)/integration-kits/python -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+	rm -f $(STANDALONE_ROOT)/examples/go-ascii-art/ascii-art $(STANDALONE_ROOT)/examples/go-ascii-art/main $(STANDALONE_ROOT)/examples/go-ascii-art/demo $(STANDALONE_ROOT)/examples/go-ascii-art/*.exe
+	rm -f $(STANDALONE_ROOT)/examples/*-ascii-art/*.db
 	@if [ -d $(BLOSSOM_DIR) ]; then $(MAKE) -C $(BLOSSOM_DIR) clean; fi
 
 # ===========================================================================

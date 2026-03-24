@@ -48,6 +48,3 @@ testing/
 # Go artifacts
 examples/go-ascii-art/main
 examples/go-ascii-art/demo
-
-# WASM for TS
-integration-kits/ts/wasm/

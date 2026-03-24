@@ -53,12 +53,10 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 ```
 cdk/
 ├── crates/
-│   ├── cdk-spilman/                # Core Rust protocol implementation
-│   ├── cdk/                        # Upstream CDK code plus wallet interop tests
-│   └── cdk/                        # Upstream CDK code
+│   └── cdk/                        # Upstream CDK reference code plus wallet interop tests
 ├── spilman-standalone/
 │   ├── crates/
-│   │   ├── cdk-spilman/            # Core Rust protocol implementation
+│   │   ├── cdk-spilman/            # Canonical core Rust protocol implementation
 │   │   ├── cdk-wasm/               # WASM bindings
 │   │   ├── cdk-spilman-python/     # Python bindings (PyO3)
 │   │   ├── cdk-spilman-go/         # Go bindings (CGO)
@@ -73,7 +71,7 @@ cdk/
 │       ├── python-ascii-art/       # Python demo
 │       └── go-ascii-art/           # Go demo
 ├── web/
-│   └── blossom-server/             # Video streaming demo (separate repo)
+│   └── blossom-server/             # Video streaming demo (nested repo)
 └── dev-mint/                       # CDK mint dev config
 ```
 
