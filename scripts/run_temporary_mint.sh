@@ -24,6 +24,16 @@ MINT_PORT="${2:-3338}"
 # Locate repo root (script is in scripts/)
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+print_mint_summary() {
+    local source="$1"
+    local mint_url="$2"
+    local helper="$REPO_ROOT/spilman-standalone/scripts/print_mint_summary.py"
+
+    if ! python3 "$helper" "$source" "$mint_url"; then
+        echo "MINT_READY source=$source url=$mint_url name=\"unknown\" version=\"unknown\" units=[]" >&2
+    fi
+}
+
 MINT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mint-${MINT_TYPE}.XXXXXX")
 
 # Variables for cleanup (set per mint type)
@@ -73,8 +83,7 @@ case "$MINT_TYPE" in
         # (The standalone test mint only binds once sat, msat, and usd keysets are ready.)
         for i in {1..60}; do
             if curl -s "$MINT_URL_LOCAL/v1/info" > /dev/null 2>&1; then
-                VERSION=$(curl -s "$MINT_URL_LOCAL/v1/info" | jq -r '.version // "unknown"')
-                echo "MINT_READY_WITH_KEYSETS $VERSION (sat, msat, usd)" >&2
+                print_mint_summary "spawned" "$MINT_URL_LOCAL" >&2
                 break
             fi
             if [ $i -eq 60 ]; then
@@ -191,8 +200,7 @@ EOF
         ADMIN_NOSTR_NSEC="$NUTMIX_ADMIN_NSEC" \
             "$NUTMIX_SETUP_UNITS" $NUTMIX_UNITS
         
-        VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
-        echo "MINT_READY_WITH_KEYSETS $VERSION ($NUTMIX_UNITS)" >&2
+        print_mint_summary "spawned" "http://localhost:$MINT_PORT" >&2
         
         # Block until compose exits or we're killed
         wait "$COMPOSE_PID"
@@ -279,8 +287,7 @@ EOF
         ADMIN_NOSTR_NSEC="$NUTMIX_ADMIN_NSEC" \
             "$NUTMIX_SETUP_UNITS" $NUTMIX_UNITS
         
-        VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
-        echo "MINT_READY_WITH_KEYSETS $VERSION ($NUTMIX_UNITS)" >&2
+        print_mint_summary "spawned" "http://localhost:$MINT_PORT" >&2
         
         wait "$MINT_PID"
         ;;

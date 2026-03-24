@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use command_group::{CommandGroup, GroupChild, Signal, UnixChildExt};
+use serde_json::Value;
 use std::process::Command;
 use tokio::time::sleep;
 
@@ -50,6 +51,73 @@ fn test_mint_manifest() -> PathBuf {
 
 fn test_mint_binary() -> PathBuf {
     project_root().join("target/debug/cdk-spilman-test-mintd")
+}
+
+fn mint_unit_order(unit: &str) -> (u8, &str) {
+    match unit {
+        "sat" => (0, unit),
+        "msat" => (1, unit),
+        "usd" => (2, unit),
+        _ => (99, unit),
+    }
+}
+
+async fn mint_ready_line(client: &reqwest::Client, source: &str, mint_url: &str) -> Result<String> {
+    let info_url = format!("{}/v1/info", mint_url);
+    let keysets_url = format!("{}/v1/keysets", mint_url);
+
+    let info = client
+        .get(&info_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    let keysets = client
+        .get(&keysets_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+
+    let name = info
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let version = info
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+
+    let mut units: Vec<String> = keysets
+        .get("keysets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("unit").and_then(Value::as_str))
+        .map(|unit| unit.to_string())
+        .collect();
+    units.sort_by(|left, right| mint_unit_order(left).cmp(&mint_unit_order(right)));
+    units.dedup();
+
+    let name_json = serde_json::to_string(name)?;
+    let version_json = serde_json::to_string(version)?;
+
+    Ok(format!(
+        "MINT_READY source={} url={} name={} version={} units=[{}]",
+        source,
+        mint_url,
+        name_json,
+        version_json,
+        units.join(",")
+    ))
+}
+
+async fn log_mint_ready(source: &str, mint_url: &str) -> Result<()> {
+    let client = reqwest::Client::new();
+    println!("{}", mint_ready_line(&client, source, mint_url).await?);
+    Ok(())
 }
 
 /// Server type enum
@@ -162,6 +230,7 @@ impl MintProcess {
             match client.get(&info_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!("Mint ready after {} attempts", i + 1);
+                    log_mint_ready("spawned", &self.url).await?;
                     return Ok(());
                 }
                 _ => {
@@ -466,6 +535,7 @@ impl TestEnvironment {
 
             // Wait for external services to be ready
             Self::wait_for_external_mint(&mint_url).await?;
+            log_mint_ready("external", &mint_url).await?;
             Self::wait_for_external_server(&server_url).await?;
 
             return Ok(Self {

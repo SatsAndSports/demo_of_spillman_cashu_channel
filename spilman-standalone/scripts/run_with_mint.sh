@@ -19,6 +19,16 @@
 
 set -e
 
+print_mint_summary() {
+    local source="$1"
+    local mint_url="$2"
+    local helper="$STANDALONE_ROOT/scripts/print_mint_summary.py"
+
+    if ! python3 "$helper" "$source" "$mint_url"; then
+        echo "MINT_READY source=$source url=$mint_url name=\"unknown\" version=\"unknown\" units=[]"
+    fi
+}
+
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <command...>" >&2
     echo "" >&2
@@ -32,7 +42,8 @@ fi
 # ============================================================================
 
 if [ -n "$MINT_URL" ]; then
-    echo "Using existing mint at $MINT_URL"
+    STANDALONE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    print_mint_summary "external" "$MINT_URL"
     exec "$@"
 fi
 
@@ -83,7 +94,7 @@ trap cleanup EXIT INT TERM
 echo "Waiting for mint to be ready..."
 for i in $(seq 1 60); do
     if curl -s "$MINT_URL_LOCAL/v1/info" > /dev/null 2>&1; then
-        echo "Mint ready at $MINT_URL_LOCAL"
+        print_mint_summary "spawned" "$MINT_URL_LOCAL"
         break
     fi
     if [ "$i" -eq 60 ]; then

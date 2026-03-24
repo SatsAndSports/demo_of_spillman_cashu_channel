@@ -1,15 +1,15 @@
-# AGENTS.md - Spilman / Minimal CDK Root
+# AGENTS.md - Spilman / Standalone-First Root
 
 This repo now has two roles:
 
 - `spilman-standalone/` is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
-- the root `cdk/` workspace is a minimized upstream-reference subset that remains only while final root removal is in progress.
+- the root `cdk/` workspace is a temporary upstream-reference subset slated for removal once the standalone workspace fully replaces it.
 
 `web/blossom-server/` is a nested git repo that consumes standalone-managed WASM and TS kit assets.
 
-## Current Root Crates
+## Remaining Root Crates
 
-Only these root crates remain active:
+Only these root crates remain while root removal is in progress:
 
 - `cashu`
 - `cdk`
@@ -30,7 +30,10 @@ If a task appears to require removed crates or old fork-local Spilman code, pref
 # Standalone test mint
 cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml
 
-# Transitional root mint subset
+# Auto-spawn mint for a command
+spilman-standalone/scripts/run_with_mint.sh <command...>
+
+# Legacy root subset sanity check
 cargo check -p cdk-mintd --locked
 
 # Standalone suites
@@ -62,8 +65,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 | `spilman-standalone/crates/cdk-wasm/` | WASM bindings |
 | `spilman-standalone/integration-kits/` | Python / Go / TS integration kits |
 | `spilman-standalone/examples/` | Demo servers |
-| `crates/cdk-mintd/` | Transitional root mint infrastructure subset |
-| `dev-mint/config.dev.toml` | Legacy root mint config kept during transition |
+| `crates/cdk-mintd/` | Legacy root mint subset pending removal |
 | `web/blossom-server/` | Nested repo for CashuTube / blossom tests |
 
 ## Mint Infrastructure
@@ -71,7 +73,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Prefer `MINT_URL` when an external mint is available.
 - Otherwise, standalone flows auto-build and spawn `cdk-spilman-test-mintd`.
 - The standalone test mint is intentionally minimal: `fakewallet` + in-memory sqlite + mint/swap coverage.
-- The root `cdk-mintd` subset is now transitional and should not be the default choice for new work.
+- The root `cdk-mintd` subset is now legacy cleanup material and should not be the default choice for new work.
 
 ## Rust Workspace Conventions
 
@@ -92,6 +94,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - root duplicate crates for Spilman/bindings/demos were removed
 - blossom tests run through `web/blossom-server/Makefile` and expect standalone-managed assets
 - if you need live-mint integration for standalone tests, start with `spilman-standalone/scripts/run_with_mint.sh`
+- active tests should use the standalone test mint, not the root `cdk-mintd` path
 
 ## Commit Style
 
@@ -104,5 +107,3 @@ Use conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test
 | Contributor guide | `SPILMAN_DEVELOPMENT.md` |
 | Integration guide | `INTEGRATION.md` |
 | Architecture notes | `ARCHITECTURE.md` |
-| Mint dev config | `dev-mint/config.dev.toml` |
-| Non-fork migration log | `NON_FORK_PLAN.md` |

@@ -104,6 +104,12 @@ cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.to
 ./spilman-standalone/target/debug/cdk-spilman-test-mintd --listen-port 3338 --base-url http://127.0.0.1:3338
 ```
 
+When it is ready, it prints a one-line summary like:
+
+```text
+MINT_READY source=spawned url=http://127.0.0.1:3338 name="Spilman Test Mint" version="cdk-spilman-test-mintd/0.15.1" units=[sat,msat,usd]
+```
+
 The standalone mint uses a fixed mnemonic for reproducible keyset IDs:
 - **sat keyset:** `01e5ccf902614063af576888a30d8c93220bf663f4de8b43edcdd1ced8a45c2f65`
 - **msat keyset:** `01f4bb1e9a93272802cbecb0e4609ea6b9ac080faa4d483fcf0c0ed36c60793677`
@@ -198,9 +204,7 @@ make test-server-all
 
 ```
 cdk/
-├── crates/
-│   ├── cdk-mintd/                            # Transitional root mint subset
-│   └── cdk/                                  # Upstream CDK reference subset
+├── crates/                                   # Temporary upstream reference subset pending removal
 ├── spilman-standalone/
 │   ├── crates/
 │   │   ├── cdk-spilman/                      # Core Rust implementation
@@ -222,7 +226,6 @@ cdk/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output
 │   └── blossom-server/            # Video streaming demo
-└── dev-mint/                      # Legacy root mint config (transition only)
 ```
 
 ## Troubleshooting

@@ -1,6 +1,6 @@
 #!/bin/bash
 # wait_for_mint.sh
-# Waits for MINT_READY_WITH_KEYSETS marker in the mint log file.
+# Waits for a MINT_READY marker in the mint log file.
 #
 # Usage: ./scripts/wait_for_mint.sh <log_file> [timeout_seconds]
 #
@@ -19,8 +19,11 @@ TIMEOUT="${2:-60}"
 ELAPSED=0
 MAX_STEPS=$((TIMEOUT * 2))
 while [ $ELAPSED -lt $MAX_STEPS ]; do
+    if grep -q "^MINT_READY " "$LOG_FILE" 2>/dev/null; then
+        grep "^MINT_READY " "$LOG_FILE"
+        exit 0
+    fi
     if grep -q "MINT_READY_WITH_KEYSETS" "$LOG_FILE" 2>/dev/null; then
-        # Print the full line for visibility
         grep "MINT_READY_WITH_KEYSETS" "$LOG_FILE"
         exit 0
     fi
@@ -28,5 +31,5 @@ while [ $ELAPSED -lt $MAX_STEPS ]; do
     ELAPSED=$((ELAPSED + 1))
 done
 
-echo "ERROR: MINT_READY_WITH_KEYSETS not found in $LOG_FILE within ${TIMEOUT}s" >&2
+echo "ERROR: MINT_READY marker not found in $LOG_FILE within ${TIMEOUT}s" >&2
 exit 1

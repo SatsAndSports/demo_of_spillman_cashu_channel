@@ -29,6 +29,7 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.ge
 LOG_DIR="$REPO_ROOT/testing"
 mkdir -p "$LOG_DIR"
 MINT_LOG="$LOG_DIR/mint-${MINT_TYPE}-${PORT}.log"
+MINT_URL_LOCAL="http://127.0.0.1:$PORT"
 
 echo "Starting $MINT_TYPE mint on port $PORT..."
 echo "Mint logs: $MINT_LOG"
@@ -54,9 +55,8 @@ trap cleanup EXIT INT TERM
 # Wait for mint to be fully ready
 "$REPO_ROOT/scripts/wait_for_mint.sh" "$MINT_LOG" 120
 
-echo "Mint ready at http://localhost:$PORT"
 echo "Running: $*"
 echo ""
 
 # Run command with MINT_URL set
-MINT_URL="http://localhost:$PORT" "$@"
+MINT_URL="$MINT_URL_LOCAL" "$@"
