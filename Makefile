@@ -401,12 +401,12 @@ test-demo-ts-nutmix-native: build-wasm
 # ===========================================================================
 
 # Test blossom server with CDK mint
-test-blossom: build-mintd build-blossom-wasm build-kit-ts
-	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test
+test-blossom: build-mintd
+	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # Test blossom server with NutMix
-test-blossom-nutmix: build-nutmix-setup build-blossom-wasm build-kit-ts
-	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test
+test-blossom-nutmix: build-nutmix-setup
+	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # ===========================================================================
 # Test Targets - Aggregate Suites

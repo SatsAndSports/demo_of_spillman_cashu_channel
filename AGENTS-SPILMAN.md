@@ -9,7 +9,7 @@ This document provides context for AI coding assistants working on this codebase
 This workspace contains **Spilman-style unidirectional payment channels** for Cashu ecash. The core Rust implementation and bindings now live under `spilman-standalone/`, while the root `cdk` crate remains only as upstream reference code during the migration.
 
 **Primary demos:**
-- **CashuTube** (`web/blossom-server/`) - Video streaming (47 tests)
+- **CashuTube** (`web/blossom-server/`) - Video streaming (51 tests)
 - **Rust ASCII Art** (`spilman-standalone/examples/rust-ascii-art/`) - Native Rust server using `ConfigurableHost`
 - **TypeScript ASCII Art** (`spilman-standalone/examples/ts-ascii-art/`) - Node.js server using `ConfigurableSpilman`
 - **Python ASCII Art** (`spilman-standalone/examples/python-ascii-art/`) - Python server using `ConfigurableSpilman`

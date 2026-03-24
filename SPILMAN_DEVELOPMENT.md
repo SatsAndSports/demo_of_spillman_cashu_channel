@@ -177,7 +177,7 @@ make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
 Or manually:
 ```bash
 cd web/blossom-server
-npm test
+corepack pnpm test
 ```
 
 ### Server Integration Tests (Rust)
@@ -212,7 +212,9 @@ cdk/
 │   │   ├── cdk-spilman-python/               # Python bindings
 │   │   └── cdk-spilman-go/                   # Go bindings
 │   ├── integration-kits/
-│   │   └── ts/                               # TypeScript kit (Express)
+│   │   ├── ts/                               # TypeScript kit (Express)
+│   │   ├── python/                           # Python integration kit
+│   │   └── go/                               # Go integration kit
 │   └── examples/
 │       ├── rust-ascii-art/                   # Rust server (native)
 │       ├── ts-ascii-art/                     # TypeScript server + client
