@@ -7,33 +7,21 @@
 > **Warning**
 > This project is in early development, it does however work with real sats! Always use amounts you don't mind losing.
 
-Cashu mint daemon implementation for the Cashu Development Kit (CDK). This binary provides a complete Cashu mint server implementation with support for multiple database backends and Lightning Network integrations.
+Cashu mint daemon implementation for the Cashu Development Kit (CDK). In this repo it is maintained primarily as a local fakewallet+sqlite dev mint for Spilman testing.
 
 ## Features
 
-- **Multiple Database Backends**: SQLite, PostgreSQL, and ReDB
-- **Lightning Network Integration**: Support for CLN, LND, LNbits, LDK Node, and test backends
-- **Authentication**: Optional user authentication with OpenID Connect
-- **Management RPC**: gRPC interface for mint management
-- **Docker Support**: Ready-to-use Docker configurations
-
-## Lightning Backend Documentation
-
-For detailed configuration of each Lightning backend, see:
-
-- **[LND](../cdk-lnd/README.md)** - Lightning Network Daemon
-- **[CLN](../cdk-cln/README.md)** - Core Lightning
-- **[LNbits](../cdk-lnbits/README.md)** - LNbits API integration
+- **SQLite dev database**: lightweight local storage for test runs
+- **FakeWallet backend**: auto-paid mint quotes for deterministic local testing
+- **Multi-unit support**: local test mint is configured for `sat`, `msat`, and `usd`
+- **HTTP mint API**: served via `cdk-axum`
+- **Docker/test support**: ready-to-use local developer workflows
 
 ## Installation
 
 ### Option 1: Download Pre-built Binary
 
 Statically-linked x86_64 Linux binaries are published to each [GitHub release](https://github.com/cashubtc/cdk/releases). These have zero runtime dependencies and run on any x86_64 Linux system.
-
-Available binaries:
-- **`cdk-mintd-{version}-x86_64`** -- standard mint with `postgres`, `prometheus`, and `redis` support
-- **`cdk-mintd-ldk-{version}-x86_64`** -- mint with built-in `ldk-node` Lightning backend
 
 Each release also includes a `SHA256SUMS` file to verify downloads:
 
@@ -63,11 +51,8 @@ cd cdk
 # Enter lean development environment
 nix develop
 
-# OR enter full regtest environment (with bitcoind, cln, lnd, postgres)
-nix develop .#regtest
-
-# Build binary
-cargo build --bin cdk-mintd --release
+# Build binary used by local Spilman test flows
+cargo build --bin cdk-mintd --no-default-features --features fakewallet,sqlite --release
 # Binary will be at ./target/release/cdk-mintd
 ```
 
@@ -137,53 +122,23 @@ mint-cli rotate-next-keyset --use-keyset-v2       # Rotate to V2
 mint-cli rotate-next-keyset --use-keyset-v2=false # Rotate to V1
 ```
 
-## Production Examples
+## Local Testing Example
 
-### With LDK Node (Recommended for Testing)
+### FakeWallet + SQLite (default in this repo)
 ```toml
+[info]
+url = "http://127.0.0.1:3338"
+listen_host = "127.0.0.1"
+listen_port = 3338
+
 [ln]
-ln_backend = "ldk-node"
+ln_backend = "fakewallet"
 
-[ldk_node]
-bitcoin_network = "signet"  # Use "mainnet" for production
-esplora_url = "https://mutinynet.com/api"
-rgs_url = "https://rgs.mutinynet.com/snapshot/0"
-gossip_source_type = "rgs"
-storage_dir_path = "/var/lib/cdk-mintd/ldk-node"
-```
+[fake_wallet]
+supported_units = ["sat", "msat", "usd"]
 
-
-### With CLN Lightning Backend
-```toml
-[ln]
-ln_backend = "cln"
-
-[cln]
-rpc_path = "/home/bitcoin/.lightning/bitcoin/lightning-rpc"
-# fee_percent = 0.02      # Optional, defaults to 2%
-# reserve_fee_min = 2     # Optional, defaults to 2 sats
-```
-
-### With LND Lightning Backend
-```toml
-[ln]
-ln_backend = "lnd"
-
-[lnd]
-address = "https://localhost:10009"
-macaroon_file = "/home/bitcoin/.lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-cert_file = "/home/bitcoin/.lnd/tls.cert"
-# fee_percent = 0.02      # Optional, defaults to 2%
-# reserve_fee_min = 2     # Optional, defaults to 2 sats
-```
-
-### With PostgreSQL Database
-```toml
 [database]
-engine = "postgres"
-
-[database.postgres]
-url = "postgresql://mint_user:password@localhost:5432/cdk_mint"
+engine = "sqlite"
 ```
 
 ## Directory Structure
@@ -266,18 +221,16 @@ For detailed Docker documentation, see [README-ldk-node.md](../../README-ldk-nod
    ```
 
 2. **Get mint keys**:
-   ```bash
-   curl http://127.0.0.1:8085/v1/keysets
-   ```
+    ```bash
+    curl http://127.0.0.1:8085/v1/keysets
+    ```
 
-3. **Test with CDK CLI wallet**:
-   ```bash
-   # Download from: https://github.com/cashubtc/cdk/releases
-   cdk-cli wallet add-mint http://127.0.0.1:8085
-   cdk-cli wallet mint-quote 100
-   ```
-
-4. **For LDK Node backend**: Access the management interface at <http://127.0.0.1:8091>
+3. **Create a fakewallet quote**:
+    ```bash
+    curl -X POST http://127.0.0.1:8085/v1/mint/quote/bolt11 \
+      -H 'Content-Type: application/json' \
+      -d '{"amount":100,"unit":"sat"}'
+    ```
 
 ## Command Line Usage
 
@@ -300,9 +253,8 @@ cdk-mintd --help
 
 ## Key Environment Variables
 
-- `CDK_MINTD_DATABASE`: Database engine (`sqlite`/`postgres`/`redb`)
-- `CDK_MINTD_DATABASE_URL`: PostgreSQL connection string
-- `CDK_MINTD_LN_BACKEND`: Lightning backend (`cln`/`lnd`/`lnbits`/`ldk-node`/`fakewallet`)
+- `CDK_MINTD_DATABASE`: Database engine (`sqlite`)
+- `CDK_MINTD_LN_BACKEND`: Lightning backend (`fakewallet`)
 - `CDK_MINTD_LISTEN_HOST`: Host to bind to (default: `127.0.0.1`)
 - `CDK_MINTD_LISTEN_PORT`: Port to bind to (default: `8085`)
 
@@ -311,7 +263,6 @@ For complete configuration options, see the [example configuration file](./examp
 ## Documentation
 
 - **[Configuration Examples](./example.config.toml)** - Complete configuration reference
-- **[PostgreSQL Setup Guide](../../docker-compose.postgres.yaml)** - Database setup with Docker Compose
 - **[Development Guide](../../DEVELOPMENT.md)** - Contributing and development setup
 
 ## License

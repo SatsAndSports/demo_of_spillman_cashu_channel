@@ -18,7 +18,7 @@ bench = []
 wallet = ["cashu/wallet", "dep:uuid"]
 mint = ["cashu/mint", "dep:uuid"]
 nostr = ["wallet", "cashu/nostr"]
-prometheus = ["cdk-prometheus/default"]
+prometheus = []
 http = ["dep:cdk-http-client"]
 grpc = ["dep:tonic"]
 
@@ -34,7 +34,6 @@ lightning-invoice.workspace = true
 lightning.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-cdk-prometheus = { workspace = true, optional = true}
 url.workspace = true
 uuid = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }

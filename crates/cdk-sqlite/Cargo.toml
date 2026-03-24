@@ -16,11 +16,10 @@ default = ["mint", "wallet"]
 mint = ["cdk-common/mint", "cdk-sql-common/mint"]
 wallet = ["cdk-common/wallet", "cdk-sql-common/wallet"]
 sqlcipher = ["rusqlite/bundled-sqlcipher"]
-prometheus = ["cdk-sql-common/prometheus", "cdk-prometheus"]
+prometheus = []
 [dependencies]
 async-trait.workspace = true
 cdk-common = { workspace = true, features = ["test"] }
-cdk-prometheus = { workspace = true, optional = true }
 bitcoin.workspace = true
 cdk-sql-common = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled"]}

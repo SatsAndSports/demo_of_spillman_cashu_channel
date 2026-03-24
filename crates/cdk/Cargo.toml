@@ -14,7 +14,7 @@ license.workspace = true
 default = ["mint", "wallet", "nostr", "bip353"]
 wallet = ["dep:futures", "cdk-common/wallet", "cdk-common/http", "dep:rustls"]
 nostr = ["wallet", "dep:nostr-sdk", "cdk-common/nostr"]
-npubcash = ["wallet", "nostr", "dep:cdk-npubcash"]
+npubcash = []
 mint = ["dep:futures", "cdk-common/mint", "cdk-common/http", "cdk-signatory"]
 bip353 = ["dep:hickory-resolver"]
 # We do not commit to a MSRV with swagger enabled
@@ -32,7 +32,7 @@ tor = [
     "dep:tls-api",
     "dep:tls-api-native-tls",
 ]
-prometheus = ["dep:cdk-prometheus"]
+prometheus = []
 
 [dependencies]
 arc-swap = "1.7.1"
@@ -57,8 +57,6 @@ utoipa = { workspace = true, optional = true }
 uuid.workspace = true
 jsonwebtoken.workspace = true
 nostr-sdk = { workspace = true, optional = true }
-cdk-npubcash = { workspace = true, optional = true }
-cdk-prometheus = {workspace = true, optional = true}
 bitcoin-payment-instructions = { workspace = true }
 web-time.workspace = true
 zeroize = "1"
