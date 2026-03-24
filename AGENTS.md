@@ -1,17 +1,14 @@
-# AGENTS.md - Spilman / Standalone-First Root
+# AGENTS.md - Spilman / Transitional Root
 
-This repo now has two roles:
+This repo now has one active role:
 
 - `spilman-standalone/` is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
-- the root `cdk/` workspace is a temporary upstream-reference subset slated for removal once the standalone workspace fully replaces it.
+
+The remaining root-level files are transitional wrappers/scripts/docs that exist only until the standalone workspace is flattened to repo root.
 
 `web/blossom-server/` is a nested git repo that consumes standalone-managed WASM and TS kit assets.
 
-## Legacy Root Subset
-
-An old upstream-reference subset still exists under `crates/`, but it is no longer part of the active Spilman workflow and is slated for deletion.
-
-If a task appears to require removed crates or old fork-local Spilman code, prefer `spilman-standalone/` instead.
+If a task appears to require old fork-local Spilman or CDK root paths, prefer `spilman-standalone/` instead.
 
 ## Common Commands
 
@@ -21,6 +18,10 @@ cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.to
 
 # Auto-spawn mint for a command
 spilman-standalone/scripts/run_with_mint.sh <command...>
+
+# Standalone lint / format
+cargo fmt --manifest-path spilman-standalone/Cargo.toml --all -- --check
+cargo clippy --manifest-path spilman-standalone/Cargo.toml --workspace --all-targets -- -D warnings
 
 # Standalone suites
 make test-standalone
@@ -34,10 +35,6 @@ make test-blossom-nutmix
 # WASM / kit sync
 make build-wasm
 make build-blossom-wasm
-
-# Lint / format
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## Important Paths
@@ -58,7 +55,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Prefer `MINT_URL` when an external mint is available.
 - Otherwise, standalone flows auto-build and spawn `cdk-spilman-test-mintd`.
 - The standalone test mint is intentionally minimal: `fakewallet` + in-memory sqlite + mint/swap coverage.
-- The old root `crates/` subset is now legacy cleanup material and should not be the default choice for new work.
 
 ## Rust Workspace Conventions
 

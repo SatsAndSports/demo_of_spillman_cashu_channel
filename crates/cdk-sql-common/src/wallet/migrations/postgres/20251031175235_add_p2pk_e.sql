@@ -1,1 +1,0 @@
-ALTER TABLE proof ADD COLUMN p2pk_e BYTEA;
