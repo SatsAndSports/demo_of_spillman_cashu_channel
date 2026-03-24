@@ -237,7 +237,7 @@ run-ts-client:
 
 # Run Spilman unit tests (Rust)
 test-unit-spilman:
-	cargo test -p cdk-spilman --features configurable-host
+	cargo test -p cdk-spilman --features configurable-host --manifest-path $(STANDALONE_ROOT)/Cargo.toml
 
 # Run standalone workspace tests
 test-standalone-core:
@@ -307,8 +307,8 @@ test-standalone-all: test-standalone test-standalone-integration-python test-sta
 	@echo "========================================="
 
 # Run Rust ASCII Art integration tests (requires mint)
-test-integration-rust: build-mintd
-	./scripts/run_with_mint.sh cdk cargo test -p rust-ascii-art --test integration -- --nocapture
+test-integration-rust:
+	$(STANDALONE_MINT_RUNNER) cargo test -p rust-ascii-art --manifest-path $(STANDALONE_ROOT)/Cargo.toml --test integration -- --nocapture
 
 # Run Go unit tests (delegates to Go Makefile)
 test-unit-go: build-go
