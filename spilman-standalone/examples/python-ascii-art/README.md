@@ -11,12 +11,12 @@ This example shows a minimal server and client using the Python integration kit.
 
 1. Build Python bindings (from repo root):
    ```bash
-   make -C crates/cdk-spilman-python build
+   make -C spilman-standalone/crates/cdk-spilman-python build
    ```
 
 2. Run a Cashu mint (default `http://localhost:3338`):
    ```bash
-   cargo run -p cdk-mintd --no-default-features --features fakewallet,sqlite -- --config dev-mint/config.dev.toml --work-dir dev-mint
+   cargo run -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
    ```
 
 ## Setup

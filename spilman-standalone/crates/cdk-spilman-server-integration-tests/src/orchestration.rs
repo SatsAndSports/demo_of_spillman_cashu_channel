@@ -1,7 +1,7 @@
 //! Process orchestration for mint and server processes.
 //!
 //! This module handles spawning, monitoring, and cleanup of:
-//! - CDK mint daemon (`cdk-mintd`)
+//! - standalone test mint (`cdk-spilman-test-mintd`)
 //! - ASCII art servers (TS, Rust, Python, Go)
 //!
 //! # Process Group Management
@@ -44,21 +44,12 @@ pub fn project_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Get the CDK repo root for spawning `cdk-mintd`.
-///
-/// Uses `CDK_REPO_ROOT` env var if set, otherwise falls back to 3 levels up
-/// from this crate (assuming the standalone workspace still lives inside this repo).
-pub fn cdk_repo_root() -> PathBuf {
-    if let Ok(root) = env::var("CDK_REPO_ROOT") {
-        return PathBuf::from(root);
-    }
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(manifest_dir)
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+fn test_mint_manifest() -> PathBuf {
+    project_root().join("Cargo.toml")
+}
+
+fn test_mint_binary() -> PathBuf {
+    project_root().join("target/debug/cdk-spilman-test-mintd")
 }
 
 /// Server type enum
@@ -105,30 +96,33 @@ pub struct MintProcess {
 }
 
 impl MintProcess {
-    /// Spawn a new CDK mint using `cdk-mintd` from a local CDK checkout.
-    ///
-    /// Uses `CDK_REPO_ROOT` env var to find the CDK repo, or falls back to
-    /// the parent of the standalone workspace during transition.
+    /// Spawn the standalone test mint.
     pub async fn spawn() -> Result<Self> {
         let port = find_available_port()?;
-        let cdk_root = cdk_repo_root();
 
-        let mintd_bin = cdk_root.join("target/debug/cdk-mintd");
-        let config_template = cdk_root.join("dev-mint/config.dev.toml");
+        let build_status = Command::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("cdk-spilman-test-mint")
+            .arg("--manifest-path")
+            .arg(test_mint_manifest())
+            .status()
+            .context("Failed to build standalone test mint")?;
+
+        if !build_status.success() {
+            return Err(anyhow!("Failed to build standalone test mint"));
+        }
+
+        let mintd_bin = test_mint_binary();
 
         if !mintd_bin.exists() {
             return Err(anyhow!(
-                "cdk-mintd binary not found at {}. Build it with: cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite",
+                "standalone test mint binary not found at {} after build",
                 mintd_bin.display()
             ));
         }
 
-        if !config_template.exists() {
-            return Err(anyhow!(
-                "Mint config not found at {}. Is CDK_REPO_ROOT set correctly?",
-                config_template.display()
-            ));
-        }
+        let mint_url = format!("http://127.0.0.1:{}", port);
 
         tracing::info!(
             "Starting mint on port {} using {}",
@@ -136,53 +130,23 @@ impl MintProcess {
             mintd_bin.display()
         );
 
-        // Create temp work dir with config
-        let work_dir = std::env::temp_dir().join(format!("spilman-server-test-mint.{}", port));
-        let _ = std::fs::create_dir_all(&work_dir);
-        let config_file = work_dir.join("config.toml");
-
-        let template = std::fs::read_to_string(&config_template)
-            .context("Failed to read mint config template")?;
-        let config = template
-            .replace("listen_port = 3338", &format!("listen_port = {}", port))
-            .replace(
-                "url = \"http://127.0.0.1:3338\"",
-                &format!("url = \"http://127.0.0.1:{}\"", port),
-            );
-        std::fs::write(&config_file, config).context("Failed to write mint config")?;
-
-        // Forward TEST_MINT_FEE_PPK_{UNIT} → CDK_MINTD_INPUT_FEE_PPK_{UNIT}
-        let fee_env_vars: Vec<(String, String)> = ["SAT", "MSAT", "USD"]
-            .iter()
-            .filter_map(|unit| {
-                env::var(format!("TEST_MINT_FEE_PPK_{}", unit))
-                    .ok()
-                    .map(|val| (format!("CDK_MINTD_INPUT_FEE_PPK_{}", unit), val))
-            })
-            .collect();
-
-        for (var, val) in &fee_env_vars {
-            tracing::info!("Forwarding fee override: {}={}", var, val);
-        }
-
         let mut cmd = Command::new(&mintd_bin);
-        cmd.arg("--config")
-            .arg(&config_file)
-            .arg("--work-dir")
-            .arg(&work_dir)
+        cmd.arg("--listen-port")
+            .arg(port.to_string())
+            .arg("--base-url")
+            .arg(&mint_url)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-
-        for (var, val) in &fee_env_vars {
-            cmd.env(var, val);
-        }
 
         let child = cmd
             .group_spawn()
             .context("Failed to spawn mint process")?;
 
-        let url = format!("http://localhost:{}", port);
-        let mint = Self { child, port, url };
+        let mint = Self {
+            child,
+            port,
+            url: mint_url,
+        };
 
         mint.wait_for_ready().await?;
 

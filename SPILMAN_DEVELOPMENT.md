@@ -92,27 +92,24 @@ podman volume rm cdk_cargo-cache cdk_target-cache
 
 The demos and tests require a Cashu mint. Choose one of:
 
-### CDK Mint (Recommended)
+### Standalone Test Mint (Recommended)
 
-The easiest option with a pre-configured development setup:
+The easiest option with the standalone fakewallet+sqlite test mint:
 
 ```bash
-# Build with fakewallet (auto-pays invoices for testing)
-cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
+# Build the standalone mint
+cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml
 
-# Start the mint
-./target/debug/cdk-mintd --config dev-mint/config.dev.toml --work-dir dev-mint
+# Start the mint on the default test port
+./spilman-standalone/target/debug/cdk-spilman-test-mintd --listen-port 3338 --base-url http://127.0.0.1:3338
 ```
 
-The dev config uses a fixed mnemonic for reproducible keyset IDs:
-- **sat keyset:** `001b6c716bf42c7e`
-- **msat keyset:** `00ffedc2dbb87212`
-- **usd keyset:** `00818d176a78e7f0`
+The standalone mint uses a fixed mnemonic for reproducible keyset IDs:
+- **sat keyset:** `01e5ccf902614063af576888a30d8c93220bf663f4de8b43edcdd1ced8a45c2f65`
+- **msat keyset:** `01f4bb1e9a93272802cbecb0e4609ea6b9ac080faa4d483fcf0c0ed36c60793677`
+- **usd keyset:** `01e96c7f95d941041f444a99b69f8030b5a9d1f6c6591eb0df388366a065df37c5`
 
-To reset the mint, delete the database and restart:
-```bash
-rm dev-mint/cdk-mintd.sqlite
-```
+For test commands that should auto-spawn a mint, prefer `spilman-standalone/scripts/run_with_mint.sh`.
 
 ### NutMix (Go-based)
 
@@ -168,9 +165,9 @@ make test-standalone-all
 
 ### Blossom Server Tests
 
-From CDK root (handles mint and WASM automatically):
+From CDK root (handles the standalone test mint and WASM automatically):
 ```bash
-make test-blossom          # Uses CDK mint (default)
+make test-blossom          # Uses standalone test mint (default)
 make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
 ```
 
@@ -202,11 +199,12 @@ make test-server-all
 ```
 cdk/
 ├── crates/
-│   ├── cdk-spilman/                          # Core Rust implementation
-│   └── cdk/                                  # Upstream CDK code
+│   ├── cdk-mintd/                            # Transitional root mint subset
+│   └── cdk/                                  # Upstream CDK reference subset
 ├── spilman-standalone/
 │   ├── crates/
 │   │   ├── cdk-spilman/                      # Core Rust implementation
+│   │   ├── cdk-spilman-test-mint/            # Standalone fakewallet+sqlite test mint
 │   │   ├── cdk-spilman-server-integration-tests/ # Test client for all servers
 │   │   ├── cdk-wasm/                         # WASM bindings (JS/TS)
 │   │   ├── cdk-spilman-python/               # Python bindings
@@ -224,7 +222,7 @@ cdk/
 │   ├── wasm-web/                  # Browser WASM output
 │   ├── wasm-nodejs/               # Node.js WASM output
 │   └── blossom-server/            # Video streaming demo
-└── dev-mint/                      # CDK mint dev config
+└── dev-mint/                      # Legacy root mint config (transition only)
 ```
 
 ## Troubleshooting

@@ -52,7 +52,7 @@ echo "--- Starting $MINT_TYPE Mint (logging to $MINT_LOG) ---"
 ./scripts/run_temporary_mint.sh "$MINT_TYPE" "$MINT_PORT" > "$MINT_LOG" 2>&1 &
 
 # Wait for mint to be fully ready
-./scripts/wait_for_mint.sh "$MINT_LOG" 60 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
+./scripts/wait_for_mint.sh "$MINT_LOG" 120 || { echo "Mint log:"; cat "$MINT_LOG"; exit 1; }
 
 # 6. Start Go Server
 echo "--- Starting Go Server (logging to $SERVER_LOG) ---"

@@ -44,8 +44,8 @@ MINT_URL=http://localhost:3338 PORT=5003 cargo run -p rust-ascii-art
 Integration tests require a Cashu mint running:
 
 ```bash
-# Start a mint (from CDK repo root)
-cargo run -p cdk-mintd --no-default-features --features fakewallet,sqlite -- --config dev-mint/config.dev.toml --work-dir dev-mint
+# Start the standalone test mint (from repo root)
+cargo run -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml -- --listen-port 3338 --base-url http://127.0.0.1:3338
 
 # In another terminal, run integration tests
 make test-integration

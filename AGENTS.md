@@ -2,8 +2,8 @@
 
 This repo now has two roles:
 
-- `spilman-standalone/` is the canonical home of Spilman code, bindings, demos, and shared test harnesses.
-- the root `cdk/` workspace is a minimized upstream-reference subset plus local fakewallet+sqlite `cdk-mintd` infrastructure used by tests.
+- `spilman-standalone/` is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
+- the root `cdk/` workspace is a minimized upstream-reference subset that remains only while final root removal is in progress.
 
 `web/blossom-server/` is a nested git repo that consumes standalone-managed WASM and TS kit assets.
 
@@ -27,8 +27,10 @@ If a task appears to require removed crates or old fork-local Spilman code, pref
 ## Common Commands
 
 ```bash
-# Root local dev mint
-cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite
+# Standalone test mint
+cargo build -p cdk-spilman-test-mint --manifest-path spilman-standalone/Cargo.toml
+
+# Transitional root mint subset
 cargo check -p cdk-mintd --locked
 
 # Standalone suites
@@ -54,21 +56,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 | Path | Purpose |
 |---|---|
 | `spilman-standalone/crates/cdk-spilman/` | Canonical Rust Spilman implementation |
+| `spilman-standalone/crates/cdk-spilman-test-mint/` | Standalone fakewallet+sqlite test mint |
 | `spilman-standalone/crates/cdk-spilman-interop-tests/` | Upstream `cdk` interoperability tests |
 | `spilman-standalone/crates/cdk-spilman-server-integration-tests/` | Shared multi-server harness |
 | `spilman-standalone/crates/cdk-wasm/` | WASM bindings |
 | `spilman-standalone/integration-kits/` | Python / Go / TS integration kits |
 | `spilman-standalone/examples/` | Demo servers |
-| `crates/cdk-mintd/` | Minimal local mint infrastructure |
-| `dev-mint/config.dev.toml` | Local fakewallet+sqlite mint config |
+| `crates/cdk-mintd/` | Transitional root mint infrastructure subset |
+| `dev-mint/config.dev.toml` | Legacy root mint config kept during transition |
 | `web/blossom-server/` | Nested repo for CashuTube / blossom tests |
 
 ## Mint Infrastructure
 
 - Prefer `MINT_URL` when an external mint is available.
-- Otherwise, standalone flows use `CDK_REPO_ROOT` to build and spawn local `cdk-mintd`.
-- The root mint path is intentionally minimal: `fakewallet` + `sqlite`.
-- Current local test mint usage is centered on mint + swap flows.
+- Otherwise, standalone flows auto-build and spawn `cdk-spilman-test-mintd`.
+- The standalone test mint is intentionally minimal: `fakewallet` + in-memory sqlite + mint/swap coverage.
+- The root `cdk-mintd` subset is now transitional and should not be the default choice for new work.
 
 ## Rust Workspace Conventions
 

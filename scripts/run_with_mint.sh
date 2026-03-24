@@ -52,7 +52,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Wait for mint to be fully ready
-"$REPO_ROOT/scripts/wait_for_mint.sh" "$MINT_LOG" 60
+"$REPO_ROOT/scripts/wait_for_mint.sh" "$MINT_LOG" 120
 
 echo "Mint ready at http://localhost:$PORT"
 echo "Running: $*"

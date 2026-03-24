@@ -13,8 +13,8 @@
 #   test-blossom*         Blossom server tests
 #   test-all*             Aggregate test suites
 #
-# Mint variants (default is CDK mint):
-#   test-demo-python          Uses CDK mint (default)
+# Mint variants (default is standalone test mint):
+#   test-demo-python          Uses standalone test mint (default)
 #   test-demo-python-nutmix   Uses NutMix mint
 
 # ===========================================================================
@@ -258,10 +258,8 @@ test-standalone-go:
 test-standalone-python:
 	$(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-unit
 
-# Standalone integration tests (require mint via MINT_URL or CDK_REPO_ROOT)
-# Default CDK_REPO_ROOT to this repo so it works out of the box during transition
-STANDALONE_CDK_REPO_ROOT ?= $(shell pwd)
-STANDALONE_MINT_RUNNER := CDK_REPO_ROOT=$(STANDALONE_CDK_REPO_ROOT) spilman-standalone/scripts/run_with_mint.sh
+# Standalone integration tests (require mint via MINT_URL or auto-spawned standalone test mint)
+STANDALONE_MINT_RUNNER := spilman-standalone/scripts/run_with_mint.sh
 
 test-standalone-integration-python:
 	$(STANDALONE_MINT_RUNNER) $(MAKE) -C spilman-standalone/crates/cdk-spilman-python test-integration
@@ -400,8 +398,8 @@ test-demo-ts-nutmix-native: build-wasm
 # Test Targets - Blossom Server Tests
 # ===========================================================================
 
-# Test blossom server with CDK mint
-test-blossom: build-mintd
+# Test blossom server with standalone test mint
+test-blossom:
 	./scripts/run_with_mint.sh cdk $(MAKE) -C $(BLOSSOM_DIR) test-full
 
 # Test blossom server with NutMix
@@ -524,6 +522,8 @@ clean: clean-nutmix-setup clean-logs
 # List orphaned test processes
 list-orphans:
 	@echo "=== Orphaned test processes ==="
+	@echo "cdk-spilman-test-mintd:"
+	@pgrep -af "cdk-spilman-test-mintd" | grep -v pgrep || echo "  (none)"
 	@echo "cdk-mintd:"
 	@pgrep -af "cdk-mintd" | grep -v pgrep || echo "  (none)"
 	@echo "rust-ascii-art:"
@@ -542,5 +542,6 @@ kill-orphans:
 	-@pkill -f "python.*server\.py" 2>/dev/null || true
 	-@pkill -f "tsx.*server" 2>/dev/null || true
 	-@pkill -f "ascii-art" 2>/dev/null || true
+	-@pkill -f "cdk-spilman-test-mintd" 2>/dev/null || true
 	-@pkill -f "cdk-mintd.*--config.*/tmp/" 2>/dev/null || true
 	@echo "Done. Run 'make list-orphans' to verify."

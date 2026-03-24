@@ -8,7 +8,7 @@
 #          ./scripts/run_temporary_mint.sh nutmix-native 12345
 #
 # Supported mint types:
-#   cdk           - CDK mint with fakewallet
+#   cdk           - standalone fakewallet test mint
 #   nutmix        - NutMix via Docker Compose (for local development)
 #   nutmix-native - NutMix with PostgreSQL directly (for Docker test image)
 #
@@ -53,30 +53,32 @@ trap cleanup EXIT INT TERM
 
 case "$MINT_TYPE" in
     cdk)
-        CONFIG_FILE="$MINT_WORK_DIR/config.toml"
-        MINT_BIN="$REPO_ROOT/target/debug/cdk-mintd"
+        STANDALONE_MANIFEST="$REPO_ROOT/spilman-standalone/Cargo.toml"
+        MINT_BIN="$REPO_ROOT/spilman-standalone/target/debug/cdk-spilman-test-mintd"
+
+        echo "Building standalone test mint..." >&2
+        cargo build -p cdk-spilman-test-mint --manifest-path "$STANDALONE_MANIFEST" >&2
+
         if [ ! -f "$MINT_BIN" ]; then
-            echo "ERROR: $MINT_BIN not found. Run: cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite" >&2
+            echo "ERROR: $MINT_BIN not found after build." >&2
             exit 1
         fi
-        
-        sed -e "s/listen_port = 3338/listen_port = $MINT_PORT/" \
-            -e "s|url = \"http://127.0.0.1:3338\"|url = \"http://127.0.0.1:$MINT_PORT\"|" \
-            "$REPO_ROOT/dev-mint/config.dev.toml" > "$CONFIG_FILE"
-        
-        "$MINT_BIN" --config "$CONFIG_FILE" --work-dir "$MINT_WORK_DIR" &
+
+        MINT_URL_LOCAL="http://127.0.0.1:$MINT_PORT"
+
+        "$MINT_BIN" --listen-port "$MINT_PORT" --base-url "$MINT_URL_LOCAL" &
         MINT_PID=$!
         
         # Wait for mint to respond
-        # (CDK is pre-configured with sat, msat, usd keysets via dev-mint/config.dev.toml)
+        # (The standalone test mint only binds once sat, msat, and usd keysets are ready.)
         for i in {1..60}; do
-            if curl -s "http://localhost:$MINT_PORT/v1/info" > /dev/null 2>&1; then
-                VERSION=$(curl -s "http://localhost:$MINT_PORT/v1/info" | jq -r '.version // "unknown"')
+            if curl -s "$MINT_URL_LOCAL/v1/info" > /dev/null 2>&1; then
+                VERSION=$(curl -s "$MINT_URL_LOCAL/v1/info" | jq -r '.version // "unknown"')
                 echo "MINT_READY_WITH_KEYSETS $VERSION (sat, msat, usd)" >&2
                 break
             fi
             if [ $i -eq 60 ]; then
-                echo "ERROR: CDK mint did not start within 30 seconds" >&2
+                echo "ERROR: standalone test mint did not start within 30 seconds" >&2
                 exit 1
             fi
             sleep 0.5

@@ -17,7 +17,8 @@ LOG_FILE="${1:?Usage: wait_for_mint.sh <log_file> [timeout_seconds]}"
 TIMEOUT="${2:-60}"
 
 ELAPSED=0
-while [ $ELAPSED -lt $TIMEOUT ]; do
+MAX_STEPS=$((TIMEOUT * 2))
+while [ $ELAPSED -lt $MAX_STEPS ]; do
     if grep -q "MINT_READY_WITH_KEYSETS" "$LOG_FILE" 2>/dev/null; then
         # Print the full line for visibility
         grep "MINT_READY_WITH_KEYSETS" "$LOG_FILE"
