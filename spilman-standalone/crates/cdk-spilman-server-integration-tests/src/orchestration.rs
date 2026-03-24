@@ -47,7 +47,7 @@ pub fn project_root() -> PathBuf {
 /// Get the CDK repo root for spawning `cdk-mintd`.
 ///
 /// Uses `CDK_REPO_ROOT` env var if set, otherwise falls back to 3 levels up
-/// from this crate (assuming we're still inside the forked CDK repo during transition).
+/// from this crate (assuming the standalone workspace still lives inside this repo).
 pub fn cdk_repo_root() -> PathBuf {
     if let Ok(root) = env::var("CDK_REPO_ROOT") {
         return PathBuf::from(root);
@@ -118,7 +118,7 @@ impl MintProcess {
 
         if !mintd_bin.exists() {
             return Err(anyhow!(
-                "cdk-mintd binary not found at {}. Build it with: cargo build -p cdk-mintd --features fakewallet",
+                "cdk-mintd binary not found at {}. Build it with: cargo build -p cdk-mintd --no-default-features --features fakewallet,sqlite",
                 mintd_bin.display()
             ));
         }

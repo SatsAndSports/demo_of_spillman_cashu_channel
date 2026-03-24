@@ -328,9 +328,7 @@ impl LnBackendSetup for config::LdkNode {
 
         let socket_addr = SocketAddr::new(host.parse()?, port);
 
-        // Parse socket address using ldk_node's SocketAddress
-        // We need to get the actual socket address struct from ldk_node
-        // For now, let's construct it manually based on the cdk-ldk-node implementation
+        // Construct the listen address directly from the configured socket address.
         let listen_address = vec![socket_addr.into()];
 
         // Check if ldk_node_mnemonic is provided in the ldk_node config
