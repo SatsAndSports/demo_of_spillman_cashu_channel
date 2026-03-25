@@ -229,7 +229,7 @@ test-standalone-wasm:
 	cargo test -p cdk-wasm --manifest-path Cargo.toml
 
 test-standalone-rust-demo:
-	cargo test -p rust-ascii-art --manifest-path Cargo.toml
+	$(STANDALONE_MINT_RUNNER) cargo test -p rust-ascii-art --manifest-path Cargo.toml
 
 test-standalone-go:
 	$(MAKE) -C crates/cdk-spilman-go test-dev

@@ -4,8 +4,6 @@ version = "0.15.1"
 edition = "2021"
 license = "MIT"
 description = "Standalone Spilman payment channels library for Cashu"
-homepage = "https://github.com/cashubtc/cdk"
-repository = "https://github.com/cashubtc/cdk.git"
 rust-version = "1.85.0"
 
 [features]
