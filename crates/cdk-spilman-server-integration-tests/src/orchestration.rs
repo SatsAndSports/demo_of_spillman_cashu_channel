@@ -168,12 +168,29 @@ impl MintProcess {
     pub async fn spawn() -> Result<Self> {
         let port = find_available_port()?;
 
-        let build_status = Command::new("cargo")
+        // Clear all inherited CARGO_* env vars so build-script
+        // fingerprints match regardless of whether we are invoked from
+        // `cargo test` (which sets CARGO_MANIFEST_DIR,
+        // CARGO_PKG_VERSION_MAJOR, etc.) or from a plain shell.
+        // Without this, `ring`'s build script sees changed CARGO_*
+        // values on every invocation and recompiles ~15 crates
+        // unnecessarily.  The child `cargo build` process sets the
+        // correct CARGO_* vars for the crate it is building.
+        let mut build_cmd = Command::new("cargo");
+        build_cmd
             .arg("build")
             .arg("-p")
             .arg("cdk-spilman-test-mint")
             .arg("--manifest-path")
-            .arg(test_mint_manifest())
+            .arg(test_mint_manifest());
+
+        for (key, _) in env::vars() {
+            if key.starts_with("CARGO_") {
+                build_cmd.env_remove(&key);
+            }
+        }
+
+        let build_status = build_cmd
             .status()
             .context("Failed to build standalone test mint")?;
 
