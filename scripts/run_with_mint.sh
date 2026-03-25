@@ -20,19 +20,18 @@ print_mint_summary() {
 
 is_mint_type() {
     case "$1" in
-        standalone|cdk|nutmix|nutmix-native) return 0 ;;
+        standalone|cdk) return 0 ;;
         *) return 1 ;;
     esac
 }
 
 usage() {
     echo "Usage:" >&2
-    echo "  $0 [standalone|nutmix|nutmix-native] <command...>" >&2
+    echo "  $0 [standalone] <command...>" >&2
     echo "  MINT_URL=http://host:port $0 <command...>" >&2
     echo "" >&2
     echo "Examples:" >&2
-    echo "  $0 standalone make -C web/blossom-server test-full" >&2
-    echo "  $0 nutmix make test-blossom-nutmix" >&2
+    echo "  $0 cargo test -p rust-ascii-art --manifest-path Cargo.toml" >&2
     echo "  MINT_URL=http://localhost:3338 $0 make test-standalone-integration-python" >&2
 }
 

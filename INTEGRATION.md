@@ -164,7 +164,6 @@ will be rejected until topped up.
 
 | Component | Location |
 |-----------|----------|
-| **CashuTube** | `web/blossom-server/` (TypeScript streaming server) |
 | **ASCII Art** | `examples/rust-ascii-art/` (Standard Rust server) |
 | **Python Demo** | `examples/python-ascii-art/` |
 | **TypeScript Demo** | `examples/ts-ascii-art/` (TypeScript/Node.js server) |

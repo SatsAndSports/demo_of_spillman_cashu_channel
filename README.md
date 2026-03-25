@@ -69,8 +69,6 @@ repo/
 │   ├── ts-ascii-art/               # TypeScript demo
 │   ├── python-ascii-art/           # Python demo
 │   └── go-ascii-art/               # Go demo
-├── web/
-│   └── blossom-server/             # Video streaming demo (nested repo)
 ```
 
 ## License

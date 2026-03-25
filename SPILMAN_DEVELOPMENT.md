@@ -65,31 +65,21 @@ The standalone mint uses a fixed mnemonic for reproducible keyset IDs:
 
 For test commands that should auto-spawn a mint, prefer `scripts/run_with_mint.sh`.
 
-### NutMix (Go-based)
+### Testing Against an External Mint
 
-Requires Docker for PostgreSQL:
-
-```bash
-# Using helper script
-./scripts/run_temporary_mint.sh nutmix 13338
-
-# Or with custom units
-NUTMIX_UNITS="sat msat usd" ./scripts/run_temporary_mint.sh nutmix 13338
-```
-
-### Nutshell (Python-based)
+By default, all test targets auto-spawn the standalone test mint. To test
+against a different mint implementation (e.g. NutMix, Nutshell, or a remote
+mint), start it yourself and set `MINT_URL`:
 
 ```bash
-git clone https://github.com/cashubtc/nutshell.git
-cd nutshell
-git checkout 1568e51  # Tested version (0.18.2)
-
-# Apply SIG_ALL message update
-sed -ire 's/\[p.secret for p in proofs\] + \[o.B_ for o in outputs\]/[p.secret + p.C for p in proofs] + [str(o.amount) + o.B_ for o in outputs]/' cashu/mint/conditions.py
-
-docker compose build mint
-docker compose up mint
+# Run integration and demo tests against your external mint
+MINT_URL=http://localhost:3338 make test-integration-all test-demo-all
 ```
+
+**Important:** The server integration tests (`test-server-*`) always spawn
+their own standalone test mint internally because the Rust harness controls
+the mint lifecycle. `MINT_URL` is respected by the integration and demo
+targets that go through `scripts/run_with_mint.sh`.
 
 ---
 
@@ -115,20 +105,6 @@ make test-standalone
 
 # Standalone full suite (includes live mint integration)
 make test-standalone-all
-```
-
-### Blossom Server Tests
-
-From repo root (handles the standalone test mint and WASM automatically):
-```bash
-make test-blossom          # Uses standalone test mint (default)
-make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
-```
-
-Or manually from the nested blossom repo:
-```bash
-cd web/blossom-server
-make test-full
 ```
 
 ### Server Integration Tests (Rust)
@@ -169,9 +145,7 @@ repo/
 │   ├── python-ascii-art/                     # Python server + client
 │   └── go-ascii-art/                         # Go server + client
 ├── web/
-│   ├── wasm-web/                  # Browser WASM output
-│   ├── wasm-nodejs/               # Node.js WASM output
-│   └── blossom-server/            # Video streaming demo
+│   └── wasm-nodejs/               # Node.js WASM output
 ```
 
 ## Troubleshooting

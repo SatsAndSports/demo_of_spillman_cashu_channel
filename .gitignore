@@ -41,6 +41,9 @@ cdk_ffi.py
 # Test logs
 testing/
 
+# WASM build output
+web/wasm-nodejs/
+
 # Build sentinels
 .wasm-built
 .kit-ts-built

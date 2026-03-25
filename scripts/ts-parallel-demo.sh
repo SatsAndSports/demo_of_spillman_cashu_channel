@@ -3,7 +3,7 @@
 # ts-parallel-demo.sh
 # Automated test for Spilman TypeScript Demo with dynamic ports and parallel clients.
 #
-# Usage: ./scripts/ts-parallel-demo.sh [standalone|nutmix|nutmix-native]
+# Usage: ./scripts/ts-parallel-demo.sh
 #        MINT_URL=http://localhost:3338 ./scripts/ts-parallel-demo.sh
 
 set -e
@@ -78,7 +78,7 @@ export PORT="$SERVER_PORT"
 
 (cd "$TS_DEMO_DIR" && npm run server) > "$SERVER_LOG" 2>&1 &
 
-# Wait for server to be ready (up to 30 seconds for slow mints like NutMix)
+# Wait for server to be ready (up to 30 seconds)
 echo "Waiting for server to start on port $SERVER_PORT..."
 for i in {1..60}; do
     if curl -s "http://localhost:$SERVER_PORT/channel/params" > /dev/null; then

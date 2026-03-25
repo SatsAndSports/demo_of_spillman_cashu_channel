@@ -3,7 +3,7 @@
 # go-parallel-demo.sh
 # Automated test for Spilman Go Demo with dynamic ports and parallel clients.
 #
-# Usage: ./scripts/go-parallel-demo.sh [standalone|nutmix|nutmix-native]
+# Usage: ./scripts/go-parallel-demo.sh
 #        MINT_URL=http://localhost:3338 ./scripts/go-parallel-demo.sh
 
 set -e

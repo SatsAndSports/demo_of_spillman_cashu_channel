@@ -10,12 +10,11 @@
 #   test-unit-*           Unit tests
 #   test-server-*         Server integration tests (54-test Rust client suite)
 #   test-demo-*           Demo tests (simple client/server sanity check)
-#   test-blossom*         Blossom server tests
 #   test-all*             Aggregate test suites
 #
-# Mint variants (default is standalone test mint):
-#   test-demo-python          Uses standalone test mint (default)
-#   test-demo-python-nutmix   Uses NutMix mint
+# Mint variants:
+#   Default uses the standalone test mint (auto-spawned).
+#   Set MINT_URL to test against an external mint (see SPILMAN_DEVELOPMENT.md).
 
 # ===========================================================================
 # Configuration
@@ -28,9 +27,7 @@ GO_CRATE_DIR := crates/cdk-spilman-go
 GO_DEMO_DIR := examples/go-ascii-art
 TS_DEMO_DIR := examples/ts-ascii-art
 PYTHON_DEMO_DIR := examples/python-ascii-art
-BLOSSOM_DIR := web/blossom-server
 WASM_CRATE := crates/cdk-wasm
-NUTMIX_SETUP_DIR := scripts/nutmix-setup-units
 
 # Python tools (single venv lives in the Python crate)
 PYTHON_VENV := $(PYTHON_CRATE_DIR)/.venv
@@ -45,8 +42,7 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 .PHONY: venv \
 	build-python build-python-wheel install-python \
 	build-go build-rust-server \
-	build-wasm build-blossom-wasm build-ts-wasm build-kit-ts \
-	build-nutmix-setup \
+	build-wasm build-ts-wasm build-kit-ts \
 	run-python-server run-python-client \
 	run-go-server run-go-client \
 	run-ts-server run-ts-client \
@@ -54,12 +50,9 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 	test-unit-go test-integration-go test-integration-python test-integration-ts \
 	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
 	test-demo-python test-demo-go test-demo-ts \
-	test-demo-python-nutmix test-demo-go-nutmix test-demo-ts-nutmix \
-	test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native \
-	test-blossom test-blossom-nutmix \
-	test-all test-all-with-blossom test-all-nutmix-native test-all-with-nutmix \
-	clean clean-logs clean-nutmix-setup \
-	list-orphans kill-orphans ensure-nutmix-image
+	test-all \
+	clean clean-logs \
+	list-orphans kill-orphans
 
 # ===========================================================================
 # Build Targets
@@ -120,7 +113,6 @@ build-rust-server:
 # --- WASM Bindings ---
 
 # WASM build artifacts
-BLOSSOM_WASM := web/blossom-server/src/wasm/cdk_wasm_bg.wasm
 TS_KIT_WASM := $(STANDALONE_ROOT)/integration-kits/ts/wasm/cdk_wasm_bg.wasm
 
 # Source files that WASM depends on
@@ -128,28 +120,18 @@ WASM_SOURCES := $(shell find $(WASM_CRATE)/src $(STANDALONE_ROOT)/crates/cdk-spi
 
 # Sentinel file tracks when WASM was last built
 .wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.toml Cargo.lock
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-web
 	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-nodejs
 	@touch .wasm-built
-	@echo "WASM build complete (web/wasm-web, web/wasm-nodejs)"
+	@echo "WASM build complete (web/wasm-nodejs)"
 
 # Build WASM bindings
 build-wasm: .wasm-built $(TS_KIT_WASM)
-
-# Build WASM and copy to blossom-server
-$(BLOSSOM_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
-	@mkdir -p web/blossom-server/src/wasm web/blossom-server/public/wasm
-	cp web/wasm-nodejs/cdk_wasm* web/blossom-server/src/wasm/
-	cp web/wasm-web/cdk_wasm* web/blossom-server/public/wasm/
-	@echo "WASM copied to blossom-server"
 
 # Build WASM and copy to TS integration kit
 $(TS_KIT_WASM): web/wasm-nodejs/cdk_wasm_bg.wasm
 	@mkdir -p $(STANDALONE_ROOT)/integration-kits/ts/wasm
 	cp web/wasm-nodejs/cdk_wasm* $(STANDALONE_ROOT)/integration-kits/ts/wasm/
 	@echo "WASM copied to TS integration kit"
-
-build-blossom-wasm: build-wasm $(BLOSSOM_WASM) build-kit-ts
 
 # Build WASM for TS ASCII Art (uses symlink, just needs WASM built)
 build-ts-wasm: .wasm-built $(TS_KIT_WASM)
@@ -166,19 +148,6 @@ TS_KIT_SOURCES := $(shell find $(TS_KIT_DIR)/src -name '*.ts' 2>/dev/null)
 	@echo "TS integration kit built"
 
 build-kit-ts: .kit-ts-built
-
-# --- NutMix Builds ---
-
-# Build NutMix setup tool
-build-nutmix-setup:
-	cd $(NUTMIX_SETUP_DIR) && go build -o nutmix-setup-units .
-
-# Ensure NutMix Docker image exists
-ensure-nutmix-image:
-	@if ! docker image inspect nutmix-mint:latest > /dev/null 2>&1; then \
-		echo "Building nutmix-mint Docker image..."; \
-		cd /home/aaron/MyCode/Cashu/NutMix/nutmix && docker compose -f docker-compose-dev.yml build; \
-	fi
 
 # ===========================================================================
 # Run Targets (Demo Servers/Clients)
@@ -350,41 +319,6 @@ test-demo-all: test-demo-python test-demo-go test-demo-ts
 	@echo "  ALL DEMO TESTS PASSED"
 	@echo "========================================="
 
-
-# --- Demo Tests with NutMix (Docker Compose) ---
-
-test-demo-python-nutmix: build-python build-nutmix-setup ensure-nutmix-image
-	@bash scripts/python-parallel-demo.sh nutmix
-
-test-demo-go-nutmix: build-go build-nutmix-setup ensure-nutmix-image
-	@bash scripts/go-parallel-demo.sh nutmix
-
-test-demo-ts-nutmix: build-wasm build-nutmix-setup ensure-nutmix-image
-	@bash scripts/ts-parallel-demo.sh nutmix
-
-# --- Demo Tests with NutMix (Native - for Docker test image) ---
-
-test-demo-python-nutmix-native: build-python
-	@bash scripts/python-parallel-demo.sh nutmix-native
-
-test-demo-go-nutmix-native: build-go
-	@bash scripts/go-parallel-demo.sh nutmix-native
-
-test-demo-ts-nutmix-native: build-wasm
-	@bash scripts/ts-parallel-demo.sh nutmix-native
-
-# ===========================================================================
-# Test Targets - Blossom Server Tests
-# ===========================================================================
-
-# Test blossom server with standalone test mint
-test-blossom:
-	./scripts/run_with_mint.sh standalone $(MAKE) -C $(BLOSSOM_DIR) test-full
-
-# Test blossom server with NutMix
-test-blossom-nutmix: build-nutmix-setup
-	./scripts/run_with_mint.sh nutmix $(MAKE) -C $(BLOSSOM_DIR) test-full
-
 # ===========================================================================
 # Test Targets - Aggregate Suites
 # ===========================================================================
@@ -399,32 +333,11 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "  ALL RUST-ONLY TESTS PASSED"
 	@echo "========================================="
 
-# All tests with standalone test mint (does not require blossom-server repo)
+# All tests
 test-all: test-unit-spilman test-integration-all test-server-all test-demo-all
 	@echo ""
 	@echo "========================================="
-	@echo "  ALL TESTS PASSED (standalone test mint)"
-	@echo "========================================="
-
-# All tests including blossom (requires web/blossom-server repo)
-test-all-with-blossom: test-unit-spilman test-integration-all test-blossom test-server-all test-demo-all
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL TESTS PASSED (standalone test mint + blossom)"
-	@echo "========================================="
-
-# All tests with NutMix (native mode - for Docker test image)
-test-all-nutmix-native: test-demo-python-nutmix-native test-demo-go-nutmix-native test-demo-ts-nutmix-native
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL TESTS PASSED (NutMix native)"
-	@echo "========================================="
-
-# All tests with both standalone test mint and NutMix (requires blossom-server repo)
-test-all-with-nutmix: test-all-with-blossom test-blossom-nutmix
-	@echo ""
-	@echo "========================================="
-	@echo "  ALL TESTS PASSED (standalone + NutMix)"
+	@echo "  ALL TESTS PASSED"
 	@echo "========================================="
 
 # ===========================================================================
@@ -435,25 +348,20 @@ test-all-with-nutmix: test-all-with-blossom test-blossom-nutmix
 clean-logs:
 	rm -rf testing/
 
-# Clean NutMix setup tool
-clean-nutmix-setup:
-	rm -f $(NUTMIX_SETUP_DIR)/nutmix-setup-units
-
 # Full clean
-clean: clean-nutmix-setup clean-logs
+clean: clean-logs
 	cargo clean --manifest-path Cargo.toml
 	rm -rf $(PYTHON_CRATE_DIR)/target
 	rm -rf $(GO_CRATE_DIR)/target
 	rm -rf $(PYTHON_VENV)
 	rm -rf $(PYTHON_CRATE_DIR)/.pytest_cache
 	rm -f .wasm-built .kit-ts-built
-	rm -rf web/wasm-web web/wasm-nodejs
+	rm -rf web/wasm-nodejs
 	rm -rf $(STANDALONE_ROOT)/integration-kits/ts/node_modules $(STANDALONE_ROOT)/integration-kits/ts/dist $(TS_DEMO_DIR)/node_modules $(TS_DEMO_DIR)/dist
 	rm -rf $(STANDALONE_ROOT)/integration-kits/python/*.egg-info
 	find $(PYTHON_CRATE_DIR) $(STANDALONE_ROOT)/integration-kits/python -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 	rm -f $(STANDALONE_ROOT)/examples/go-ascii-art/ascii-art $(STANDALONE_ROOT)/examples/go-ascii-art/main $(STANDALONE_ROOT)/examples/go-ascii-art/demo $(STANDALONE_ROOT)/examples/go-ascii-art/*.exe
 	rm -f $(STANDALONE_ROOT)/examples/*-ascii-art/*.db
-	@if [ -d $(BLOSSOM_DIR) ]; then $(MAKE) -C $(BLOSSOM_DIR) clean; fi
 
 # ===========================================================================
 # Utility Targets

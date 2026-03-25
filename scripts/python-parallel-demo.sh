@@ -3,7 +3,7 @@
 # python-parallel-demo.sh
 # Automated test for Spilman Python Demo with dynamic ports and parallel clients.
 #
-# Usage: ./scripts/python-parallel-demo.sh [standalone|nutmix|nutmix-native]
+# Usage: ./scripts/python-parallel-demo.sh
 #        MINT_URL=http://localhost:3338 ./scripts/python-parallel-demo.sh
 
 set -e

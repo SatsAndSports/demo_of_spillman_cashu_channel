@@ -4,8 +4,6 @@ This repo now has one active role:
 
 - repo root is the canonical home of Spilman code, bindings, demos, shared test harnesses, and the standalone test mint.
 
-`web/blossom-server/` is a nested git repo that consumes root-managed WASM and TS kit assets.
-
 ## Common Commands
 
 ```bash
@@ -25,12 +23,9 @@ make test-standalone-all
 
 # Common delegated top-level targets
 make test-unit-spilman
-make test-blossom
-make test-blossom-nutmix
 
 # WASM / kit sync
 make build-wasm
-make build-blossom-wasm
 ```
 
 ## Important Paths
@@ -44,7 +39,6 @@ make build-blossom-wasm
 | `crates/cdk-wasm/` | WASM bindings |
 | `integration-kits/` | Python / Go / TS integration kits |
 | `examples/` | Demo servers |
-| `web/blossom-server/` | Nested repo for CashuTube / blossom tests |
 
 ## Mint Infrastructure
 
@@ -67,7 +61,6 @@ make build-blossom-wasm
 
 ## Project Notes
 
-- blossom tests run through `web/blossom-server/Makefile` and expect root-managed assets
 - if you need live-mint integration for standalone tests, start with `scripts/run_with_mint.sh`
 - active tests should use the standalone test mint by default
 
