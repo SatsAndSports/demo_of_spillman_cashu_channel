@@ -69,7 +69,7 @@ make build-blossom-wasm
 
 - blossom tests run through `web/blossom-server/Makefile` and expect root-managed assets
 - if you need live-mint integration for standalone tests, start with `scripts/run_with_mint.sh`
-- active tests should use the standalone test mint, not the root `cdk-mintd` path
+- active tests should use the standalone test mint by default
 
 ## Commit Style
 

@@ -52,7 +52,7 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 ## Project Structure
 
 ```
-cdk/
+repo/
 ├── crates/
 │   ├── cdk-spilman/                # Canonical core Rust protocol implementation
 │   ├── cdk-spilman-test-mint/      # Standalone local test mint

@@ -5,7 +5,7 @@ Go bindings for Spilman payment channels, compiled from the core Rust implementa
 ## Installation
 
 ```bash
-go get github.com/cashubtc/cdk/crates/cdk-spilman-go/spilman
+go get github.com/SatsAndSports/demo_of_spillman_cashu_channel/crates/cdk-spilman-go/spilman
 ```
 
 **Note**: This package requires CGO and links against a native Rust library.
@@ -19,7 +19,7 @@ The `Bridge` handles payment validation and channel registration. It delegates s
 ```go
 package main
 
-import "github.com/cashubtc/cdk/crates/cdk-spilman-go/spilman"
+import "github.com/SatsAndSports/demo_of_spillman_cashu_channel/crates/cdk-spilman-go/spilman"
 
 type MyHost struct {
     // Implement spilman.SpilmanHost interface
@@ -41,7 +41,7 @@ func main() {
 ### Client-Side: Setup
 
 ```go
-import "github.com/cashubtc/cdk/crates/cdk-spilman-go/spilman"
+import "github.com/SatsAndSports/demo_of_spillman_cashu_channel/crates/cdk-spilman-go/spilman"
 
 // Derive `_channel secret_` with receiver
 channelSecret, _ := spilman.ComputeChannelSecret(senderSecret, receiverPubkey)

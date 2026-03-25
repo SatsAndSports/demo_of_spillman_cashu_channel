@@ -7,7 +7,7 @@ This guide covers setting up the development environment for Spilman payment cha
 From the repository root:
 
 ```bash
-# Run the standalone Spilman crate tests
+# Run the Spilman test suite
 make test-standalone
 ```
 
@@ -119,7 +119,7 @@ make test-standalone-all
 
 ### Blossom Server Tests
 
-From CDK root (handles the standalone test mint and WASM automatically):
+From repo root (handles the standalone test mint and WASM automatically):
 ```bash
 make test-blossom          # Uses standalone test mint (default)
 make test-blossom-nutmix   # Uses NutMix mint (requires Docker)
@@ -151,7 +151,7 @@ make test-server-all
 ## Directory Structure
 
 ```
-cdk/
+repo/
 ├── crates/
 │   ├── cdk-spilman/                          # Core Rust implementation
 │   ├── cdk-spilman-test-mint/                # Standalone fakewallet+sqlite test mint
