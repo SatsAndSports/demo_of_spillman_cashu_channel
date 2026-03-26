@@ -1,4 +1,6 @@
 **/target
+**/node_modules/
+**/dist/
 .DS_Store
 .direnv
 .jj
@@ -9,10 +11,12 @@
 config.toml
 .pre-commit-config.yaml
 result
+static-bin/
 .aider*
 **/postgres_data/
 .pg_data/
 **/.env
+tor-data
 
 # Mutation testing artifacts
 mutants.out/
@@ -24,10 +28,27 @@ fuzz/artifacts/
 fuzz/corpus/
 
 
-# Python ffi
-__pycache__
+# Python artifacts
+**/__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
 libcdk_ffi*
 cdk_ffi.py
 
-# llm artifacts
-AGENTS.md
+# Test logs
+testing/
+
+# WASM build output
+web/wasm-nodejs/
+integration-kits/ts/wasm/
+
+# Build sentinels
+.wasm-built
+.kit-ts-built
+
+# Go artifacts
+examples/go-ascii-art/main
+examples/go-ascii-art/demo

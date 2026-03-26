@@ -1,1 +1,0 @@
-ALTER TABLE keyset ADD COLUMN final_expiry INTEGER DEFAULT NULL;
