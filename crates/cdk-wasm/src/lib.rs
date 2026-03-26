@@ -21,6 +21,13 @@ pub fn start() {
     console_error_panic_hook::set_once();
 }
 
+/// Extract error string from JsValue, falling back to debug format.
+/// This ensures JS error strings are passed through cleanly instead of
+/// being wrapped as `JsValue("...")`.
+fn js_error_to_string(e: JsValue) -> String {
+    e.as_string().unwrap_or_else(|| format!("{:?}", e))
+}
+
 #[wasm_bindgen]
 extern "C" {
     pub type JsSpilmanHost;
@@ -226,7 +233,7 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
                 payment.balance,
                 &payment.signature,
             )
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
     fn get_closing_data(&self, channel_id: &str) -> Option<ClosingData> {
         let val = self.js_host.get_closing_data(channel_id);
@@ -327,7 +334,7 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
                 receiver_sum,
                 sender_sum,
             )
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
     fn compute_channel_secret(
         &self,
@@ -336,7 +343,7 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
     ) -> Result<String, String> {
         self.js_host
             .compute_channel_secret_host(receiver_pubkey_hex, sender_pubkey_hex)
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
     fn sign_with_tweaked_key(
         &self,
@@ -346,7 +353,7 @@ impl SpilmanHost<String> for WasmSpilmanHostProxy {
     ) -> Result<String, String> {
         self.js_host
             .sign_with_tweaked_key_host(signer_pubkey_hex, message_hex, tweak_scalar_hex)
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
 }
 
@@ -360,14 +367,14 @@ impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
     ) -> Result<String, String> {
         JsFuture::from(self.js_host.call_mint_swap(mint_url, swap_request_json))
             .await
-            .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?
+            .map_err(js_error_to_string)?
             .as_string()
             .ok_or_else(|| "Result not a string".to_string())
     }
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         let _ = JsFuture::from(self.js_host.refresh_all_keysets(mint))
             .await
-            .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?;
+            .map_err(js_error_to_string)?;
         Ok(())
     }
 }
@@ -430,7 +437,7 @@ impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
     ) -> Result<String, String> {
         self.js_host
             .client_sign_with_tweaked_key(signer_pubkey_hex, message_hex, tweak_scalar_hex)
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
     fn compute_channel_secret(
         &self,
@@ -439,7 +446,7 @@ impl RustSpilmanClientHost for WasmSpilmanClientHostProxy {
     ) -> Result<String, String> {
         self.js_host
             .client_compute_channel_secret(sender_pubkey_hex, receiver_pubkey_hex)
-            .map_err(|e| format!("{:?}", e))
+            .map_err(js_error_to_string)
     }
 }
 
