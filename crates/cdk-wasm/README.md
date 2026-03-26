@@ -78,6 +78,27 @@ Errors thrown by the bridge are structured objects:
 }
 ```
 
+### WASM-JS Error Boundary
+
+When implementing host callbacks that can fail, throw string errors to preserve structured error information:
+
+```typescript
+// Good: throw string for structured errors
+callMintSwap: async (mintUrl, swapJson) => {
+  const resp = await fetch(`${mintUrl}/v1/swap`, { ... });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw body;  // Preserves raw NUT-00 JSON: {"code":11001,"detail":"..."}
+  }
+  return await resp.text();
+}
+
+// Bad: wrapping loses structure
+throw new Error(body);  // Becomes "Error: {\"code\":11001,...}"
+```
+
+The Rust WASM bindings extract string content from `JsValue` errors, preserving structured error information for proper NUT-00 error code handling and selective retry logic.
+
 ## Build Outputs
 
 - `web/wasm-nodejs/` - WASM build output (copied to TS integration kit by `make build-wasm`)

@@ -93,6 +93,24 @@ make test-standalone
 make test-standalone-all
 ```
 
+### Fast Development Builds
+
+For faster iteration during development, use `WASM_DEV=1` to skip `wasm-opt`:
+
+```bash
+# Fast dev build (~2.5s incremental vs ~40s with wasm-opt)
+WASM_DEV=1 make build-wasm
+
+# Explicit release build (default, includes wasm-opt)
+make build-wasm
+```
+
+Test targets automatically use dev mode for speed:
+```bash
+make test-standalone-integration-ts  # Uses WASM_DEV=1 internally
+make test-standalone-demo-ts         # Uses WASM_DEV=1 internally
+```
+
 ---
 
 ## Running Tests
@@ -121,6 +139,26 @@ make test-server-go
 # Test all servers sequentially
 make test-server-all
 ```
+
+### NUT-00 Error Handling Tests
+
+Tests for selective retry behavior based on NUT-00 error codes:
+
+```bash
+# Run selective retry tests (no external mint needed)
+make test-standalone-selective-retry
+
+# Run all retry-related tests
+cargo test -p cdk-spilman-interop-tests retry -- --nocapture
+
+# NUT-00 compliance test against real mint (requires mint)
+make test-standalone-nut00-errors
+```
+
+These tests verify that:
+- Keyset errors (12xxx) trigger retry after keysets refresh
+- Token-spent errors (11001) fail immediately without retry
+- Unparseable errors fail immediately without retry
 
 ---
 

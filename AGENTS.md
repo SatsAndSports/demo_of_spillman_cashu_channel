@@ -24,8 +24,13 @@ make test-standalone-all
 # Common delegated top-level targets
 make test-unit-spilman
 
-# WASM / kit sync
-make build-wasm
+# WASM builds
+make build-wasm              # Release (with wasm-opt)
+WASM_DEV=1 make build-wasm   # Dev (fast, no wasm-opt)
+
+# NUT-00 error handling tests
+make test-standalone-selective-retry
+make test-standalone-nut00-errors
 ```
 
 ## Important Paths

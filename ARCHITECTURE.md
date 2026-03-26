@@ -283,3 +283,31 @@ Closing is orchestrated by the bridge in two stages:
 
 1. **Sync stage** (`prepare_cooperative_close_for_execution`): Validates signatures, verifies balance, and creates the swap request.
 2. **Async stage**: Submits the swap to the mint, retries on keyset error, unblinds signatures, verifies DLEQ, and calls the `mark_channel_closed` host hook.
+
+### NUT-00 Error Handling
+
+The bridge implements intelligent error handling based on [NUT-00](https://github.com/cashubtc/nuts/blob/main/00.md) error codes returned by the mint.
+
+#### Error Code Categories
+
+| Code Range | Category | Retry Behavior |
+|------------|----------|----------------|
+| 10xxx | Proof/Token verification | Fail immediately |
+| 11xxx | Input/Output errors (e.g., spent proofs) | Fail immediately |
+| 12xxx | Keyset errors (not found, inactive) | Retry after refresh |
+| 20xxx+ | Quote/Payment/Auth errors | Fail immediately |
+
+#### Selective Retry Logic
+
+When a swap fails during channel closing:
+
+1. **Parse the NUT-00 error code** from the mint's JSON response (`{"code": 12001, "detail": "..."}`)
+2. **Check if retryable**: Only keyset errors (12xxx range) trigger retry
+3. **If retryable**: Refresh keysets from mint, rebuild swap request, retry once
+4. **If not retryable**: Fail immediately without refresh or retry
+
+This prevents wasted retries on errors that can't be fixed by refreshing keysets (e.g., proofs already spent, signature invalid). The error code is preserved in the `CloseError` for callers to inspect.
+
+#### WASM Error Boundary
+
+Errors crossing the WASM-JS boundary must preserve their string content. The `js_error_to_string()` helper extracts string values from `JsValue` errors, ensuring NUT-00 JSON is passed through cleanly rather than being wrapped as `JsValue("...")`.
