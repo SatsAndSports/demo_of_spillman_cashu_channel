@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,8 +86,8 @@ func TestFundingOutputsAndChannelId(t *testing.T) {
 		t.Fatalf("ComputeFundingTokenAmount failed: %v", err)
 	}
 	params := map[string]interface{}{
-		"sender_pubkey":         senderPubkey,
-		"receiver_pubkey":       receiverPubkey,
+		"sender_pubkey":        senderPubkey,
+		"receiver_pubkey":      receiverPubkey,
 		"mint":                 mintURL,
 		"unit":                 "sat",
 		"capacity":             uint64(100),
@@ -169,7 +170,10 @@ func (h *testClientHost) CallMintSwap(mintURL, swapRequestJSON string) (string, 
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("swap failed (HTTP %d): %s", resp.StatusCode, string(body))
+		if len(body) > 0 {
+			return "", errors.New(string(body))
+		}
+		return "", fmt.Errorf("swap failed with status %d", resp.StatusCode)
 	}
 	return string(body), nil
 }
@@ -232,6 +236,15 @@ func (h *testClientHost) ComputeChannelSecret(senderPubkeyHex, receiverPubkeyHex
 		return "", fmt.Errorf("no key registered for pubkey: %s", senderPubkeyHex)
 	}
 	return ComputeChannelSecret(secretHex, receiverPubkeyHex)
+}
+
+type failingClientHost struct {
+	*testClientHost
+	mintErr string
+}
+
+func (h *failingClientHost) CallMintSwap(mintURL, swapRequestJSON string) (string, error) {
+	return "", errors.New(h.mintErr)
 }
 
 // testServerHost implements SpilmanHost for the server-side bridge in tests.
@@ -614,6 +627,70 @@ func TestClientBridge(t *testing.T) {
 	t.Log("Channel removed from storage")
 
 	t.Log("All client bridge tests passed!")
+}
+
+func TestClientBridgePreservesStructuredMintError(t *testing.T) {
+	mintURL := getMintURL()
+
+	keysetInfo, err := fetchActiveKeyset(mintURL, "sat")
+	if err != nil {
+		t.Fatalf("Failed to fetch keyset: %v", err)
+	}
+	keysetJSON, _ := json.Marshal(keysetInfo)
+
+	_, receiverPubkey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatalf("GenerateKeypair (receiver) failed: %v", err)
+	}
+
+	proofsJSON, err := MintProofsFromMint(mintURL, 100, string(keysetJSON), httpCallback)
+	if err != nil {
+		t.Fatalf("MintProofsFromMint failed: %v", err)
+	}
+	token, err := BuildCashuAToken(mintURL, proofsJSON)
+	if err != nil {
+		t.Fatalf("BuildCashuAToken failed: %v", err)
+	}
+
+	aliceSecret, senderPubkey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatalf("GenerateKeypair (alice) failed: %v", err)
+	}
+
+	host := &failingClientHost{
+		testClientHost: newTestClientHost(mintURL),
+		mintErr:        "{\n  \"code\": 12001,\n  \"detail\": \"Unknown Keyset\"\n}",
+	}
+	host.RegisterKey(aliceSecret, senderPubkey)
+
+	clientBridge, err := NewClientBridge(host)
+	if err != nil {
+		t.Fatalf("NewClientBridge failed: %v", err)
+	}
+	defer clientBridge.Free()
+
+	_, err = clientBridge.OpenChannelFromToken(
+		token,
+		receiverPubkey,
+		senderPubkey,
+		uint64(time.Now().Unix())+7200,
+		string(keysetJSON),
+		64,
+	)
+	if err == nil {
+		t.Fatal("expected open channel to fail")
+	}
+
+	var errJSON map[string]interface{}
+	if decodeErr := json.Unmarshal([]byte(err.Error()), &errJSON); decodeErr != nil {
+		t.Fatalf("expected structured JSON error, got %q: %v", err.Error(), decodeErr)
+	}
+	if uint64(errJSON["code"].(float64)) != 12001 {
+		t.Fatalf("expected code 12001, got %v", errJSON["code"])
+	}
+	if errJSON["detail"].(string) != "Unknown Keyset" {
+		t.Fatalf("expected detail %q, got %q", "Unknown Keyset", errJSON["detail"])
+	}
 }
 
 // fetchActiveKeyset fetches the active keyset for a unit from the mint

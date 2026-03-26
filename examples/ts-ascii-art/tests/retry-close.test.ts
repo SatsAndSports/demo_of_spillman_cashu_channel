@@ -268,7 +268,7 @@ describe('WASM close retry with real mint', () => {
         });
         const text = await response.text();
         if (!response.ok) {
-          throw new Error(text || `Mint rejected swap with status ${response.status}`);
+          throw (text || `Mint rejected swap with status ${response.status}`);
         }
         return text;
       },

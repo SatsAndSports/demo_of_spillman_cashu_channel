@@ -544,7 +544,7 @@ impl spilman_core::SpilmanNetworking for PySpilmanHost {
                 .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
             {
                 Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(python_error_message(py, e)),
             }
         })
     }
@@ -1090,6 +1090,13 @@ struct PySpilmanClientHost {
     py_host: PyObject,
 }
 
+fn python_error_message(py: Python<'_>, err: PyErr) -> String {
+    err.value_bound(py)
+        .str()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| err.to_string())
+}
+
 impl SpilmanClientHost for PySpilmanClientHost {
     fn call_mint_swap(&self, mint_url: &str, swap_request_json: &str) -> Result<String, String> {
         Python::with_gil(|py| {
@@ -1098,7 +1105,7 @@ impl SpilmanClientHost for PySpilmanClientHost {
                 .call_method1(py, "call_mint_swap", (mint_url, swap_request_json))
             {
                 Ok(result) => result.extract::<String>(py).map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(python_error_message(py, e)),
             }
         })
     }

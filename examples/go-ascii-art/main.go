@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -90,7 +91,14 @@ type DemoClientHost struct {
 
 func (h *DemoClientHost) CallMintSwap(url, req string) (string, error) {
 	resp, _ := http.Post(url+"/v1/swap", "application/json", strings.NewReader(req))
+	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		if len(body) > 0 {
+			return "", errors.New(string(body))
+		}
+		return "", fmt.Errorf("mint rejected swap with status %d", resp.StatusCode)
+	}
 	return string(body), nil
 }
 func (h *DemoClientHost) SaveChannel(id, json, sec string) {

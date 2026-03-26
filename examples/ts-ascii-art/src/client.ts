@@ -19,7 +19,11 @@ class DemoClientHost {
   constructor(private aliceSecret: string) {}
   async callMintSwap(url: string, req: string) {
     const r = await fetch(`${url}/v1/swap`, { method: "POST", body: req, headers: { "Content-Type": "application/json" } });
-    return await r.text();
+    const text = await r.text();
+    if (!r.ok) {
+      throw (text || `Mint rejected swap with status ${r.status}`);
+    }
+    return text;
   }
   saveChannel(id: string, json: string, sec: string) { this.channels[id] = { json, sec }; }
   getChannel(id: string) { const c = this.channels[id]; return c ? [c.json, c.sec] : null; }

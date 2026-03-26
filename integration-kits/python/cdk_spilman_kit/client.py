@@ -13,7 +13,7 @@ class BaseSpilmanClientHost:
     def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
         resp = requests.post(f"{mint_url}/v1/swap", json=json.loads(swap_request_json))
         if resp.status_code != 200:
-            raise RuntimeError(f"Mint rejected swap ({resp.status_code}): {resp.text}")
+            raise RuntimeError(resp.text or f"Mint rejected swap with status {resp.status_code}")
         return resp.text
 
     def save_channel(self, channel_id: str, channel_json: str, channel_secret_hex: str):

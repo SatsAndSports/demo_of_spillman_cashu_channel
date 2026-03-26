@@ -169,7 +169,7 @@ class BaseSpilmanHost:
             timeout=DEFAULT_TIMEOUT,
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"Mint rejected swap ({resp.status_code}): {resp.text}")
+            raise RuntimeError(resp.text or f"Mint rejected swap with status {resp.status_code}")
         return resp.text
 
     def refresh_all_keysets(self, mint: str):

@@ -224,7 +224,7 @@ class MockClientHost:
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"swap failed (HTTP {resp.status_code}): {resp.text}")
+            raise RuntimeError(resp.text or f"swap failed with status {resp.status_code}")
         return resp.text
 
     def save_channel(self, channel_id: str, channel_json: str, channel_secret_hex: str):
@@ -506,5 +506,47 @@ class TestClientBridge:
         assert client_bridge.get_channel_info(result.channel_id) is None, "Channel should be removed"
         assert len(client_bridge.list_channels()) == 0, "Channel list should be empty"
         print("Channel removed from storage")
+
+    def test_open_channel_preserves_structured_mint_error(self):
+        mint_url = get_mint_url()
+
+        keyset_info = fetch_active_keyset(mint_url, "sat")
+        assert keyset_info is not None, "Failed to fetch keyset from mint"
+        keyset_json = json.dumps(keyset_info)
+
+        charlie_secret, receiver_pubkey = cdk_spilman.generate_keypair()
+        alice_secret, sender_pubkey = cdk_spilman.generate_keypair()
+
+        def http_call(method, url, body):
+            if method == "GET":
+                r = requests.get(url)
+            else:
+                r = requests.post(url, data=body, headers={"Content-Type": "application/json"})
+            return r.text
+
+        proofs_json = cdk_spilman.mint_proofs_from_mint(mint_url, 100, keyset_json, http_call)
+        token = cdk_spilman.build_cashu_a_token(mint_url, proofs_json)
+
+        class FailingClientHost(MockClientHost):
+            def call_mint_swap(self, mint_url: str, swap_request_json: str) -> str:
+                raise RuntimeError(json.dumps({"code": 12001, "detail": "Unknown Keyset"}, indent=2))
+
+        client_host = FailingClientHost(mint_url)
+        client_host.register_key(alice_secret, sender_pubkey)
+        client_bridge = cdk_spilman.ClientBridge(client_host)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            client_bridge.open_channel_from_token(
+                token,
+                receiver_pubkey,
+                sender_pubkey,
+                int(time.time()) + 7200,
+                keyset_json,
+                64,
+            )
+
+        err_json = json.loads(str(excinfo.value))
+        assert err_json["code"] == 12001
+        assert err_json["detail"] == "Unknown Keyset"
 
         print("All client bridge tests passed!")

@@ -3,6 +3,7 @@ package spilmankit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -227,7 +228,10 @@ func (h *BaseSpilmanHost) CallMintSwap(mintUrl, swapRequestJson string) (string,
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("mint rejected swap (%d): %s", resp.StatusCode, string(body))
+		if len(body) > 0 {
+			return "", errors.New(string(body))
+		}
+		return "", fmt.Errorf("mint rejected swap with status %d", resp.StatusCode)
 	}
 	return string(body), nil
 }
