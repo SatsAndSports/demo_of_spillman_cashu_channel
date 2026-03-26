@@ -4,7 +4,7 @@
   "description": "Spilman channel management kit for Express",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --incremental",
     "server": "tsx src/example_server.ts"
   },
   "exports": {

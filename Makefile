@@ -29,6 +29,14 @@ TS_DEMO_DIR := examples/ts-ascii-art
 PYTHON_DEMO_DIR := examples/python-ascii-art
 WASM_CRATE := crates/cdk-wasm
 
+# WASM build mode: set WASM_DEV=1 for fast dev builds (skips wasm-opt)
+WASM_DEV ?= 0
+ifeq ($(WASM_DEV),1)
+  WASM_PROFILE := --dev
+else
+  WASM_PROFILE := --release
+endif
+
 # Python tools (single venv lives in the Python crate)
 PYTHON_VENV := $(PYTHON_CRATE_DIR)/.venv
 PYTHON := $(PYTHON_VENV)/bin/python
@@ -120,7 +128,8 @@ WASM_SOURCES := $(shell find $(WASM_CRATE)/src $(STANDALONE_ROOT)/crates/cdk-spi
 
 # Sentinel file tracks when WASM was last built
 .wasm-built: $(WASM_SOURCES) $(WASM_CRATE)/Cargo.toml crates/cdk-spilman/Cargo.toml Cargo.toml Cargo.lock
-	cd $(WASM_CRATE) && wasm-pack build --release --no-opt --target web --out-dir ../../web/wasm-nodejs
+	@echo "Building WASM ($(if $(filter 1,$(WASM_DEV)),dev,release) mode)..."
+	cd $(WASM_CRATE) && wasm-pack build $(WASM_PROFILE) --target web --out-dir ../../web/wasm-nodejs
 	@touch .wasm-built
 	@echo "WASM build complete (web/wasm-nodejs)"
 
@@ -228,10 +237,10 @@ test-standalone-demo-go: test-standalone-go
 	$(STANDALONE_MINT_RUNNER) scripts/go-parallel-demo.sh
 
 test-standalone-integration-ts:
-	$(STANDALONE_MINT_RUNNER) $(MAKE) -C crates/cdk-wasm test-integration
+	$(STANDALONE_MINT_RUNNER) $(MAKE) -C crates/cdk-wasm test-integration WASM_DEV=1
 
 test-standalone-demo-ts:
-	$(STANDALONE_MINT_RUNNER) scripts/ts-parallel-demo.sh
+	WASM_DEV=1 $(STANDALONE_MINT_RUNNER) scripts/ts-parallel-demo.sh
 
 # NUT-00 error code compliance test (requires mint via MINT_URL or auto-spawned)
 test-standalone-nut00-errors:
@@ -248,7 +257,7 @@ test-standalone-server-rust: test-standalone-rust-demo
 	SERVER_TYPE=rust cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-server-ts: test-standalone-integration-ts
-	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
+	WASM_DEV=1 SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
 test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-nut00-errors test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
 	@echo ""

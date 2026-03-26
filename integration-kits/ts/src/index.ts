@@ -14,10 +14,6 @@ export {
   verify_channel,
   build_cashu_b_token,
 } from "../wasm/cdk_wasm.js";
-import wasmInit from "../wasm/cdk_wasm.js";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { fileURLToPath } from "url";
 
 export { createSpilmanManagementRouter } from "./router.js";
 export { createSpilmanHost, getServerPubkey } from "./host.js";
@@ -50,10 +46,11 @@ export { SpilmanClientBridge, type SpilmanClientHost } from "./client_bridge.js"
 
 /**
  * Initializes the WASM module for Node.js environment.
+ *
+ * With `wasm-pack --target nodejs`, the WASM binary is loaded synchronously
+ * when the module is first imported, so this function is a no-op.  It is
+ * retained for backward compatibility with callers that `await init()`.
  */
 export async function init() {
-  const __dirname = fileURLToPath(new URL(".", import.meta.url));
-  const wasmPath = join(__dirname, "../wasm/cdk_wasm_bg.wasm");
-  const wasmBytes = readFileSync(wasmPath);
-  return await wasmInit({ module_or_path: wasmBytes });
+  // WASM is loaded synchronously on import by the nodejs target; nothing to do.
 }

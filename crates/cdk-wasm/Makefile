@@ -20,6 +20,14 @@ EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/ts-ascii-art
 KIT_DIR := $(STANDALONE_ROOT)/integration-kits/ts
 WASM_OUT_DIR := $(KIT_DIR)/wasm
 
+# WASM build mode: set WASM_DEV=1 for fast dev builds (skips wasm-opt)
+WASM_DEV ?= 0
+ifeq ($(WASM_DEV),1)
+  WASM_PROFILE := --dev
+else
+  WASM_PROFILE := --release
+endif
+
 .PHONY: build build-wasm install test-integration run-server run-client clean help
 
 # Default target
@@ -42,33 +50,33 @@ help:
 # Build
 # ============================================================================
 
-# Build WASM for Node.js into the TS integration kit's wasm/ directory
-# Only rebuilds if wasm artifacts are missing; use `make rebuild-wasm` to force.
+# Build WASM for Node.js into the TS integration kit's wasm/ directory.
+# Always invoke wasm-pack so Cargo can decide incrementally whether anything
+# actually needs rebuilding. This avoids stale generated JS/WASM when source
+# files changed but old artifacts still exist.
 build: build-wasm
 
 build-wasm:
-	@if [ ! -f "$(WASM_OUT_DIR)/cdk_wasm.js" ]; then \
-		echo "Building WASM for Node.js..."; \
-		wasm-pack build --target nodejs --out-dir $(WASM_OUT_DIR); \
-		echo "WASM build complete (output: $(WASM_OUT_DIR))"; \
-	else \
-		echo "WASM artifacts already exist in $(WASM_OUT_DIR), skipping build (use rebuild-wasm to force)"; \
+	@if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "wasm-pack is required to build WASM bindings but was not found in PATH."; \
+		echo "Please install wasm-pack and re-run:"; \
+		echo "  cargo install wasm-pack"; \
+		exit 1; \
 	fi
+	@echo "Building WASM for Node.js ($(if $(filter 1,$(WASM_DEV)),dev,release) mode)..."
+	wasm-pack build $(WASM_PROFILE) --target nodejs --out-dir $(WASM_OUT_DIR)
+	@echo "WASM build complete (output: $(WASM_OUT_DIR))"
 
 rebuild-wasm:
-	@echo "Rebuilding WASM for Node.js..."
-	wasm-pack build --target nodejs --out-dir $(WASM_OUT_DIR)
+	@echo "Rebuilding WASM for Node.js ($(if $(filter 1,$(WASM_DEV)),dev,release) mode)..."
+	wasm-pack build $(WASM_PROFILE) --target nodejs --out-dir $(WASM_OUT_DIR)
 	@echo "WASM build complete (output: $(WASM_OUT_DIR))"
 
 # Build TS kit (compile TypeScript to dist/) and install example dependencies
-install:
+install: build-wasm
 	cd $(KIT_DIR) && npm install --no-package-lock --no-fund --no-audit
-	@if [ ! -d "$(KIT_DIR)/dist" ]; then \
-		echo "Building TS kit (tsc)..."; \
-		cd $(KIT_DIR) && npm run build; \
-	else \
-		echo "TS kit dist/ already exists, skipping tsc"; \
-	fi
+	@echo "Building TS kit (incremental when unchanged)..."
+	cd $(KIT_DIR) && npm run build
 	cd $(KIT_DIR) && npm link
 	rm -rf $(EXAMPLE_DIR)/node_modules/cdk-spilman-kit
 	cd $(EXAMPLE_DIR) && npm install --no-package-lock --no-fund --no-audit && npm link cdk-spilman-kit

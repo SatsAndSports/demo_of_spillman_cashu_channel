@@ -3,7 +3,10 @@
   "description": "WASM bindings for Cashu payment channels",
   "version": "0.15.1",
   "license": "MIT",
-  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SatsAndSports/demo_of_spillman_cashu_channel"
+  },
   "files": [
     "cdk_wasm_bg.wasm",
     "cdk_wasm.js",

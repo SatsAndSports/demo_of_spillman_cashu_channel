@@ -80,4 +80,4 @@ Errors thrown by the bridge are structured objects:
 
 ## Build Outputs
 
-- `web/wasm-nodejs/` - WASM build output (copied here by `make build-wasm`)
+- `web/wasm-nodejs/` - WASM build output (copied to TS integration kit by `make build-wasm`)
