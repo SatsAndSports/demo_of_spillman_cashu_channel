@@ -112,12 +112,12 @@ impl DeterministicSecretWithBlinding {
         // After expiry, Alice can refund with just her signature
         // All pubkeys are BLINDED for privacy, with refund using a separate tweak
         let conditions = Conditions::new(
-            Some(params.expiry_timestamp),           // Expiry timestamp for Alice's refund
-            Some(vec![blinded_receiver_pubkey]),      // Charlie's blinded key for 2-of-2
+            Some(params.expiry_timestamp), // Expiry timestamp for Alice's refund
+            Some(vec![blinded_receiver_pubkey]), // Charlie's blinded key for 2-of-2
             Some(vec![blinded_sender_pubkey_refund]), // Alice's REFUND blinded key (different tweak)
-            Some(2),                                 // Require 2 signatures before expiry
-            Some(SigFlag::SigAll),                   // SigAll: signatures commit to outputs
-            Some(1),                                 // Only 1 signature needed for refund (Alice)
+            Some(2),                                  // Require 2 signatures before expiry
+            Some(SigFlag::SigAll),                    // SigAll: signatures commit to outputs
+            Some(1),                                  // Only 1 signature needed for refund (Alice)
         )?;
 
         // Convert conditions to proper NUT-10/11 tag array format
@@ -597,9 +597,12 @@ mod tests {
 
         let capacity = 1000;
         let maximum_amount = 100_000;
-        let funding_token_amount =
-            ChannelParameters::get_minimum_funding_token_amount(capacity, &keyset_info, maximum_amount)
-                .unwrap();
+        let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+            capacity,
+            &keyset_info,
+            maximum_amount,
+        )
+        .unwrap();
 
         ChannelParameters::new_with_secret_key(
             sender_pubkey,
@@ -690,9 +693,12 @@ mod tests {
 
         let capacity = 1000;
         let maximum_amount = 100_000;
-        let funding_token_amount =
-            ChannelParameters::get_minimum_funding_token_amount(capacity, &keyset_info, maximum_amount)
-                .unwrap();
+        let funding_token_amount = ChannelParameters::get_minimum_funding_token_amount(
+            capacity,
+            &keyset_info,
+            maximum_amount,
+        )
+        .unwrap();
 
         ChannelParameters::new_with_secret_key(
             sender_pubkey,
@@ -702,7 +708,7 @@ mod tests {
             capacity,
             funding_token_amount,
             expiry_timestamp, // expiry_timestamp (configurable)
-            0,        // setup_timestamp
+            0,                // setup_timestamp
             keyset_info,
             maximum_amount,
             &alice_secret,
@@ -942,10 +948,7 @@ mod tests {
             .expect("create_swap_request");
 
         let outputs = swap_request.outputs();
-        let output_amounts: Vec<u64> = outputs
-            .iter()
-            .map(|bm| u64::from(bm.amount))
-            .collect();
+        let output_amounts: Vec<u64> = outputs.iter().map(|bm| u64::from(bm.amount)).collect();
 
         // 1. Verify ascending order
         for i in 1..output_amounts.len() {
@@ -988,9 +991,7 @@ mod tests {
             let group_start = i;
 
             // Collect the group of outputs with this amount
-            while i < outputs.len()
-                && u64::from(outputs[i].amount) == current_amount
-            {
+            while i < outputs.len() && u64::from(outputs[i].amount) == current_amount {
                 i += 1;
             }
 
@@ -1016,7 +1017,8 @@ mod tests {
                 assert!(
                     is_receiver || is_sender,
                     "output at position {} doesn't match receiver or sender for amount {}",
-                    j, current_amount
+                    j,
+                    current_amount
                 );
             }
         }

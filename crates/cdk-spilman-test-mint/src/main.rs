@@ -46,8 +46,8 @@ fn parse_args() -> Result<TestMintConfig> {
         }
     }
 
-    config.base_url = base_url_override
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", config.listen_port));
+    config.base_url =
+        base_url_override.unwrap_or_else(|| format!("http://127.0.0.1:{}", config.listen_port));
 
     Ok(config)
 }

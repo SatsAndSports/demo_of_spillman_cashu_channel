@@ -14,7 +14,7 @@ use cdk::mint::{MintBuilder, MintMeltLimits};
 use cdk::nuts::nut10::Secret as Nut10Secret;
 use cdk::nuts::{
     BatchCheckMintQuoteRequest, BatchMintRequest, BlindedMessage, CheckStateRequest,
-    CheckStateResponse, CurrencyUnit, Id, KeySet, KeysetResponse, Keys, MeltQuoteBolt11Response,
+    CheckStateResponse, CurrencyUnit, Id, KeySet, Keys, KeysetResponse, MeltQuoteBolt11Response,
     MeltRequest, MintInfo, MintQuoteBolt11Request, MintQuoteBolt11Response, MintQuoteState,
     MintRequest, MintResponse, PaymentMethod, PreMintSecrets, Proof, RestoreRequest,
     RestoreResponse, SpendingConditions, SwapRequest, SwapResponse,
@@ -29,8 +29,8 @@ use cdk_common::nut00::KnownMethod;
 use cdk_common::{MeltQuoteRequest, MeltQuoteResponse, MintQuoteRequest};
 use cdk_fake_wallet::FakeWallet;
 use cdk_spilman::{
-    complete_funding_swap, compute_channel_from_token, create_funding_swap, ChannelParameters,
-    ChannelFunding, ChannelPolicy, ChannelState, ClosingData, CommitmentOutputs,
+    complete_funding_swap, compute_channel_from_token, create_funding_swap, ChannelFunding,
+    ChannelParameters, ChannelPolicy, ChannelState, CloseError, ClosingData, CommitmentOutputs,
     DeterministicOutputsForOneContext, EstablishedChannel, KeysetInfo, PaymentProof, SpilmanBridge,
     SpilmanChannelSender, SpilmanHost, SpilmanNetworking,
 };
@@ -221,7 +221,8 @@ async fn mint_test_proofs(mint: &Mint, amount: Amount) -> anyhow::Result<Vec<Pro
         .clone();
 
     let fees: (u64, Vec<u64>) = (0, keys.iter().map(|a| a.0.to_u64()).collect());
-    let premint_secrets = PreMintSecrets::random(keyset_id, amount, &SplitTarget::None, &fees.into())?;
+    let premint_secrets =
+        PreMintSecrets::random(keyset_id, amount, &SplitTarget::None, &fees.into())?;
 
     let request = cdk::nuts::MintRequest {
         quote: mint_quote.quote,
@@ -313,7 +314,9 @@ impl MintConnector for DirectMintConnection {
     }
 
     async fn get_mint_keyset(&self, keyset_id: Id) -> Result<KeySet, cdk::Error> {
-        self.mint.keyset(&keyset_id).ok_or(cdk::Error::UnknownKeySet)
+        self.mint
+            .keyset(&keyset_id)
+            .ok_or(cdk::Error::UnknownKeySet)
     }
 
     async fn get_mint_keysets(&self) -> Result<KeysetResponse, cdk::Error> {
@@ -450,8 +453,11 @@ async fn test_spilman_2of2_spending_with_blinded_keys() -> anyhow::Result<()> {
     )?;
 
     let funding_amount = params.get_total_funding_token_amount()?;
-    let _funding_outputs =
-        DeterministicOutputsForOneContext::new("funding".to_string(), funding_amount, params.clone())?;
+    let _funding_outputs = DeterministicOutputsForOneContext::new(
+        "funding".to_string(),
+        funding_amount,
+        params.clone(),
+    )?;
     let input_proofs = test_mint.mint_proofs(Amount::from(funding_amount)).await?;
 
     let num_input_proofs = input_proofs.len() as u64;
@@ -473,16 +479,21 @@ async fn test_spilman_2of2_spending_with_blinded_keys() -> anyhow::Result<()> {
         .iter()
         .map(|s| s.blinding_factor.clone())
         .collect();
-    let secrets = secrets_with_blinding.iter().map(|s| s.secret.clone()).collect();
+    let secrets = secrets_with_blinding
+        .iter()
+        .map(|s| s.secret.clone())
+        .collect();
     let p2pk_proofs = construct_proofs(swap_response.signatures, blinding_factors, secrets, &keys)?;
 
     let spend_fee = (input_fee_ppk * p2pk_proofs.len() as u64).div_ceil(1000);
     let final_output_amount = available_for_outputs - spend_fee;
-    let (new_outputs, _) = create_test_blinded_messages(mint, Amount::from(final_output_amount)).await?;
+    let (new_outputs, _) =
+        create_test_blinded_messages(mint, Amount::from(final_output_amount)).await?;
 
     let mut swap_request_2of2 = SwapRequest::new(p2pk_proofs, new_outputs);
     let alice_blinded_secret = params.get_sender_blinded_secret_key_for_stage1(&alice_secret)?;
-    let charlie_blinded_secret = params.get_receiver_blinded_secret_key_for_stage1(&charlie_secret)?;
+    let charlie_blinded_secret =
+        params.get_receiver_blinded_secret_key_for_stage1(&charlie_secret)?;
     swap_request_2of2.sign_sig_all(alice_blinded_secret)?;
     swap_request_2of2.sign_sig_all(charlie_blinded_secret)?;
 
@@ -563,12 +574,9 @@ async fn test_swap_to_funding() -> anyhow::Result<()> {
     let swap_response = mint.process_swap_request(swap_request).await?;
     let swap_response_json = serde_json::to_string(&swap_response)?;
 
-    let complete_result = complete_funding_swap(
-        &swap_response_json,
-        funding_secrets_json,
-        &keyset_info_json,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let complete_result =
+        complete_funding_swap(&swap_response_json, funding_secrets_json, &keyset_info_json)
+            .map_err(anyhow::Error::msg)?;
     let complete_json: serde_json::Value = serde_json::from_str(&complete_result)?;
     let funding_proofs_json = complete_json["funding_proofs_json"].as_str().unwrap();
     let funding_proofs: Vec<Proof> = serde_json::from_str(funding_proofs_json)?;
@@ -657,7 +665,8 @@ async fn test_spilman_refund_spending_with_blinded_key() -> anyhow::Result<()> {
 
     let refund_fee = (input_fee_ppk * p2pk_proofs.len() as u64).div_ceil(1000);
     let refund_output_amount = available_for_outputs - refund_fee;
-    let (new_outputs, _) = create_test_blinded_messages(mint, Amount::from(refund_output_amount)).await?;
+    let (new_outputs, _) =
+        create_test_blinded_messages(mint, Amount::from(refund_output_amount)).await?;
 
     let mut swap_request_refund = SwapRequest::new(p2pk_proofs, new_outputs);
     let alice_refund_blinded_secret =
@@ -704,9 +713,15 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() -> anyhow::Result<()
     let charlie_raw = receiver_pubkey.to_hex();
     let alice_stage1 = params.get_sender_blinded_pubkey_for_stage1()?.to_hex();
     let charlie_stage1 = params.get_receiver_blinded_pubkey_for_stage1()?.to_hex();
-    let alice_stage2_64_0 = params.get_sender_blinded_pubkey_for_stage2_output(64, 0)?.to_hex();
-    let charlie_stage2_64_0 = params.get_receiver_blinded_pubkey_for_stage2_output(64, 0)?.to_hex();
-    let alice_refund = params.get_sender_blinded_pubkey_for_stage1_refund()?.to_hex();
+    let alice_stage2_64_0 = params
+        .get_sender_blinded_pubkey_for_stage2_output(64, 0)?
+        .to_hex();
+    let charlie_stage2_64_0 = params
+        .get_receiver_blinded_pubkey_for_stage2_output(64, 0)?
+        .to_hex();
+    let alice_refund = params
+        .get_sender_blinded_pubkey_for_stage1_refund()?
+        .to_hex();
 
     assert_ne!(alice_stage2_64_0, alice_raw);
     assert_ne!(charlie_stage2_64_0, charlie_raw);
@@ -715,8 +730,12 @@ fn test_stage2_blinded_pubkeys_differ_from_stage1_and_raw() -> anyhow::Result<()
     assert_ne!(alice_stage2_64_0, charlie_stage2_64_0);
     assert_ne!(alice_stage2_64_0, alice_refund);
 
-    let alice_stage2_64_1 = params.get_sender_blinded_pubkey_for_stage2_output(64, 1)?.to_hex();
-    let alice_stage2_32_0 = params.get_sender_blinded_pubkey_for_stage2_output(32, 0)?.to_hex();
+    let alice_stage2_64_1 = params
+        .get_sender_blinded_pubkey_for_stage2_output(64, 1)?
+        .to_hex();
+    let alice_stage2_32_0 = params
+        .get_sender_blinded_pubkey_for_stage2_output(32, 0)?
+        .to_hex();
 
     assert_ne!(alice_stage2_64_0, alice_stage2_64_1);
     assert_ne!(alice_stage2_64_0, alice_stage2_32_0);
@@ -861,15 +880,23 @@ async fn create_stage2_receiver_proof_fixture(
     let swap_response = mint.process_swap_request(swap_request).await?;
 
     let secrets_with_blinding = funding_outputs.get_secrets_with_blinding()?;
-    let blinding_factors = secrets_with_blinding.iter().map(|s| s.blinding_factor.clone()).collect();
-    let secrets = secrets_with_blinding.iter().map(|s| s.secret.clone()).collect();
-    let funding_proofs = construct_proofs(swap_response.signatures, blinding_factors, secrets, &keys)?;
+    let blinding_factors = secrets_with_blinding
+        .iter()
+        .map(|s| s.blinding_factor.clone())
+        .collect();
+    let secrets = secrets_with_blinding
+        .iter()
+        .map(|s| s.secret.clone())
+        .collect();
+    let funding_proofs =
+        construct_proofs(swap_response.signatures, blinding_factors, secrets, &keys)?;
 
     let commitment_outputs = CommitmentOutputs::for_balance(balance, &params)?;
     let mut close_swap = commitment_outputs.create_swap_request(funding_proofs, None)?;
 
     let alice_blinded_secret = params.get_sender_blinded_secret_key_for_stage1(&alice_secret)?;
-    let charlie_blinded_secret = params.get_receiver_blinded_secret_key_for_stage1(&charlie_secret)?;
+    let charlie_blinded_secret =
+        params.get_receiver_blinded_secret_key_for_stage1(&charlie_secret)?;
     close_swap.sign_sig_all(alice_blinded_secret)?;
     close_swap.sign_sig_all(charlie_blinded_secret)?;
 
@@ -1024,7 +1051,10 @@ async fn test_client_bridge() -> anyhow::Result<()> {
                 tokio::runtime::Handle::current()
                     .block_on(async { mint.process_swap_request(swap_request).await })
             })
-            .map_err(|e| format!("Mint swap failed: {}", e))?;
+            .map_err(|e| {
+                serde_json::to_string(&cdk_common::error::ErrorResponse::from(e))
+                    .unwrap_or_else(|ser_err| format!("Mint swap failed: {ser_err}"))
+            })?;
             serde_json::to_string(&response)
                 .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
@@ -1141,12 +1171,7 @@ async fn test_client_bridge() -> anyhow::Result<()> {
         fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             self.amount_due.load(Ordering::Relaxed)
         }
-        fn record_payment(
-            &self,
-            channel_id: &str,
-            payment: PaymentProof,
-            _context_json: &String,
-        ) {
+        fn record_payment(&self, channel_id: &str, payment: PaymentProof, _context_json: &String) {
             self.payments
                 .lock()
                 .unwrap()
@@ -1182,11 +1207,7 @@ async fn test_client_bridge() -> anyhow::Result<()> {
         ) -> Option<PaymentProof> {
             self.payments.lock().unwrap().get(channel_id).cloned()
         }
-        fn get_active_keyset_ids(
-            &self,
-            _mint: &str,
-            _unit: &CurrencyUnit,
-        ) -> Vec<Id> {
+        fn get_active_keyset_ids(&self, _mint: &str, _unit: &CurrencyUnit) -> Vec<Id> {
             self.keyset_ids.clone()
         }
         fn get_keyset_info(&self, _mint: &str, keyset_id: &Id) -> Option<String> {
@@ -1256,7 +1277,10 @@ async fn test_client_bridge() -> anyhow::Result<()> {
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("missing SAT keyset"))?;
     let keyset_pubkeys = shared_mint.keyset_pubkeys(&active_keyset_id)?;
-    let keyset = keyset_pubkeys.keysets.first().ok_or_else(|| anyhow::anyhow!("missing keyset"))?;
+    let keyset = keyset_pubkeys
+        .keysets
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing keyset"))?;
     let shared_keys = keyset.keys.clone();
     let shared_fee_ppk = shared_mint
         .keysets()
@@ -1337,7 +1361,10 @@ async fn test_client_bridge() -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
 
     let update: serde_json::Value = serde_json::from_str(&update_json)?;
-    assert_eq!(update["channel_id"].as_str().unwrap(), open_result.channel_id);
+    assert_eq!(
+        update["channel_id"].as_str().unwrap(),
+        open_result.channel_id
+    );
     assert_eq!(update["amount"].as_u64().unwrap(), 10);
     assert!(update["signature"].as_str().is_some());
 
@@ -1352,7 +1379,10 @@ async fn test_client_bridge() -> anyhow::Result<()> {
     let decoded = base64_decode(&header_with_funding).map_err(anyhow::Error::msg)?;
     let header_json: serde_json::Value = serde_json::from_str(&decoded)?;
 
-    assert_eq!(header_json["channel_id"].as_str().unwrap(), open_result.channel_id);
+    assert_eq!(
+        header_json["channel_id"].as_str().unwrap(),
+        open_result.channel_id
+    );
     assert_eq!(header_json["balance"].as_u64().unwrap(), 10);
     assert!(header_json["signature"].as_str().is_some());
     assert!(header_json["params"].is_object());
@@ -1449,7 +1479,10 @@ async fn test_client_bridge() -> anyhow::Result<()> {
         )
         .unwrap_err();
     match err {
-        BridgeError::InsufficientBalance { balance, amount_due } => {
+        BridgeError::InsufficientBalance {
+            balance,
+            amount_due,
+        } => {
             assert_eq!(balance, 10);
             assert_eq!(amount_due, 15);
         }
@@ -1461,8 +1494,139 @@ async fn test_client_bridge() -> anyhow::Result<()> {
     // ====================================================================
 
     client_bridge.remove_channel(&open_result.channel_id);
-    assert!(client_bridge.get_channel_info(&open_result.channel_id).is_none());
+    assert!(client_bridge
+        .get_channel_info(&open_result.channel_id)
+        .is_none());
     assert_eq!(client_bridge.list_channels().len(), 0);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_bridge_preserves_structured_mint_error() -> anyhow::Result<()> {
+    use cdk::nuts::nut00::token::Token;
+    use cdk_spilman::{ChannelData, SpilmanClientBridge, SpilmanClientHost};
+    use std::sync::Mutex;
+
+    struct FailingClientHost {
+        keys: Mutex<HashMap<String, String>>,
+        mint_error_json: String,
+    }
+
+    impl FailingClientHost {
+        fn register_key(&self, secret_hex: &str, pubkey_hex: &str) {
+            self.keys
+                .lock()
+                .expect("key lock")
+                .insert(pubkey_hex.to_string(), secret_hex.to_string());
+        }
+    }
+
+    impl SpilmanClientHost for FailingClientHost {
+        fn call_mint_swap(&self, _: &str, _: &str) -> Result<String, String> {
+            Err(self.mint_error_json.clone())
+        }
+
+        fn save_channel(&self, _: &str, _: &str, _: &str) {}
+
+        fn get_channel(&self, _: &str) -> Option<ChannelData> {
+            None
+        }
+
+        fn list_channel_ids(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn delete_channel(&self, _: &str) {}
+
+        fn sign_with_tweaked_key(&self, _: &str, _: &str, _: &str) -> Result<String, String> {
+            Err("not used in this test".to_string())
+        }
+
+        fn compute_channel_secret(
+            &self,
+            sender_pubkey_hex: &str,
+            receiver_pubkey_hex: &str,
+        ) -> Result<String, String> {
+            let secret_hex = self
+                .keys
+                .lock()
+                .expect("key lock")
+                .get(sender_pubkey_hex)
+                .cloned()
+                .ok_or_else(|| format!("No key registered for pubkey: {}", sender_pubkey_hex))?;
+            cdk_spilman::compute_channel_secret_from_hex(&secret_hex, receiver_pubkey_hex)
+        }
+    }
+
+    let receiver_pubkey = cdk::nuts::SecretKey::generate().public_key();
+    let shared_mint = Arc::new(create_test_mint().await?);
+
+    let active_keyset_id = shared_mint
+        .get_active_keysets()
+        .get(&CurrencyUnit::Sat)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("missing SAT keyset"))?;
+    let keyset_pubkeys = shared_mint.keyset_pubkeys(&active_keyset_id)?;
+    let keyset = keyset_pubkeys
+        .keysets
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing keyset"))?;
+    let shared_keys = keyset.keys.clone();
+    let shared_fee_ppk = shared_mint
+        .keysets()
+        .keysets
+        .iter()
+        .find(|k| k.id == active_keyset_id)
+        .ok_or_else(|| anyhow::anyhow!("missing keyset info"))?
+        .input_fee_ppk;
+
+    let keyset_info_json = serde_json::json!({
+        "keysetId": active_keyset_id.to_string(),
+        "unit": "sat",
+        "inputFeePpk": shared_fee_ppk,
+        "keys": shared_keys.iter().map(|(amt, pk)| {
+            (u64::from(*amt).to_string(), pk.to_hex())
+        }).collect::<HashMap<_, _>>()
+    })
+    .to_string();
+
+    let proofs = mint_test_proofs(&shared_mint, Amount::from(100u64)).await?;
+    let token = Token::new(
+        "http://localhost:3338".parse().unwrap(),
+        proofs,
+        None,
+        CurrencyUnit::Sat,
+    );
+    let token_string = token.to_string();
+
+    let alice_secret = cdk::nuts::SecretKey::generate();
+    let sender_pubkey_hex = alice_secret.public_key().to_hex();
+
+    let host = FailingClientHost {
+        keys: Mutex::new(HashMap::new()),
+        mint_error_json: serde_json::to_string_pretty(&serde_json::json!({
+            "code": 12001,
+            "detail": "Unknown Keyset"
+        }))?,
+    };
+    host.register_key(&alice_secret.to_secret_hex(), &sender_pubkey_hex);
+
+    let bridge = SpilmanClientBridge::new(host);
+    let err = bridge
+        .open_channel_from_token(
+            &token_string,
+            &receiver_pubkey.to_hex(),
+            &sender_pubkey_hex,
+            unix_time() + 7200,
+            &keyset_info_json,
+            64,
+        )
+        .expect_err("open_channel_from_token should return the mint error");
+
+    let err_json: serde_json::Value = serde_json::from_str(&err)?;
+    assert_eq!(err_json["code"], serde_json::json!(12001));
+    assert_eq!(err_json["detail"], serde_json::json!("Unknown Keyset"));
 
     Ok(())
 }
@@ -1535,12 +1699,7 @@ mod close_balance_tests {
         fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             self.amount_due.get()
         }
-        fn record_payment(
-            &self,
-            _channel_id: &str,
-            payment: PaymentProof,
-            _context_json: &String,
-        ) {
+        fn record_payment(&self, _channel_id: &str, payment: PaymentProof, _context_json: &String) {
             *self.stored_payment.borrow_mut() = Some(payment);
         }
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
@@ -1610,10 +1769,7 @@ mod close_balance_tests {
             _receiver_pubkey_hex: &str,
             sender_pubkey_hex: &str,
         ) -> Result<String, String> {
-            bindings::compute_channel_secret_from_hex(
-                &self.charlie_secret_hex,
-                sender_pubkey_hex,
-            )
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, sender_pubkey_hex)
         }
         fn sign_with_tweaked_key(
             &self,
@@ -1719,8 +1875,13 @@ mod close_balance_tests {
 
         let capacity = 100u64;
         let expiry_timestamp = unix_time() + 7200;
-        let keyset_info =
-            KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keyset_keys.clone(), fee_ppk, None);
+        let keyset_info = KeysetInfo::new(
+            keyset_id,
+            CurrencyUnit::Sat,
+            keyset_keys.clone(),
+            fee_ppk,
+            None,
+        );
 
         let params = ChannelParameters::new_with_secret_key(
             sender_pubkey,
@@ -1759,9 +1920,13 @@ mod close_balance_tests {
             .expect("secrets");
         let blinding_factors = swb.iter().map(|s| s.blinding_factor.clone()).collect();
         let secrets = swb.iter().map(|s| s.secret.clone()).collect();
-        let funding_proofs =
-            construct_proofs(swap_response.signatures, blinding_factors, secrets, &keyset_keys)
-                .expect("construct proofs");
+        let funding_proofs = construct_proofs(
+            swap_response.signatures,
+            blinding_factors,
+            secrets,
+            &keyset_keys,
+        )
+        .expect("construct proofs");
 
         let channel =
             EstablishedChannel::new(params.clone(), funding_proofs.clone()).expect("channel");
@@ -1891,10 +2056,9 @@ async fn test_cooperative_close_with_overpayment() -> anyhow::Result<()> {
     ));
 
     let closed = s.bridge.host().closed_data.borrow();
-    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
-        closed
-            .as_ref()
-            .expect("mark_channel_closed should have been called");
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) = closed
+        .as_ref()
+        .expect("mark_channel_closed should have been called");
 
     assert_eq!(
         *closed_balance, s.amount_due,
@@ -1925,10 +2089,9 @@ async fn test_unilateral_close_uses_latest_payment_balance() -> anyhow::Result<(
     ));
 
     let closed = s.bridge.host().closed_data.borrow();
-    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) =
-        closed
-            .as_ref()
-            .expect("mark_channel_closed should have been called");
+    let (closed_balance, _closed_total, ref receiver_proofs_json, ref _sender_proofs_json) = closed
+        .as_ref()
+        .expect("mark_channel_closed should have been called");
 
     assert_eq!(
         *closed_balance, s.overpayment_balance,
@@ -2015,12 +2178,7 @@ mod retry_tests {
         fn get_amount_due(&self, _channel_id: &str, _context_json: Option<&String>) -> u64 {
             self.amount_due.get()
         }
-        fn record_payment(
-            &self,
-            _channel_id: &str,
-            payment: PaymentProof,
-            _context_json: &String,
-        ) {
+        fn record_payment(&self, _channel_id: &str, payment: PaymentProof, _context_json: &String) {
             *self.stored_payment.borrow_mut() = Some(payment);
         }
         fn get_channel_state(&self, _channel_id: &str) -> ChannelState {
@@ -2090,10 +2248,7 @@ mod retry_tests {
             _receiver_pubkey_hex: &str,
             sender_pubkey_hex: &str,
         ) -> Result<String, String> {
-            bindings::compute_channel_secret_from_hex(
-                &self.charlie_secret_hex,
-                sender_pubkey_hex,
-            )
+            bindings::compute_channel_secret_from_hex(&self.charlie_secret_hex, sender_pubkey_hex)
         }
         fn sign_with_tweaked_key(
             &self,
@@ -2133,10 +2288,8 @@ mod retry_tests {
                 // error string carries the proper {code, detail} JSON,
                 // matching what a real mint HTTP endpoint would return.
                 let error_response = cdk_common::error::ErrorResponse::from(e);
-                let error_json =
-                    serde_json::to_string(&error_response).unwrap_or_else(|ser_err| {
-                        format!("{{\"detail\":\"{}\",\"code\":0}}", ser_err)
-                    });
+                let error_json = serde_json::to_string(&error_response)
+                    .unwrap_or_else(|ser_err| format!("{{\"detail\":\"{}\",\"code\":0}}", ser_err));
                 eprintln!(
                     "[RetryTestHost] mint rejected swap (NUT-00): {}",
                     error_json
@@ -2412,6 +2565,77 @@ async fn test_cooperative_close_full_retry_with_real_mint() -> anyhow::Result<()
     Ok(())
 }
 
+struct JsonFailingNetworking {
+    swap_call_count: std::cell::Cell<u32>,
+    refresh_count: std::cell::Cell<u32>,
+}
+
+impl SpilmanNetworking for JsonFailingNetworking {
+    fn call_mint_swap(&self, _: &str, _: &str) -> Result<String, String> {
+        let attempt = self.swap_call_count.get();
+        self.swap_call_count.set(attempt + 1);
+
+        match attempt {
+            0 => Err(r#"{"code":12002,"detail":"Inactive Keyset"}"#.to_string()),
+            _ => Err(r#"{"code":12001,"detail":"Unknown Keyset"}"#.to_string()),
+        }
+    }
+
+    fn refresh_all_keysets(&self, _: &str) -> Result<(), String> {
+        self.refresh_count.set(self.refresh_count.get() + 1);
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cooperative_close_retry_preserves_structured_mint_errors() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+    let net = JsonFailingNetworking {
+        swap_call_count: std::cell::Cell::new(0),
+        refresh_count: std::cell::Cell::new(0),
+    };
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let err = s
+        .bridge
+        .execute_cooperative_close(&payment_json, &net)
+        .expect_err("close should fail after retry");
+
+    assert_eq!(net.swap_call_count.get(), 2);
+    assert_eq!(net.refresh_count.get(), 1);
+
+    match err {
+        CloseError::MintRejectedAfterRetry {
+            original_error,
+            retry_error,
+            status,
+        } => {
+            assert_eq!(status, 502);
+            assert!(
+                original_error.is_object(),
+                "original error should be JSON object"
+            );
+            assert!(retry_error.is_object(), "retry error should be JSON object");
+            assert_eq!(original_error["code"], serde_json::json!(12002));
+            assert_eq!(
+                original_error["detail"],
+                serde_json::json!("Inactive Keyset")
+            );
+            assert_eq!(retry_error["code"], serde_json::json!(12001));
+            assert_eq!(retry_error["detail"], serde_json::json!("Unknown Keyset"));
+        }
+        other => panic!("expected MintRejectedAfterRetry, got {other:?}"),
+    }
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_unilateral_close_full_retry_with_real_mint() -> anyhow::Result<()> {
     let s = retry_tests::setup_retry_scenario().await;
@@ -2490,9 +2714,8 @@ async fn test_mint_swap_error_returns_nut00_codes() -> anyhow::Result<()> {
     let active_keyset_id = keysets_resp["keysets"]
         .as_array()
         .and_then(|ks| {
-            ks.iter().find(|k| {
-                k["unit"].as_str() == Some("sat") && k["active"].as_bool() == Some(true)
-            })
+            ks.iter()
+                .find(|k| k["unit"].as_str() == Some("sat") && k["active"].as_bool() == Some(true))
         })
         .and_then(|k| k["id"].as_str())
         .expect("mint should have an active sat keyset")

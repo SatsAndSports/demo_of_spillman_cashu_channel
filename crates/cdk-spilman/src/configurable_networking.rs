@@ -9,9 +9,9 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use cashu::nuts::{CurrencyUnit, Id};
 use crate::configurable_host::{ConfigurableHost, KeysetCacheEntry};
 use crate::SpilmanAsyncNetworking;
+use cashu::nuts::{CurrencyUnit, Id};
 
 /// Keyset with full key data, as fetched from a mint.
 #[derive(Debug, Clone)]

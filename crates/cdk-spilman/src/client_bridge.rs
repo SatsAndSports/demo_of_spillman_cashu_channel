@@ -200,6 +200,12 @@ pub struct SpilmanClientBridge<H: SpilmanClientHost> {
     host: H,
 }
 
+fn normalize_mint_error_string(raw: String) -> String {
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .map(|value| value.to_string())
+        .unwrap_or(raw)
+}
+
 impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
     /// Create a new client bridge.
     ///
@@ -292,7 +298,10 @@ impl<H: SpilmanClientHost> SpilmanClientBridge<H> {
             .ok_or("Missing 'funding_secrets_json' in swap result")?;
 
         // Step 4: Submit swap to mint
-        let swap_response_json = self.host.call_mint_swap(&mint_url, swap_request_json)?;
+        let swap_response_json = self
+            .host
+            .call_mint_swap(&mint_url, swap_request_json)
+            .map_err(normalize_mint_error_string)?;
 
         // Step 5: Unblind signatures and verify DLEQ
         let complete_result =

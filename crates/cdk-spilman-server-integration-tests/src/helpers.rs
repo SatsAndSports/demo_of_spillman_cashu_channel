@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use cashu::nuts::{Proof, SecretKey};
 use cdk_spilman::{
-    channel_parameters_get_channel_id, compute_funding_token_amount,
-    compute_channel_secret_from_hex, construct_proofs, create_funding_outputs,
+    channel_parameters_get_channel_id, compute_channel_secret_from_hex,
+    compute_funding_token_amount, construct_proofs, create_funding_outputs,
     create_signed_balance_update, parse_keyset_info_from_json, KeysetInfo,
 };
 
@@ -383,7 +383,11 @@ impl HttpClient {
     }
 
     /// Close a channel cooperatively
-    pub async fn close_channel(&self, channel: &Channel, balance: u64) -> Result<CloseChannelResponse> {
+    pub async fn close_channel(
+        &self,
+        channel: &Channel,
+        balance: u64,
+    ) -> Result<CloseChannelResponse> {
         let balance_update_json = create_signed_balance_update(
             &channel.channel_params_json,
             &channel.keyset_info_json,

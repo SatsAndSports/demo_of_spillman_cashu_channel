@@ -108,7 +108,10 @@ impl TestContext {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Test environment was already cleaned up"))?;
 
-            let client = HttpClient::new(env.server().base_url.to_string(), env.mint().url.to_string());
+            let client = HttpClient::new(
+                env.server().base_url.to_string(),
+                env.mint().url.to_string(),
+            );
             let server_type = env.server().server_type;
 
             (client, server_type)

@@ -30,8 +30,7 @@ use routes::{create_router, AppStateInner};
 // ============================================================================
 
 /// Default secret key for development (same pattern as TS/Python/Go servers)
-const DEFAULT_SECRET_KEY: &str =
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const DEFAULT_SECRET_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Default port
 const DEFAULT_PORT: u16 = 5003;
@@ -68,8 +67,7 @@ async fn main() {
     let secret_key_hex =
         env::var("SERVER_SECRET_KEY").unwrap_or_else(|_| DEFAULT_SECRET_KEY.to_string());
 
-    let config_path =
-        env::var("CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+    let config_path = env::var("CONFIG_PATH").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
 
     // Load YAML config — search multiple locations.
     let search_paths = [
@@ -80,10 +78,7 @@ async fn main() {
         .iter()
         .find_map(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_else(|| {
-            eprintln!(
-                "Failed to find config file. Searched: {:?}",
-                search_paths
-            );
+            eprintln!("Failed to find config file. Searched: {:?}", search_paths);
             eprintln!(
                 "Hint: set CONFIG_PATH env var or run from the examples/rust-ascii-art directory"
             );

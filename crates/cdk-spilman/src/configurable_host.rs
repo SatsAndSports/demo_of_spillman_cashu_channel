@@ -61,10 +61,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey};
 use crate::{
     ChannelFunding, ChannelId, ChannelPolicy, ChannelState, ClosingData, PaymentProof, SpilmanHost,
 };
+use cashu::nuts::{CurrencyUnit, Id, PublicKey, SecretKey};
 
 // ============================================================================
 // Configuration types
@@ -1181,7 +1181,9 @@ impl SpilmanHost for ConfigurableHost {
             None => return false,
         };
         match self.storage.get_keyset(mint, keyset_id) {
-            Some(entry) => entry.active && trusted_units.iter().any(|u| u == &entry.unit.to_string()),
+            Some(entry) => {
+                entry.active && trusted_units.iter().any(|u| u == &entry.unit.to_string())
+            }
             None => false,
         }
     }
@@ -1814,7 +1816,7 @@ pricing:
         assert_eq!(host.get_channel_state("ch1"), ChannelState::Closing);
 
         let closing = host.get_closing_data("ch1").unwrap();
-            assert_eq!(closing.expiry_timestamp, 1000);
+        assert_eq!(closing.expiry_timestamp, 1000);
         assert_eq!(closing.balance, 50);
 
         host.mark_channel_closed("ch1", 1000, 50, "[]", "[]", 40, 10)
@@ -2244,7 +2246,7 @@ storage:
             assert_eq!(s.get_state("ch1"), ChannelState::Closing);
 
             let closing = s.get_closing_data("ch1").unwrap();
-        assert_eq!(closing.expiry_timestamp, 1000);
+            assert_eq!(closing.expiry_timestamp, 1000);
             assert_eq!(closing.balance, 50);
 
             s.mark_closed(

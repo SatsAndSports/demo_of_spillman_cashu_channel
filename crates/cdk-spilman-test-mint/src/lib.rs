@@ -114,7 +114,11 @@ fn input_fee_ppk_for_unit(config: &TestMintConfig, unit: &CurrencyUnit) -> u64 {
                     );
                 }
                 Err(_) => {
-                    tracing::warn!("Ignoring {}={} because it is not a valid u64", env_name, raw);
+                    tracing::warn!(
+                        "Ignoring {}={} because it is not a valid u64",
+                        env_name,
+                        raw
+                    );
                 }
             }
         }
@@ -200,7 +204,11 @@ pub async fn build_test_mint(config: &TestMintConfig) -> Result<Mint> {
 
 /// Build the axum router for the standalone test mint.
 pub async fn build_router(mint: Arc<Mint>) -> Result<Router> {
-    create_mint_router(mint, vec![PaymentMethod::Known(KnownMethod::Bolt11).to_string()]).await
+    create_mint_router(
+        mint,
+        vec![PaymentMethod::Known(KnownMethod::Bolt11).to_string()],
+    )
+    .await
 }
 
 /// Serve the standalone test mint until a shutdown signal is received.
@@ -220,7 +228,10 @@ pub async fn serve_mint_with_shutdown(
     );
     let listener = tokio::net::TcpListener::bind(socket_addr).await?;
 
-    tracing::info!("Standalone test mint listening on {}", listener.local_addr()?);
+    tracing::info!(
+        "Standalone test mint listening on {}",
+        listener.local_addr()?
+    );
 
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal)

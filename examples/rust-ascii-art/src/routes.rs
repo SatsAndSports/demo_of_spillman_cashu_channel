@@ -236,7 +236,9 @@ async fn preflight_ascii(
         .bridge
         .verify_payment_covers_amount_due_via_json(&payment_json, &context.to_string())
     {
-        Ok(amount_due) => Json(serde_json::json!({ "ok": true, "amount_due": amount_due })).into_response(),
+        Ok(amount_due) => {
+            Json(serde_json::json!({ "ok": true, "amount_due": amount_due })).into_response()
+        }
         Err(e) => {
             let error_response = ClosePreparationError::from_bridge_error(e);
             let status = match error_response.status {

@@ -365,11 +365,10 @@ impl SpilmanChannelSender {
                 match restore_response {
                     Ok(response) if !response.signatures.is_empty() => {
                         // Success! Unblind the signature to get the proof
-                        let blind_signature = response
-                            .signatures
-                            .into_iter()
-                            .next()
-                            .ok_or_else(|| anyhow::anyhow!("mint restore response had no signatures"))?;
+                        let blind_signature =
+                            response.signatures.into_iter().next().ok_or_else(|| {
+                                anyhow::anyhow!("mint restore response had no signatures")
+                            })?;
 
                         let mut proofs = cashu::dhke::construct_proofs(
                             vec![blind_signature],
@@ -377,9 +376,9 @@ impl SpilmanChannelSender {
                             vec![det_output.secret.clone()],
                             &params.keyset_info.active_keys,
                         )?;
-                        let mut proof = proofs
-                            .pop()
-                            .ok_or_else(|| anyhow::anyhow!("construct_proofs returned no proofs"))?;
+                        let mut proof = proofs.pop().ok_or_else(|| {
+                            anyhow::anyhow!("construct_proofs returned no proofs")
+                        })?;
 
                         params.attach_stage2_p2pk_e(
                             &mut proof,
@@ -413,8 +412,8 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use cashu::nuts::{CheckStateResponse, CurrencyUnit, RestoreResponse, SwapResponse};
     use crate::params::mock_keyset_info;
+    use cashu::nuts::{CheckStateResponse, CurrencyUnit, RestoreResponse, SwapResponse};
 
     struct RecordingMintConnection {
         attempted_amounts: Mutex<Vec<u64>>,

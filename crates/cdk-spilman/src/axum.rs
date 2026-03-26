@@ -69,10 +69,7 @@ where
             post(post_channel_register::<ConfigurableHost, N, String>),
         )
         .route("/{id}/status", get(get_configurable_status_handler::<N>))
-        .route(
-            "/{id}/close",
-            post(post_configurable_channel_close::<N>),
-        )
+        .route("/{id}/close", post(post_configurable_channel_close::<N>))
         .route(
             "/{id}/unilateral-close",
             post(post_configurable_unilateral_close::<N>),
@@ -192,26 +189,24 @@ where
     N: SpilmanAsyncNetworking + Send + Sync + 'static,
     C: Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static,
 {
-    let channel_id = match body.channel_id {
-        Some(id) => id,
-        None => {
-            return (
+    let channel_id =
+        match body.channel_id {
+            Some(id) => id,
+            None => return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "Bad request", "reason": "missing channel_id" })),
             )
-                .into_response()
-        }
-    };
-    let signature = match body.signature {
-        Some(s) => s,
-        None => {
-            return (
+                .into_response(),
+        };
+    let signature =
+        match body.signature {
+            Some(s) => s,
+            None => return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "Bad request", "reason": "missing signature" })),
             )
-                .into_response()
-        }
-    };
+                .into_response(),
+        };
     let params = match body.params {
         Some(p) => p,
         None => {
@@ -224,15 +219,11 @@ where
     };
     let funding_proofs = match body.funding_proofs {
         Some(p) => p,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({ "error": "Bad request", "reason": "missing funding_proofs" }),
-                ),
-            )
-                .into_response()
-        }
+        None => return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Bad request", "reason": "missing funding_proofs" })),
+        )
+            .into_response(),
     };
 
     if body.balance.unwrap_or(0) != 0 {
@@ -286,7 +277,11 @@ where
     let params: serde_json::Value = serde_json::from_str(&funding.params_json).unwrap_or_default();
     let capacity = params.get("capacity").and_then(|v| v.as_u64()).unwrap_or(0);
 
-    let balance = s.host.get_balance(&channel_id).map(|p| p.balance).unwrap_or(0);
+    let balance = s
+        .host
+        .get_balance(&channel_id)
+        .map(|p| p.balance)
+        .unwrap_or(0);
     let usage = s.host.get_usage(&channel_id).unwrap_or_default();
     let closed_data = s.host.get_closed_data(&channel_id);
     let amount_due = s.host.get_amount_due(&channel_id, None);
@@ -316,7 +311,7 @@ where
     // Specialized idempotency for ConfigurableHost
     // (We use a trick to see if H is actually ConfigurableHost)
     // Actually, we can just use the generic SpilmanHost methods.
-    
+
     if s.host.get_channel_state(&channel_id) == ChannelState::Closed {
         // We can't get the full proofs generically, but let's try to return enough for success
         return (StatusCode::OK, Json(serde_json::json!({ "success": true, "already_closed": true, "channel_id": channel_id }))).into_response();

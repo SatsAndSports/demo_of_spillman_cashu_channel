@@ -223,9 +223,7 @@ impl MintProcess {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
-        let child = cmd
-            .group_spawn()
-            .context("Failed to spawn mint process")?;
+        let child = cmd.group_spawn().context("Failed to spawn mint process")?;
 
         let mint = Self {
             child,
@@ -386,7 +384,9 @@ impl ServerProcess {
             .status()
             .context("Failed to run npm link cdk-spilman-kit for TypeScript demo")?;
         if !status.success() {
-            return Err(anyhow!("npm link cdk-spilman-kit failed for TypeScript demo"));
+            return Err(anyhow!(
+                "npm link cdk-spilman-kit failed for TypeScript demo"
+            ));
         }
 
         Command::new("npx")

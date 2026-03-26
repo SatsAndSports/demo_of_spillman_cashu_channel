@@ -41,10 +41,7 @@ mod channel_params {
         let ctx = TestContext::new().await?;
 
         let pubkey = &ctx.server_params.receiver_pubkey;
-        assert!(
-            pubkey.len() == 66,
-            "Pubkey should be 66 chars (compressed)"
-        );
+        assert!(pubkey.len() == 66, "Pubkey should be 66 chars (compressed)");
         assert!(
             pubkey.starts_with("02") || pubkey.starts_with("03"),
             "Pubkey should start with 02 or 03"
@@ -64,7 +61,10 @@ mod channel_params {
             .pricing
             .get("sat")
             .expect("sat pricing required");
-        assert!(!sat_pricing.variables.is_empty(), "sat should have pricing variables");
+        assert!(
+            !sat_pricing.variables.is_empty(),
+            "sat should have pricing variables"
+        );
         assert!(sat_pricing.min_capacity > 0);
 
         // Check msat pricing (CDK dev mint has msat keysets)
@@ -139,7 +139,10 @@ mod channel_status {
         let response = ctx.client.fetch_channel_status(&fake_channel_id).await?;
 
         assert_eq!(response.http_status, 404);
-        println!("GET /channel/{}... returned 404 as expected", &fake_channel_id[..8]);
+        println!(
+            "GET /channel/{}... returned 404 as expected",
+            &fake_channel_id[..8]
+        );
         Ok(())
     }
 }
@@ -165,7 +168,10 @@ mod channel_register {
         assert_eq!(result["channel_id"], channel.channel_id);
         assert_eq!(result["capacity"], 100);
         assert_eq!(result["already_known"], false);
-        println!("Registered: capacity={}, already_known={}", result["capacity"], result["already_known"]);
+        println!(
+            "Registered: capacity={}, already_known={}",
+            result["capacity"], result["already_known"]
+        );
         Ok(())
     }
 
@@ -216,7 +222,10 @@ mod channel_register {
 
         assert_eq!(status, 400);
         assert_eq!(result["error"], "Bad request");
-        assert!(result["reason"].as_str().unwrap_or("").contains("balance=0"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("balance=0"));
         println!("Rejected non-zero balance: {}", result["reason"]);
         Ok(())
     }
@@ -239,7 +248,10 @@ mod channel_register {
 
         assert_eq!(status, 402);
         assert_eq!(result["success"], false);
-        assert!(result["reason"].as_str().unwrap_or("").contains("signature"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("signature"));
         println!("Rejected invalid signature");
         Ok(())
     }
@@ -318,7 +330,7 @@ mod minting {
 mod verification {
     use super::*;
     use cashu::util::hex;
-    use cdk_spilman::{verify_valid_channel, ChannelParameters, parse_keyset_info_from_json};
+    use cdk_spilman::{parse_keyset_info_from_json, verify_valid_channel, ChannelParameters};
 
     #[tokio::test]
     async fn detects_tampered_keyset_keys() -> Result<()> {
@@ -333,12 +345,16 @@ mod verification {
         let original_key = keyset_json["keys"]["1"].as_str().unwrap().to_string();
         let different_pubkey = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
         keyset_json["keys"]["1"] = serde_json::Value::String(different_pubkey.to_string());
-        println!("Tampered key: {}... -> {}...", &original_key[..16], &different_pubkey[..16]);
+        println!(
+            "Tampered key: {}... -> {}...",
+            &original_key[..16],
+            &different_pubkey[..16]
+        );
 
         // Parse tampered keyset
         let tampered_json = serde_json::to_string(&keyset_json)?;
-        let tampered_keyset = parse_keyset_info_from_json(&tampered_json)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let tampered_keyset =
+            parse_keyset_info_from_json(&tampered_json).map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Build params with tampered keyset
         let params = ChannelParameters::from_json_with_channel_secret(
@@ -350,7 +366,8 @@ mod verification {
                 arr.copy_from_slice(&bytes);
                 arr
             },
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let result = verify_valid_channel(&channel.proofs, &params);
 
@@ -376,7 +393,7 @@ mod verification {
             let e_hex = dleq.e.to_secret_hex();
             let last_char = e_hex.chars().last().unwrap();
             let new_char = if last_char == 'a' { 'b' } else { 'a' };
-            let new_e_hex = format!("{}{}", &e_hex[..e_hex.len()-1], new_char);
+            let new_e_hex = format!("{}{}", &e_hex[..e_hex.len() - 1], new_char);
             dleq.e = cashu::nuts::SecretKey::from_hex(&new_e_hex)?;
         }
 
@@ -392,13 +409,21 @@ mod verification {
                 arr.copy_from_slice(&bytes);
                 arr
             },
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let result = verify_valid_channel(&tampered_proofs, &params);
 
         assert!(!result.valid);
-        let error_types: Vec<_> = result.errors.iter()
-            .map(|e| serde_json::to_value(e).unwrap()["type"].as_str().unwrap().to_string())
+        let error_types: Vec<_> = result
+            .errors
+            .iter()
+            .map(|e| {
+                serde_json::to_value(e).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
         assert!(error_types.contains(&"InvalidDleq".to_string()));
         println!("Tampered DLEQ detected");
@@ -419,8 +444,8 @@ mod verification {
         keyset_json["keys"]["1"] = serde_json::Value::String(different_pubkey.to_string());
 
         let tampered_json = serde_json::to_string(&keyset_json)?;
-        let tampered_keyset = parse_keyset_info_from_json(&tampered_json)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let tampered_keyset =
+            parse_keyset_info_from_json(&tampered_json).map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Error 2: Tamper with DLEQ
         let mut tampered_proofs = channel.proofs.clone();
@@ -428,7 +453,7 @@ mod verification {
             let e_hex = dleq.e.to_secret_hex();
             let last_char = e_hex.chars().last().unwrap();
             let new_char = if last_char == 'a' { 'b' } else { 'a' };
-            let new_e_hex = format!("{}{}", &e_hex[..e_hex.len()-1], new_char);
+            let new_e_hex = format!("{}{}", &e_hex[..e_hex.len() - 1], new_char);
             dleq.e = cashu::nuts::SecretKey::from_hex(&new_e_hex)?;
         }
 
@@ -441,13 +466,21 @@ mod verification {
                 arr.copy_from_slice(&bytes);
                 arr
             },
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let result = verify_valid_channel(&tampered_proofs, &params);
 
         assert!(!result.valid);
-        let error_types: Vec<_> = result.errors.iter()
-            .map(|e| serde_json::to_value(e).unwrap()["type"].as_str().unwrap().to_string())
+        let error_types: Vec<_> = result
+            .errors
+            .iter()
+            .map(|e| {
+                serde_json::to_value(e).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect();
 
         assert!(error_types.contains(&"InvalidKeysetId".to_string()));
@@ -473,7 +506,12 @@ mod payment {
 
         let message = "Hi";
         let expected_cost = message.len() as u64 * ctx.get_price_per_char("sat");
-        println!("Message: \"{}\" ({} chars, cost={} sats)", message, message.len(), expected_cost);
+        println!(
+            "Message: \"{}\" ({} chars, cost={} sats)",
+            message,
+            message.len(),
+            expected_cost
+        );
 
         let payment_header = create_payment_header(&channel, expected_cost)?;
         let response = ctx.client.fetch_ascii_art(&payment_header, message).await?;
@@ -490,7 +528,10 @@ mod payment {
         assert_eq!(body.balance, expected_cost);
         assert_eq!(body.capacity, channel.capacity);
         assert!(!body.closed);
-        println!("Status verified: amount_due={}, balance={}", body.amount_due, body.balance);
+        println!(
+            "Status verified: amount_due={}, balance={}",
+            body.amount_due, body.balance
+        );
         Ok(())
     }
 
@@ -500,10 +541,12 @@ mod payment {
 
         let capacity = ctx.get_min_capacity("msat");
         let options = MintFundedChannelOptions {
-            maximum_amount: Some(8192),  // Larger to keep proof count manageable
+            maximum_amount: Some(8192), // Larger to keep proof count manageable
             ..Default::default()
         };
-        let channel = ctx.mint_channel_with_options("msat", capacity, options).await?;
+        let channel = ctx
+            .mint_channel_with_options("msat", capacity, options)
+            .await?;
         ctx.client.register_channel(&channel).await?;
 
         let message = "Hi";
@@ -538,7 +581,10 @@ mod payment {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        assert!(result["reason"].as_str().unwrap_or("").contains("capacity too small"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("capacity too small"));
         println!("Rejected: {}", result["reason"]);
         Ok(())
     }
@@ -550,8 +596,8 @@ mod payment {
         let channel = ctx.mint_channel("sat", 100).await?;
         ctx.client.register_channel(&channel).await?;
 
-        let message = "Hi";  // 2 chars = 2 sats
-        let balance = 10;    // Pre-pay 10 sats
+        let message = "Hi"; // 2 chars = 2 sats
+        let balance = 10; // Pre-pay 10 sats
         let expected_cost = message.len() as u64 * ctx.get_price_per_char("sat");
 
         let payment_header = create_payment_header(&channel, balance)?;
@@ -560,14 +606,18 @@ mod payment {
         assert_eq!(response.status, 200);
 
         // Check payment info (either in header or body.payment)
-        let payment_info = response.channel_header
+        let payment_info = response
+            .channel_header
             .or_else(|| response.body.get("payment").cloned())
             .expect("Payment info expected");
 
         assert_eq!(payment_info["balance"], balance);
         assert_eq!(payment_info["amount_due"], expected_cost);
         assert!(payment_info["balance"].as_u64() > payment_info["amount_due"].as_u64());
-        println!("Pre-payment: balance={} amount_due={}", balance, expected_cost);
+        println!(
+            "Pre-payment: balance={} amount_due={}",
+            balance, expected_cost
+        );
         Ok(())
     }
 
@@ -596,7 +646,10 @@ mod payment {
         // Request without payment
         let response = ctx.client.fetch_ascii_art_no_header("Hello").await?;
         assert_eq!(response.status, 402);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("Missing X-Cashu-Channel"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Missing X-Cashu-Channel"));
         println!("Got 402 without payment");
 
         // Now with payment
@@ -635,7 +688,8 @@ mod validation {
             &channel.alice.secret_hex,
             &serde_json::to_string(&channel.proofs)?,
             1,
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
         let balance_update: serde_json::Value = serde_json::from_str(&balance_update_json)?;
 
         // Send with balance=2 but signature for balance=1
@@ -649,7 +703,10 @@ mod validation {
         let response = ctx.client.fetch_ascii_art(&header, "Hi").await?;
 
         assert_eq!(response.status, 402);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("invalid signature"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("invalid signature"));
         println!("Invalid signature rejected");
         Ok(())
     }
@@ -676,7 +733,10 @@ mod validation {
         let response = ctx.client.fetch_ascii_art(&header, "Hi").await?;
 
         assert_eq!(response.status, 402);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("balance exceeds capacity"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("balance exceeds capacity"));
         println!("Balance exceeds capacity rejected");
         Ok(())
     }
@@ -697,7 +757,10 @@ mod validation {
         let response = ctx.client.fetch_ascii_art(&header2, "Hi").await?;
 
         assert_eq!(response.status, 402);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("insufficient balance"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("insufficient balance"));
         println!("Insufficient balance rejected");
         Ok(())
     }
@@ -710,12 +773,17 @@ mod validation {
 
         // Tamper with DLEQ
         let mut tampered_proofs: serde_json::Value = serde_json::to_value(&channel.proofs)?;
-        let original_e = tampered_proofs[0]["dleq"]["e"].as_str().unwrap().to_string();
+        let original_e = tampered_proofs[0]["dleq"]["e"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let last_char = original_e.chars().last().unwrap();
         let new_char = if last_char == 'a' { 'b' } else { 'a' };
-        tampered_proofs[0]["dleq"]["e"] = serde_json::Value::String(
-            format!("{}{}", &original_e[..original_e.len()-1], new_char)
-        );
+        tampered_proofs[0]["dleq"]["e"] = serde_json::Value::String(format!(
+            "{}{}",
+            &original_e[..original_e.len() - 1],
+            new_char
+        ));
 
         // Create balance update with tampered proofs
         let balance_update_json = create_signed_balance_update(
@@ -724,7 +792,8 @@ mod validation {
             &channel.alice.secret_hex,
             &serde_json::to_string(&tampered_proofs)?,
             0,
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
         let balance_update: serde_json::Value = serde_json::from_str(&balance_update_json)?;
 
         let body = json!({
@@ -738,11 +807,16 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        let has_dleq_error = result.get("validation_errors")
+        let has_dleq_error = result
+            .get("validation_errors")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().any(|e| e["type"] == "InvalidDleq"))
             .unwrap_or(false);
-        let reason_has_dleq = result["reason"].as_str().unwrap_or("").to_lowercase().contains("dleq");
+        let reason_has_dleq = result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("dleq");
         assert!(has_dleq_error || reason_has_dleq);
         println!("Tampered DLEQ rejected");
         Ok(())
@@ -752,7 +826,7 @@ mod validation {
     async fn returns_402_when_expiry_too_soon() -> Result<()> {
         let ctx = TestContext::new().await?;
 
-        let too_soon_expiry = now_seconds() + 60;  // Only 60 seconds
+        let too_soon_expiry = now_seconds() + 60; // Only 60 seconds
         println!("Using expiry_timestamp {} (60s from now)", too_soon_expiry);
 
         let options = MintFundedChannelOptions {
@@ -767,7 +841,8 @@ mod validation {
             &channel.alice.secret_hex,
             &serde_json::to_string(&channel.proofs)?,
             0,
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
         let balance_update: serde_json::Value = serde_json::from_str(&balance_update_json)?;
 
         let body = json!({
@@ -781,7 +856,10 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        assert!(result["reason"].as_str().unwrap_or("").contains("expiry too soon"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("expiry too soon"));
         println!("Expiry too soon rejected");
         Ok(())
     }
@@ -793,7 +871,10 @@ mod validation {
         let response = ctx.client.fetch_ascii_art_no_header("Hello").await?;
 
         assert_eq!(response.status, 402);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("Missing X-Cashu-Channel"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Missing X-Cashu-Channel"));
         println!("Missing header rejected");
         Ok(())
     }
@@ -802,10 +883,16 @@ mod validation {
     async fn returns_400_for_invalid_base64() -> Result<()> {
         let ctx = TestContext::new().await?;
 
-        let response = ctx.client.fetch_ascii_art_raw_header("not-valid-base64!!!", "Hello").await?;
+        let response = ctx
+            .client
+            .fetch_ascii_art_raw_header("not-valid-base64!!!", "Hello")
+            .await?;
 
         assert_eq!(response.status, 400);
-        assert!(response.body["reason"].as_str().unwrap_or("").contains("invalid base64"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("invalid base64"));
         println!("Invalid base64 rejected");
         Ok(())
     }
@@ -818,7 +905,7 @@ mod validation {
 
         // Tamper proof amount
         let mut tampered_proofs: serde_json::Value = serde_json::to_value(&channel.proofs)?;
-        tampered_proofs[0]["amount"] = serde_json::json!(3);  // Not power of 2
+        tampered_proofs[0]["amount"] = serde_json::json!(3); // Not power of 2
 
         let body = json!({
             "channel_id": channel.channel_id,
@@ -831,11 +918,16 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        let has_missing_key = result.get("validation_errors")
+        let has_missing_key = result
+            .get("validation_errors")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().any(|e| e["type"] == "MissingMintKey"))
             .unwrap_or(false);
-        let reason_has_missing = result["reason"].as_str().unwrap_or("").to_lowercase().contains("missing");
+        let reason_has_missing = result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("missing");
         assert!(has_missing_key || reason_has_missing);
         println!("MissingMintKey rejected");
         Ok(())
@@ -853,7 +945,8 @@ mod validation {
             &channel.alice.secret_hex,
             &serde_json::to_string(&channel.proofs)?,
             0,
-        ).map_err(|e| anyhow::anyhow!("{}", e))?;
+        )
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
         let balance_update: serde_json::Value = serde_json::from_str(&balance_update_json)?;
 
         // Tamper channel_id
@@ -875,7 +968,10 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        assert!(result["reason"].as_str().unwrap_or("").contains("channel_id mismatch"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("channel_id mismatch"));
         println!("channel_id mismatch rejected");
         Ok(())
     }
@@ -901,7 +997,10 @@ mod validation {
         let (status, result) = ctx.client.register_channel_raw(&body).await?;
 
         assert_eq!(status, 402);
-        assert!(result["reason"].as_str().unwrap_or("").contains("mint or keyset not acceptable"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("mint or keyset not acceptable"));
         println!("Unknown keyset rejected");
         Ok(())
     }
@@ -911,14 +1010,46 @@ mod validation {
         let ctx = TestContext::new().await?;
 
         let test_cases = vec![
-            ("missing channel_id", json!({"balance": 1, "signature": "def456"}), "channel_id"),
-            ("empty channel_id", json!({"channel_id": "", "balance": 1, "signature": "def456"}), "channel_id"),
-            ("non-string channel_id", json!({"channel_id": 12345, "balance": 1, "signature": "def456"}), "integer"),
-            ("missing balance", json!({"channel_id": "abc123", "signature": "def456"}), "balance"),
-            ("non-integer balance", json!({"channel_id": "abc123", "balance": 1.5, "signature": "def456"}), "u64"),
-            ("missing signature", json!({"channel_id": "abc123", "balance": 1}), "signature"),
-            ("empty signature", json!({"channel_id": "abc123", "balance": 1, "signature": ""}), "signature"),
-            ("non-string signature", json!({"channel_id": "abc123", "balance": 1, "signature": 12345}), "string"),
+            (
+                "missing channel_id",
+                json!({"balance": 1, "signature": "def456"}),
+                "channel_id",
+            ),
+            (
+                "empty channel_id",
+                json!({"channel_id": "", "balance": 1, "signature": "def456"}),
+                "channel_id",
+            ),
+            (
+                "non-string channel_id",
+                json!({"channel_id": 12345, "balance": 1, "signature": "def456"}),
+                "integer",
+            ),
+            (
+                "missing balance",
+                json!({"channel_id": "abc123", "signature": "def456"}),
+                "balance",
+            ),
+            (
+                "non-integer balance",
+                json!({"channel_id": "abc123", "balance": 1.5, "signature": "def456"}),
+                "u64",
+            ),
+            (
+                "missing signature",
+                json!({"channel_id": "abc123", "balance": 1}),
+                "signature",
+            ),
+            (
+                "empty signature",
+                json!({"channel_id": "abc123", "balance": 1, "signature": ""}),
+                "signature",
+            ),
+            (
+                "non-string signature",
+                json!({"channel_id": "abc123", "balance": 1, "signature": 12345}),
+                "string",
+            ),
         ];
 
         for (name, payment, expected_error) in test_cases {
@@ -931,7 +1062,10 @@ mod validation {
                 name,
                 response.status
             );
-            let reason = response.body["reason"].as_str().unwrap_or("").to_lowercase();
+            let reason = response.body["reason"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
             let expected = expected_error.to_lowercase();
             assert!(
                 reason.contains(&expected),
@@ -951,9 +1085,12 @@ mod validation {
 
         // Get the max_amount_per_output for usd from server params
         let server_params = ctx.client.fetch_channel_params().await?;
-        let usd_pricing = server_params.pricing.get("usd")
+        let usd_pricing = server_params
+            .pricing
+            .get("usd")
             .expect("usd pricing should exist");
-        let max_allowed = usd_pricing.max_amount_per_output
+        let max_allowed = usd_pricing
+            .max_amount_per_output
             .expect("usd should have maxAmountPerOutput set");
 
         println!("usd maxAmountPerOutput policy: {}", max_allowed);
@@ -984,8 +1121,10 @@ mod validation {
             "Expected error about max_amount, got: {}",
             reason
         );
-        println!("Correctly rejected channel with maximum_amount={} (policy max={}): {}", 
-            exceeding_amount, max_allowed, reason);
+        println!(
+            "Correctly rejected channel with maximum_amount={} (policy max={}): {}",
+            exceeding_amount, max_allowed, reason
+        );
         Ok(())
     }
 
@@ -995,18 +1134,23 @@ mod validation {
 
         // Get max_amount_per_output for usd (should be 64)
         let server_params = ctx.client.fetch_channel_params().await?;
-        let usd_pricing = server_params.pricing.get("usd")
+        let usd_pricing = server_params
+            .pricing
+            .get("usd")
             .expect("usd pricing should exist");
-        let max_amount = usd_pricing.max_amount_per_output
+        let max_amount = usd_pricing
+            .max_amount_per_output
             .expect("usd should have maxAmountPerOutput set");
 
         // Create large 1000 usd channel with the policy's max_amount
         let capacity = 1000u64;
         let options = MintFundedChannelOptions {
-            maximum_amount: Some(max_amount),  // Use the policy limit (64)
+            maximum_amount: Some(max_amount), // Use the policy limit (64)
             ..Default::default()
         };
-        let channel = ctx.mint_channel_with_options("usd", capacity, options).await?;
+        let channel = ctx
+            .mint_channel_with_options("usd", capacity, options)
+            .await?;
 
         // With capacity=1000 and max_amount=64, we need at least ceil(1000/64) = 16 outputs
         // (actual count may be higher due to fee structure and amount decomposition)
@@ -1020,7 +1164,8 @@ mod validation {
         assert!(
             channel.output_count >= min_expected_outputs,
             "Expected at least {} outputs, got {}",
-            min_expected_outputs, channel.output_count
+            min_expected_outputs,
+            channel.output_count
         );
 
         // Verify channel is functional by registering
@@ -1029,7 +1174,10 @@ mod validation {
         let status_body = status_resp.body.expect("Status body should exist");
         assert_eq!(status_body.capacity, capacity);
 
-        println!("Large channel registered successfully with {} outputs", channel.output_count);
+        println!(
+            "Large channel registered successfully with {} outputs",
+            channel.output_count
+        );
         Ok(())
     }
 }
@@ -1136,7 +1284,9 @@ mod closing {
         assert_eq!(response.body["channel_id"], channel.channel_id);
         assert!(response.body["total_value"].as_u64().unwrap() >= channel.capacity);
         let sender_proofs = match response.body["sender_proofs"].as_str() {
-            Some(raw) => serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::json!([])),
+            Some(raw) => {
+                serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::json!([]))
+            }
             None => response.body["sender_proofs"].clone(),
         };
         assert!(!sender_proofs.as_array().unwrap().is_empty());
@@ -1144,7 +1294,8 @@ mod closing {
 
         // Sender gets all funds back
         let sender_sum: u64 = sender_proofs
-            .as_array().unwrap()
+            .as_array()
+            .unwrap()
             .iter()
             .map(|p| p["amount"].as_u64().unwrap())
             .sum();
@@ -1172,7 +1323,9 @@ mod closing {
 
         assert_eq!(response.http_status, 200);
         let sender_proofs = match response.body["sender_proofs"].as_str() {
-            Some(raw) => serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::json!([])),
+            Some(raw) => {
+                serde_json::from_str::<serde_json::Value>(raw).unwrap_or(serde_json::json!([]))
+            }
             None => response.body["sender_proofs"].clone(),
         };
         assert!(!sender_proofs.as_array().unwrap().is_empty());
@@ -1250,7 +1403,10 @@ mod closing {
         let response = ctx.client.close_channel(&channel, cost + 1).await?;
 
         assert_eq!(response.http_status, 400);
-        assert!(response.body["error"].as_str().unwrap().contains("already closed"));
+        assert!(response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("already closed"));
         println!("Different amount rejected");
         Ok(())
     }
@@ -1274,7 +1430,10 @@ mod closing {
         let response = ctx.client.fetch_ascii_art(&header2, "X").await?;
 
         assert_eq!(response.status, 410);
-        assert!(response.body["reason"].as_str().unwrap().contains("channel closed"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("channel closed"));
         println!("Payment on closed channel rejected");
         Ok(())
     }
@@ -1295,10 +1454,16 @@ mod closing {
             "signature": "invalid_signature",
         });
 
-        let response = ctx.client.close_channel_raw(&channel.channel_id, &body).await?;
+        let response = ctx
+            .client
+            .close_channel_raw(&channel.channel_id, &body)
+            .await?;
 
         assert_eq!(response.http_status, 402);
-        assert!(response.body["reason"].as_str().unwrap().contains("invalid signature"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("invalid signature"));
         println!("Invalid signature rejected");
         Ok(())
     }
@@ -1343,7 +1508,10 @@ mod closing {
         let response = ctx.client.close_channel(&channel, 0).await?;
 
         assert_eq!(response.http_status, 402);
-        assert!(response.body["reason"].as_str().unwrap().contains("balance mismatch"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("balance mismatch"));
         println!("Balance < amount_due rejected");
         Ok(())
     }
@@ -1359,7 +1527,10 @@ mod closing {
         let response = ctx.client.close_channel(&channel, 10).await?;
 
         assert_eq!(response.http_status, 402);
-        assert!(response.body["reason"].as_str().unwrap().contains("balance mismatch"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("balance mismatch"));
         println!("Nonzero balance on unused channel rejected");
         Ok(())
     }
@@ -1379,7 +1550,10 @@ mod closing {
         let response = ctx.client.close_channel(&channel, cost + 5).await?;
 
         assert_eq!(response.http_status, 402);
-        assert!(response.body["reason"].as_str().unwrap().contains("balance mismatch"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("balance mismatch"));
         println!("Balance > amount_due rejected");
         Ok(())
     }
@@ -1428,8 +1602,10 @@ mod unilateral_closing {
 
         assert_eq!(response.http_status, 200);
         assert!(response.body["earnedBeforeStage2Fees"].as_u64().unwrap() >= overpayment);
-        println!("Server earned {} (overpayment={})", 
-            response.body["earnedBeforeStage2Fees"], overpayment);
+        println!(
+            "Server earned {} (overpayment={})",
+            response.body["earnedBeforeStage2Fees"], overpayment
+        );
         Ok(())
     }
 
@@ -1536,7 +1712,10 @@ mod unilateral_closing {
         let response = ctx.client.fetch_ascii_art(&header2, "X").await?;
 
         assert_eq!(response.status, 410);
-        assert!(response.body["reason"].as_str().unwrap().contains("channel closed"));
+        assert!(response.body["reason"]
+            .as_str()
+            .unwrap()
+            .contains("channel closed"));
         println!("Payment after unilateral rejected");
         Ok(())
     }
