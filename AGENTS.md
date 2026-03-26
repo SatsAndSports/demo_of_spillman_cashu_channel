@@ -19,7 +19,7 @@ cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
 # Test suites
 make test-suite
-make test-full
+make test-all
 
 # Common delegated top-level targets
 make test-unit-spilman

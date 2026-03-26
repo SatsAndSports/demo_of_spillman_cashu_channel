@@ -90,7 +90,7 @@ The WASM bindings are used by both browser clients and Node.js servers. The root
 ```bash
 # Build and test the workspace
 make test-suite
-make test-full
+make test-all
 ```
 
 ### Fast Development Builds
@@ -121,8 +121,8 @@ make test-demo-ts         # Uses WASM_DEV=1 internally
 # Rust-side suite
 make test-suite
 
-# Full suite (includes live mint integration)
-make test-full
+# All tests (includes live mint integration)
+make test-all
 ```
 
 ### Server Integration Tests (Rust)
