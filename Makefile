@@ -233,6 +233,10 @@ test-standalone-integration-ts:
 test-standalone-demo-ts:
 	$(STANDALONE_MINT_RUNNER) scripts/ts-parallel-demo.sh
 
+# NUT-00 error code compliance test (requires mint via MINT_URL or auto-spawned)
+test-standalone-nut00-errors:
+	$(STANDALONE_MINT_RUNNER) cargo test -p cdk-spilman-interop-tests --manifest-path Cargo.toml test_mint_swap_error_returns_nut00_codes -- --ignored --nocapture
+
 # Standalone server integration tests (shared Rust harness against each server type)
 test-standalone-server-python: test-standalone-python
 	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
@@ -246,7 +250,7 @@ test-standalone-server-rust: test-standalone-rust-demo
 test-standalone-server-ts: test-standalone-integration-ts
 	SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-nut00-errors test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE TESTS PASSED"

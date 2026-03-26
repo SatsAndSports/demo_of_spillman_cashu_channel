@@ -190,6 +190,25 @@ impl SpilmanAsyncNetworking for ReqwestNetworking {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+
+            // Try to parse the body as a NUT-00 error: {"detail": "...", "code": ...}
+            // Mints may also include an "error" field (e.g. nutmix).
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) {
+                let code = parsed.get("code").and_then(|v| v.as_u64());
+                let detail = parsed
+                    .get("detail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                tracing::warn!(
+                    %status,
+                    nut00_code = ?code,
+                    detail,
+                    "Mint rejected swap (NUT-00 error)"
+                );
+                // Return the raw JSON body so callers can deserialize it.
+                return Err(body);
+            }
+
             return Err(format!("Swap failed: {status} - {body}"));
         }
 

@@ -16,6 +16,7 @@ cdk-sqlite = { git = "https://github.com/cashubtc/cdk.git", rev = "63866dc6d7da9
 cdk-spilman = { path = "../cdk-spilman", features = ["wallet"] }
 hex = "0.4"
 rand = "0.9.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 

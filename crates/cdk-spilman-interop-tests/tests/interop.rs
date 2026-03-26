@@ -1968,6 +1968,8 @@ mod retry_tests {
         pub swap_call_count: Cell<u32>,
         pub refresh_count: Cell<u32>,
         pub closed_data: RefCell<Option<(u64, u64, String, String)>>,
+        /// The NUT-00 error JSON from the most recent failed swap, if any.
+        pub last_swap_error: RefCell<Option<String>>,
     }
 
     impl SpilmanHost<String> for RetryTestHost {
@@ -2126,7 +2128,22 @@ mod retry_tests {
                 tokio::runtime::Handle::current()
                     .block_on(async { mint.process_swap_request(swap_request).await })
             })
-            .map_err(|e| serde_json::json!({"detail": e.to_string(), "code": 0}).to_string())?;
+            .map_err(|e| {
+                // Convert the cdk Error to a NUT-00 ErrorResponse so the
+                // error string carries the proper {code, detail} JSON,
+                // matching what a real mint HTTP endpoint would return.
+                let error_response = cdk_common::error::ErrorResponse::from(e);
+                let error_json =
+                    serde_json::to_string(&error_response).unwrap_or_else(|ser_err| {
+                        format!("{{\"detail\":\"{}\",\"code\":0}}", ser_err)
+                    });
+                eprintln!(
+                    "[RetryTestHost] mint rejected swap (NUT-00): {}",
+                    error_json
+                );
+                *self.last_swap_error.borrow_mut() = Some(error_json.clone());
+                error_json
+            })?;
             serde_json::to_string(&response)
                 .map_err(|e| format!("Failed to serialize swap response: {}", e))
         }
@@ -2306,6 +2323,7 @@ mod retry_tests {
             swap_call_count: Cell::new(0),
             refresh_count: Cell::new(0),
             closed_data: RefCell::new(None),
+            last_swap_error: RefCell::new(None),
         };
 
         let bridge = SpilmanBridge::new(host);
@@ -2366,6 +2384,31 @@ async fn test_cooperative_close_full_retry_with_real_mint() -> anyhow::Result<()
     assert!(success.total_value > 0);
     assert!(success.receiver_sum > 0);
     let _ = sender;
+
+    // Verify the first swap attempt produced a proper NUT-00 error with a
+    // keyset-related error code (12001 = keyset not known, 12002 = keyset
+    // inactive).  Before this change, the error was always `"code": 0`.
+    let last_err_json = s.bridge.host().last_swap_error.borrow();
+    let last_err_json = last_err_json
+        .as_ref()
+        .expect("first swap should have recorded a NUT-00 error");
+    let err_value: serde_json::Value =
+        serde_json::from_str(last_err_json).expect("error should be valid JSON");
+    let nut00_code = err_value
+        .get("code")
+        .and_then(|v| v.as_u64())
+        .expect("NUT-00 error should contain a 'code' field");
+    eprintln!(
+        "[test] first swap NUT-00 error: code={}, detail={:?}",
+        nut00_code,
+        err_value.get("detail").and_then(|v| v.as_str())
+    );
+    assert!(
+        nut00_code == 12001 || nut00_code == 12002,
+        "Expected NUT-00 keyset error code (12001 or 12002), got {}",
+        nut00_code
+    );
+
     Ok(())
 }
 
@@ -2409,5 +2452,146 @@ async fn test_unilateral_close_full_retry_with_real_mint() -> anyhow::Result<()>
     assert!(success.total_value > 0);
     assert!(success.receiver_sum > 0);
     let _ = sender;
+    Ok(())
+}
+
+/// Verify that a real mint returns well-formed NUT-00 errors (with the
+/// correct `code` field) when a swap request is invalid.
+///
+/// Uses `MINT_URL` from the environment, falling back to
+/// `http://localhost:3338`.  The test is `#[ignore]`-d because it requires
+/// a running HTTP mint — run it via `scripts/run_with_mint.sh` or the
+/// `test-standalone-nut00-errors` Makefile target.
+///
+/// ```bash
+/// # Auto-spawn the test mint:
+/// scripts/run_with_mint.sh cargo test -p cdk-spilman-interop-tests \
+///     test_mint_swap_error_returns_nut00_codes -- --ignored --nocapture
+///
+/// # Or point at an external mint:
+/// MINT_URL=http://localhost:3338 cargo test -p cdk-spilman-interop-tests \
+///     test_mint_swap_error_returns_nut00_codes -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore]
+async fn test_mint_swap_error_returns_nut00_codes() -> anyhow::Result<()> {
+    let mint_url =
+        std::env::var("MINT_URL").unwrap_or_else(|_| "http://localhost:3338".to_string());
+    eprintln!("[nut00] testing against mint at {mint_url}");
+
+    // 1. Fetch the active sat keyset ID from the mint.
+    let client = reqwest::Client::new();
+    let keysets_resp: serde_json::Value = client
+        .get(format!("{mint_url}/v1/keysets"))
+        .send()
+        .await?
+        .json()
+        .await?;
+    let active_keyset_id = keysets_resp["keysets"]
+        .as_array()
+        .and_then(|ks| {
+            ks.iter().find(|k| {
+                k["unit"].as_str() == Some("sat") && k["active"].as_bool() == Some(true)
+            })
+        })
+        .and_then(|k| k["id"].as_str())
+        .expect("mint should have an active sat keyset")
+        .to_string();
+
+    // 2. Send a swap with the correct keyset ID but a fabricated proof.
+    //    The mint should reject it with NUT-00 code 10001 (proof verification
+    //    failed).
+    let bad_swap = serde_json::json!({
+        "inputs": [{
+            "amount": 1,
+            "id": active_keyset_id,
+            "secret": "407915bc212be61a77e3e6d2aeb4c727980bda51cd06a6afc29e2861768a7837",
+            "C": "020000000000000000000000000000000000000000000000000000000000000001"
+        }],
+        "outputs": [{
+            "amount": 1,
+            "id": active_keyset_id,
+            "B_": "020000000000000000000000000000000000000000000000000000000000000001"
+        }]
+    });
+
+    let resp = client
+        .post(format!("{mint_url}/v1/swap"))
+        .header("Content-Type", "application/json")
+        .json(&bad_swap)
+        .send()
+        .await?;
+
+    let status = resp.status();
+    assert!(
+        status.is_client_error(),
+        "Expected 4xx from mint, got {status}"
+    );
+
+    let body: serde_json::Value = resp.json().await?;
+    eprintln!("[nut00] bad-proof swap error response: {body}");
+
+    let code = body
+        .get("code")
+        .and_then(|v| v.as_u64())
+        .expect("NUT-00 response should contain a 'code' field");
+    eprintln!("[nut00] NUT-00 error code: {code}");
+
+    // 10001 = "Proof verification failed" per the NUT error codes spec.
+    assert_eq!(
+        code, 10001,
+        "Expected NUT-00 code 10001 (proof verification failed), got {code}"
+    );
+
+    // 3. Now try with a completely fake keyset ID.  The mint should return
+    //    12001 (keyset not known) — or a generic error if it doesn't
+    //    recognise the keyset before checking proofs.
+    let bad_keyset_swap = serde_json::json!({
+        "inputs": [{
+            "amount": 1,
+            "id": "00deadbeef000000",
+            "secret": "407915bc212be61a77e3e6d2aeb4c727980bda51cd06a6afc29e2861768a7837",
+            "C": "020000000000000000000000000000000000000000000000000000000000000001"
+        }],
+        "outputs": [{
+            "amount": 1,
+            "id": "00deadbeef000000",
+            "B_": "020000000000000000000000000000000000000000000000000000000000000001"
+        }]
+    });
+
+    let resp2 = client
+        .post(format!("{mint_url}/v1/swap"))
+        .header("Content-Type", "application/json")
+        .json(&bad_keyset_swap)
+        .send()
+        .await?;
+
+    assert!(
+        resp2.status().is_client_error(),
+        "Expected 4xx from mint for unknown keyset, got {}",
+        resp2.status()
+    );
+
+    let body2: serde_json::Value = resp2.json().await?;
+    eprintln!("[nut00] unknown-keyset swap error response: {body2}");
+
+    let code2 = body2
+        .get("code")
+        .and_then(|v| v.as_u64())
+        .expect("NUT-00 response should contain a 'code' field");
+    eprintln!("[nut00] NUT-00 error code for unknown keyset: {code2}");
+
+    // The spec says 12001, but some mints may return a generic error.
+    // Log whatever we get — the primary goal is visibility.
+    if code2 == 12001 {
+        eprintln!("[nut00] Got expected NUT-00 code 12001 (keyset not known)");
+    } else {
+        eprintln!(
+            "[nut00] Got NUT-00 code {code2} instead of 12001 — \
+             mint may not distinguish unknown keysets at this layer"
+        );
+    }
+
     Ok(())
 }
