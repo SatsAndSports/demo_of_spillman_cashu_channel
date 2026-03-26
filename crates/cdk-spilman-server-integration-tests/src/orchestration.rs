@@ -185,7 +185,8 @@ impl MintProcess {
             .arg(test_mint_manifest());
 
         for (key, _) in env::vars() {
-            if key.starts_with("CARGO_") {
+            // Preserve CARGO_NET_OFFLINE and CARGO_HOME for containerized builds
+            if key.starts_with("CARGO_") && key != "CARGO_NET_OFFLINE" && key != "CARGO_HOME" {
                 build_cmd.env_remove(&key);
             }
         }

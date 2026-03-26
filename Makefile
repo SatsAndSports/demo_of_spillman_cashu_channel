@@ -45,6 +45,9 @@ MATURIN := $(PYTHON_VENV)/bin/maturin
 # Mint runner (auto-spawns standalone test mint if MINT_URL is not set)
 MINT_RUNNER := scripts/run_with_mint.sh
 
+# Container runtime (podman or docker)
+CONTAINER_CMD ?= podman
+
 # ===========================================================================
 # .PHONY declarations
 # ===========================================================================
@@ -60,7 +63,7 @@ MINT_RUNNER := scripts/run_with_mint.sh
 	test-unit-go test-integration-go test-integration-python test-integration-ts \
 	test-server-ts test-server-rust test-server-python test-server-go test-server-all \
 	test-demo-python test-demo-go test-demo-ts \
-	test-all \
+	test-all container-test \
 	clean clean-logs \
 	list-orphans kill-orphans
 
@@ -321,8 +324,15 @@ test-rust-only: test-unit-spilman test-server-rust
 	@echo "  ALL RUST-ONLY TESTS PASSED"
 	@echo "========================================="
 
-# All tests
+# ===========================================================================
+# Container Tests
+# ===========================================================================
 
+# Run Rust-only tests in a container (no local Rust toolchain required)
+# Use CONTAINER_CMD=docker if you prefer docker over podman
+container-test:
+	git archive $$(git stash create | grep . || echo HEAD) | $(CONTAINER_CMD) build -t spilman-test-rust -f containers/Dockerfile.test-rust-only -
+	$(CONTAINER_CMD) run --rm spilman-test-rust
 
 # ===========================================================================
 # Cleanup Targets

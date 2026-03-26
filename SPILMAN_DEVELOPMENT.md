@@ -36,6 +36,23 @@ Then run tests as usual:
 make test-rust-only
 ```
 
+## Container Builds
+
+For reproducible builds without installing Rust locally (works with both `podman` and `docker`):
+
+```bash
+# Run Rust-only tests in a container (uses podman by default)
+make container-test
+
+# Use docker instead of podman
+make container-test CONTAINER_CMD=docker
+
+# Interactive shell for debugging
+podman run --rm -it spilman-test-rust bash
+```
+
+The container build uses `git archive` to ensure layer caching is based on git state rather than filesystem timestamps, and excludes untracked files. Uncommitted changes are included in the build.
+
 ## Running a Mint
 
 The demos and tests require a Cashu mint. Choose one of:
