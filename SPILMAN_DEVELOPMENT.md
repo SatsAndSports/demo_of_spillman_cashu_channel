@@ -8,7 +8,7 @@ From the repository root:
 
 ```bash
 # Run the Spilman test suite
-make test-standalone
+make test-suite
 ```
 
 ## Native Development (Recommended for Pi)
@@ -88,9 +88,9 @@ targets that go through `scripts/run_with_mint.sh`.
 The WASM bindings are used by both browser clients and Node.js servers. The root Makefile uses sentinel-based dependency tracking for fast builds.
 
 ```bash
-# Build and test the standalone workspace
-make test-standalone
-make test-standalone-all
+# Build and test the workspace
+make test-suite
+make test-full
 ```
 
 ### Fast Development Builds
@@ -107,8 +107,8 @@ make build-wasm
 
 Test targets automatically use dev mode for speed:
 ```bash
-make test-standalone-integration-ts  # Uses WASM_DEV=1 internally
-make test-standalone-demo-ts         # Uses WASM_DEV=1 internally
+make test-integration-ts  # Uses WASM_DEV=1 internally
+make test-demo-ts         # Uses WASM_DEV=1 internally
 ```
 
 ---
@@ -118,16 +118,16 @@ make test-standalone-demo-ts         # Uses WASM_DEV=1 internally
 ### Rust Tests
 
 ```bash
-# Standalone Rust-side suite
-make test-standalone
+# Rust-side suite
+make test-suite
 
-# Standalone full suite (includes live mint integration)
-make test-standalone-all
+# Full suite (includes live mint integration)
+make test-full
 ```
 
 ### Server Integration Tests (Rust)
 
-The standalone `cdk-spilman-server-integration-tests` crate validates all four server implementations (TypeScript, Rust, Python, Go).
+The `cdk-spilman-server-integration-tests` crate validates all four server implementations (TypeScript, Rust, Python, Go).
 
 ```bash
 # Test individual servers
@@ -146,13 +146,13 @@ Tests for selective retry behavior based on NUT-00 error codes:
 
 ```bash
 # Run selective retry tests (no external mint needed)
-make test-standalone-selective-retry
+make test-selective-retry
 
 # Run all retry-related tests
 cargo test -p cdk-spilman-interop-tests retry -- --nocapture
 
 # NUT-00 compliance test against real mint (requires mint)
-make test-standalone-nut00-errors
+make test-nut00-errors
 ```
 
 These tests verify that:

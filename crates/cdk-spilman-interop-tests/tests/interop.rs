@@ -2685,7 +2685,7 @@ async fn test_unilateral_close_full_retry_with_real_mint() -> anyhow::Result<()>
 /// Uses `MINT_URL` from the environment, falling back to
 /// `http://localhost:3338`.  The test is `#[ignore]`-d because it requires
 /// a running HTTP mint — run it via `scripts/run_with_mint.sh` or the
-/// `test-standalone-nut00-errors` Makefile target.
+/// `test-nut00-errors` Makefile target.
 ///
 /// ```bash
 /// # Auto-spawn the test mint:

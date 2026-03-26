@@ -1,4 +1,4 @@
-# CDK WASM Bindings - Standalone Workspace Makefile
+# CDK WASM Bindings Makefile
 #
 # For TypeScript/JavaScript developers using this package:
 #   make build             - Build WASM using wasm-pack
@@ -12,12 +12,12 @@
 MINT_URL ?= http://localhost:3338
 PORT ?= 5001
 
-# Standalone workspace root
-STANDALONE_ROOT ?= ../..
+# Project root
+PROJECT_ROOT ?= ../..
 
 # Directories
-EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/ts-ascii-art
-KIT_DIR := $(STANDALONE_ROOT)/integration-kits/ts
+EXAMPLE_DIR := $(PROJECT_ROOT)/examples/ts-ascii-art
+KIT_DIR := $(PROJECT_ROOT)/integration-kits/ts
 WASM_OUT_DIR := $(KIT_DIR)/wasm
 
 # WASM build mode: set WASM_DEV=1 for fast dev builds (skips wasm-opt)
@@ -32,7 +32,7 @@ endif
 
 # Default target
 help:
-	@echo "CDK WASM Bindings (standalone workspace)"
+	@echo "CDK WASM Bindings"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make build             Build WASM (requires Rust + wasm-pack)"
@@ -42,9 +42,9 @@ help:
 	@echo "  make run-client        Run the example client"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  MINT_URL         Mint URL (default: $(MINT_URL))"
-	@echo "  PORT             Server port (default: $(PORT))"
-	@echo "  STANDALONE_ROOT  Standalone workspace root (default: $(STANDALONE_ROOT))"
+	@echo "  MINT_URL       Mint URL (default: $(MINT_URL))"
+	@echo "  PORT           Server port (default: $(PORT))"
+	@echo "  PROJECT_ROOT   Project root (default: $(PROJECT_ROOT))"
 
 # ============================================================================
 # Build

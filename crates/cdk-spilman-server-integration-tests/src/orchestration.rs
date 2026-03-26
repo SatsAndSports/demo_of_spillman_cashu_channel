@@ -32,7 +32,7 @@ pub fn find_available_port() -> Result<u16> {
     Ok(port)
 }
 
-/// Get the standalone workspace root directory.
+/// Get the project root directory.
 ///
 /// This crate is at `crates/cdk-spilman-server-integration-tests`,
 /// so the workspace root is two levels up from `CARGO_MANIFEST_DIR`.

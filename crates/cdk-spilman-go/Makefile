@@ -1,6 +1,6 @@
-# Spilman Go Bindings - Standalone Workspace Makefile
+# Spilman Go Bindings Makefile
 #
-# For Go developers using this package standalone:
+# For Go developers using this package:
 #   make test              - Run unit tests (uses packaged static libs)
 #   make test-integration  - Run integration tests (requires mint at MINT_URL)
 #
@@ -12,15 +12,15 @@
 MINT_URL ?= http://localhost:3338
 SERVER_URL ?= http://localhost:5001
 
-# Standalone workspace root
-STANDALONE_ROOT ?= ../..
+# Project root
+PROJECT_ROOT ?= ../..
 
 # Directories (relative to this Makefile)
 SPILMAN_PKG := ./spilman
-EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/go-ascii-art
+EXAMPLE_DIR := $(PROJECT_ROOT)/examples/go-ascii-art
 
-# Standalone workspace target dir
-STANDALONE_TARGET := ../../target
+# Project target dir
+PROJECT_TARGET := ../../target
 
 .PHONY: test test-dev test-integration test-integration-dev \
         build-lib build-lib-release \
@@ -28,10 +28,10 @@ STANDALONE_TARGET := ../../target
 
 # Default target
 help:
-	@echo "Spilman Go Bindings (standalone workspace)"
+	@echo "Spilman Go Bindings"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make test              Run unit tests (standalone, no mint required)"
+	@echo "  make test              Run unit tests (no mint required)"
 	@echo "  make test-integration  Run integration tests (requires mint at MINT_URL)"
 	@echo ""
 	@echo "Development (requires Rust/Cargo):"
@@ -44,12 +44,12 @@ help:
 	@echo "  make run-client        Run example client"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  MINT_URL    Mint URL (default: $(MINT_URL))"
-	@echo "  SERVER_URL  Server URL for client (default: $(SERVER_URL))"
-	@echo "  STANDALONE_ROOT  Standalone workspace root (default: $(STANDALONE_ROOT))"
+	@echo "  MINT_URL       Mint URL (default: $(MINT_URL))"
+	@echo "  SERVER_URL     Server URL for client (default: $(SERVER_URL))"
+	@echo "  PROJECT_ROOT   Project root (default: $(PROJECT_ROOT))"
 
 # ============================================================================
-# Unit Tests (standalone - uses packaged static libs)
+# Unit Tests (uses packaged static libs)
 # ============================================================================
 
 test:
@@ -66,23 +66,23 @@ test-integration:
 # Development (for CDK contributors)
 # ============================================================================
 
-# Build the Rust library (debug) using the standalone workspace manifest
+# Build the Rust library (debug) using the project workspace manifest
 build-lib:
 	cargo build -p cdk-spilman-go --manifest-path ../../Cargo.toml
 
 # Build the Rust library (release, stripped)
 build-lib-release:
 	cargo build -p cdk-spilman-go --manifest-path ../../Cargo.toml --release
-	strip $(STANDALONE_TARGET)/release/libcdk_spilman_go.so 2>/dev/null || \
-	strip $(STANDALONE_TARGET)/release/libcdk_spilman_go.dylib 2>/dev/null || true
+	strip $(PROJECT_TARGET)/release/libcdk_spilman_go.so 2>/dev/null || \
+	strip $(PROJECT_TARGET)/release/libcdk_spilman_go.dylib 2>/dev/null || true
 
 # Run unit tests with local debug build (for development)
 test-dev: build-lib
-	cd $(SPILMAN_PKG) && LD_LIBRARY_PATH=$(abspath $(STANDALONE_TARGET)/debug) go test -v -tags spilman_dev ./...
+	cd $(SPILMAN_PKG) && LD_LIBRARY_PATH=$(abspath $(PROJECT_TARGET)/debug) go test -v -tags spilman_dev ./...
 
 # Run integration tests with local debug build
 test-integration-dev: build-lib
-	cd $(SPILMAN_PKG) && LD_LIBRARY_PATH=$(abspath $(STANDALONE_TARGET)/debug) MINT_URL=$(MINT_URL) \
+	cd $(SPILMAN_PKG) && LD_LIBRARY_PATH=$(abspath $(PROJECT_TARGET)/debug) MINT_URL=$(MINT_URL) \
 		go test -v -tags 'spilman_dev integration' -count=1 ./...
 
 # ============================================================================

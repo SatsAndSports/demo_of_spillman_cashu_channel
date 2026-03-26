@@ -1,4 +1,4 @@
-# CDK Spilman Python Bindings - Standalone Workspace Makefile
+# CDK Spilman Python Bindings Makefile
 #
 # For Python developers using this package:
 #   make build             - Build and install using maturin
@@ -12,12 +12,12 @@
 MINT_URL ?= http://localhost:3338
 PORT ?= 5002
 
-# Standalone workspace root
-STANDALONE_ROOT ?= ../..
+# Project root
+PROJECT_ROOT ?= ../..
 
 # Directories
-EXAMPLE_DIR := $(STANDALONE_ROOT)/examples/python-ascii-art
-INTEGRATION_KIT_DIR := $(STANDALONE_ROOT)/integration-kits/python
+EXAMPLE_DIR := $(PROJECT_ROOT)/examples/python-ascii-art
+INTEGRATION_KIT_DIR := $(PROJECT_ROOT)/integration-kits/python
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
@@ -26,7 +26,7 @@ PIP := $(VENV_DIR)/bin/pip
 
 # Default target
 help:
-	@echo "CDK Spilman Python Bindings (standalone workspace)"
+	@echo "CDK Spilman Python Bindings"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make build             Build and install using maturin"
@@ -35,9 +35,9 @@ help:
 	@echo "  make run-client        Run the example client"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  MINT_URL    Mint URL (default: $(MINT_URL))"
-	@echo "  PORT        Server port (default: $(PORT))"
-	@echo "  STANDALONE_ROOT  Standalone workspace root (default: $(STANDALONE_ROOT))"
+	@echo "  MINT_URL       Mint URL (default: $(MINT_URL))"
+	@echo "  PORT           Server port (default: $(PORT))"
+	@echo "  PROJECT_ROOT   Project root (default: $(PROJECT_ROOT))"
 
 # ============================================================================
 # Build

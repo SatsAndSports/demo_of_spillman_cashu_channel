@@ -13,13 +13,13 @@ cargo build -p cdk-spilman-test-mint --manifest-path Cargo.toml
 # Auto-spawn mint for a command
 scripts/run_with_mint.sh <command...>
 
-# Standalone lint / format
+# Lint / format
 cargo fmt --manifest-path Cargo.toml --all -- --check
 cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings
 
-# Standalone suites
-make test-standalone
-make test-standalone-all
+# Test suites
+make test-suite
+make test-full
 
 # Common delegated top-level targets
 make test-unit-spilman
@@ -29,8 +29,8 @@ make build-wasm              # Release (with wasm-opt)
 WASM_DEV=1 make build-wasm   # Dev (fast, no wasm-opt)
 
 # NUT-00 error handling tests
-make test-standalone-selective-retry
-make test-standalone-nut00-errors
+make test-selective-retry
+make test-nut00-errors
 ```
 
 ## Important Paths
@@ -48,7 +48,7 @@ make test-standalone-nut00-errors
 ## Mint Infrastructure
 
 - Prefer `MINT_URL` when an external mint is available.
-- Otherwise, standalone flows auto-build and spawn `cdk-spilman-test-mintd`.
+- Otherwise, test flows auto-build and spawn `cdk-spilman-test-mintd`.
 - The standalone test mint is intentionally minimal: `fakewallet` + in-memory sqlite + mint/swap coverage.
 
 ## Rust Workspace Conventions
@@ -66,7 +66,7 @@ make test-standalone-nut00-errors
 
 ## Project Notes
 
-- if you need live-mint integration for standalone tests, start with `scripts/run_with_mint.sh`
+- if you need live-mint integration for tests, start with `scripts/run_with_mint.sh`
 - active tests should use the standalone test mint by default
 
 ## Commit Style

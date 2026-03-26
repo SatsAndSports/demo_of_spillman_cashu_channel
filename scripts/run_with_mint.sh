@@ -32,7 +32,7 @@ usage() {
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 cargo test -p rust-ascii-art --manifest-path Cargo.toml" >&2
-    echo "  MINT_URL=http://localhost:3338 $0 make test-standalone-integration-python" >&2
+    echo "  MINT_URL=http://localhost:3338 $0 make test-integration-python" >&2
 }
 
 if [ $# -eq 0 ]; then
