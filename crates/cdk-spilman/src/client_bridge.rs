@@ -200,6 +200,7 @@ pub struct SpilmanClientBridge<H: SpilmanClientHost> {
     host: H,
 }
 
+#[cfg(feature = "wallet")]
 fn normalize_mint_error_string(raw: String) -> String {
     serde_json::from_str::<serde_json::Value>(&raw)
         .map(|value| value.to_string())
