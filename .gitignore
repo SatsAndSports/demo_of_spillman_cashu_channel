@@ -43,6 +43,7 @@ testing/
 
 # WASM build output
 web/wasm-nodejs/
+integration-kits/ts/wasm/
 
 # Build sentinels
 .wasm-built
