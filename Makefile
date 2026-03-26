@@ -246,6 +246,11 @@ test-standalone-demo-ts:
 test-standalone-nut00-errors:
 	$(STANDALONE_MINT_RUNNER) cargo test -p cdk-spilman-interop-tests --manifest-path Cargo.toml test_mint_swap_error_returns_nut00_codes -- --ignored --nocapture
 
+# Selective retry test: verifies that non-keyset errors (e.g., 11001 TokenAlreadySpent)
+# fail immediately without retry, while keyset errors (12xxx) trigger retry.
+test-standalone-selective-retry:
+	cargo test -p cdk-spilman-interop-tests --manifest-path Cargo.toml test_selective_retry -- --nocapture
+
 # Standalone server integration tests (shared Rust harness against each server type)
 test-standalone-server-python: test-standalone-python
 	SERVER_TYPE=python cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
@@ -259,7 +264,7 @@ test-standalone-server-rust: test-standalone-rust-demo
 test-standalone-server-ts: test-standalone-integration-ts
 	WASM_DEV=1 SERVER_TYPE=ts cargo test -p cdk-spilman-server-integration-tests --manifest-path Cargo.toml --test integration -- --nocapture
 
-test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-nut00-errors test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
+test-standalone-all: test-standalone test-standalone-integration-python test-standalone-integration-go test-standalone-integration-ts test-standalone-nut00-errors test-standalone-selective-retry test-standalone-demo-python test-standalone-demo-go test-standalone-demo-ts test-standalone-server-python test-standalone-server-go test-standalone-server-rust test-standalone-server-ts
 	@echo ""
 	@echo "========================================="
 	@echo "  ALL STANDALONE TESTS PASSED"

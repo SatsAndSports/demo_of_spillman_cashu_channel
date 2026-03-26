@@ -360,14 +360,14 @@ impl SpilmanAsyncNetworking for WasmSpilmanHostProxy {
     ) -> Result<String, String> {
         JsFuture::from(self.js_host.call_mint_swap(mint_url, swap_request_json))
             .await
-            .map_err(|e| format!("{:?}", e))?
+            .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?
             .as_string()
             .ok_or_else(|| "Result not a string".to_string())
     }
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
         let _ = JsFuture::from(self.js_host.refresh_all_keysets(mint))
             .await
-            .map_err(|e| format!("{:?}", e))?;
+            .map_err(|e| e.as_string().unwrap_or_else(|| format!("{:?}", e)))?;
         Ok(())
     }
 }

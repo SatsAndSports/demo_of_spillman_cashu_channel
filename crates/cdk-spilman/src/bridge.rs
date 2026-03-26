@@ -610,6 +610,42 @@ fn parse_mint_error_value(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
 }
 
+/// Extract the NUT-00 error code from a raw error string.
+/// Returns None if the string is not valid JSON or lacks a "code" field.
+fn extract_nut00_error_code(raw: &str) -> Option<u16> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("code")?.as_u64())
+        .map(|c| c as u16)
+}
+
+/// Returns true if the error code is in the keyset error range (12xxx).
+/// These errors may be recoverable by refreshing keysets and retrying.
+fn is_keyset_error_code(code: u16) -> bool {
+    (12000..13000).contains(&code)
+}
+
+/// Determine if a swap error should trigger a retry (refresh keysets + re-attempt).
+/// Only keyset errors (12xxx) are retryable. All other errors fail immediately.
+/// If the error can't be parsed, fail immediately (strict mode).
+fn should_retry_swap_error(raw: &str) -> bool {
+    match extract_nut00_error_code(raw) {
+        Some(code) => {
+            let retryable = is_keyset_error_code(code);
+            if retryable {
+                tracing::debug!(code, "Keyset error detected, will retry after refreshing keysets");
+            } else {
+                tracing::debug!(code, "Non-retryable NUT-00 error code, failing immediately");
+            }
+            retryable
+        }
+        None => {
+            tracing::debug!(error = %raw, "Could not parse NUT-00 error code, failing immediately");
+            false
+        }
+    }
+}
+
 impl std::fmt::Display for CloseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1912,6 +1948,10 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         {
             Ok(r) => (prep, r),
             Err(e) => {
+                // Only retry on keyset errors (12xxx); fail immediately otherwise
+                if !should_retry_swap_error(&e) {
+                    return Err(CloseError::mint_rejected(parse_mint_error_value(&e)));
+                }
                 let _ = net.refresh_all_keysets(&prep.mint_url);
                 let retry = self
                     .prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature)
@@ -1970,6 +2010,10 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         {
             Ok(r) => (prep, r),
             Err(e) => {
+                // Only retry on keyset errors (12xxx); fail immediately otherwise
+                if !should_retry_swap_error(&e) {
+                    return Err(CloseError::mint_rejected(parse_mint_error_value(&e)));
+                }
                 let _ = net.refresh_all_keysets(&prep.mint_url).await;
                 let retry = self
                     .prepare_close_for_closing_channel(channel_id, cd.balance, &cd.signature)

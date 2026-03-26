@@ -2818,3 +2818,423 @@ async fn test_mint_swap_error_returns_nut00_codes() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ============================================================================
+// Selective Retry Tests
+// ============================================================================
+
+/// A networking mock that always returns a specific NUT-00 error code.
+/// Used to test selective retry behavior based on error codes.
+struct SelectiveRetryTestNetworking {
+    /// The NUT-00 error code to return on swap failures.
+    error_code: u16,
+    /// The error detail message.
+    error_detail: String,
+    /// Count of swap attempts.
+    swap_call_count: std::cell::Cell<u32>,
+    /// Count of keyset refresh calls.
+    refresh_count: std::cell::Cell<u32>,
+}
+
+impl SelectiveRetryTestNetworking {
+    fn new(error_code: u16, error_detail: &str) -> Self {
+        Self {
+            error_code,
+            error_detail: error_detail.to_string(),
+            swap_call_count: std::cell::Cell::new(0),
+            refresh_count: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl SpilmanNetworking for SelectiveRetryTestNetworking {
+    fn call_mint_swap(&self, _: &str, _: &str) -> Result<String, String> {
+        self.swap_call_count.set(self.swap_call_count.get() + 1);
+        Err(format!(
+            r#"{{"code":{},"detail":"{}"}}"#,
+            self.error_code, self.error_detail
+        ))
+    }
+
+    fn refresh_all_keysets(&self, _: &str) -> Result<(), String> {
+        self.refresh_count.set(self.refresh_count.get() + 1);
+        Ok(())
+    }
+}
+
+/// Test that non-keyset errors (like 11001 TokenAlreadySpent) fail immediately
+/// without triggering a retry.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_close_no_retry_on_token_spent_error() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    // Error code 11001 = TokenAlreadySpent (not a keyset error)
+    let net = SelectiveRetryTestNetworking::new(11001, "Token already spent");
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let err = s
+        .bridge
+        .execute_cooperative_close(&payment_json, &net)
+        .expect_err("close should fail immediately without retry");
+
+    // Should only call swap once (no retry)
+    assert_eq!(
+        net.swap_call_count.get(),
+        1,
+        "Should only attempt swap once for non-keyset error"
+    );
+    // Should not refresh keysets
+    assert_eq!(
+        net.refresh_count.get(),
+        0,
+        "Should not refresh keysets for non-keyset error"
+    );
+
+    // Should return MintRejected (not MintRejectedAfterRetry)
+    match err {
+        CloseError::MintRejected { mint_error, status } => {
+            assert_eq!(status, 502);
+            assert_eq!(mint_error["code"], serde_json::json!(11001));
+            assert_eq!(mint_error["detail"], serde_json::json!("Token already spent"));
+        }
+        other => panic!("expected MintRejected, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Test that keyset errors (12001, 12002) trigger retry after refreshing keysets.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_close_retry_on_keyset_error() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    // Error code 12001 = KeysetNotFound (keyset error, should retry)
+    let net = SelectiveRetryTestNetworking::new(12001, "Keyset not found");
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let err = s
+        .bridge
+        .execute_cooperative_close(&payment_json, &net)
+        .expect_err("close should fail after retry");
+
+    // Should call swap twice (initial + retry)
+    assert_eq!(
+        net.swap_call_count.get(),
+        2,
+        "Should attempt swap twice for keyset error"
+    );
+    // Should refresh keysets once
+    assert_eq!(
+        net.refresh_count.get(),
+        1,
+        "Should refresh keysets once for keyset error"
+    );
+
+    // Should return MintRejectedAfterRetry
+    match err {
+        CloseError::MintRejectedAfterRetry {
+            original_error,
+            retry_error,
+            status,
+        } => {
+            assert_eq!(status, 502);
+            assert_eq!(original_error["code"], serde_json::json!(12001));
+            assert_eq!(retry_error["code"], serde_json::json!(12001));
+        }
+        other => panic!("expected MintRejectedAfterRetry, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Test that unparseable error responses fail immediately without retry.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_close_no_retry_on_unparseable_error() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    // A networking mock that returns unparseable errors
+    struct UnparseableErrorNetworking {
+        swap_call_count: std::cell::Cell<u32>,
+        refresh_count: std::cell::Cell<u32>,
+    }
+
+    impl SpilmanNetworking for UnparseableErrorNetworking {
+        fn call_mint_swap(&self, _: &str, _: &str) -> Result<String, String> {
+            self.swap_call_count.set(self.swap_call_count.get() + 1);
+            // Return a plain string error without JSON structure
+            Err("Internal server error".to_string())
+        }
+
+        fn refresh_all_keysets(&self, _: &str) -> Result<(), String> {
+            self.refresh_count.set(self.refresh_count.get() + 1);
+            Ok(())
+        }
+    }
+
+    let net = UnparseableErrorNetworking {
+        swap_call_count: std::cell::Cell::new(0),
+        refresh_count: std::cell::Cell::new(0),
+    };
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let err = s
+        .bridge
+        .execute_cooperative_close(&payment_json, &net)
+        .expect_err("close should fail immediately without retry");
+
+    // Should only call swap once (no retry for unparseable errors)
+    assert_eq!(
+        net.swap_call_count.get(),
+        1,
+        "Should only attempt swap once for unparseable error"
+    );
+    // Should not refresh keysets
+    assert_eq!(
+        net.refresh_count.get(),
+        0,
+        "Should not refresh keysets for unparseable error"
+    );
+
+    // Should return MintRejected with the error as a string value
+    match err {
+        CloseError::MintRejected { mint_error, status } => {
+            assert_eq!(status, 502);
+            // The unparseable error should be wrapped as a JSON string
+            assert_eq!(
+                mint_error,
+                serde_json::json!("Internal server error")
+            );
+        }
+        other => panic!("expected MintRejected, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Test that verification errors (10001) fail immediately without retry.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_close_no_retry_on_verification_error() -> anyhow::Result<()> {
+    let s = retry_tests::setup_retry_scenario().await;
+
+    // Error code 10001 = TokenNotVerified
+    let net = SelectiveRetryTestNetworking::new(10001, "Token verification failed");
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    let err = s
+        .bridge
+        .execute_cooperative_close(&payment_json, &net)
+        .expect_err("close should fail immediately without retry");
+
+    assert_eq!(
+        net.swap_call_count.get(),
+        1,
+        "Should only attempt swap once for verification error"
+    );
+    assert_eq!(
+        net.refresh_count.get(),
+        0,
+        "Should not refresh keysets for verification error"
+    );
+
+    match err {
+        CloseError::MintRejected { mint_error, status } => {
+            assert_eq!(status, 502);
+            assert_eq!(mint_error["code"], serde_json::json!(10001));
+        }
+        other => panic!("expected MintRejected, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Integration Test: Selective Retry Against Real Mint (Double-Spend)
+// ============================================================================
+
+/// Test that the selective retry logic correctly fails immediately (no retry)
+/// when a mint returns error 11001 (TokenAlreadySpent).
+///
+/// This test:
+/// 1. Funds a channel with real proofs from a real in-memory mint
+/// 2. Successfully closes the channel (spends the proofs)
+/// 3. Resets channel state and attempts to close again with the same (now spent) proofs
+/// 4. Verifies the second close fails immediately without retry
+///
+/// This test uses the in-memory test mint (same as other retry tests), so no
+/// external mint is required. It's NOT marked `#[ignore]`.
+///
+/// The key assertion is that when proofs are already spent (11001), the bridge
+/// should fail immediately without attempting a keyset refresh + retry, because
+/// 11001 is not a keyset error.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_selective_retry_no_retry_on_double_spend() -> anyhow::Result<()> {
+    // Set up a real channel scenario using the existing retry test infrastructure.
+    // This creates a funded channel with real proofs from an in-memory mint.
+    let s = retry_tests::setup_retry_scenario().await;
+    eprintln!(
+        "[selective-retry] Channel {} funded with balance {}",
+        s.channel_id, s.balance
+    );
+
+    let payment_json = serde_json::json!({
+        "channel_id": s.channel_id,
+        "balance": s.balance,
+        "signature": s.close_signature,
+    })
+    .to_string();
+
+    // Record initial swap count
+    let initial_swap_count = s.bridge.host().swap_call_count.get();
+    eprintln!(
+        "[selective-retry] Initial swap count: {}",
+        initial_swap_count
+    );
+
+    // First close: should succeed (with retry due to keyset rotation in setup).
+    // The RetryTestHost starts with keyset A active, but keyset A has been rotated
+    // to inactive, so the first swap fails with 12002 (inactive keyset), then
+    // refresh_all_keysets switches to keyset B, and the retry succeeds.
+    eprintln!("[selective-retry] Attempting first close (should succeed with retry)...");
+    let result1 = s
+        .bridge
+        .execute_cooperative_close(&payment_json, s.bridge.host());
+
+    let after_first_close_swap_count = s.bridge.host().swap_call_count.get();
+    let after_first_close_refresh_count = s.bridge.host().refresh_count.get();
+    eprintln!(
+        "[selective-retry] After first close: swap_count={}, refresh_count={}",
+        after_first_close_swap_count, after_first_close_refresh_count
+    );
+
+    match &result1 {
+        Ok(success) => {
+            eprintln!(
+                "[selective-retry] First close succeeded: total_value={}",
+                success.total_value
+            );
+        }
+        Err(e) => {
+            panic!("[selective-retry] First close should succeed, got error: {e:?}");
+        }
+    }
+
+    // First close should have used 2 swaps (initial fail + retry) and 1 refresh
+    assert_eq!(
+        after_first_close_swap_count - initial_swap_count,
+        2,
+        "First close should use 2 swap calls (initial + retry)"
+    );
+    assert_eq!(
+        after_first_close_refresh_count,
+        1,
+        "First close should use 1 refresh call"
+    );
+
+    // Reset the channel state to allow another close attempt.
+    // This simulates a buggy client trying to double-spend.
+    *s.bridge.host().channel_state.borrow_mut() = ChannelState::Open;
+    *s.bridge.host().closing_data.borrow_mut() = None;
+    // Also reset the active keyset back to the original (now inactive) one
+    // to ensure the second close doesn't fail due to keyset issues first.
+    // Actually, let's keep the fresh keyset so the keyset is valid,
+    // and the only error should be "proofs already spent".
+    eprintln!("[selective-retry] Reset channel state for second close attempt");
+
+    // Second close: should fail immediately with 11001 (TokenAlreadySpent).
+    // The proofs have already been spent by the first close.
+    eprintln!("[selective-retry] Attempting second close (should fail with 11001, no retry)...");
+
+    let result2 = s
+        .bridge
+        .execute_cooperative_close(&payment_json, s.bridge.host());
+
+    let after_second_close_swap_count = s.bridge.host().swap_call_count.get();
+    let after_second_close_refresh_count = s.bridge.host().refresh_count.get();
+    eprintln!(
+        "[selective-retry] After second close: swap_count={}, refresh_count={}",
+        after_second_close_swap_count, after_second_close_refresh_count
+    );
+
+    // The second close should fail
+    let err = result2.expect_err("Second close should fail (proofs already spent)");
+    eprintln!("[selective-retry] Second close error: {err:?}");
+
+    // KEY ASSERTION: Second close should use only 1 swap (no retry for 11001)
+    let second_close_swaps = after_second_close_swap_count - after_first_close_swap_count;
+    assert_eq!(
+        second_close_swaps, 1,
+        "Second close should use only 1 swap call (no retry for token-spent error), got {}",
+        second_close_swaps
+    );
+    eprintln!("[selective-retry] ✓ Second close used only 1 swap (no retry)");
+
+    // KEY ASSERTION: Second close should NOT trigger a keyset refresh
+    let second_close_refreshes = after_second_close_refresh_count - after_first_close_refresh_count;
+    assert_eq!(
+        second_close_refreshes, 0,
+        "Second close should not refresh keysets for token-spent error, got {} refreshes",
+        second_close_refreshes
+    );
+    eprintln!("[selective-retry] ✓ Second close did not refresh keysets");
+
+    // Check the error type and code
+    match &err {
+        CloseError::MintRejected { mint_error, status } => {
+            eprintln!(
+                "[selective-retry] Got MintRejected: status={}, error={}",
+                status, mint_error
+            );
+            let code = mint_error
+                .get("code")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            eprintln!("[selective-retry] NUT-00 error code: {code}");
+
+            // 11001 = TokenAlreadySpent
+            assert_eq!(
+                code, 11001,
+                "Expected NUT-00 code 11001 (TokenAlreadySpent), got {code}"
+            );
+            eprintln!("[selective-retry] ✓ Got expected error code 11001 (TokenAlreadySpent)");
+        }
+        CloseError::MintRejectedAfterRetry { .. } => {
+            panic!(
+                "Got MintRejectedAfterRetry, but should have failed immediately without retry! \
+                 The selective retry logic should not retry on 11001 (TokenAlreadySpent)."
+            );
+        }
+        other => {
+            panic!(
+                "[selective-retry] Got unexpected error type: {other:?}. \
+                 Expected MintRejected with code 11001."
+            );
+        }
+    }
+
+    eprintln!("[selective-retry] PASSED: Selective retry correctly skipped retry for 11001 error");
+    Ok(())
+}
