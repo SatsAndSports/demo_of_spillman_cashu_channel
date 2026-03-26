@@ -25,7 +25,6 @@ Experimental protocol. APIs and data models are subject to breaking changes.
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Cryptographic protocol and system design |
 | [INTEGRATION.md](INTEGRATION.md) | Server and Client integration guide |
-| [CASHUTUBE.md](CASHUTUBE.md) | Video streaming demo and API reference |
 | [SPILMAN_DEVELOPMENT.md](SPILMAN_DEVELOPMENT.md) | Contributor guide and environment setup |
 
 ---

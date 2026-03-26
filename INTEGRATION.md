@@ -174,5 +174,4 @@ will be rejected until topped up.
 ## Further Reading
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Cryptographic protocol details and Trait definitions
-- [CASHUTUBE.md](CASHUTUBE.md) - API reference for the video streaming demo
 - [NUT-XX: Spilman Channels](https://github.com/cashubtc/nuts/pull/296) - Protocol specification
